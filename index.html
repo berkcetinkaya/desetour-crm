@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <meta name="description" content="Dese Tour Operations Center — CRM"/>
+  <title>Dese Tour Operations</title>
+
+  <!--
+  ══════════════════════════════════════════════════════════════════════
+  DESE TOUR OPERATIONS CENTER — index.html
+  Sprint 16 · Production Ready Template
+
+  SETUP INSTRUCTIONS:
+  1. Replace YOUR_PROJECT_REF and YOUR_ANON_KEY below with real values.
+  2. Set USE_RESEND=true when Resend is configured (after EMAIL_SETUP.md).
+  3. For npm/Vite setup, see the "npm option" section below.
+  ══════════════════════════════════════════════════════════════════════
+  -->
+
+  <!-- ── Google Fonts (Playfair Display + DM Sans) ── -->
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600;700&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; height: 100%; }
+    body { font-family: 'DM Sans', -apple-system, Helvetica, Arial, sans-serif; }
+    #root { height: 100%; }
+
+    /* Loading screen shown while scripts download */
+    #boot-screen {
+      position: fixed; inset: 0;
+      background: linear-gradient(135deg, #0D1B3E 0%, #1B2D4F 60%, #2C3E6B 100%);
+      display: flex; align-items: center; justify-content: center;
+      flex-direction: column; gap: 16px; z-index: 9999;
+      transition: opacity .4s ease;
+    }
+    #boot-screen.hidden { opacity: 0; pointer-events: none; }
+    .boot-spinner {
+      width: 40px; height: 40px; border-radius: 50%;
+      border: 3px solid rgba(201,168,76,0.25); border-top-color: #C9A84C;
+      animation: spin .8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .boot-text { color: rgba(248,245,238,0.6); font-size: 13px; font-family: 'DM Sans', sans-serif; }
+  </style>
+
+  <style>
+    /* Responsive table — hidden on mobile, shown on desktop */
+    .rsp-table { width: 100%; border-collapse: collapse; }
+    @media (max-width: 767px) {
+      .rsp-table { display: none !important; }
+      .rsp-cards  { display: block !important; }
+    }
+    @media (min-width: 768px) {
+      .rsp-table  { display: table !important; }
+      .rsp-cards  { display: none !important; }
+    }
+    /* Mobile page header — stack vertically */
+    @media (max-width: 767px) {
+      .page-header { flex-direction: column !important; align-items: flex-start !important; gap: 12px !important; }
+      .page-header-actions { width: 100%; justify-content: space-between; }
+    }
+    /* Modal responsive */
+    @media (max-width: 767px) {
+      .modal-inner { max-width: 100% !important; max-height: 95vh !important; margin: 0 !important; border-radius: 12px 12px 0 0 !important; }
+    }
+    /* Animation */
+    @keyframes fadeInUp {
+      from { opacity: 0; transform: translateY(8px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .fade { animation: fadeInUp 0.18s ease; }
+  </style>
+</head>
+<body>
+
+  <!-- Boot loading screen -->
+  <div id="boot-screen">
+    <div class="boot-spinner"></div>
+    <div class="boot-text">Dese Tour Operations Center yükleniyor…</div>
+  </div>
+
+  <!-- React root -->
+  <div id="root"></div>
+
+  <!--
+  ══════════════════════════════════════════════════════════════════════
+  CONFIGURATION — window.__DESE_CONFIG
+  ══════════════════════════════════════════════════════════════════════
+  Replace placeholder values before deploying.
+  This block is the ONLY place secrets are configured for the CDN build.
+  For a Vite build, use .env.local instead (see npm option below).
+
+  NEVER commit real keys to version control.
+  ══════════════════════════════════════════════════════════════════════
+  -->
+  <script>
+    // Catch any JS errors and show them instead of blank screen
+    window.onerror = function(msg, src, line, col, err) {
+      var boot = document.getElementById('boot-screen');
+      if (boot) {
+        boot.innerHTML = '<div style="padding:40px;color:#fff;font-family:monospace;font-size:13px;max-width:800px;margin:0 auto">' +
+          '<div style="color:#C9A84C;font-size:16px;margin-bottom:16px">Dese Tour — Yükleme Hatası</div>' +
+          '<div style="color:#f87171;margin-bottom:8px">' + msg + '</div>' +
+          '<div style="color:rgba(255,255,255,0.5);font-size:11px">' + src + ' L' + line + ':' + col + '</div>' +
+          '<div style="margin-top:24px;color:rgba(255,255,255,0.4);font-size:11px">Konsolu açın (F12) daha fazla bilgi için</div>' +
+          '</div>';
+      }
+      return false;
+    };
+    window.addEventListener('unhandledrejection', function(e) {
+      window.onerror(e.reason && e.reason.message || String(e.reason), 'promise', 0, 0, e.reason);
+    });
+  </script>
+  <script>
+    window.__DESE_CONFIG = {
+      // ── Supabase ─────────────────────────────────────────────────────
+      VITE_SUPABASE_URL:      "https://xylgdkrkgfcbyhecrjlg.supabase.co",
+      VITE_SUPABASE_ANON_KEY: "sb_publishable_MC5-EAsn7AF-eFOBtOCG_A_BcOWRlrp",
+
+      // ── Email (frontend-safe settings only) ──────────────────────────
+      // RESEND_API_KEY goes in Vercel env vars only — never here.
+      USE_RESEND:             "false",
+      EMAIL_ENDPOINT:         "/api/send-email",
+      FROM_EMAIL:             "hello@desetour.com",
+      FROM_NAME:              "Dese Tour",
+    };
+  </script>
+
+  <!--
+  ══════════════════════════════════════════════════════════════════════
+  DEPENDENCIES — CDN scripts (order matters)
+  ══════════════════════════════════════════════════════════════════════
+  -->
+
+  <!-- 1. Supabase JS — REQUIRED for live database connection -->
+  <script src="https://unpkg.com/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+  <script>
+    // Expose supabase under the name getSB() expects
+    if (window.supabase) {
+      window.__supabase = window.supabase;
+    }
+  </script>
+
+  <!-- 2. React 18 -->
+  <script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js" crossorigin></script>
+
+
+  <!-- App (pre-transpiled JSX — no Babel needed in browser) -->
+  <script src="app.js"></script>
+
+  <!-- Hide boot screen once React renders -->
+  <script>
+    (function() {
+      var maxWait = 12000; // 12s timeout
+      var started = Date.now();
+      function checkReady() {
+        var root = document.getElementById('root');
+        var boot = document.getElementById('boot-screen');
+        if (root && root.children.length > 0) {
+          boot && boot.classList.add('hidden');
+          setTimeout(function(){ boot && (boot.style.display = 'none'); }, 500);
+        } else if (Date.now() - started < maxWait) {
+          setTimeout(checkReady, 100);
+        } else {
+          // Timeout — hide anyway
+          boot && boot.classList.add('hidden');
+        }
+      }
+      setTimeout(checkReady, 200);
+    })();
+  </script>
+
+  <!--
+  ══════════════════════════════════════════════════════════════════════
+  npm / Vite OPTION (alternative to CDN)
+  ══════════════════════════════════════════════════════════════════════
+  If you use Vite instead of CDN scripts:
+
+  1. package.json (minimum):
+     {
+       "dependencies": {
+         "@supabase/supabase-js": "^2.0.0",
+         "react": "^18.0.0",
+         "react-dom": "^18.0.0",
+         "resend": "^3.0.0"
+       },
+       "devDependencies": {
+         "@vitejs/plugin-react": "^4.0.0",
+         "vite": "^5.0.0"
+       }
+     }
+
+  2. .env.local (never commit):
+     VITE_SUPABASE_URL=https://YOUR_PROJECT_REF.supabase.co
+     VITE_SUPABASE_ANON_KEY=YOUR_ANON_KEY
+
+  3. vite.config.js:
+     import { defineConfig } from 'vite';
+     import react from '@vitejs/plugin-react';
+     export default defineConfig({ plugins: [react()] });
+
+  4. Build: npm run build → serves from dist/
+     Then remove the <script> tag above
+     and use standard ESM imports in DeseTourDashboard.jsx instead.
+  ══════════════════════════════════════════════════════════════════════
+  -->
+
+</body>
+</html>

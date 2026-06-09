@@ -1,0 +1,15 @@
+{
+  "version": 2,
+  "buildCommand": "node build.js",
+  "outputDirectory": ".",
+  "installCommand": "npm install",
+  "functions": {
+    "api/send-email.js": {
+      "maxDuration": 30,
+      "memory": 512
+    }
+  },
+  "rewrites": [
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
+}
