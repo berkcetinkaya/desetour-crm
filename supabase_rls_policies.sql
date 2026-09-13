@@ -131,6 +131,18 @@ CREATE POLICY "staff_users: own profile update"
   USING  ( auth.uid() = id )
   WITH CHECK ( auth.uid() = id );
 
+-- Admin can update ANY staff row (role changes, activate/deactivate other
+-- staff, etc.). Without this, "own profile update" above is the only UPDATE
+-- policy on this table, so even an admin cannot deactivate a different
+-- staff_users row through the app's normal (anon-key + session) client —
+-- only through their own row, or via service_role/SQL Editor.
+CREATE POLICY "staff_users: admin update any"
+  ON public.staff_users
+  FOR UPDATE
+  TO authenticated
+  USING  ( is_admin() )
+  WITH CHECK ( is_admin() );
+
 -- Only admin can create new staff rows.
 CREATE POLICY "staff_users: admin insert"
   ON public.staff_users
