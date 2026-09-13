@@ -7244,29 +7244,13 @@ function MobileAgendaView({ date, events }) {
   );
 }
 
-function CalendarPage() {
-  const { isMobile } = useBreakpoint();
-  // Mobile never opens on the desktop weekly grid (Phase 9).
-  const [view, setView]         = useState(() => isMobile ? "daily" : "weekly");   // "daily" | "weekly" | "monthly"
-  const [weekOffset, setWeekOffset] = useState(0);
-  const [dayOffset, setDayOffset]   = useState(0);
-  const [monthOffset, setMonthOffset] = useState(0);
+/* Shared by CalendarPage (desktop) and MobileCalendarPage (mobile agenda):
+   builds calendar events from the reservations repo, falling back to
+   CAL_EVENTS mock data. Extracted so both surfaces read the exact same
+   data/business logic — only presentation differs. */
+function useCalendarEvents() {
   const { data:calReservations } = useRepo("reservation", "getAll");
-
-  const currentDay = new Date(CAL_TODAY);
-  currentDay.setDate(currentDay.getDate() + dayOffset);
-
-  const weekStart = new Date(CAL_TODAY);
-  const dow = (CAL_TODAY.getDay() + 6) % 7; // Mon=0
-  weekStart.setDate(CAL_TODAY.getDate() - dow + weekOffset * 7);
-
-  const monthStart = new Date(CAL_TODAY.getFullYear(), CAL_TODAY.getMonth() + monthOffset, 1);
-
-  const weekEnd = new Date(weekStart);
-  weekEnd.setDate(weekEnd.getDate() + 6);
-
-  /* Build live calendar events from reservations repo; fallback to CAL_EVENTS */
-  const CAL_EVENTS_LIVE = calReservations && calReservations.length > 0
+  return calReservations && calReservations.length > 0
     ? calReservations.map(r => {
         const raw = r.checkIn || r.travelStart || r.check_in || r.date || null;
         if (!raw) return null;
@@ -7292,6 +7276,28 @@ function CalendarPage() {
         } catch(_) { return null; }
       }).filter(Boolean)
     : (typeof CAL_EVENTS !== 'undefined' ? CAL_EVENTS : []);
+}
+
+function CalendarPage() {
+  const { isMobile } = useBreakpoint();
+  // Mobile never opens on the desktop weekly grid (Phase 9).
+  const [view, setView]         = useState(() => isMobile ? "daily" : "weekly");   // "daily" | "weekly" | "monthly"
+  const [weekOffset, setWeekOffset] = useState(0);
+  const [dayOffset, setDayOffset]   = useState(0);
+  const [monthOffset, setMonthOffset] = useState(0);
+  const CAL_EVENTS_LIVE = useCalendarEvents();
+
+  const currentDay = new Date(CAL_TODAY);
+  currentDay.setDate(currentDay.getDate() + dayOffset);
+
+  const weekStart = new Date(CAL_TODAY);
+  const dow = (CAL_TODAY.getDay() + 6) % 7; // Mon=0
+  weekStart.setDate(CAL_TODAY.getDate() - dow + weekOffset * 7);
+
+  const monthStart = new Date(CAL_TODAY.getFullYear(), CAL_TODAY.getMonth() + monthOffset, 1);
+
+  const weekEnd = new Date(weekStart);
+  weekEnd.setDate(weekEnd.getDate() + 6);
 
   const visibleEvents = view === "daily"
     ? CAL_EVENTS_LIVE.filter(e => isSameDay(e.date, currentDay))
@@ -15810,16 +15816,27 @@ function App() {
 
     if (base === "more") return <MobileMorePage navigate={navigate}/>;
 
-    // ── Mobile: dedicated screens for the routes reachable from daily
-    // operations. Detail views (a specific record) still reuse the
-    // desktop detail pages, which already stack correctly on mobile —
-    // only the *list*/home-level information architecture differs.
+    // ── Mobile: dedicated screens for every route reachable from daily
+    // operations, list AND detail. Each one is its own information
+    // architecture — not the desktop page reused at a narrow width.
     if (isMobile) {
       if (base === "dashboard") return <MobileHomePage navigate={navigate}/>;
-      if (base === "leads" && !param) return <MobileRequestsPage onSelectLead={id=>navigate('/leads/'+id)}/>;
-      if (base === "reservations" && !param) return <MobileReservationsPage onSelect={id=>navigate('/reservations/'+id)}/>;
-      if (base === "customers" && !param) return <MobileGuestsPage onSelectGuest={id=>navigate('/customers/'+id)}/>;
-      if (base === "quotes" && !param) return <MobileQuotesPage onSelectQuote={id=>navigate('/quotes/'+id)} onNewQuote={()=>navigate('/quotes/new')}/>;
+      if (base === "calendar") return <MobileCalendarPage navigate={navigate}/>;
+      if (base === "messages") return <MobileMessagesPage/>;
+
+      if (base === "leads" && param) return <MobileLeadDetailPage leadId={param} onBack={()=>navigate('/leads')}/>;
+      if (base === "leads") return <MobileRequestsPage onSelectLead={id=>navigate('/leads/'+id)}/>;
+
+      if (base === "reservations" && param) return <MobileReservationDetailPage resId={param} onBack={()=>navigate('/reservations')}/>;
+      if (base === "reservations") return <MobileReservationsPage onSelect={id=>navigate('/reservations/'+id)}/>;
+
+      if (base === "customers" && param) return <MobileGuestDetailPage guestId={param} onBack={()=>navigate('/customers')}/>;
+      if (base === "customers") return <MobileGuestsPage onSelectGuest={id=>navigate('/customers/'+id)}/>;
+
+      if (base === "quotes" && param === "new") return <MobileNewQuotePage onBack={()=>navigate('/quotes')}/>;
+      if (base === "quotes" && param) return <MobileQuoteDetailPage quoteId={param} onBack={()=>navigate('/quotes')}/>;
+      if (base === "quotes") return <MobileQuotesPage onSelectQuote={id=>navigate('/quotes/'+id)} onNewQuote={()=>navigate('/quotes/new')}/>;
+
       if (base === "payments") return <MobilePaymentsPage/>;
       if (base === "tasks" || base === "reminders") return <MobileTasksQueuePage/>;
     }
@@ -16979,6 +16996,1078 @@ function MobileTasksQueuePage() {
           <QueueGroup label="Bugün" list={today}/>
           <QueueGroup label="Yaklaşan" list={upcoming}/>
         </>
+      )}
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   MOBILE DETAIL PRIMITIVES — a small back-row header and a label/value
+   line, shared by every Mobile*DetailPage below so identity, contact
+   actions and record data are laid out consistently without each detail
+   page reinventing chrome.
+   ══════════════════════════════════════════════════════════════════════ */
+function MobileDetailHeader({ onBack, chip }) {
+  return (
+    <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:10 }}>
+      <button onClick={onBack} style={{
+        display:"flex", alignItems:"center", gap:5, flexShrink:0,
+        border:"none", background:"transparent", cursor:"pointer", padding:"6px 6px 6px 0",
+        color:C.navy, fontSize:14, fontWeight:500, fontFamily:"'DM Sans',sans-serif",
+      }}>
+        <GIc d="M15 18l-6-6 6-6" size={16} sw={2.2}/>
+        Geri
+      </button>
+      {chip}
+    </div>
+  );
+}
+
+function MobileInfoLine({ label, value, mono, bold, warn }) {
+  return (
+    <div style={{
+      display:"flex", justifyContent:"space-between", alignItems:"center", gap:10,
+      padding:"9px 0", borderBottom:`1px solid ${C.borderLight}`,
+    }}>
+      <span style={{ fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif" }}>{label}</span>
+      <span style={{
+        fontSize: bold ? 15 : 13, fontWeight: bold ? 700 : 500,
+        color: warn ? C.red : C.text,
+        fontFamily: mono ? "'DM Mono',monospace" : (bold ? "'Playfair Display',serif" : "'DM Sans',sans-serif"),
+        textAlign:"right", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", maxWidth:"65%",
+      }}>{value}</span>
+    </div>
+  );
+}
+
+function MobileEmptyNote({ text }) {
+  return (
+    <MobileEntityCard style={{ textAlign:"center", padding:"20px 16px" }}>
+      <div style={{ fontSize:12.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif" }}>{text}</div>
+    </MobileEntityCard>
+  );
+}
+
+/* Generic bottom sheet for a single-choice pick (e.g. status change) —
+   the "bottom sheet" interaction pattern used across the mobile surface. */
+function MobileStatusSheet({ title, options, current, onSelect, onClose }) {
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = prev; };
+  }, []);
+  return (
+    <div style={{ position:"fixed", inset:0, zIndex:1200, display:"flex", flexDirection:"column", justifyContent:"flex-end" }}>
+      <div onClick={onClose} style={{ position:"absolute", inset:0, background:"rgba(13,27,62,0.42)" }}/>
+      <div style={{
+        position:"relative", background:C.white, borderRadius:"16px 16px 0 0",
+        padding:`6px 0 calc(10px + env(safe-area-inset-bottom, 0px))`,
+        maxHeight:"70vh", overflowY:"auto",
+      }}>
+        <div style={{ width:36, height:4, borderRadius:99, background:C.border, margin:"6px auto 12px" }}/>
+        <div style={{ padding:"0 20px 10px", fontSize:14.5, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif" }}>{title}</div>
+        {options.map(o=>(
+          <button key={o} onClick={()=>onSelect(o)} style={{
+            width:"100%", display:"flex", alignItems:"center", justifyContent:"space-between",
+            padding:"13px 20px", border:"none", background: o===current ? C.goldPale : "transparent",
+            cursor:"pointer", textAlign:"left", fontSize:14, color:C.text, fontFamily:"'DM Sans',sans-serif",
+          }}>
+            {o}
+            {o===current && <GIc d="M20 6L9 17l-5-5" size={15} sw={2.3} color={C.gold}/>}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   MOBILE CALENDAR — a genuine operations agenda, not the desktop weekly
+   grid shrunk down. Sticky compact date header (Today / prev / next / a
+   7-day picker strip), a vertical list of touch-friendly tour cards for
+   the selected day, and the desktop sidebar's "what needs attention"
+   counts folded directly into the header instead of living in a panel
+   that has nowhere to go on a phone. Month view is one tap away, via the
+   existing MonthlyView grid, but is never the page mobile opens on.
+   ══════════════════════════════════════════════════════════════════════ */
+function MobileAgendaCard({ ev, onClick }) {
+  const col = CAL_OP_COLOR[ev.opStatus] || CAL_OP_COLOR["Hazırlanıyor"];
+  const OP_TONE = { "Hazırlanıyor":"neutral", "Rehber Atandı":"info", "Hazır":"gold", "Tamamlandı":"neutral", "İptal":"bad" };
+  return (
+    <MobileEntityCard onClick={onClick} style={{ borderLeft:`4px solid ${col.border}` }}>
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:8, marginBottom:6 }}>
+        <span style={{ fontSize:15, fontWeight:700, color:C.navy, fontFamily:"'Playfair Display',serif" }}>{fmtHHMM(ev.date)}</span>
+        {ev.opStatus && <MobileStatusChip label={ev.opStatus} tone={OP_TONE[ev.opStatus]||"neutral"}/>}
+      </div>
+      <div style={{ fontSize:14.5, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif" }}>{ev.flag} {ev.guest}</div>
+      <div style={{ fontSize:12.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", marginTop:2 }}>{ev.tour} · {ev.pax} kişi</div>
+      <div style={{ display:"flex", alignItems:"center", gap:6, marginTop:9, flexWrap:"wrap" }}>
+        <MobileStatusChip label={ev.guideOk ? `Rehber: ${ev.guide}` : "Rehber Atanmadı"} tone={ev.guideOk?"good":"bad"}/>
+        <MobileStatusChip label={ev.pickup || "Pickup Eksik"} tone={ev.pickup?"neutral":"warn"}/>
+        <MobileStatusChip label={ev.payStatus || "—"} tone={ev.payStatus==="Ödeme Bekliyor"?"bad":ev.payStatus==="Kapora Ödendi"?"warn":"good"}/>
+      </div>
+    </MobileEntityCard>
+  );
+}
+
+function MobileCalendarPage({ navigate }) {
+  const [dayOffset, setDayOffset] = useState(0);
+  const [showMonth, setShowMonth] = useState(false);
+  const events = useCalendarEvents();
+
+  const currentDay = new Date(CAL_TODAY);
+  currentDay.setDate(currentDay.getDate() + dayOffset);
+
+  const dow = (currentDay.getDay() + 6) % 7; // Mon=0
+  const weekStart = new Date(currentDay);
+  weekStart.setDate(currentDay.getDate() - dow);
+  const weekDays = Array.from({ length:7 }, (_,i) => { const d=new Date(weekStart); d.setDate(d.getDate()+i); return d; });
+
+  const weekEvents = events.filter(e => {
+    const d = new Date(e.date); d.setHours(0,0,0,0);
+    const ws = new Date(weekStart); ws.setHours(0,0,0,0);
+    const we = new Date(weekStart); we.setDate(we.getDate()+6); we.setHours(23,59,59,0);
+    return d >= ws && d <= we;
+  });
+  const noGuideWeek  = weekEvents.filter(e => !e.guideOk && e.opStatus !== "Tamamlandı").length;
+  const noPayWeek    = weekEvents.filter(e => e.payStatus === "Ödeme Bekliyor").length;
+  const noPickupWeek = weekEvents.filter(e => !e.pickup && e.opStatus !== "Tamamlandı").length;
+
+  const dayEvents = events.filter(e => isSameDay(e.date, currentDay)).sort((a,b)=>a.date-b.date);
+  const monthStart = new Date(currentDay.getFullYear(), currentDay.getMonth(), 1);
+
+  function jumpTo(d) { setDayOffset(Math.round((new Date(d.getFullYear(),d.getMonth(),d.getDate()) - new Date(CAL_TODAY.getFullYear(),CAL_TODAY.getMonth(),CAL_TODAY.getDate())) / 86400000)); }
+  function selectDayFromMonth(d) { jumpTo(d); setShowMonth(false); }
+
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
+      {}
+      <div style={{
+        position:"sticky", top:0, zIndex:5, background:C.ivory,
+        margin:"-14px -12px 0", padding:"14px 12px 12px",
+        display:"flex", flexDirection:"column", gap:12,
+        borderBottom:`1px solid ${C.borderLight}`,
+      }}>
+        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:8 }}>
+          <div style={{ minWidth:0 }}>
+            <div style={{ fontSize:19, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif", textTransform:"capitalize" }}>
+              {isToday(currentDay) ? "Bugün" : currentDay.toLocaleDateString("tr-TR",{ weekday:"long" })}
+            </div>
+            <div style={{ fontSize:12, color:C.textMuted, fontFamily:"'DM Sans',sans-serif" }}>
+              {currentDay.toLocaleDateString("tr-TR",{ day:"numeric", month:"long", year:"numeric" })}
+            </div>
+          </div>
+          <div style={{ display:"flex", alignItems:"center", gap:6, flexShrink:0 }}>
+            {!isToday(currentDay) && (
+              <button onClick={()=>setDayOffset(0)} style={{
+                padding:"7px 12px", borderRadius:8, border:`1px solid ${C.border}`, background:C.white,
+                color:C.navy, fontSize:12.5, fontWeight:600, fontFamily:"'DM Sans',sans-serif", cursor:"pointer",
+              }}>Bugün</button>
+            )}
+            <button onClick={()=>setDayOffset(o=>o-1)} aria-label="Önceki gün" style={{
+              width:34, height:34, borderRadius:8, border:`1px solid ${C.border}`, background:C.white,
+              display:"flex", alignItems:"center", justifyContent:"center", cursor:"pointer", color:C.textMid,
+            }}><GIc d="M15 18l-6-6 6-6" size={14} sw={2.2}/></button>
+            <button onClick={()=>setDayOffset(o=>o+1)} aria-label="Sonraki gün" style={{
+              width:34, height:34, borderRadius:8, border:`1px solid ${C.border}`, background:C.white,
+              display:"flex", alignItems:"center", justifyContent:"center", cursor:"pointer", color:C.textMid,
+            }}><GIc d="M9 18l6-6-6-6" size={14} sw={2.2}/></button>
+            <button onClick={()=>setShowMonth(s=>!s)} aria-label="Ay görünümü" style={{
+              width:34, height:34, borderRadius:8, border:`1px solid ${showMonth?C.gold:C.border}`,
+              background: showMonth ? C.goldPale : C.white,
+              display:"flex", alignItems:"center", justifyContent:"center", cursor:"pointer",
+              color: showMonth ? "#8A6D1F" : C.textMid,
+            }}><GIc d="M8 2v4M16 2v4M3 10h18M21 8a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2h14a2 2 0 002-2V8z" size={14} sw={1.9}/></button>
+          </div>
+        </div>
+
+        {}
+        <div className="rsp-scroll-x" style={{ display:"flex", gap:5 }}>
+          {weekDays.map((d,i)=>{
+            const active = isSameDay(d, currentDay);
+            const has = events.some(e=>isSameDay(e.date,d));
+            return (
+              <button key={i} onClick={()=>jumpTo(d)} style={{
+                flex:"1 0 auto", minWidth:42, display:"flex", flexDirection:"column", alignItems:"center", gap:3,
+                padding:"7px 4px", borderRadius:10, border:"none", cursor:"pointer",
+                background: active ? C.navy : "transparent",
+              }}>
+                <span style={{ fontSize:9.5, fontWeight:600, color: active?"rgba(248,245,238,0.65)":C.textFaint, fontFamily:"'DM Sans',sans-serif", textTransform:"uppercase" }}>{fmtDayShort(d)}</span>
+                <span style={{ fontSize:13.5, fontWeight:700, color: active?C.white:isToday(d)?C.gold:C.text, fontFamily:"'DM Sans',sans-serif" }}>{fmtDayNum(d)}</span>
+                <span style={{ width:4, height:4, borderRadius:"50%", background: has ? (active?C.goldLight:C.gold) : "transparent" }}/>
+              </button>
+            );
+          })}
+        </div>
+
+        {}
+        {(noGuideWeek>0 || noPayWeek>0 || noPickupWeek>0) && (
+          <div className="rsp-scroll-x" style={{ display:"flex", gap:8 }}>
+            {noGuideWeek>0  && <MobileStatusChip label={`${noGuideWeek} rehber eksik (bu hafta)`} tone="bad"/>}
+            {noPayWeek>0    && <MobileStatusChip label={`${noPayWeek} ödeme bekliyor (bu hafta)`} tone="warn"/>}
+            {noPickupWeek>0 && <MobileStatusChip label={`${noPickupWeek} pickup eksik (bu hafta)`} tone="warn"/>}
+          </div>
+        )}
+      </div>
+
+      {showMonth && (
+        <MonthlyView monthStart={monthStart} events={events} onSelectDay={selectDayFromMonth} isMobile/>
+      )}
+
+      {}
+      {dayEvents.length === 0 ? (
+        <MobileEntityCard style={{ textAlign:"center", padding:"44px 16px" }}>
+          <div style={{ fontSize:28, marginBottom:10, opacity:.3 }}>🗓️</div>
+          <div style={{ fontSize:13.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif" }}>Bu gün için planlanmış tur yok.</div>
+        </MobileEntityCard>
+      ) : (
+        <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+          {dayEvents.map(ev => (
+            <MobileAgendaCard key={ev.id} ev={ev} onClick={()=>{
+              const target = ev.resId || ev.id;
+              if (target && navigate) navigate('/reservations/'+target);
+            }}/>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   MOBILE GUEST DETAIL — a CRM contact page: identity and contact actions
+   first, then requests/reservations/quotes/payments/notes as independent
+   sections, each backed by the same per-customer repo lookups the
+   desktop page would use (getByCustomerId on every entity). Deliberately
+   does not depend on the mock-only enrichCustomer() helper the desktop
+   GuestDetailPage uses, which never resolves real Supabase records.
+   ══════════════════════════════════════════════════════════════════════ */
+function MobileGuestDetailPage({ guestId, onBack }) {
+  const _sp = safeParam(guestId);
+  if (_sp.invalid) return <NotFoundCard entityType="Misafir" entityId={guestId} onBack={onBack}/>;
+
+  const { data:g, loading, error } = useRepo("customer", "getById", guestId);
+  const { data:leads }   = useRepo("lead",        "getByCustomerId", guestId);
+  const { data:quotes }  = useRepo("quote",       "getByCustomerId", guestId);
+  const { data:resList } = useRepo("reservation", "getByCustomerId", guestId);
+  const { data:pays }    = useRepo("payment",     "getByCustomerId", guestId);
+
+  if (loading) return <LoadingState label="Misafir profili yükleniyor…"/>;
+  if (error)   return <ErrorState message={error} onRetry={()=>{}}/>;
+  if (!g)      return <NotFoundCard entityType="Misafir" entityId={guestId} onBack={onBack}/>;
+
+  const openLeads = (leads||[]).filter(l => !["Onaylandı","İptal"].includes(l.status));
+  const today = new Date(); today.setHours(0,0,0,0);
+  const upcomingRes = (resList||[]).filter(r => r.opStatus !== "İptal" && (!r.checkIn || new Date(r.checkIn) >= today));
+
+  const LEAD_TONE = { "Yeni":"info", "Görüşüldü":"neutral", "Teklif Hazırlanıyor":"neutral", "Teklif Gönderildi":"warn", "Teklif Onaylandı":"good", "Onaylandı":"good", "İptal":"bad", "Beklemede":"neutral" };
+  const QUOTE_TONE = { "Taslak":"neutral", "Gönderildi":"info", "Onaylandı":"good", "İptal":"bad", "Süresi Doldu":"neutral" };
+  const PAY_TONE = { "Bekliyor":"bad", "Gecikmiş":"bad", "Kısmi Ödendi":"warn", "Kapora Ödendi":"warn", "Ödendi":"good", "İade Edildi":"neutral" };
+  const waHref = g.phone ? `https://wa.me/${String(g.phone).replace(/[^0-9]/g,'')}` : null;
+
+  const contactBtn = (href, label, disabled) => (
+    <a href={disabled?undefined:href} target={href&&href.startsWith('http')?"_blank":undefined} rel="noreferrer" style={{
+      display:"flex", alignItems:"center", justifyContent:"center", padding:"10px 0", borderRadius:10,
+      border:`1px solid ${C.border}`, background:C.white, color: disabled?C.textFaint:C.navy,
+      fontSize:12.5, fontWeight:600, fontFamily:"'DM Sans',sans-serif", textDecoration:"none",
+      opacity: disabled?0.5:1, cursor: disabled?"default":"pointer",
+    }}>{label}</a>
+  );
+
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:18 }}>
+      <MobileDetailHeader onBack={onBack}/>
+
+      <MobileEntityCard style={{ padding:0, overflow:"hidden" }}>
+        <div style={{ background:`linear-gradient(135deg, ${C.navyDeep} 0%, ${C.navy} 100%)`, padding:"22px 18px 18px", display:"flex", alignItems:"center", gap:14 }}>
+          <div style={{ width:56, height:56, borderRadius:"50%", flexShrink:0, background:"rgba(201,168,76,0.18)", border:"2px solid rgba(201,168,76,0.4)", display:"flex", alignItems:"center", justifyContent:"center" }}>
+            <span style={{ fontSize:20, fontWeight:700, color:C.goldLight, fontFamily:"'Playfair Display',serif" }}>{g.initials}</span>
+          </div>
+          <div style={{ minWidth:0 }}>
+            <div style={{ fontSize:18, fontWeight:700, color:C.ivory, fontFamily:"'Playfair Display',serif", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{g.flag} {g.name}</div>
+            <div style={{ fontSize:12.5, color:"rgba(248,245,238,0.6)", fontFamily:"'DM Sans',sans-serif", marginTop:3 }}>
+              {[g.country, g.language].filter(Boolean).join(" · ") || "—"}
+            </div>
+          </div>
+        </div>
+        <div style={{ padding:"12px 16px", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+          <MobileStatusChip label={g.status||"Aktif"} tone={g.status==="Arşiv"?"neutral":"good"}/>
+          {g.firstContact && <span style={{ fontSize:11, color:C.textFaint, fontFamily:"'DM Sans',sans-serif" }}>{g.firstContact}'dan beri</span>}
+        </div>
+      </MobileEntityCard>
+
+      {}
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:8 }}>
+        {contactBtn(g.phone?`tel:${g.phone}`:null, "Ara", !g.phone)}
+        {contactBtn(waHref, "WhatsApp", !g.phone)}
+        {contactBtn(g.email?`mailto:${g.email}`:null, "E-posta", !g.email)}
+      </div>
+
+      {(g.phone || g.email) && (
+        <MobileEntityCard>
+          {g.phone && <MobileInfoLine label="Telefon" value={g.phone} mono/>}
+          {g.email && <MobileInfoLine label="E-posta" value={g.email} mono/>}
+        </MobileEntityCard>
+      )}
+
+      <MobileSection title={`Aktif Talepler (${openLeads.length})`}>
+        {openLeads.length===0 ? <MobileEmptyNote text="Açık talep yok."/> : openLeads.map(l=>(
+          <MobileEntityCard key={l.id} onClick={()=>NAV_REF.fn && NAV_REF.fn('/leads/'+l.id)}>
+            <div style={{ display:"flex", justifyContent:"space-between", gap:8 }}>
+              <div style={{ fontSize:13.5, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif" }}>{l.tour || "Deneyim belirtilmedi"}</div>
+              <MobileStatusChip label={l.status} tone={LEAD_TONE[l.status]||"neutral"}/>
+            </div>
+            <div style={{ fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:3 }}>{l.dateRange || l.ago}</div>
+          </MobileEntityCard>
+        ))}
+      </MobileSection>
+
+      <MobileSection title={`Yaklaşan Rezervasyonlar (${upcomingRes.length})`}>
+        {upcomingRes.length===0 ? <MobileEmptyNote text="Yaklaşan rezervasyon yok."/> : upcomingRes.map(r=>(
+          <MobileEntityCard key={r.id} onClick={()=>NAV_REF.fn && NAV_REF.fn('/reservations/'+r.id)}>
+            <div style={{ display:"flex", justifyContent:"space-between", gap:8 }}>
+              <div style={{ fontSize:13.5, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif" }}>{r.tour}</div>
+              <MobileStatusChip label={r.opStatus} tone={r.opStatus==="Tamamlandı"?"neutral":r.opStatus==="İptal"?"bad":"good"}/>
+            </div>
+            <div style={{ fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:3 }}>{r.date} · {r.pax} kişi</div>
+          </MobileEntityCard>
+        ))}
+      </MobileSection>
+
+      <MobileSection title={`Teklifler (${(quotes||[]).length})`}>
+        {(quotes||[]).length===0 ? <MobileEmptyNote text="Teklif yok."/> : (quotes||[]).map(q=>(
+          <MobileEntityCard key={q.id} onClick={()=>NAV_REF.fn && NAV_REF.fn('/quotes/'+q.id)}>
+            <div style={{ display:"flex", justifyContent:"space-between", gap:8 }}>
+              <div style={{ fontSize:13.5, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif" }}>{q.tour}</div>
+              <MobileStatusChip label={q.status} tone={QUOTE_TONE[q.status]||"neutral"}/>
+            </div>
+            <div style={{ fontSize:13.5, fontWeight:700, color:C.gold, fontFamily:"'Playfair Display',serif", marginTop:4 }}>{q.currency==="TRY"?"₺":"€"}{q.total.toLocaleString("tr-TR")}</div>
+          </MobileEntityCard>
+        ))}
+      </MobileSection>
+
+      <MobileSection title={`Ödeme Geçmişi (${(pays||[]).length})`}>
+        {(pays||[]).length===0 ? <MobileEmptyNote text="Ödeme kaydı yok."/> : (pays||[]).map(p=>(
+          <MobileEntityCard key={p.id}>
+            <div style={{ display:"flex", justifyContent:"space-between", gap:8 }}>
+              <div style={{ fontSize:13.5, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif" }}>{p.paymentType}</div>
+              <MobileStatusChip label={p.status} tone={PAY_TONE[p.status]||"neutral"}/>
+            </div>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"baseline", marginTop:5 }}>
+              <span style={{ fontSize:14, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif" }}>{p.currency==="TRY"?"₺":"€"}{p.amount.toLocaleString("tr-TR")}</span>
+              {p.dueDate && <span style={{ fontSize:11, color:C.textFaint, fontFamily:"'DM Sans',sans-serif" }}>Vade: {p.dueDate}</span>}
+            </div>
+          </MobileEntityCard>
+        ))}
+      </MobileSection>
+
+      {g.notes && (
+        <MobileSection title="Notlar">
+          <MobileEntityCard><div style={{ fontSize:13, color:C.textMid, fontFamily:"'DM Sans',sans-serif", lineHeight:1.6 }}>{g.notes}</div></MobileEntityCard>
+        </MobileSection>
+      )}
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   MOBILE LEAD DETAIL — guest, requested tour/date, source, status and
+   assignee up front; the two things a salesperson actually does from a
+   phone (call the guest, create a quote) are one tap away, and status
+   changes go through mutLead("update", …) exactly like the desktop page.
+   ══════════════════════════════════════════════════════════════════════ */
+function MobileLeadDetailPage({ leadId, onBack }) {
+  const _sp = safeParam(leadId);
+  if (_sp.invalid) return <NotFoundCard entityType="Talep" entityId={leadId} onBack={onBack}/>;
+
+  const { data:lead, loading, error } = useRepo("lead", "getById", leadId);
+  const { sources } = useSources();
+  const { data:staffList } = useRepo("staff", "getAll");
+  const { mutate:mutLead, mutating } = useRepoMutation("lead");
+  const [showStatus, setShowStatus] = useState(false);
+
+  if (loading) return <LoadingState label="Talep yükleniyor…"/>;
+  if (error)   return <ErrorState message={error} onRetry={()=>{}}/>;
+  if (!lead)   return <NotFoundCard entityType="Talep" entityId={leadId} onBack={onBack}/>;
+
+  const srcLabel  = (sources||[]).find(s=>s.id===lead.sourceId)?.name || "Belirtilmedi";
+  const assignee  = (staffList||[]).find(s=>s.id===lead.assigneeId);
+  const STATUS_TONE = { "Yeni":"info", "Görüşüldü":"neutral", "Teklif Hazırlanıyor":"neutral", "Teklif Gönderildi":"warn", "Teklif Onaylandı":"good", "Onaylandı":"good", "İptal":"bad", "Beklemede":"neutral" };
+  const STATUS_OPTIONS = ["Yeni","Görüşüldü","Teklif Hazırlanıyor","Teklif Gönderildi","Teklif Onaylandı","Onaylandı","Beklemede","İptal"];
+
+  async function setStatus(s) {
+    setShowStatus(false);
+    const { error } = await mutLead("update", lead.id, { status:s });
+    if (error) showToast("Güncellenemedi: " + error);
+    else showToast("Durum güncellendi ✓");
+  }
+
+  function createQuote() {
+    // Same prefill shape QuickActionsCard uses for the desktop builder —
+    // MobileNewQuotePage reads SESSION.getPrefill() the same way.
+    SESSION.setPrefill({
+      fromLead:lead.id, guestName:lead.name, email:lead.email, phone:lead.phone,
+      tourName:lead.tour, tourDate:lead.dateRange, guestCount:lead.paxAdult,
+    });
+    NAV_REF.fn && NAV_REF.fn('/quotes/new');
+  }
+
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:18, paddingBottom:64 }}>
+      <MobileDetailHeader onBack={onBack} chip={<MobileStatusChip label={lead.status} tone={STATUS_TONE[lead.status]||"neutral"}/>}/>
+
+      <MobileEntityCard>
+        <div style={{ fontSize:18, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif" }}>{lead.name}</div>
+        <div style={{ fontSize:13, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", marginTop:3 }}>{lead.tour || "Deneyim belirtilmedi"}</div>
+        <div style={{ display:"flex", flexWrap:"wrap", gap:6, marginTop:10 }}>
+          {lead.dateRange && <MobileStatusChip label={`📅 ${lead.dateRange}`} tone="neutral"/>}
+          <MobileStatusChip label={srcLabel} tone="neutral"/>
+          <MobileStatusChip label={`${lead.paxAdult||1} kişi`} tone="neutral"/>
+        </div>
+      </MobileEntityCard>
+
+      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
+        <a href={lead.phone?`tel:${lead.phone}`:undefined} style={{
+          display:"flex", alignItems:"center", justifyContent:"center", padding:"11px 0", borderRadius:10,
+          border:`1px solid ${C.border}`, background:C.white, color: lead.phone?C.navy:C.textFaint,
+          fontSize:13, fontWeight:600, fontFamily:"'DM Sans',sans-serif", textDecoration:"none",
+          opacity: lead.phone?1:0.5,
+        }}>Misafiri Ara</a>
+        <button onClick={createQuote} style={{
+          display:"flex", alignItems:"center", justifyContent:"center", padding:"11px 0", borderRadius:10,
+          border:"none", background:C.goldPale, color:"#8A6D1F", cursor:"pointer",
+          fontSize:13, fontWeight:700, fontFamily:"'DM Sans',sans-serif",
+        }}>Teklif Oluştur</button>
+      </div>
+
+      <MobileSection title="Detaylar">
+        <MobileEntityCard>
+          <MobileInfoLine label="Telefon" value={lead.phone||"—"} mono/>
+          <MobileInfoLine label="E-posta" value={lead.email||"—"} mono/>
+          <MobileInfoLine label="Görevli" value={assignee?.name || "Atanmadı"}/>
+          <MobileInfoLine label="Oluşturulma" value={lead.ago||"—"}/>
+        </MobileEntityCard>
+      </MobileSection>
+
+      {lead.notes && (
+        <MobileSection title="Notlar">
+          <MobileEntityCard><div style={{ fontSize:13, color:C.textMid, fontFamily:"'DM Sans',sans-serif", lineHeight:1.6 }}>{lead.notes}</div></MobileEntityCard>
+        </MobileSection>
+      )}
+
+      <MobileActionBar aboveTabBar>
+        <button onClick={()=>setShowStatus(true)} disabled={mutating} style={{
+          flex:1, padding:"13px 0", borderRadius:12, border:"none", cursor:"pointer",
+          background:C.navy, color:C.white, fontSize:14, fontWeight:700, fontFamily:"'DM Sans',sans-serif",
+        }}>Durumu Güncelle</button>
+      </MobileActionBar>
+
+      {showStatus && (
+        <MobileStatusSheet title="Durumu Güncelle" options={STATUS_OPTIONS} current={lead.status}
+          onSelect={setStatus} onClose={()=>setShowStatus(false)}/>
+      )}
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   MOBILE QUOTE DETAIL — a status-driven document, not a two-column
+   builder squeezed onto a phone. Send / Resend / Approve / Convert to
+   Reservation are wired to the real repos (quote update, reservation
+   create) rather than the desktop page's action list, part of which
+   calls a handler that only exists in a different component.
+   ══════════════════════════════════════════════════════════════════════ */
+function MobileQuoteDetailPage({ quoteId, onBack }) {
+  const _sp = safeParam(quoteId);
+  if (_sp.invalid) return <NotFoundCard entityType="Teklif" entityId={quoteId} onBack={onBack}/>;
+
+  const { data:q, loading, error } = useRepo("quote", "getById", quoteId);
+  const { mutate:mutQuote, mutating:quoteMut } = useRepoMutation("quote");
+  const { mutate:mutRes,   mutating:resMut }   = useRepoMutation("reservation");
+  const [converting, setConverting] = useState(false);
+
+  if (loading) return <LoadingState label="Teklif yükleniyor…"/>;
+  if (error)   return <ErrorState message={error} onRetry={()=>{}}/>;
+  if (!q)      return <NotFoundCard entityType="Teklif" entityId={quoteId} onBack={onBack}/>;
+
+  const sym = q.currency==="TRY"?"₺":q.currency==="GBP"?"£":q.currency==="USD"?"$":"€";
+  const fmt = n => `${sym}${Number(n||0).toLocaleString("tr-TR")}`;
+  const STATUS_TONE = { "Taslak":"neutral", "Gönderildi":"info", "Onaylandı":"good", "İptal":"bad", "Süresi Doldu":"neutral" };
+  const included = (q.items||[]).filter(i=>i.type==="Dahil");
+  const excluded = (q.items||[]).filter(i=>i.type==="Hariç");
+
+  async function send() {
+    const { error } = await mutQuote("update", q.id, { status:"Gönderildi" });
+    if (error) showToast("Güncellenemedi: " + error);
+    else showToast(q.status==="Gönderildi" ? "Teklif tekrar gönderildi ✓" : "Teklif gönderildi ✓");
+  }
+  async function approve() {
+    const { error } = await mutQuote("update", q.id, { status:"Onaylandı" });
+    if (error) showToast("Güncellenemedi: " + error);
+    else showToast("Teklif onaylandı ✓");
+  }
+  async function convertToReservation() {
+    if (!q.customerId) { showToast("Bu teklifin bağlı bir misafiri yok."); return; }
+    setConverting(true);
+    const { data:newRes, error } = await mutRes("create", {
+      customerId: q.customerId, tourId: q.tourId||null, quoteId: q.id, tour: q.tour,
+      checkIn: q.travelStart||null, checkOut: q.travelStart||null,
+      pax: q.pax, total: q.total, deposit: q.deposit, currency: q.currency, notes: q.notes||"",
+    });
+    if (error) { setConverting(false); showToast("Rezervasyona dönüştürülemedi: " + error); return; }
+    await mutQuote("update", q.id, { status:"Onaylandı" });
+    setConverting(false);
+    showToast("Rezervasyon oluşturuldu ✓");
+    if (newRes?.id && NAV_REF.fn) NAV_REF.fn('/reservations/'+newRes.id);
+  }
+
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:18, paddingBottom:64 }}>
+      <MobileDetailHeader onBack={onBack} chip={<MobileStatusChip label={q.status} tone={STATUS_TONE[q.status]||"neutral"}/>}/>
+
+      <MobileEntityCard style={{ padding:0, overflow:"hidden" }}>
+        <div style={{ background:`linear-gradient(135deg, ${C.navyDeep} 0%, ${C.navy} 100%)`, padding:"20px 18px" }}>
+          <div style={{ fontSize:11, color:"rgba(248,245,238,0.55)", fontFamily:"'DM Sans',sans-serif", textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:8 }}>{q.flag} {q.customer || "—"}</div>
+          <div style={{ display:"flex", alignItems:"baseline", gap:8 }}>
+            <span style={{ fontSize:29, fontWeight:700, color:C.goldLight, fontFamily:"'Playfair Display',serif" }}>{fmt(q.total)}</span>
+            <span style={{ fontSize:12, color:"rgba(248,245,238,0.5)", fontFamily:"'DM Sans',sans-serif" }}>{q.currency}</span>
+          </div>
+          <div style={{ fontSize:12, color:"rgba(248,245,238,0.6)", fontFamily:"'DM Sans',sans-serif", marginTop:4 }}>{fmt(q.unitPrice)} × {q.pax} kişi</div>
+        </div>
+        <div style={{ padding:"12px 18px" }}>
+          <div style={{ fontSize:14, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif" }}>{q.tour}</div>
+          <div style={{ fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:2 }}>
+            {q.dateRange}{q.validUntil && ` · Geçerlilik: ${q.validUntil}`}
+          </div>
+        </div>
+      </MobileEntityCard>
+
+      <MobileSection title="Ödeme">
+        <MobileEntityCard>
+          <MobileInfoLine label="Toplam" value={fmt(q.total)} bold/>
+          <MobileInfoLine label="Kapora" value={fmt(q.deposit)}/>
+          <MobileInfoLine label="Kalan" value={fmt(q.remaining)}/>
+        </MobileEntityCard>
+      </MobileSection>
+
+      {included.length>0 && (
+        <MobileSection title="Dahil Hizmetler">
+          <MobileEntityCard>{included.map((it,i)=><CheckItem key={i} label={it.label} checked={true}/>)}</MobileEntityCard>
+        </MobileSection>
+      )}
+      {excluded.length>0 && (
+        <MobileSection title="Dahil Olmayan Hizmetler">
+          <MobileEntityCard>{excluded.map((it,i)=><CheckItem key={i} label={it.label} checked={false}/>)}</MobileEntityCard>
+        </MobileSection>
+      )}
+
+      {q.notes && (
+        <MobileSection title="Notlar">
+          <MobileEntityCard><div style={{ fontSize:13, color:C.textMid, fontFamily:"'DM Sans',sans-serif", lineHeight:1.6 }}>{q.notes}</div></MobileEntityCard>
+        </MobileSection>
+      )}
+
+      <MobileActionBar aboveTabBar>
+        {q.status==="Taslak" && (
+          <button onClick={send} disabled={quoteMut} style={{ flex:1, padding:"13px 0", borderRadius:12, border:"none", cursor:"pointer", background:C.navy, color:C.white, fontSize:14, fontWeight:700, fontFamily:"'DM Sans',sans-serif" }}>Gönder</button>
+        )}
+        {q.status==="Gönderildi" && (
+          <>
+            <button onClick={send} disabled={quoteMut} style={{ flex:1, padding:"13px 0", borderRadius:12, border:`1px solid ${C.border}`, cursor:"pointer", background:C.white, color:C.textMid, fontSize:13.5, fontWeight:600, fontFamily:"'DM Sans',sans-serif" }}>Tekrar Gönder</button>
+            <button onClick={approve} disabled={quoteMut} style={{ flex:1, padding:"13px 0", borderRadius:12, border:"none", cursor:"pointer", background:C.navy, color:C.white, fontSize:14, fontWeight:700, fontFamily:"'DM Sans',sans-serif" }}>Onayla</button>
+          </>
+        )}
+        {q.status==="Onaylandı" && (
+          <button onClick={convertToReservation} disabled={converting||resMut} style={{ flex:1, padding:"13px 0", borderRadius:12, border:"none", cursor:"pointer", background:C.navy, color:C.white, fontSize:14, fontWeight:700, fontFamily:"'DM Sans',sans-serif" }}>
+            {converting ? "Dönüştürülüyor…" : "Rezervasyona Dönüştür"}
+          </button>
+        )}
+      </MobileActionBar>
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   MOBILE RESERVATION DETAIL — the most operationally important screen:
+   missing guide / missing pickup / pending payment must read instantly,
+   so they surface as a red warning card above everything else rather
+   than as a dot buried in a corner.
+   ══════════════════════════════════════════════════════════════════════ */
+function MobileReservationDetailPage({ resId, onBack }) {
+  const _sp = safeParam(resId);
+  if (_sp.invalid) return <NotFoundCard entityType="Rezervasyon" entityId={resId} onBack={onBack}/>;
+
+  const { data:r, loading, error } = useRepo("reservation", "getById", resId);
+  const { data:cust } = useRepo("customer", "getById", r?.customerId || null);
+
+  if (loading) return <LoadingState label="Rezervasyon yükleniyor…"/>;
+  if (error)   return <ErrorState message={error} onRetry={()=>{}}/>;
+  if (!r)      return <NotFoundCard entityType="Rezervasyon" entityId={resId} onBack={onBack}/>;
+
+  const sym = r.currency==="TRY"?"₺":r.currency==="GBP"?"£":r.currency==="USD"?"$":"€";
+  const fmt = n => `${sym}${Number(n||0).toLocaleString("tr-TR")}`;
+  const OP_TONE  = { "Onaylandı":"good", "Rehber Atandı":"good", "Hazırlanıyor":"warn", "Tur Günü":"info", "Tamamlandı":"neutral", "İptal":"bad" };
+  const PAY_TONE = { "Ödendi":"good", "Kapora Ödendi":"warn", "Kısmi Ödendi":"warn", "Bekliyor":"bad", "Gecikmiş":"bad", "İade Edildi":"neutral" };
+  const warnings = [];
+  if (!r.guide) warnings.push("Rehber atanmadı");
+  if (!r.pickup) warnings.push("Pickup bilgisi eksik");
+  if (r.payStatus==="Bekliyor" || r.payStatus==="Gecikmiş") warnings.push("Ödeme bekliyor");
+  const waHref = cust?.phone ? `https://wa.me/${String(cust.phone).replace(/[^0-9]/g,'')}` : null;
+
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:18 }}>
+      <MobileDetailHeader onBack={onBack} chip={<MobileStatusChip label={r.opStatus} tone={OP_TONE[r.opStatus]||"neutral"}/>}/>
+
+      {warnings.length>0 && (
+        <MobileEntityCard style={{ borderLeft:`3px solid ${C.red}`, background:C.redBg }}>
+          <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+            <GIc d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" size={15} sw={1.8} color={C.red}/>
+            <span style={{ fontSize:13, fontWeight:700, color:C.red, fontFamily:"'DM Sans',sans-serif" }}>Operasyonel Uyarı</span>
+          </div>
+          {warnings.map((w,i)=>(
+            <div key={i} style={{ fontSize:12.5, color:C.red, fontFamily:"'DM Sans',sans-serif", marginTop:5, paddingLeft:23 }}>• {w}</div>
+          ))}
+        </MobileEntityCard>
+      )}
+
+      <MobileEntityCard>
+        <div style={{ fontSize:18, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif" }}>{r.name || "—"}</div>
+        <div style={{ fontSize:13, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", marginTop:3 }}>{r.tour}</div>
+        <div style={{ display:"flex", alignItems:"center", gap:6, marginTop:10, flexWrap:"wrap" }}>
+          <MobileStatusChip label={`📅 ${r.date}`} tone="neutral"/>
+          <MobileStatusChip label={`🕐 ${r.time}`} tone="neutral"/>
+          <MobileStatusChip label={`${r.pax} kişi`} tone="neutral"/>
+        </div>
+      </MobileEntityCard>
+
+      {cust?.phone && (
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
+          <a href={`tel:${cust.phone}`} style={{
+            display:"flex", alignItems:"center", justifyContent:"center", padding:"11px 0", borderRadius:10,
+            border:`1px solid ${C.border}`, background:C.white, color:C.navy,
+            fontSize:13, fontWeight:600, fontFamily:"'DM Sans',sans-serif", textDecoration:"none",
+          }}>Misafiri Ara</a>
+          <a href={waHref} target="_blank" rel="noreferrer" style={{
+            display:"flex", alignItems:"center", justifyContent:"center", padding:"11px 0", borderRadius:10,
+            border:"none", background:C.goldPale, color:"#8A6D1F",
+            fontSize:13, fontWeight:700, fontFamily:"'DM Sans',sans-serif", textDecoration:"none",
+          }}>WhatsApp</a>
+        </div>
+      )}
+
+      <MobileSection title="Operasyon">
+        <MobileEntityCard>
+          <MobileInfoLine label="Rehber" value={r.guide || "Atanmadı"} warn={!r.guide}/>
+          <MobileInfoLine label="Araç" value={r.vehicle || "—"}/>
+          <MobileInfoLine label="Şoför" value={r.driver || "—"}/>
+          <MobileInfoLine label="Pickup" value={r.pickup || "Belirtilmedi"} warn={!r.pickup}/>
+          <MobileInfoLine label="Pickup Saati" value={r.pickupTime || "—"}/>
+        </MobileEntityCard>
+      </MobileSection>
+
+      <MobileSection title="Ödeme">
+        <MobileEntityCard>
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"baseline", marginBottom:10 }}>
+            <span style={{ fontSize:21, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif" }}>{fmt(r.total)}</span>
+            <MobileStatusChip label={r.payStatus} tone={PAY_TONE[r.payStatus]||"neutral"}/>
+          </div>
+          <MobileInfoLine label="Kapora" value={fmt(r.deposit)}/>
+          <MobileInfoLine label="Kalan" value={fmt(r.remaining)}/>
+        </MobileEntityCard>
+      </MobileSection>
+
+      {r.opNotes && (
+        <MobileSection title="Notlar">
+          <MobileEntityCard><div style={{ fontSize:13, color:C.textMid, fontFamily:"'DM Sans',sans-serif", lineHeight:1.6 }}>{r.opNotes}</div></MobileEntityCard>
+        </MobileSection>
+      )}
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   MOBILE QUOTE CREATION — a full-screen, five-step wizard (Guest → Tour
+   → Date & Guests → Pricing & Inclusions → Review), not the desktop
+   builder's two-column form+live-preview squeezed onto a phone. Uses the
+   same repos as every other create flow (customer find-or-create, then
+   quote create with items) — written fresh rather than reusing
+   NewProposalPage, whose own save/convert handlers reference state that
+   doesn't exist in its scope and would throw if invoked.
+   ══════════════════════════════════════════════════════════════════════ */
+function MobileNewQuotePage({ onBack }) {
+  // Same SESSION prefill the desktop builder reads (set by QuickActionsCard /
+  // MobileLeadDetailPage's "Teklif Oluştur") — consumed once, like there.
+  const _pf = SESSION.getPrefill() || {};
+  const [step, setStep] = useState(0);
+  const [guestName, setGuestName]   = useState(_pf.guestName || "");
+  const [phone, setPhone]           = useState(_pf.phone || "");
+  const [email, setEmail]           = useState(_pf.email || "");
+  const [nationality, setNationality] = useState(_pf.nationality || "");
+  const [fromLeadId] = useState(_pf.fromLead || null);
+  const { data:tourList } = useRepo("tour", "getAll");
+  const [tourId, setTourId]     = useState("");
+  const [tourName, setTourName] = useState(_pf.tourName || "");
+  const [travelDate, setTravelDate] = useState(_pf.tourDate || "");
+  const [guestCount, setGuestCount] = useState(String(_pf.guestCount || 2));
+  const [currency, setCurrency]     = useState(_pf.currency || "EUR");
+  const [pricePerPerson, setPricePerPerson] = useState(_pf.pricePerPerson ? String(_pf.pricePerPerson) : "");
+  const [discountPct, setDiscountPct] = useState("0");
+  const [depositPct, setDepositPct]   = useState("25");
+  const [included, setIncluded] = useState(DEFAULT_INCLUDED.map(l=>({ label:l, on:true })));
+  const [excluded, setExcluded] = useState(DEFAULT_EXCLUDED.map(l=>({ label:l, on:true })));
+  const [notes, setNotes] = useState("");
+  const [errs, setErrs]   = useState({});
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = prev; };
+  }, []);
+
+  const tours = tourList || [];
+  const pax   = parseInt(guestCount) || 1;
+  const unit  = parseFloat(pricePerPerson) || 0;
+  const total = Math.round(unit * pax * (1 - (parseFloat(discountPct)||0) / 100));
+  const deposit   = Math.round(total * (parseFloat(depositPct)||25) / 100);
+  const remaining = total - deposit;
+  const sym = currency==="TRY"?"₺":currency==="GBP"?"£":currency==="USD"?"$":"€";
+  const STEPS = ["Misafir","Tur","Tarih & Kişi","Fiyat","Özet"];
+
+  function pickTour(id) {
+    setTourId(id);
+    const t = tours.find(x=>x.id===id);
+    if (t) {
+      setTourName(t.name);
+      if (!pricePerPerson) setPricePerPerson(String(t.flatPrice||""));
+      if (t.currency) setCurrency(t.currency);
+    }
+  }
+
+  function validateStep(s) {
+    const e = {};
+    if (s===0 && !guestName.trim()) e.guestName = "Ad Soyad zorunludur";
+    if (s===1 && !tourName.trim())  e.tourName  = "Tur seçin veya adını girin";
+    if (s===2 && !travelDate)       e.travelDate = "Seyahat tarihi zorunludur";
+    if (s===3 && total<=0)          e.pricePerPerson = "Toplam tutar sıfırdan büyük olmalı";
+    return e;
+  }
+
+  function goBack() {
+    if (step===0) { onBack(); return; }
+    setStep(s=>s-1);
+  }
+  function goNext() {
+    const e = validateStep(step);
+    setErrs(e);
+    if (Object.keys(e).length) return;
+    if (step < STEPS.length-1) setStep(s=>s+1);
+    else save();
+  }
+
+  async function save() {
+    setSaving(true);
+    try {
+      const custRepo = getActiveRepo("customer");
+      let custId = null;
+      const existing = await Promise.resolve(custRepo.findByContact({ email: email||null, phone: phone||null })).catch(()=>null);
+      if (existing) {
+        custId = existing.id;
+      } else {
+        const newCust = await Promise.resolve(custRepo.create({
+          name: guestName, phone: phone||"", email: email||"",
+          country: nationality||"Diğer", language:"İngilizce", importType:"manual",
+        }));
+        custId = newCust?.id || null;
+      }
+
+      const items = [
+        ...included.filter(i=>i.on).map((i,idx)=>({ type:"Dahil", label:i.label, quantity:1, unitPrice:0, total:0, sortOrder:idx })),
+        ...excluded.filter(i=>i.on).map((i,idx)=>({ type:"Hariç", label:i.label, quantity:1, unitPrice:0, total:0, sortOrder:idx+50 })),
+      ];
+
+      const quoteRepo = getActiveRepo("quote");
+      const newQuote = await Promise.resolve(quoteRepo.create({
+        customerId: custId, leadId: fromLeadId, tourId: tourId||null, tourName, tour: tourName,
+        travelStart: travelDate||null, status:"Taslak",
+        guestCount: pax, pricePerPerson: unit, currency,
+        discountPct: parseFloat(discountPct)||0, total, deposit, notes, items,
+      }));
+
+      await autoLog("quote", newQuote?.id || "?", "created", `Teklif oluşturuldu: ${tourName}`);
+      showToast("Teklif oluşturuldu ✓");
+      if (newQuote?.id && NAV_REF.fn) NAV_REF.fn('/quotes/'+newQuote.id);
+      else onBack();
+    } catch(err) {
+      showToast("Teklif oluşturulamadı: " + (err?.message || err));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function toggleItem(list, setList, idx) {
+    setList(arr => arr.map((x,i)=> i===idx ? { ...x, on: !x.on } : x));
+  }
+
+  return (
+    <div style={{ position:"fixed", inset:0, zIndex:1000, background:C.ivory, display:"flex", flexDirection:"column" }}>
+      {}
+      <div style={{
+        flexShrink:0, background:C.white, borderBottom:`1px solid ${C.border}`,
+        paddingTop:"env(safe-area-inset-top, 0px)",
+      }}>
+        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"calc(10px + env(safe-area-inset-top, 0px)) 8px 8px" }}>
+          <button onClick={goBack} style={{ border:"none", background:"transparent", cursor:"pointer", color:C.textMid, fontSize:14.5, fontFamily:"'DM Sans',sans-serif", padding:"8px 10px", minWidth:44 }}>
+            {step===0 ? "İptal" : "Geri"}
+          </button>
+          <div style={{ fontSize:15.5, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif" }}>Yeni Teklif</div>
+          <div style={{ minWidth:44 }}/>
+        </div>
+        <div style={{ display:"flex", gap:4, padding:"0 16px 10px" }}>
+          {STEPS.map((s,i)=>(<div key={i} style={{ flex:1, height:3, borderRadius:99, background: i<=step ? C.gold : C.borderLight }}/>))}
+        </div>
+        <div style={{ padding:"0 16px 10px", fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif" }}>Adım {step+1}/{STEPS.length} · {STEPS[step]}</div>
+      </div>
+
+      {}
+      <div style={{ flex:1, overflowY:"auto", padding:"18px 16px 24px" }}>
+        {step===0 && (
+          <FGrid>
+            <FRow label="Ad Soyad" required error={errs.guestName}><FText value={guestName} onChange={setGuestName} placeholder="Sarah Johnson"/></FRow>
+            <FRow label="Telefon"><FText value={phone} onChange={setPhone} placeholder="+90 555 000 0000" mono/></FRow>
+            <FRow label="E-posta"><FText value={email} onChange={setEmail} placeholder="email@example.com" type="email"/></FRow>
+            <FRow label="Ülke"><FText value={nationality} onChange={setNationality} placeholder="Avustralya"/></FRow>
+          </FGrid>
+        )}
+        {step===1 && (
+          <FGrid>
+            <FRow label="Tur Kataloğundan Seç">
+              <select value={tourId} onChange={e=>pickTour(e.target.value)} style={{ width:"100%", padding:"9px 10px", borderRadius:7, border:`1.5px solid ${C.border}`, fontSize:13.5, color:C.text, background:C.white }}>
+                <option value="">-- Tur seçin --</option>
+                {tours.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}
+              </select>
+            </FRow>
+            <FRow label="Tur / Deneyim Adı" required error={errs.tourName}>
+              <FText value={tourName} onChange={setTourName} placeholder="Private Istanbul Experience"/>
+            </FRow>
+          </FGrid>
+        )}
+        {step===2 && (
+          <FGrid>
+            <FRow label="Seyahat Tarihi" required error={errs.travelDate}><FText type="date" value={travelDate} onChange={setTravelDate}/></FRow>
+            <FRow label="Kişi Sayısı"><FText type="number" value={guestCount} onChange={setGuestCount} placeholder="2"/></FRow>
+          </FGrid>
+        )}
+        {step===3 && (
+          <>
+            <FGrid>
+              <FRow label="Para Birimi"><FSelect value={currency} onChange={setCurrency} options={CURRENCY_OPTIONS}/></FRow>
+              <FRow label="Kişi Başı Fiyat" required error={errs.pricePerPerson}><FText type="number" value={pricePerPerson} onChange={setPricePerPerson} placeholder="90"/></FRow>
+              <FRow label="İndirim (%)"><FText type="number" value={discountPct} onChange={setDiscountPct} placeholder="0"/></FRow>
+              <FRow label="Kapora (%)"><FText type="number" value={depositPct} onChange={setDepositPct} placeholder="25"/></FRow>
+            </FGrid>
+            <div style={{ marginTop:16, padding:"14px 16px", background:C.goldPale, borderRadius:12, display:"flex", justifyContent:"space-between", alignItems:"baseline" }}>
+              <span style={{ fontSize:12.5, color:"#8A6D1F", fontFamily:"'DM Sans',sans-serif" }}>Toplam Tutar</span>
+              <span style={{ fontSize:19, fontWeight:700, color:"#8A6D1F", fontFamily:"'Playfair Display',serif" }}>{sym}{total.toLocaleString("tr-TR")}</span>
+            </div>
+            <div style={{ marginTop:18 }}>
+              <MobileSection title="Dahil Hizmetler" tight>
+                {included.map((it,i)=>(
+                  <label key={i} style={{ display:"flex", alignItems:"center", gap:10, padding:"7px 2px", cursor:"pointer" }}>
+                    <input type="checkbox" checked={it.on} onChange={()=>toggleItem(included,setIncluded,i)}/>
+                    <span style={{ fontSize:13, color:C.text, fontFamily:"'DM Sans',sans-serif" }}>{it.label}</span>
+                  </label>
+                ))}
+              </MobileSection>
+            </div>
+            <div style={{ marginTop:14 }}>
+              <MobileSection title="Dahil Olmayan Hizmetler" tight>
+                {excluded.map((it,i)=>(
+                  <label key={i} style={{ display:"flex", alignItems:"center", gap:10, padding:"7px 2px", cursor:"pointer" }}>
+                    <input type="checkbox" checked={it.on} onChange={()=>toggleItem(excluded,setExcluded,i)}/>
+                    <span style={{ fontSize:13, color:C.text, fontFamily:"'DM Sans',sans-serif" }}>{it.label}</span>
+                  </label>
+                ))}
+              </MobileSection>
+            </div>
+          </>
+        )}
+        {step===4 && (
+          <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+            <MobileEntityCard>
+              <div style={{ fontSize:16, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif" }}>{guestName || "—"}</div>
+              <div style={{ fontSize:12.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", marginTop:3 }}>
+                {[phone, email].filter(Boolean).join(" · ") || "İletişim bilgisi girilmedi"}
+              </div>
+            </MobileEntityCard>
+            <MobileEntityCard>
+              <MobileInfoLine label="Tur" value={tourName || "—"}/>
+              <MobileInfoLine label="Tarih" value={travelDate || "—"}/>
+              <MobileInfoLine label="Kişi Sayısı" value={`${pax} kişi`}/>
+            </MobileEntityCard>
+            <MobileEntityCard>
+              <MobileInfoLine label="Kişi Başı" value={`${sym}${unit.toLocaleString("tr-TR")}`}/>
+              <MobileInfoLine label="Toplam" value={`${sym}${total.toLocaleString("tr-TR")}`} bold/>
+              <MobileInfoLine label="Kapora" value={`${sym}${deposit.toLocaleString("tr-TR")}`}/>
+              <MobileInfoLine label="Kalan" value={`${sym}${remaining.toLocaleString("tr-TR")}`}/>
+            </MobileEntityCard>
+            <FRow label="Notlar"><FTextArea value={notes} onChange={setNotes} placeholder="Özel talepler…"/></FRow>
+          </div>
+        )}
+      </div>
+
+      {}
+      <div style={{ flexShrink:0, background:C.white, borderTop:`1px solid ${C.border}`, padding:`12px 16px calc(12px + env(safe-area-inset-bottom, 0px))` }}>
+        <button onClick={goNext} disabled={saving} style={{
+          width:"100%", padding:"13px 0", borderRadius:12, border:"none", cursor: saving?"default":"pointer",
+          background:C.navy, color:C.white, fontSize:14.5, fontWeight:700, fontFamily:"'DM Sans',sans-serif",
+          opacity: saving?0.7:1,
+        }}>{saving ? "Kaydediliyor…" : step===STEPS.length-1 ? "Teklifi Kaydet" : "Devam Et"}</button>
+      </div>
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   MOBILE MESSAGES — a real messaging inbox/thread, not the desktop
+   three-pane split. List and thread are two distinct full screens (never
+   both visible together); the thread reuses the desktop's own MsgBubble/
+   ChannelBadge components (already sender-separated bubbles) inside a
+   dedicated mobile shell with a sticky composer.
+   ══════════════════════════════════════════════════════════════════════ */
+function MobileMessagesPage() {
+  const [view, setView] = useState("list");
+  const [selectedId, setSelectedId] = useState(null);
+  const [filter, setFilter] = useState("Tümü");
+  const [draft, setDraft] = useState("");
+  const [, forceTick] = useState(0);
+
+  const FILTERS = ["Tümü","Okunmamış","WhatsApp","E-posta"];
+  const filtered = MOCK_CONVERSATIONS.filter(c=>{
+    if (filter==="Tümü") return true;
+    if (filter==="Okunmamış") return c.unread>0;
+    return MSG_CHANNELS[c.channel]?.label === filter;
+  });
+  const totalUnread = MOCK_CONVERSATIONS.reduce((s,c)=>s+c.unread,0);
+  const selected = MOCK_CONVERSATIONS.find(c=>c.id===selectedId);
+
+  function open(id) {
+    const c = MOCK_CONVERSATIONS.find(x=>x.id===id);
+    if (c) c.unread = 0;
+    setSelectedId(id);
+    setView("detail");
+  }
+  function send() {
+    if (!draft.trim() || !selected) return;
+    selected.messages.push({
+      id:"m"+Date.now(), dir:"out", text:draft.trim(),
+      time:new Date().toLocaleTimeString("tr-TR",{hour:"2-digit",minute:"2-digit"}), date:"Bugün",
+    });
+    selected.lastMessage = draft.trim();
+    setDraft("");
+    forceTick(t=>t+1);
+  }
+
+  if (view==="detail" && selected) {
+    const cust = getCustomerById(selected.customerId);
+    return (
+      <div style={{ position:"fixed", inset:0, zIndex:900, background:C.ivory, display:"flex", flexDirection:"column" }}>
+        <div style={{
+          flexShrink:0, background:C.white, borderBottom:`1px solid ${C.border}`,
+          paddingTop:"env(safe-area-inset-top, 0px)",
+          display:"flex", alignItems:"center", gap:10, padding:"calc(10px + env(safe-area-inset-top, 0px)) 12px 10px",
+        }}>
+          <button onClick={()=>setView("list")} style={{ border:"none", background:"transparent", cursor:"pointer", padding:6, color:C.navy, flexShrink:0 }}>
+            <GIc d="M15 18l-6-6 6-6" size={18} sw={2.3}/>
+          </button>
+          <div style={{ width:36, height:36, borderRadius:"50%", flexShrink:0, background:"rgba(27,45,79,0.09)", display:"flex", alignItems:"center", justifyContent:"center" }}>
+            <span style={{ fontSize:12, fontWeight:700, color:C.navy, fontFamily:"'DM Sans',sans-serif" }}>{cust?.name?.split(" ").map(w=>w[0]).join("").slice(0,2)||"?"}</span>
+          </div>
+          <div style={{ minWidth:0, flex:1 }}>
+            <div style={{ fontSize:14.5, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{cust?.name || "Bilinmiyor"}</div>
+            <ChannelBadge channel={selected.channel} small/>
+          </div>
+        </div>
+
+        <div style={{ flex:1, overflowY:"auto", padding:"16px 14px" }}>
+          {selected.messages.length>0 && (
+            <div style={{ textAlign:"center", marginBottom:14, fontSize:11, color:C.textFaint, fontFamily:"'DM Sans',sans-serif" }}>
+              <span style={{ background:C.ivoryDark, padding:"3px 12px", borderRadius:99, border:`1px solid ${C.border}` }}>{selected.messages[0].date}</span>
+            </div>
+          )}
+          {selected.messages.map(m=><MsgBubble key={m.id} msg={m} customerName={cust?.name}/>)}
+        </div>
+
+        <div style={{
+          flexShrink:0, background:C.white, borderTop:`1px solid ${C.border}`,
+          padding:`10px 12px calc(10px + env(safe-area-inset-bottom, 0px))`,
+          display:"flex", gap:8, alignItems:"flex-end",
+        }}>
+          <textarea value={draft} onChange={e=>setDraft(e.target.value)} placeholder="Mesaj yazın…" rows={1}
+            style={{ flex:1, resize:"none", padding:"10px 14px", borderRadius:20, border:`1px solid ${C.border}`, fontSize:14, fontFamily:"'DM Sans',sans-serif", outline:"none", maxHeight:90 }}/>
+          <button onClick={send} disabled={!draft.trim()} style={{
+            width:40, height:40, borderRadius:"50%", flexShrink:0, border:"none",
+            cursor: draft.trim() ? "pointer" : "default",
+            background: draft.trim() ? C.navy : C.borderLight,
+            display:"flex", alignItems:"center", justifyContent:"center",
+          }}>
+            <GIc d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z" size={16} sw={1.8} color="#fff"/>
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
+      <div>
+        <div style={{ fontSize:20, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif" }}>Mesajlar</div>
+        {totalUnread>0 && <div style={{ fontSize:12, color:C.red, fontFamily:"'DM Sans',sans-serif", marginTop:2 }}>{totalUnread} okunmamış mesaj</div>}
+      </div>
+
+      <div className="rsp-scroll-x" style={{ display:"flex", gap:8 }}>
+        {FILTERS.map(f=>(
+          <button key={f} onClick={()=>setFilter(f)} style={{
+            flexShrink:0, padding:"7px 14px", borderRadius:99, cursor:"pointer",
+            border: filter===f ? "none" : `1px solid ${C.border}`,
+            background: filter===f ? C.navy : C.white,
+            color: filter===f ? C.white : C.textMid,
+            fontSize:12.5, fontWeight:500, fontFamily:"'DM Sans',sans-serif",
+          }}>{f}</button>
+        ))}
+      </div>
+
+      {filtered.length===0 ? (
+        <MobileEmptyNote text="Konuşma bulunamadı."/>
+      ) : (
+        <MobileEntityCard style={{ padding:0, overflow:"hidden" }}>
+          {filtered.map((c,i)=>{
+            const cust = getCustomerById(c.customerId);
+            return (
+              <div key={c.id} onClick={()=>open(c.id)} style={{
+                display:"flex", alignItems:"flex-start", gap:10, padding:"13px 14px", cursor:"pointer",
+                borderBottom: i<filtered.length-1 ? `1px solid ${C.borderLight}` : "none",
+              }}>
+                <div style={{ position:"relative", flexShrink:0 }}>
+                  <div style={{ width:40, height:40, borderRadius:"50%", background:"rgba(27,45,79,0.08)", display:"flex", alignItems:"center", justifyContent:"center" }}>
+                    <span style={{ fontSize:13, fontWeight:700, color:C.navy, fontFamily:"'DM Sans',sans-serif" }}>{cust?.name?.split(" ").map(w=>w[0]).join("").slice(0,2)||"?"}</span>
+                  </div>
+                  <div style={{ position:"absolute", bottom:-2, right:-2, width:14, height:14, borderRadius:"50%", background:MSG_CHANNELS[c.channel]?.color||C.textFaint, border:`1.5px solid ${C.white}` }}/>
+                </div>
+                <div style={{ flex:1, minWidth:0 }}>
+                  <div style={{ display:"flex", justifyContent:"space-between", gap:8 }}>
+                    <span style={{ fontSize:13.5, fontWeight: c.unread>0?700:500, color:C.text, fontFamily:"'DM Sans',sans-serif", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{cust?.name||"Bilinmiyor"}</span>
+                    <span style={{ fontSize:11, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", flexShrink:0 }}>{c.lastTime}</span>
+                  </div>
+                  <div style={{ fontSize:12.5, color: c.unread>0?C.textMid:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:2, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", fontWeight: c.unread>0?500:400 }}>{c.lastMessage}</div>
+                </div>
+                {c.unread>0 && (
+                  <div style={{ minWidth:18, height:18, borderRadius:99, padding:"0 5px", background:C.red, color:"#fff", fontSize:10, fontWeight:700, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, marginTop:2 }}>{c.unread}</div>
+                )}
+              </div>
+            );
+          })}
+        </MobileEntityCard>
       )}
     </div>
   );
