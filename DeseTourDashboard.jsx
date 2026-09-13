@@ -2515,7 +2515,7 @@ const STATUS_META = {
   "Yeni":                 { color:"#1A6FAE", bg:"#E8F2FB" },
   "Görüşüldü":            { color:"#B45309", bg:"#FEF3E2" },
   "Teklif Hazırlanıyor":  { color:"#6B3FA0", bg:"#F3EEF9" },
-  "Teklif Gönderildi":    { color:"#B8973A", bg:"#F5EDD4" },
+  "Teklif Gönderildi":    { color:"#0E7490", bg:"#ECFEFF" },
   "Ödeme Bekleniyor":     { color:"#C05621", bg:"#FEF0E8" },
   "Onaylandı":            { color:"#2E7D52", bg:"#EBF5EF" },
   "İptal":                { color:"#C0392B", bg:"#FDECEC" },
@@ -3658,8 +3658,8 @@ function LeadDetailPage({ onBack, leadId }) {
 
       {}
       <div style={{
-        background: C.white, border: `1px solid ${C.border}`, borderRadius: 12,
-        padding: "16px 22px", marginBottom: 20,
+        background: C.white, border: `1px solid ${C.border}`, borderRadius: T.radius,
+        padding: "15px 22px", marginBottom: 20,
         display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16,
       }}>
         {}
@@ -3667,7 +3667,7 @@ function LeadDetailPage({ onBack, leadId }) {
           <button onClick={onBack} style={{
             display: "flex", alignItems: "center", gap: 6,
             background: C.ivory, border: `1px solid ${C.border}`,
-            borderRadius: 7, padding: "6px 12px", cursor: "pointer",
+            borderRadius: T.radiusSm, padding: "6px 12px", cursor: "pointer",
             color: C.textMid, fontFamily: "'DM Sans',sans-serif", fontSize: 12.5,
             transition: "background 0.1s",
           }}
@@ -3779,7 +3779,7 @@ function LeadDetailPage({ onBack, leadId }) {
 
 const QUOTE_STATUS = {
   "Taslak":        { color:"#6B3FA0", bg:"#F3EEF9" },
-  "Gönderildi":    { color:"#B8973A", bg:"#F5EDD4" },
+  "Gönderildi":    { color:"#0E7490", bg:"#ECFEFF" },
   "Görüldü":       { color:"#1A6FAE", bg:"#E8F2FB" },
   "Onaylandı":     { color:"#2E7D52", bg:"#EBF5EF" },
   "Reddedildi":    { color:"#C0392B", bg:"#FDECEC" },
@@ -5622,14 +5622,14 @@ function NewProposalPage({ onBack }) {
 const RES_STATUS = {
   "Hazırlanıyor":  { color:"#6B3FA0", bg:"#F3EEF9", dot:"#6B3FA0" },
   "Rehber Atandı": { color:"#1A6FAE", bg:"#E8F2FB", dot:"#1A6FAE" },
-  "Hazır":         { color:"#B8973A", bg:"#F5EDD4", dot:"#B8973A" },
+  "Hazır":         { color:"#B45309", bg:"#FEF3E2", dot:"#B45309" },
   "Tamamlandı":    { color:"#2E7D52", bg:"#EBF5EF", dot:"#2E7D52" },
   "İptal":         { color:"#C0392B", bg:"#FDECEC", dot:"#C0392B" },
 };
 
 const PAY_STATUS = {
   "Ödendi":           { color:"#2E7D52", bg:"#EBF5EF" },
-  "Kapora Ödendi":    { color:"#B8973A", bg:"#F5EDD4" },
+  "Kapora Ödendi":    { color:"#B45309", bg:"#FEF3E2" },
   "Ödeme Bekliyor":   { color:"#C05621", bg:"#FEF0E8" },
   "Gecikmiş":         { color:"#C0392B", bg:"#FDECEC" },
 };
@@ -6558,7 +6558,7 @@ const CAL_TODAY = new Date(); // real current date — was hardcoded to a fixed 
 const CAL_OP_COLOR = {
   "Hazırlanıyor":  { border:"#6B3FA0", bg:"#F3EEF9", text:"#6B3FA0", stripe:"rgba(107,63,160,0.08)" },
   "Rehber Atandı": { border:"#1A6FAE", bg:"#EBF4FC", text:"#1A6FAE", stripe:"rgba(26,111,174,0.08)" },
-  "Hazır":         { border:"#B8973A", bg:"#FDF8EC", text:"#B8973A", stripe:"rgba(184,151,58,0.08)" },
+  "Hazır":         { border:"#B45309", bg:"#FEF3E2", text:"#B45309", stripe:"rgba(180,83,9,0.08)" },
   "Tamamlandı":    { border:"#2E7D52", bg:"#EBF5EF", text:"#2E7D52", stripe:"rgba(46,125,82,0.08)"  },
   "İptal":         { border:"#C0392B", bg:"#FDECEC", text:"#C0392B", stripe:"rgba(192,57,43,0.08)"  },
 };
@@ -6608,13 +6608,13 @@ function EventCard({ ev, compact }) {
       onMouseLeave={()=>setHov(false)}
       style={{
         background:C.white,
-        border:`1.5px solid ${col.border}`,
-        borderLeft:`4px solid ${col.border}`,
-        borderRadius:8,
+        border:`1px solid ${C.borderLight}`,
+        borderLeft:`3px solid ${col.border}`,
+        borderRadius:T.radiusSm,
         padding: compact ? "7px 10px" : "10px 12px",
         cursor:"pointer",
         transition:"background .12s, box-shadow .12s",
-        boxShadow: hov ? `0 2px 8px rgba(27,45,79,0.28)` : "0 1px 3px rgba(0,0,0,0.06)",
+        boxShadow: hov ? `0 2px 6px rgba(27,45,79,0.14)` : T.shadowSoft,
         position:"relative",
         overflow:"hidden",
       }}
@@ -6667,8 +6667,8 @@ function EventCard({ ev, compact }) {
             }}>{ev.pax} kişi</span>
             <span style={{
               fontSize:10.5, padding:"2px 6px", borderRadius:4,
-              background: ev.payStatus==="Ödendi" ? C.greenBg : ev.payStatus==="Kapora Ödendi" ? C.goldPale : C.redBg,
-              color: ev.payStatus==="Ödendi" ? C.green : ev.payStatus==="Kapora Ödendi" ? C.gold : C.red,
+              background: ev.payStatus==="Ödendi" ? C.greenBg : ev.payStatus==="Kapora Ödendi" ? C.amberBg : C.redBg,
+              color: ev.payStatus==="Ödendi" ? C.green : ev.payStatus==="Kapora Ödendi" ? C.amber : C.red,
               fontFamily:"'DM Sans',sans-serif",
             }}>{ev.payStatus}</span>
           </div>
@@ -7422,8 +7422,8 @@ function TPill({ label, map, small }) {
   const m = map[label] || { color:"#6B7280", bg:"#F3F4F6" };
   return (
     <span style={{
-      display:"inline-flex", alignItems:"center", gap:4,
-      padding: small ? "2px 7px" : "3px 9px",
+      display:"inline-flex", alignItems:"center", gap:5,
+      padding: small ? "3px 8px" : "4px 10px",
       borderRadius:99, fontSize: small ? 10.5 : 11.5,
       fontWeight:500, color:m.color, background:m.bg,
       fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap",
@@ -7996,7 +7996,7 @@ function TasksPage() {
 
 const PAY_STATUS_MAP = {
   "Bekliyor":      { color:"#C05621", bg:"#FEF0E8", dot:"#C05621" },
-  "Kısmi Ödendi":  { color:"#B8973A", bg:"#F5EDD4", dot:"#B8973A" },
+  "Kısmi Ödendi":  { color:"#B45309", bg:"#FEF3E2", dot:"#B45309" },
   "Tamamlandı":    { color:"#2E7D52", bg:"#EBF5EF", dot:"#2E7D52" },
   "İade Edildi":   { color:"#6B3FA0", bg:"#F3EEF9", dot:"#6B3FA0" },
 };
@@ -8027,8 +8027,8 @@ function PBadge({ label, small }) {
   return (
     <span style={{
       display:"inline-flex", alignItems:"center", gap:5,
-      padding: small ? "3px 8px" : "4px 11px",
-      borderRadius:99, fontSize: small ? 11 : 12, fontWeight:500,
+      padding: small ? "3px 8px" : "4px 10px",
+      borderRadius:99, fontSize: small ? 10.5 : 11.5, fontWeight:500,
       color:m.color, background:m.bg, whiteSpace:"nowrap",
       fontFamily:"'DM Sans',sans-serif",
     }}>
@@ -8710,9 +8710,9 @@ function HBadge({ label, map, small }) {
   const m = (map||{})[label] || { color:"#6B7280", bg:"#F3F4F6" };
   return (
     <span style={{
-      display:"inline-flex", alignItems:"center", gap:4,
-      padding: small ? "2px 7px" : "3px 9px",
-      borderRadius:99, fontSize: small ? 11 : 11.5, fontWeight:500,
+      display:"inline-flex", alignItems:"center", gap:5,
+      padding: small ? "3px 8px" : "4px 10px",
+      borderRadius:99, fontSize: small ? 10.5 : 11.5, fontWeight:500,
       color:m.color, background:m.bg, whiteSpace:"nowrap",
       fontFamily:"'DM Sans',sans-serif",
     }}>
@@ -9246,7 +9246,7 @@ function RemindersPage() {
 
 const TOUR_STATUS_CFG = {
   "Aktif":  { color:"#2E7D52", bg:"#EBF5EF", dot:"#2E7D52" },
-  "Taslak": { color:"#B8973A", bg:"#F5EDD4", dot:"#B8973A" },
+  "Taslak": { color:"#6B3FA0", bg:"#F3EEF9", dot:"#6B3FA0" },
   "Arşiv":  { color:"#6B7280", bg:"#F3F4F6", dot:"#9CA3AF" },
 };
 const TOUR_CATEGORY_CFG = {
@@ -10169,21 +10169,24 @@ function SSelect({ value, onChange, options }) {
   );
 }
 
-function SSection({ id, title, icon, children }) {
+function SSection({ id, title, desc, icon, children }) {
   return (
-    <div id={id} style={{background:C.white, border:`1px solid ${C.border}`, borderRadius:12, overflow:"hidden"}}>
+    <div id={id} style={{background:C.white, border:`1px solid ${C.border}`, borderRadius:T.radius, overflow:"hidden", boxShadow:T.shadowSoft}}>
       <div style={{
-        padding:"16px 24px",
+        padding: desc ? "15px 24px" : "16px 24px",
         background:C.ivory, borderBottom:`1px solid ${C.border}`,
         display:"flex", alignItems:"center", gap:10,
       }}>
         <div style={{
-          width:32, height:32, borderRadius:8,
+          width:32, height:32, borderRadius:T.radiusSm, flexShrink:0,
           background:C.navy, display:"flex", alignItems:"center", justifyContent:"center",
         }}>
           <SIc d={icon} size={15} sw={1.8} color={C.goldLight}/>
         </div>
-        <span style={{fontSize:15, fontWeight:600, color:C.text, fontFamily:"'Playfair Display',serif"}}>{title}</span>
+        <div>
+          <div style={{fontSize:15, fontWeight:600, color:C.text, fontFamily:"'Playfair Display',serif", lineHeight:1.2}}>{title}</div>
+          {desc && <div style={{fontSize:12, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", marginTop:2}}>{desc}</div>}
+        </div>
       </div>
       <div style={{padding:"4px 24px 16px"}}>{children}</div>
     </div>
@@ -10328,7 +10331,7 @@ function SettingsPage() {
 
           {}
           {activeSection==="sirket" && (
-            <SSection id="sirket" title="Şirket Bilgileri" icon="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4">
+            <SSection id="sirket" title="Şirket Bilgileri" desc="İletişim ve fatura bilgileriniz" icon="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4">
               <SField label="Şirket Adı" hint="Tekliflerde ve belgelerde görünür">
                 <SInput value={companyName} onChange={setCompanyName} placeholder="Şirket adı"/>
               </SField>
@@ -10362,7 +10365,7 @@ function SettingsPage() {
 
           {}
           {activeSection==="marka" && (
-            <SSection id="marka" title="Marka Ayarları" icon="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01">
+            <SSection id="marka" title="Marka Ayarları" desc="Teklif ve doküman görünümü" icon="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01">
               {}
               <SField label="Şirket Logosu" hint="Teklifler ve PDF'lerde kullanılır">
                 <div style={{
@@ -10439,7 +10442,7 @@ function SettingsPage() {
 
           {}
           {activeSection==="kullanicilar" && (
-            <SSection id="kullanicilar" title="Kullanıcılar" icon="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z">
+            <SSection id="kullanicilar" title="Kullanıcılar" desc="Ekip üyeleri ve rolleri" icon="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z">
               {}
               <div style={{marginTop:8}}>
                 {users.map((u,i)=>(
@@ -10497,7 +10500,7 @@ function SettingsPage() {
 
           {}
           {activeSection==="kaynaklar" && (
-            <SSection id="kaynaklar" title="Lead Kaynakları" icon="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z">
+            <SSection id="kaynaklar" title="Lead Kaynakları" desc="Talep ve misafir kaynak listesi" icon="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z">
               <div style={{marginTop:8}}>
                 {sources.map((s,i)=>(
                   <div key={s.id} style={{
@@ -10547,7 +10550,7 @@ function SettingsPage() {
 
           {}
           {activeSection==="durumlar" && (
-            <SSection id="durumlar" title="Durum Ayarları" icon="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4">
+            <SSection id="durumlar" title="Durum Ayarları" desc="Talep, rezervasyon ve ödeme durumları" icon="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4">
               <div style={{display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:20, marginTop:8}}>
                 {[
                   {
@@ -10557,7 +10560,7 @@ function SettingsPage() {
                       {label:"Yeni Talep",          color:"#1A6FAE", bg:"#E8F2FB"},
                       {label:"Görüşüldü",            color:"#B45309", bg:"#FEF3E2"},
                       {label:"Teklif Hazırlanıyor",  color:"#6B3FA0", bg:"#F3EEF9"},
-                      {label:"Teklif Gönderildi",    color:"#B8973A", bg:"#F5EDD4"},
+                      {label:"Teklif Gönderildi",    color:"#0E7490", bg:"#ECFEFF"},
                       {label:"Ödeme Bekleniyor",     color:"#C05621", bg:"#FEF0E8"},
                       {label:"Onaylandı",            color:"#2E7D52", bg:"#EBF5EF"},
                       {label:"İptal",                color:"#C0392B", bg:"#FDECEC"},
@@ -10569,7 +10572,7 @@ function SettingsPage() {
                     items:[
                       {label:"Hazırlanıyor",  color:"#6B3FA0", bg:"#F3EEF9"},
                       {label:"Rehber Atandı", color:"#1A6FAE", bg:"#E8F2FB"},
-                      {label:"Hazır",         color:"#B8973A", bg:"#F5EDD4"},
+                      {label:"Hazır",         color:"#B45309", bg:"#FEF3E2"},
                       {label:"Tamamlandı",    color:"#2E7D52", bg:"#EBF5EF"},
                       {label:"İptal",         color:"#C0392B", bg:"#FDECEC"},
                     ],
@@ -10579,7 +10582,7 @@ function SettingsPage() {
                     icon:"M2 9a2 2 0 012-2h16a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V9zM2 13h20",
                     items:[
                       {label:"Bekliyor",       color:"#C05621", bg:"#FEF0E8"},
-                      {label:"Kısmi Ödendi",   color:"#B8973A", bg:"#F5EDD4"},
+                      {label:"Kısmi Ödendi",   color:"#B45309", bg:"#FEF3E2"},
                       {label:"Tamamlandı",     color:"#2E7D52", bg:"#EBF5EF"},
                       {label:"İade Edildi",    color:"#6B3FA0", bg:"#F3EEF9"},
                     ],
@@ -10618,7 +10621,7 @@ function SettingsPage() {
 
           {}
           {activeSection==="bildirimler" && (
-            <SSection id="bildirimler" title="Bildirim Ayarları" icon="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9">
+            <SSection id="bildirimler" title="Bildirim Ayarları" desc="Otomatik uyarı kanalları" icon="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9">
               {[
                 {
                   id:"whatsapp", label:"WhatsApp Business",
@@ -10679,7 +10682,7 @@ function SettingsPage() {
 
           {}
           {activeSection==="otomasyon" && (
-            <SSection id="otomasyon" title="Otomasyon Kuralları" icon="M13 10V3L4 14h7v7l9-11h-7z">
+            <SSection id="otomasyon" title="Otomasyon Kuralları" desc="Tetiklenen sistem eylemleri" icon="M13 10V3L4 14h7v7l9-11h-7z">
               <div style={{
                 padding:"12px 14px", borderRadius:9, marginTop:8, marginBottom:16,
                 background:C.goldPale, border:`1px solid ${C.gold}30`,
@@ -10962,11 +10965,11 @@ function RpKpiCard({ label, value, sub, icon, color, bg, highlight }) {
   return (
     <div style={{
       background:C.white, border:`1px solid ${highlight?color+"44":C.border}`,
-      borderRadius:12, padding:"18px 20px",
+      borderRadius:T.radius, padding:"18px 20px",
       display:"flex", alignItems:"flex-start", gap:14,
-      boxShadow: highlight?`0 0 0 1px ${color}22`:"none",
+      boxShadow: highlight?`0 0 0 1px ${color}22`:T.shadowSoft,
     }}>
-      <div style={{width:42, height:42, borderRadius:10, flexShrink:0, background:bg, display:"flex", alignItems:"center", justifyContent:"center"}}>
+      <div style={{width:36, height:36, borderRadius:T.radiusSm, flexShrink:0, background:bg, display:"flex", alignItems:"center", justifyContent:"center"}}>
         <RpIc d={icon} size={18} sw={1.6} color={color}/>
       </div>
       <div style={{flex:1, minWidth:0}}>
@@ -11062,7 +11065,7 @@ function ReportsPage() {
               {[
                 { label:"Talep",           val:kpi.leads,        icon:"M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01",                            color:C.blue,  pct:100 },
                 { label:"Teklif",          val:kpi.quotes,       icon:"M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z M14 2v6h6",              color:C.amber, pct:safePctNum(kpi.quotes, kpi.leads) },
-                { label:"Rezervasyon",     val:kpi.reservations, icon:"M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11",         color:C.gold,  pct:safePctNum(kpi.reservations, kpi.leads) },
+                { label:"Rezervasyon",     val:kpi.reservations, icon:"M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11",         color:"#0E7490",  pct:safePctNum(kpi.reservations, kpi.leads) },
                 { label:"Tamamlanan Tur",  val:kpi.completed,    icon:"M22 11.08V12a10 10 0 11-5.93-9.14 M22 4L12 14.01l-3-3",                         color:C.green, pct:safePctNum(kpi.completed, kpi.leads) },
               ].map((step,i)=>(
                 <div key={i} style={{display:"flex", flexDirection:"column", alignItems:"center", gap:10, position:"relative"}}>
@@ -11465,7 +11468,7 @@ function ReportsPage() {
 const GUEST_STATUS_CFG = {
   "Aktif":              { color:"#2E7D52", bg:"#EBF5EF", dot:"#2E7D52" },
   "Rezervasyonu Var":   { color:"#1A6FAE", bg:"#E8F2FB", dot:"#1A6FAE" },
-  "Tekrar Gelen":       { color:"#B8973A", bg:"#F5EDD4", dot:"#B8973A" },
+  "Tekrar Gelen":       { color:"#0E7490", bg:"#ECFEFF", dot:"#0E7490" },
   "Teklif Bekliyor":    { color:"#B45309", bg:"#FEF3E2", dot:"#B45309" },
   "Arşiv":              { color:"#6B7280", bg:"#F3F4F6", dot:"#9CA3AF" },
 };
@@ -11581,8 +11584,8 @@ function GStatusBadge({ status, small }) {
   return (
     <span style={{
       display:"inline-flex", alignItems:"center", gap:5,
-      padding: small ? "3px 8px" : "4px 11px",
-      borderRadius:99, fontSize: small ? 11 : 12, fontWeight:500,
+      padding: small ? "3px 8px" : "4px 10px",
+      borderRadius:99, fontSize: small ? 10.5 : 11.5, fontWeight:500,
       color:m.color, background:m.bg, whiteSpace:"nowrap",
       fontFamily:"'DM Sans',sans-serif",
     }}>
@@ -13179,8 +13182,8 @@ function ErrorState({ message, onRetry }) {
 }
 function EmptyState({ icon, title, subtitle, action }) {
   return (
-    <div style={{padding:"60px 20px",textAlign:"center",display:"flex",flexDirection:"column",alignItems:"center",gap:8}}>
-      <div style={{fontSize:34,opacity:.18,marginBottom:4}}>{icon||"📭"}</div>
+    <div style={{padding:"44px 20px",textAlign:"center",display:"flex",flexDirection:"column",alignItems:"center",gap:8}}>
+      <div style={{fontSize:30,opacity:.18,marginBottom:4}}>{icon||"📭"}</div>
       <div style={{fontSize:15,fontWeight:600,color:C.text,fontFamily:"'Playfair Display',serif"}}>{title||"Henüz kayıt bulunmuyor."}</div>
       {subtitle && <div style={{fontSize:13,color:C.textMuted,fontFamily:"'DM Sans',sans-serif",maxWidth:280}}>{subtitle}</div>}
       {action && <div style={{marginTop:6}}>{action}</div>}
@@ -13802,10 +13805,10 @@ function Modal({ title, onClose, onSubmit, submitLabel, children, wide, danger }
       padding: isMobile ? 0 : 16,
     }} onClick={e=>{ if(e.target===e.currentTarget) onClose(); }}>
       <div className="modal-inner" style={{
-        background:C.white, borderRadius:12,
+        background:C.white, borderRadius:T.radius,
         width:"100%", maxWidth: wide ? 720 : 520,
         maxHeight:"90vh", overflowY:"auto", overflowX:"hidden",
-        boxShadow:"0 24px 64px rgba(13,27,62,0.4)",
+        boxShadow:"0 16px 40px rgba(13,27,62,0.22)",
         display:"flex", flexDirection:"column",
         boxSizing:"border-box",
       }}>
@@ -13848,12 +13851,11 @@ function Modal({ title, onClose, onSubmit, submitLabel, children, wide, danger }
             flex: isMobile ? 1 : "none",
           }}>İptal</button>
           <button onClick={onSubmit} style={{
-            padding:"9px 20px", borderRadius:8, cursor:"pointer",
+            padding:"9px 20px", borderRadius:T.radiusSm, cursor:"pointer",
             border:"none",
-            background: danger ? C.red : `linear-gradient(135deg,${C.navyDeep},${C.navy})`,
+            background: danger ? C.red : C.navy,
             color:C.white, fontSize:13.5, fontWeight:500,
             fontFamily:"'DM Sans',sans-serif",
-            boxShadow:`0 2px 8px rgba(13,27,62,0.25)`,
             flex: isMobile ? 2 : "none",
           }}>{submitLabel || "Kaydet"}</button>
         </div>
@@ -13907,15 +13909,15 @@ function FText({ value, onChange, placeholder, type, mono, error, disabled, maxL
       placeholder={placeholder} disabled={disabled} maxLength={maxLength}
       style={{
         width:"100%", boxSizing:"border-box",
-        padding:"9px 12px", borderRadius:7,
+        padding:"9px 12px", borderRadius:T.radiusSm,
         border:`1.5px solid ${error ? C.red : C.border}`,
         fontSize:13.5, color:C.text,
         fontFamily: mono ? "'DM Mono',monospace" : "'DM Sans',sans-serif",
         outline:"none", background: disabled ? C.ivory : C.white,
-        transition:"border-color .15s",
+        transition:"border-color .15s, box-shadow .15s",
       }}
-      onFocus={e=>{ if(!error) e.target.style.borderColor=C.navy; }}
-      onBlur={e=>{ e.target.style.borderColor=error?C.red:C.border; }}
+      onFocus={e=>{ if(!error){ e.target.style.borderColor=C.navy; e.target.style.boxShadow=`0 0 0 3px rgba(27,45,79,0.10)`; } }}
+      onBlur={e=>{ e.target.style.borderColor=error?C.red:C.border; e.target.style.boxShadow="none"; }}
     />
   );
 }
@@ -13925,7 +13927,7 @@ function FSelect({ value, onChange, options, error, disabled }) {
     <select value={value} onChange={e=>onChange(e.target.value)} disabled={disabled}
       style={{
         width:"100%", boxSizing:"border-box",
-        padding:"9px 12px", borderRadius:7,
+        padding:"9px 12px", borderRadius:T.radiusSm,
         border:`1.5px solid ${error ? C.red : C.border}`,
         fontSize:13.5, color:C.text, fontFamily:"'DM Sans',sans-serif",
         outline:"none", background: disabled ? C.ivory : C.white,
@@ -13935,7 +13937,11 @@ function FSelect({ value, onChange, options, error, disabled }) {
         backgroundRepeat:"no-repeat",
         backgroundPosition:"right 10px center",
         paddingRight:30,
-      }}>
+        transition:"border-color .15s, box-shadow .15s",
+      }}
+      onFocus={e=>{ if(!error){ e.target.style.borderColor=C.navy; e.target.style.boxShadow=`0 0 0 3px rgba(27,45,79,0.10)`; } }}
+      onBlur={e=>{ e.target.style.borderColor=error?C.red:C.border; e.target.style.boxShadow="none"; }}
+    >
       {(options||[]).map(opt => {
         if (Array.isArray(opt)) {
           return <option key={opt[0]} value={opt[0]}>{opt[1]}</option>;
@@ -13953,15 +13959,15 @@ function FTextArea({ value, onChange, placeholder, rows, error, disabled }) {
       placeholder={placeholder} rows={rows||3} disabled={disabled}
       style={{
         width:"100%", boxSizing:"border-box",
-        padding:"9px 12px", borderRadius:7,
+        padding:"9px 12px", borderRadius:T.radiusSm,
         border:`1.5px solid ${error ? C.red : C.border}`,
         fontSize:13.5, color:C.text, fontFamily:"'DM Sans',sans-serif",
         outline:"none", background: disabled ? C.ivory : C.white,
         resize:"vertical", lineHeight:1.55,
-        transition:"border-color .15s",
+        transition:"border-color .15s, box-shadow .15s",
       }}
-      onFocus={e=>{ if(!error) e.target.style.borderColor=C.navy; }}
-      onBlur={e=>{ e.target.style.borderColor=error?C.red:C.border; }}
+      onFocus={e=>{ if(!error){ e.target.style.borderColor=C.navy; e.target.style.boxShadow=`0 0 0 3px rgba(27,45,79,0.10)`; } }}
+      onBlur={e=>{ e.target.style.borderColor=error?C.red:C.border; e.target.style.boxShadow="none"; }}
     />
   );
 }
