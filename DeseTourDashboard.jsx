@@ -100,6 +100,24 @@ const C = {
   orange:"#C05621", orangeBg:"#FEF0E8",
 };
 
+// Shared desktop visual tokens — one place to keep radius/spacing/shadow/
+// control-height decisions consistent instead of re-picking a value per
+// component. Not exhaustive: existing per-component values that already
+// match these are left as literals rather than churned into references.
+const T = {
+  radius:      12,   // cards, panels, modals
+  radiusSm:    8,    // inputs, buttons, small chips
+  radiusPill:  99,   // badges
+  gutter:      24,   // page-level horizontal gutter
+  cardPad:     "20px 24px",
+  sectionGap:  20,
+  shadowSoft:  "0 1px 2px rgba(15,29,53,0.05)",
+  shadowCard:  "0 1px 3px rgba(15,29,53,0.06)",
+  controlH:    38,   // inputs, selects, filter buttons
+  buttonH:     40,   // primary/secondary buttons
+  rowH:        48,   // table row target height
+};
+
 const DB = {
 
   staff: [
@@ -1602,17 +1620,17 @@ function NavItem({ item, currentBase }) {
       style={{
         textDecoration:"none",
         display:"flex", alignItems:"center", gap:10, width:"100%",
-        padding: item._collapsed ? "10px 0" : "8.5px 14px",
+        padding: item._collapsed ? "10px 0" : "9px 14px",
         justifyContent: item._collapsed ? "center" : "flex-start",
-        border:"none", borderRadius:7,
-        background: on ? "rgba(184,151,58,0.13)" : hov ? "rgba(255,255,255,0.06)" : "transparent",
-        color: on ? C.goldLight : hov ? "rgba(248,245,238,0.9)" : "rgba(248,245,238,0.58)",
+        border:"none", borderRadius:T.radiusSm,
+        background: on ? "rgba(184,151,58,0.10)" : hov ? "rgba(255,255,255,0.05)" : "transparent",
+        color: on ? C.goldLight : hov ? "rgba(248,245,238,0.9)" : "rgba(248,245,238,0.56)",
         cursor:"pointer", textAlign:"left", position:"relative",
         transition:"background 0.12s, color 0.12s",
       }}>
       {on && <span style={{
         position:"absolute", left:0, top:"50%", transform:"translateY(-50%)",
-        width:3, height:20, borderRadius:"0 3px 3px 0", background:C.goldLight,
+        width:2.5, height:16, borderRadius:2, background:C.goldLight,
       }}/>}
       <span style={{flexShrink:0, opacity:on?1:0.85}}>
         <Ic d={item.icon} size={15} sw={on?2:1.6}/>
@@ -1818,36 +1836,37 @@ function Sidebar({ currentBase, collapsed, onToggle, mobileOpen, onMobileClose }
           }
         </svg>
       </button>
-      <div style={{padding:"20px 16px 14px", borderBottom:"1px solid rgba(255,255,255,0.08)"}}>
+      <div style={{padding:"22px 16px 16px", borderBottom:"1px solid rgba(255,255,255,0.08)"}}>
         {}
         <img
           src="/seffafdeselogo.png"
           alt="Dese Tour"
           style={{
-            width:"100%", maxWidth:168,
+            width:"100%", maxWidth:collapsed?40:160,
             height:"auto", display:"block",
             mixBlendMode:"screen",
             opacity:0.95,
+            transition:"max-width 0.22s cubic-bezier(0.4,0,0.2,1)",
           }}
         />
-        <div style={{
-          fontSize:9, letterSpacing:"0.18em", textTransform:"uppercase",
-          color:C.goldLight, fontFamily:"'DM Sans',sans-serif", fontWeight:500,
-          marginTop:10, paddingLeft:2,
-        }}>Operations Center</div>
+        {!collapsed && <div style={{
+          fontSize:9, letterSpacing:"0.16em", textTransform:"uppercase",
+          color:"rgba(201,168,76,0.75)", fontFamily:"'DM Sans',sans-serif", fontWeight:500,
+          marginTop:11, paddingLeft:2,
+        }}>Operations Center</div>}
       </div>
-      <nav style={{padding:"10px 10px 0", display:"flex", flexDirection:"column", gap:1}}>
+      <nav style={{padding:"12px 10px 0", display:"flex", flexDirection:"column", gap:2}}>
         {NAV_TOP.map(it=><NavItem key={it.id} item={{...it,_collapsed:collapsed}} currentBase={currentBase}/>)}
       </nav>
-      <div style={{height:1, background:"rgba(255,255,255,0.07)", margin:"10px 18px"}}/>
-      <nav style={{padding:"0 10px", display:"flex", flexDirection:"column", gap:1}}>
+      <div style={{height:1, background:"rgba(255,255,255,0.07)", margin:"12px 18px"}}/>
+      <nav style={{padding:"0 10px", display:"flex", flexDirection:"column", gap:2}}>
         {NAV_BOT.map(it=><NavItem key={it.id} item={{...it,_collapsed:collapsed}} currentBase={currentBase}/>)}
 
         {}
-        <div style={{padding:"8px 10px", borderTop:"1px solid rgba(255,255,255,0.07)", marginTop:4}}>
+        <div style={{padding:"8px 10px", borderTop:"1px solid rgba(255,255,255,0.07)", marginTop:6}}>
           <button onClick={()=>auth.logout()} style={{
             display:"flex", alignItems:"center", gap:9, width:"100%",
-            padding:"8px 14px", border:"none", borderRadius:7,
+            padding:"9px 14px", border:"none", borderRadius:T.radiusSm,
             background:"transparent", color:"rgba(248,245,238,0.45)",
             cursor:"pointer", textAlign:"left", transition:"color .12s, background .12s",
           }}
@@ -1915,14 +1934,15 @@ function Welcome() {
     <div style={{
       background: C.white,
       border:`1px solid ${C.border}`,
-      borderRadius:12,
-      padding:"24px 28px",
+      borderRadius:T.radius,
+      padding:"22px 28px",
       display:"flex", alignItems:"center", justifyContent:"space-between", gap:24,
+      boxShadow:T.shadowSoft,
     }}>
       <div>
         <div style={{
-          fontSize:11, letterSpacing:"0.12em", textTransform:"uppercase",
-          color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginBottom:6,
+          fontSize:10.5, letterSpacing:"0.12em", textTransform:"uppercase",
+          color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginBottom:7,
         }}>
           {new Date().toLocaleDateString("tr-TR",{day:"2-digit",month:"long",year:"numeric",weekday:"long"})}
         </div>
@@ -1971,23 +1991,23 @@ function Welcome() {
 function KpiCard({ kpi }) {
   return (
     <div style={{
-      background:C.white, border:`1px solid ${C.border}`, borderRadius:12,
-      padding:"18px 20px", display:"flex", flexDirection:"column", gap:12,
-      position:"relative", overflow:"hidden",
+      background:C.white, border:`1px solid ${C.border}`, borderRadius:T.radius,
+      padding:"19px 20px", display:"flex", flexDirection:"column", gap:14,
+      position:"relative", overflow:"hidden", boxShadow:T.shadowSoft,
     }}>
       {}
       <div style={{display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:10}}>
         <div style={{
-          width:40, height:40, borderRadius:10, flexShrink:0,
+          width:34, height:34, borderRadius:T.radiusSm, flexShrink:0,
           background: kpi.alert ? C.redBg : C.goldPale,
           display:"flex", alignItems:"center", justifyContent:"center",
           color: kpi.alert ? C.red : C.gold,
         }}>
-          <Ic d={kpi.icon} size={18} sw={1.6}/>
+          <Ic d={kpi.icon} size={16} sw={1.6}/>
         </div>
         {kpi.alert && (
           <div style={{
-            width:8, height:8, borderRadius:"50%",
+            width:7, height:7, borderRadius:"50%",
             background:C.red, marginTop:4, flexShrink:0,
           }}/>
         )}
@@ -1996,10 +2016,11 @@ function KpiCard({ kpi }) {
       {}
       <div>
         <div style={{
-          fontSize:26, fontWeight:700, color: kpi.alert ? C.red : C.text,
-          fontFamily:"'Playfair Display',serif", lineHeight:1, marginBottom:4,
+          fontSize:28, fontWeight:700, color: kpi.alert ? C.red : C.text,
+          fontFamily:"'Playfair Display',serif", lineHeight:1, marginBottom:5,
+          letterSpacing:"-0.01em",
         }}>{kpi.value}</div>
-        <div style={{fontSize:12, color:C.textMuted, fontFamily:"'DM Sans',sans-serif"}}>{kpi.label}</div>
+        <div style={{fontSize:11.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", letterSpacing:"0.01em"}}>{kpi.label}</div>
       </div>
 
       {}
@@ -2315,9 +2336,7 @@ function TodayTours() {
 
 function UpcomingResRow({ r, isLast }) {
   return (
-    <div key={r.id}
-      onMouseEnter={()=>setHov(true)}
-      onMouseLeave={()=>setHov(false)}
+    <div key={r.id} className="dt-row"
       style={{
         display:"grid", gridTemplateColumns:"56px 1fr 80px 120px",
         gap:12, padding:"14px 0",
@@ -2592,9 +2611,7 @@ function LeadRow({ lead, isLast, onSelect }) {
   const isUrgent = lead.status === "Ödeme Bekleniyor";
 
   return (
-    <tr
-      onMouseEnter={() => setHov(true)}
-      onMouseLeave={() => setHov(false)}
+    <tr className="dt-row"
       onClick={() => onSelect && onSelect(lead.id)}
       style={{
         background:C.white,
@@ -3811,9 +3828,7 @@ function QuoteRow({ q, isLast, onSelect }) {
   const expired = q.status === "Süresi Doldu" || q.status === "Reddedildi";
 
   return (
-    <tr
-      onMouseEnter={()=>setHov(true)}
-      onMouseLeave={()=>setHov(false)}
+    <tr className="dt-row"
       onClick={()=>onSelect&&onSelect(q.id)}
       style={{
         background:C.white,
@@ -5927,9 +5942,7 @@ function ReservationsPage({ onSelect }) {
                   const isLast = i === filtered.length - 1;
                   const urgent = !r.guide && r.opStatus !== "İptal" && r.opStatus !== "Tamamlandı";
                   return (
-                    <tr key={r.id}
-                      onMouseEnter={()=>setHov(true)}
-                      onMouseLeave={()=>setHov(false)}
+                    <tr key={r.id} className="dt-row"
                       onClick={()=>onSelect&&onSelect(r.id)}
                       style={{
                         background:C.white,
@@ -7480,9 +7493,7 @@ function TaskRow({ task, isLast, onToggle }) {
   const pMeta = TASK_PRIORITY[task.priority] || {};
 
   return (
-    <tr
-      onMouseEnter={()=>setHov(true)}
-      onMouseLeave={()=>setHov(false)}
+    <tr className="dt-row"
       style={{
         background:C.white,
         transition:"background .1s",
@@ -8210,9 +8221,7 @@ function PaymentRow({ p, isLast, onOpen }) {
   const pct = p.total > 0 ? Math.round(p.paid / p.total * 100) : 0;
 
   return (
-    <tr
-      onMouseEnter={()=>setHov(true)}
-      onMouseLeave={()=>setHov(false)}
+    <tr className="dt-row"
       onClick={()=>onOpen(p)}
       style={{
         background:C.white,
@@ -8750,9 +8759,7 @@ function ReminderRow({ rem, isLast, onToggle }) {
   const pMeta = REM_PRIORITY[rem.priority] || {};
 
   return (
-    <tr
-      onMouseEnter={()=>setHov(true)}
-      onMouseLeave={()=>setHov(false)}
+    <tr className="dt-row"
       style={{
         background:C.white,
         transition:"background .1s",
@@ -10014,9 +10021,7 @@ function ToursPage({ onSelect }) {
                   const isLast=i===filtered.length-1;
                   const sym=tour.currency==="TRY"?"₺":"€";
                   return (
-                    <tr key={tour.id}
-                      onMouseEnter={()=>setHov(true)}
-                      onMouseLeave={()=>setHov(false)}
+                    <tr key={tour.id} className="dt-row"
                       onClick={()=>onSelect&&onSelect(tour.id)}
                       style={{
                         background:C.white, cursor:"pointer", transition:"background .1s",
@@ -11118,9 +11123,7 @@ function ReportsPage() {
               <tbody>
                 {metrics.sources.map((s,i)=>{
                   return (
-                    <tr key={i}
-                      onMouseEnter={()=>setHov(true)}
-                      onMouseLeave={()=>setHov(false)}
+                    <tr key={i} className="dt-row"
                       style={{background:C.white, transition:"background .1s"}}>
                       <td style={{padding:"12px 10px", borderBottom:`1px solid ${C.borderLight}`, verticalAlign:"middle"}}>
                         <span style={{fontSize:13.5, fontWeight:500, color:C.text, fontFamily:"'DM Sans',sans-serif"}}>{s.source}</span>
@@ -11224,9 +11227,7 @@ function ReportsPage() {
                   const maxLeadsC = Math.max(...metrics.countries.map(x=>x.leads));
                   const isTop = i===0;
                   return (
-                    <tr key={i}
-                      onMouseEnter={()=>setHov(true)}
-                      onMouseLeave={()=>setHov(false)}
+                    <tr key={i} className="dt-row"
                       style={{background:C.white, transition:"background .1s"}}>
                       <td style={{padding:"11px 12px", borderBottom:`1px solid ${C.borderLight}`, verticalAlign:"middle"}}>
                         <div style={{display:"flex", alignItems:"center", gap:8}}>
@@ -11916,7 +11917,7 @@ function GuestDetailPage({ guestId, onBack, onNavigate }) {
                   <tbody>
                     {g.relatedLeads.map((lead,i)=>{
                       return (
-                        <tr key={i} onMouseEnter={()=>setHov(true)} onMouseLeave={()=>setHov(false)} style={{background:C.white, cursor:"pointer", transition:"background .1s"}}>
+                        <tr key={i} className="dt-row" style={{background:C.white, cursor:"pointer", transition:"background .1s"}}>
                           <td style={{padding:"12px 16px", borderBottom:`1px solid ${C.borderLight}`, fontSize:13, color:C.text, fontFamily:"'DM Sans',sans-serif"}}>{lead.date}</td>
                           <td style={{padding:"12px 16px", borderBottom:`1px solid ${C.borderLight}`}}>
                             <span style={{fontSize:12.5, color:C.textMid, fontFamily:"'DM Sans',sans-serif"}}>{lead.source}</span>
@@ -11958,7 +11959,7 @@ function GuestDetailPage({ guestId, onBack, onNavigate }) {
                     {g.relatedQuotes.map((q,i)=>{
                       const qm = QUOTE_STATUS[q.status]||{color:C.textMuted,bg:C.ivoryDark};
                       return (
-                        <tr key={i} onMouseEnter={()=>setHov(true)} onMouseLeave={()=>setHov(false)} style={{background:C.white, cursor:"pointer", transition:"background .1s"}}>
+                        <tr key={i} className="dt-row" style={{background:C.white, cursor:"pointer", transition:"background .1s"}}>
                           <td style={{padding:"12px 16px", borderBottom:`1px solid ${C.borderLight}`}}>
                             <span style={{fontSize:12, fontWeight:600, color:C.navy, fontFamily:"'DM Mono',monospace", background:C.ivory, border:`1px solid ${C.borderLight}`, padding:"2px 7px", borderRadius:5}}>{q.id}</span>
                           </td>
@@ -11996,7 +11997,7 @@ function GuestDetailPage({ guestId, onBack, onNavigate }) {
                       const rsm = RES_STATUS[r.opStatus]||{color:C.textMuted,bg:C.ivoryDark};
                       const rpm = PAY_STATUS_MAP[r.payStatus]||{color:C.textMuted,bg:C.ivoryDark};
                       return (
-                        <tr key={i} onMouseEnter={()=>setHov(true)} onMouseLeave={()=>setHov(false)} style={{background:C.white, cursor:"pointer", transition:"background .1s"}}>
+                        <tr key={i} className="dt-row" style={{background:C.white, cursor:"pointer", transition:"background .1s"}}>
                           <td style={{padding:"12px 16px", borderBottom:`1px solid ${C.borderLight}`}}>
                             <span style={{fontSize:12, fontWeight:600, color:C.navy, fontFamily:"'DM Mono',monospace", background:C.ivory, border:`1px solid ${C.borderLight}`, padding:"2px 7px", borderRadius:5}}>{r.id}</span>
                           </td>
@@ -12247,9 +12248,7 @@ function CustomersPage({ onSelectGuest }) {
                 {filtered.map((g,i)=>{
                   const isLast=i===filtered.length-1;
                   return (
-                    <tr key={g.id}
-                      onMouseEnter={()=>setHov(true)}
-                      onMouseLeave={()=>setHov(false)}
+                    <tr key={g.id} className="dt-row"
                       onClick={()=>onSelectGuest&&onSelectGuest(g.id)}
                       style={{background:C.white, cursor:"pointer", transition:"background .1s"}}>
                       {}
@@ -15849,6 +15848,11 @@ function App() {
         @keyframes slideIn { from { transform:translateX(-100%); } to { transform:translateX(0); } }
         .fade { animation: fadeUp 0.25s ease both; }
         a { cursor: pointer; }
+
+        /* ── Shared desktop table/row hover — CSS-driven so a row never
+           needs its own hover state just to tint on mouseover. ── */
+        .dt-row { transition: background 0.12s ease; }
+        .dt-row:hover { background: #F7F3E9 !important; }
         @media (max-width: 767px) {
           .rsp-table { display: none !important; }
           .rsp-cards { display: flex !important; }
