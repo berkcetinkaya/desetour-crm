@@ -651,27 +651,32 @@ function filterByDateRange(items, dateField, period) {
 }
 
 function computeUrgent(leads, reservations, payments, tasks, reminders) {
+  // Supabase mode: `null` means "not loaded yet" — must resolve to an empty
+  // list, never to the DB mock arrays. Falling back to DB.* here previously
+  // made "Acil İşler" flash fabricated urgent items on every dashboard load,
+  // which then vanished once the real (usually shorter/empty) data arrived.
+  const useMock = !AppConfig.useSupabase;
   const items=[];let id=1;const now=Date.now();
-  (payments||DB.payments).filter(p=>["Bekliyor","Kısmi Ödendi"].includes(p.status)).slice(0,3).forEach(p=>{
+  (payments ?? (useMock ? DB.payments : [])).filter(p=>["Bekliyor","Kısmi Ödendi"].includes(p.status)).slice(0,3).forEach(p=>{
     const res=getReservationById(p.resId||""),cust=getCustomerById(res?.customerId||"");
     items.push({id:id++,level:"high",title:`${cust?.name||"Müşteri"} için ödeme takibi`,
       sub:`${res?.tour||"Rezervasyon"} · €${parseFloat(p.amount||0).toLocaleString("tr-TR")} bekliyor`,
       tag:"Ödeme",tagColor:C.red,tagBg:C.redBg,ago:p.depositDate||"—",
       icon:"M2 9a2 2 0 012-2h16a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V9zM2 13h20"});
   });
-  (reservations||DB.reservations).filter(r=>!r.guide&&!["Tamamlandı","İptal"].includes(r.opStatus)).slice(0,2).forEach(r=>{
+  (reservations ?? (useMock ? DB.reservations : [])).filter(r=>!r.guide&&!["Tamamlandı","İptal"].includes(r.opStatus)).slice(0,2).forEach(r=>{
     const cust=getCustomerById(r.customerId||"");
     items.push({id:id++,level:"high",title:`${cust?.name||"Rezervasyon"} için rehber atanmalı`,
       sub:`${r.tour||"Tur"} · ${r.date||"—"} · ${r.pax||1} kişi`,
       tag:"Rehber",tagColor:C.blue,tagBg:C.blueBg,ago:r.date||"—",
       icon:"M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2 M23 21v-2a4 4 0 00-3-3.87 M16 3.13a4 4 0 010 7.75"});
   });
-  (tasks||DB.tasks).filter(t=>t.status!=="Tamamlandı"&&["Yüksek","Acil"].includes(t.priority)).slice(0,2).forEach(t=>{
+  (tasks ?? (useMock ? DB.tasks : [])).filter(t=>t.status!=="Tamamlandı"&&["Yüksek","Acil"].includes(t.priority)).slice(0,2).forEach(t=>{
     items.push({id:id++,level:"medium",title:t.title,sub:`Öncelik: ${t.priority} · ${t.dueDate||"—"}`,
       tag:"Görev",tagColor:C.amber,tagBg:"#FEF3E2",ago:t.dueDate||"—",
       icon:"M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"});
   });
-  (reminders||DB.reminders).filter(r=>!r.status?.includes("Tamamlandı")&&r.dueDateRaw&&r.dueDateRaw<now).slice(0,2).forEach(r=>{
+  (reminders ?? (useMock ? DB.reminders : [])).filter(r=>!r.status?.includes("Tamamlandı")&&r.dueDateRaw&&r.dueDateRaw<now).slice(0,2).forEach(r=>{
     items.push({id:id++,level:"medium",title:r.title,sub:`Gecikmiş · ${r.type||"Hatırlatma"}`,
       tag:"Hatırlatma",tagColor:"#6B3FA0",tagBg:"#F3EEF9",ago:r.dueDate||"—",
       icon:"M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0"});
@@ -2162,11 +2167,33 @@ function TodayTours() {
   const { data:repoRes, loading:ttLoading } = useRepo("reservation", "getAll");
   const allRes    = repoRes ?? [];
   const todayList = allRes.filter(r => r.date===_TODAY_STR || r.checkIn===_TODAY_ISO);
+  // Supabase mode: render the real, today-filtered reservations — never the
+  // static mock catalog (which was previously always shown regardless of
+  // loading state or actual data).
+  const _payMeta = { "Ödendi":{color:C.green,bg:C.greenBg}, "Kapora Ödendi":{color:C.amber,bg:C.amberBg}, "Bekliyor":{color:C.red,bg:C.redBg} };
+  const rows = AppConfig.useSupabase
+    ? todayList.map(r => {
+        const pm = _payMeta[r.payStatus] || { color:C.textFaint, bg:C.ivoryDark };
+        return {
+          time: r.time, customer: r.name || r.tour, tour: r.tour, pax: r.pax,
+          flag: "🌍", resId: r.id,
+          payStatus: r.payStatus, payColor: pm.color, payBg: pm.bg,
+          guideStatus: r.guide ? "Rehber Atandı" : "Rehber Atanmadı",
+          guideColor:  r.guide ? C.green : C.red,
+          guideBg:     r.guide ? C.greenBg : C.redBg,
+        };
+      })
+    : TODAY_TOURS;
   return (
     <Card>
       <SectionHeader title="Bugünkü Turlar" action="Takvimi Gör"/>
       {ttLoading  ? <LoadingState label="Yükleniyor…"/> : null}
-      {!ttLoading && <div style={{display:"flex", flexDirection:"column", gap:0}}>
+      {!ttLoading && rows.length === 0 && (
+        <div style={{padding:"28px 0", textAlign:"center", color:C.textFaint, fontFamily:"'DM Sans',sans-serif", fontSize:13.5}}>
+          Bugün için planlanmış tur bulunmuyor.
+        </div>
+      )}
+      {!ttLoading && rows.length > 0 && <div style={{display:"flex", flexDirection:"column", gap:0}}>
         {}
         <div style={{
           display:"grid",
@@ -2183,8 +2210,8 @@ function TodayTours() {
           ))}
         </div>
 
-        {TODAY_TOURS.map((t,i)=>{
-          const isLast = i === TODAY_TOURS.length-1;
+        {rows.map((t,i)=>{
+          const isLast = i === rows.length-1;
           return (
             <div key={i}
               onMouseEnter={e=>e.currentTarget.style.background=C.ivory}
@@ -2324,16 +2351,20 @@ function ActivityFeed() {
     task:        { type:"task",        icon:"M9 11l3 3L22 4", color:C.amber },
     call:        { type:"call",        icon:"M22 16.92v3a2 2 0 01-2.18 2A19.79 19.79 0 013.07 9.81", color:C.textMid },
   };
+  // Supabase mode: while loading (repoActivities===null) or genuinely empty,
+  // never fall back to the hardcoded DB.activityLogs mock feed — that caused
+  // the dashboard to briefly show fabricated activity that then vanished
+  // once the real (possibly empty) Supabase result arrived.
   const feedItems = repoActivities
     ? repoActivities.slice(0,6).map(a => {
         const tm = TYPE_MAP[a.type||a.entityType] || TYPE_MAP.task;
         return { ...a, ...tm, detail:a.description||a.detail, date:a.date||"—", time:a.time||"—", who:a.who||"—" };
       })
-    : DB.activityLogs.slice(-6).reverse().map((log,i) => {
+    : (AppConfig.useSupabase ? [] : DB.activityLogs.slice(-6).reverse().map((log,i) => {
         const tm = TYPE_MAP[log.entityType||"task"] || TYPE_MAP.task;
         const dt = new Date(log.createdAt||Date.now());
         return { ...log, ...tm, detail:log.description, date:dt.toLocaleDateString("tr-TR",{day:"2-digit",month:"short"}), time:dt.toLocaleTimeString("tr-TR",{hour:"2-digit",minute:"2-digit"}), who:"—" };
-      });
+      }));
 
   return (
     <Card>
@@ -2345,10 +2376,15 @@ function ActivityFeed() {
           width:1, background:C.borderLight,
         }}/>
         {actLoading  ? <LoadingState label="Yükleniyor…"/> : null}
+        {!actLoading && feedItems.length === 0 && (
+          <div style={{padding:"12px 0 4px", color:C.textFaint, fontFamily:"'DM Sans',sans-serif", fontSize:13}}>
+            Henüz aktivite kaydı yok.
+          </div>
+        )}
         {feedItems.map((a,i)=>(
           <div key={i} style={{
             display:"flex", alignItems:"flex-start", gap:14,
-            paddingBottom: i<ACTIVITIES.length-1 ? 18 : 0,
+            paddingBottom: i<feedItems.length-1 ? 18 : 0,
             position:"relative",
           }}>
             {}
@@ -9772,7 +9808,8 @@ function ToursPage({ onSelect }) {
     = useRepo("tour", "getAll");
 
   const TABS = ["Tümü","Aktif","Taslak","Arşiv"];
-  const allTours = repoTours || MOCK_TOURS;
+  // Supabase mode: never show the mock catalog while the real list is loading/empty.
+  const allTours = repoTours ?? (AppConfig.useSupabase ? [] : MOCK_TOURS);
   const filtered = allTours.filter(t => {
     const tabOk  = activeTab==="Tümü" || t.status===activeTab;
     const srchOk = !search ||
@@ -11587,9 +11624,11 @@ function GuestDetailPage({ guestId, onBack, onNavigate }) {
 
   const { data:rawCust, loading:guestLoading, error:guestError }
     = useRepo("customer", "getById", guestId);
+  // In Supabase mode, a missing/blocked record must never be masked by mock data.
+  // Mock demo data is only used when the app is genuinely running in Mock mode.
   const g = rawCust
     ? (enrichCustomer(rawCust.id) || rawCust)
-    : (MOCK_GUESTS ? MOCK_GUESTS.find(x=>x.id===guestId)||MOCK_GUESTS[0] : null);
+    : (!AppConfig.useSupabase && MOCK_GUESTS ? (MOCK_GUESTS.find(x=>x.id===guestId)||MOCK_GUESTS[0]) : null);
 
   const [activeTab, setActiveTab] = useState("genel");
 
@@ -12508,9 +12547,13 @@ function NewGuestModal({ onClose }) {
     const { error } = await mutCustG("create", {
       name, phone:phone||"", email:email||"",
       initials:name.split(" ").map(w=>w[0]).join("").slice(0,2).toUpperCase(),
-      flag:"🌍", country, language:lang, sourceId:srcObj?.id||"SRC-01", notes,
+      flag:"🌍", country, language:lang, sourceId:resolvedSourceId, notes,
     });
-    if (error) { showToast("Hata: "+error); return; }
+    if (error) {
+      console.error('[NewGuestModal] customer create failed:', error);
+      showToast("Misafir kaydedilemedi: " + error);
+      return;
+    }
     showToast("Misafir oluşturuldu ✓"); onClose();
   }
   return (
@@ -12732,8 +12775,18 @@ function getSB() {
 
 async function _sbLog(type, id, action, desc) {
   const sb = getSB(); if (!sb || !id) return;
-  try { await sb.from('activity_logs').insert({entity_type:type,entity_id:id,action,description:desc}); }
-  catch(_) {}
+  try {
+    let uid = (typeof _authCache !== 'undefined' && _authCache?.session?.user?.id) || null;
+    if (!uid) {
+      const { data } = await sb.auth.getSession();
+      uid = data?.session?.user?.id || null;
+    }
+    const { error } = await sb.from('activity_logs')
+      .insert({ entity_type:type, entity_id:id, action, description:desc, performed_by:uid });
+    if (error) console.error('[_sbLog] activity_logs insert failed:', error.message, { type, id, action });
+  } catch(e) {
+    console.error('[_sbLog] unexpected error:', e);
+  }
 }
 
 function mapCustomerFromDB(r) {
@@ -13044,6 +13097,16 @@ async function loadStaffData(userId) {
   } catch(_) { return null; }
 }
 
+// A hung Supabase call (paused project, unreachable network, bad API key)
+// must not leave the app stuck in authLoading forever. Race any session
+// check against a deterministic timeout so the auth flow always finishes.
+function _withTimeout(promise, ms, label) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error(`${label || 'İşlem'} zaman aşımına uğradı (${ms}ms)`)), ms)),
+  ]);
+}
+
 // Module-level auth cache — survives re-renders and page navigation
 let _authCache = null;
 let _authListeners = [];
@@ -13057,6 +13120,7 @@ function useAuth() {
   const session    = authState.session;
   const staff      = authState.staff;
   const authLoading = authState.authLoading;
+  const authError   = authState.authError || null;
 
   function updateAuth(patch) {
     _authCache = { ...(_authCache || { session:null, staff:null, authLoading:true }), ...patch };
@@ -13091,15 +13155,17 @@ function useAuth() {
 
     async function init() {
       try {
-        const { data:{ session:s } } = await sb.auth.getSession();
-        const st = s?.user ? await loadStaffData(s.user.id) : null;
-        const newState = { session:s, staff:st, authLoading:false };
+        const { data:{ session:s } } = await _withTimeout(sb.auth.getSession(), 12000, 'Oturum kontrolü');
+        const st = s?.user ? await _withTimeout(loadStaffData(s.user.id), 12000, 'Personel profili') : null;
+        const newState = { session:s, staff:st, authLoading:false, authError:null };
         _authCache = newState;
         setAuthState(newState);
         _notifyAuthListeners();
       } catch(e) {
-        console.error('[Auth]', e);
-        const newState = { session:null, staff:null, authLoading:false };
+        // Never grant access on failure/timeout — fail closed to the login
+        // screen, but always finish loading so the app doesn't hang forever.
+        console.error('[Auth] session check failed:', e);
+        const newState = { session:null, staff:null, authLoading:false, authError:e.message };
         _authCache = newState;
         setAuthState(newState);
         _notifyAuthListeners();
@@ -13108,11 +13174,19 @@ function useAuth() {
     init();
 
     const { data:{ subscription } } = sb.auth.onAuthStateChange(async (_ev, s) => {
-      const st = s?.user ? await loadStaffData(s.user.id) : null;
-      const newState = { session:s, staff:st, authLoading:false };
-      _authCache = newState;
-      setAuthState(newState);
-      _notifyAuthListeners();
+      try {
+        const st = s?.user ? await _withTimeout(loadStaffData(s.user.id), 12000, 'Personel profili') : null;
+        const newState = { session:s, staff:st, authLoading:false, authError:null };
+        _authCache = newState;
+        setAuthState(newState);
+        _notifyAuthListeners();
+      } catch(e) {
+        console.error('[Auth] onAuthStateChange failed:', e);
+        const newState = { session:null, staff:null, authLoading:false, authError:e.message };
+        _authCache = newState;
+        setAuthState(newState);
+        _notifyAuthListeners();
+      }
     });
     return () => {
       subscription?.unsubscribe?.();
@@ -13159,13 +13233,13 @@ function useAuth() {
   const rawRole = staff?.role || 'admin';
   const role    = ROLE_MAP[rawRole] || rawRole;
 
-  return { session, staff, authLoading, login, logout, displayName, initials, role, isLoggedIn:!!session };
+  return { session, staff, authLoading, authError, login, logout, displayName, initials, role, isLoggedIn:!!session };
 }
 
 const AuthContext = createContext(null);
 function useAuthContext() { return useContext(AuthContext); }
 
-function LoginPage({ onLogin }) {
+function LoginPage({ onLogin, connectionError }) {
   const [email,      setEmail]      = useState("");
   const [password,   setPassword]   = useState("");
   const [error,      setError]      = useState("");
@@ -13241,6 +13315,27 @@ function LoginPage({ onLogin }) {
         </div>
 
         {}
+        {!error && connectionError && (
+          <div style={{
+            padding:"11px 14px", borderRadius:8, marginBottom:20,
+            background:"#FEF3E2", border:"1px solid #FDE0A6",
+            display:"flex", flexDirection:"column", gap:8,
+          }}>
+            <div style={{display:"flex", alignItems:"center", gap:9}}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#B45309" strokeWidth="2" strokeLinecap="round">
+                <path d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
+              </svg>
+              <span style={{fontSize:13, color:"#B45309", fontFamily:"'DM Sans',sans-serif"}}>
+                Oturum durumu doğrulanamadı. Supabase bağlantısı kontrol edilemedi.
+              </span>
+            </div>
+            <button onClick={()=>window.location.reload()} style={{
+              alignSelf:"flex-start", padding:"6px 12px", borderRadius:6, cursor:"pointer",
+              border:"1px solid #FDE0A6", background:"#fff", color:"#B45309",
+              fontSize:12, fontWeight:500, fontFamily:"'DM Sans',sans-serif",
+            }}>Tekrar Dene</button>
+          </div>
+        )}
         {error && (
           <div style={{
             padding:"11px 14px", borderRadius:8, marginBottom:20,
@@ -13473,7 +13568,10 @@ function AuthGuard({ children }) {
   }
 
   if (!auth.isLoggedIn) {
-    return <LoginPage onLogin={()=>{ if (typeof NAV_REF.fn === 'function') NAV_REF.fn('/dashboard'); }} />;
+    return <LoginPage
+      onLogin={()=>{ if (typeof NAV_REF.fn === 'function') NAV_REF.fn('/dashboard'); }}
+      connectionError={auth.authError}
+    />;
   }
 
   return (
@@ -13838,8 +13936,8 @@ function NewLeadModal({ onClose, onSuccess }) {
       onSuccess && onSuccess(newLead);
       onClose();
     } catch(err) {
-      console.error('[NewLeadModal]', err);
-      showToast("Talep oluşturulurken bir hata oluştu.");
+      console.error('[NewLeadModal] create failed:', err);
+      showToast("Talep oluşturulurken bir hata oluştu: " + (err?.message || err));
     } finally {
       setBusy(false);
     }
