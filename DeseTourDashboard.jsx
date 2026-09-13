@@ -10735,12 +10735,18 @@ const _COUNTRY_FLAG = {
   "Kanada":"🇨🇦","Brezilya":"🇧🇷","Diğer":"🌍",
 };
 
-function calculateReportMetrics(period, leads, quotes, reservations, payments, customers) {
+function calculateReportMetrics(period, leads, quotes, reservations, payments, customers, sources) {
   const _leads   = leads        ?? [];
   const _quotes  = quotes       ?? [];
   const _res     = reservations ?? [];
   const _pays    = payments     ?? [];
   const _custs   = customers    ?? [];
+  // Source lookup must use the live sources list — DB.sources is mock-only
+  // data with mock ids, so it never matched a real Supabase source_id and
+  // every real lead/quote/reservation fell into "Diğer" regardless of its
+  // actual source.
+  const _sources = sources && sources.length ? sources : DB.sources;
+  const srcName  = (id) => { const s=_sources.find(x=>x.id===id); return s?.name || s?.label || "Diğer"; };
 
   const fLeads = filterByDateRange(_leads,   "createdAt",  period);
   const fQuotes= filterByDateRange(_quotes,  "createdAt",  period);
@@ -10760,25 +10766,19 @@ function calculateReportMetrics(period, leads, quotes, reservations, payments, c
 
   const sourceMap = {};
   fLeads.forEach(l => {
-    const src = l.sourceId
-      ? (DB.sources.find(s=>s.id===l.sourceId)?.label || "Diğer")
-      : (l.importType === "manual" ? "Manuel" : "Diğer");
+    const src = l.sourceId ? srcName(l.sourceId) : (l.importType === "manual" ? "Manuel" : "Diğer");
     if (!sourceMap[src]) sourceMap[src] = { source:src, leads:0, quotes:0, reservations:0, revenue:0 };
     sourceMap[src].leads++;
   });
   fQuotes.forEach(q => {
     const lead = _leads.find(l=>l.id===q.leadId);
-    const src  = lead?.sourceId
-      ? (DB.sources.find(s=>s.id===lead.sourceId)?.label || "Diğer")
-      : "Diğer";
+    const src  = lead?.sourceId ? srcName(lead.sourceId) : "Diğer";
     if (!sourceMap[src]) sourceMap[src] = { source:src, leads:0, quotes:0, reservations:0, revenue:0 };
     sourceMap[src].quotes++;
   });
   fRes.forEach(r => {
     const lead = _leads.find(l=>l.id===r.leadId);
-    const src  = lead?.sourceId
-      ? (DB.sources.find(s=>s.id===lead.sourceId)?.label || "Diğer")
-      : "Diğer";
+    const src  = lead?.sourceId ? srcName(lead.sourceId) : "Diğer";
     if (!sourceMap[src]) sourceMap[src] = { source:src, leads:0, quotes:0, reservations:0, revenue:0 };
     sourceMap[src].reservations++;
     sourceMap[src].revenue += parseFloat(r.total||0);
@@ -10982,11 +10982,12 @@ function ReportsPage() {
   const { data:rRes,   loading:rResLoading,  error:rResError,   reload:reloadRes }   = useRepo("reservation", "getAll");
   const { data:rPays,  loading:rPaysLoading, error:rPaysError,  reload:reloadPays }  = useRepo("payment",     "getAll");
   const { data:rCusts }                                                               = useRepo("customer",    "getAll");
+  const { sources } = useSources();
   const isLoading = rLeadsLoading || rResLoading || rPaysLoading;
 
   const metrics = useMemo(
-    () => calculateReportMetrics(period, rLeads, DB.quotes, rRes, rPays, rCusts),
-    [period, rLeads, rRes, rPays, rCusts]
+    () => calculateReportMetrics(period, rLeads, DB.quotes, rRes, rPays, rCusts, sources),
+    [period, rLeads, rRes, rPays, rCusts, sources]
   );
   const kpi       = metrics.kpi;
   const convRate  = kpi.leads > 0 ? Math.round(kpi.reservations/kpi.leads*100) : 0;
@@ -12934,7 +12935,7 @@ function mapLeadFromDB(r) {
     initials:fullName.split(' ').map(w=>w[0]||'').join('').slice(0,2).toUpperCase(),
     country:c?.nationality||'', language:c?.language||'', flag:'🌍',
     status:_S2A[r.status]||r.status||'Yeni', sourceId:r.source_id||null,
-    source:r.source?.label||r.source?.name||r.source?.slug||'',
+    source:r.source?.name||r.source?.label||r.source?.slug||'',
     assigneeId:r.assigned_to||null, assignee:a?.full_name||'',
     assigneeInitials:(a?.full_name||'').split(' ').map(w=>w[0]||'').join('').slice(0,2).toUpperCase(),
     currency:r.currency||'EUR', notes:r.notes||'',
@@ -13055,7 +13056,7 @@ const SupabaseCustomerRepo = {
 };
 
 const SupabaseLeadRepo = {
-  async getAll(f={}){const sb=getSB();if(!sb)return LeadRepository.getAll(f);let q=sb.from('leads').select('*,customer:customers(id,full_name,email,phone,nationality,language),source:sources(id,slug,label),assignee:staff_users!assigned_to(id,full_name)').order('created_at',{ascending:false});if(f?.status)q=q.eq('status',_A2S[f.status]||f.status);if(f?.customerId)q=q.eq('customer_id',f.customerId);if(f?.search)q=q.or(`contact_name.ilike.%${f.search}%,destination.ilike.%${f.search}%,lead_number.ilike.%${f.search}%`);const{data,error}=await q;if(error)throw new Error(error.message);return(data||[]).map(mapLeadFromDB);},
+  async getAll(f={}){const sb=getSB();if(!sb)return LeadRepository.getAll(f);let q=sb.from('leads').select('*,customer:customers(id,full_name,email,phone,nationality,language),source:sources(id,slug,name),assignee:staff_users!assigned_to(id,full_name)').order('created_at',{ascending:false});if(f?.status)q=q.eq('status',_A2S[f.status]||f.status);if(f?.customerId)q=q.eq('customer_id',f.customerId);if(f?.search)q=q.or(`contact_name.ilike.%${f.search}%,destination.ilike.%${f.search}%,lead_number.ilike.%${f.search}%`);const{data,error}=await q;if(error)throw new Error(error.message);return(data||[]).map(mapLeadFromDB);},
   async getById(id){const sb=getSB();if(!sb)return LeadRepository.getById(id);const{data,error}=await sb.from('leads').select('*,customer:customers(*),source:sources(*),assignee:staff_users!assigned_to(id,full_name)').eq('id',id).maybeSingle();if(error)throw new Error(error.message);return mapLeadFromDB(data);},
   async getByCustomerId(cid){const sb=getSB();if(!sb)return LeadRepository.getByCustomerId(cid);const{data,error}=await sb.from('leads').select('*').eq('customer_id',cid).order('created_at',{ascending:false});if(error)throw new Error(error.message);return(data||[]).map(mapLeadFromDB);},
   async create(d){const sb=getSB();if(!sb)return LeadRepository.create(d);let ln=`LEAD-${new Date().getFullYear()}-${String(Date.now()).slice(-4)}`;try{const{data:ref}=await sb.rpc('next_ref_number',{prefix:'LEAD',table_name:'leads',number_col:'lead_number'});if(ref)ln=ref;}catch(_){}const row={lead_number:ln,customer_id:d.customerId||null,contact_name:d.name||d.contact_name||'Bilinmiyor',contact_phone:d.phone||null,contact_email:d.email||null,status:'new',source_id:d.sourceId||null,import_type:d.importType||'manual',destination:d.tour||d.destination||null,travel_start_date:d.travelStart||null,pax_adult:parseInt(d.paxAdult)||1,pax_child:parseInt(d.paxChild)||0,currency:d.currency||'EUR',notes:d.notes||null,assigned_to:d.assigneeId||null};const{data:c,error}=await sb.from('leads').insert(row).select().single();if(error)throw new Error(error.message);try{await _sbLog('lead',c.id,'created',`Yeni talep: ${c.destination||c.lead_number}`);}catch(_){}return mapLeadFromDB(c);},

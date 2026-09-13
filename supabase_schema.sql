@@ -831,7 +831,8 @@ INSERT INTO public.sources (id, name, slug, is_active) VALUES
   (gen_random_uuid(), 'Referans',    'referral',    TRUE),
   (gen_random_uuid(), 'Yüz Yüze',   'in_person',   TRUE),
   (gen_random_uuid(), 'Manuel',      'manual',      TRUE),
-  (gen_random_uuid(), 'Diğer',       'other',       TRUE)
+  (gen_random_uuid(), 'Diğer',       'other',       TRUE),
+  (gen_random_uuid(), 'Civitatis',   'civitatis',   TRUE)
 ON CONFLICT (slug) DO NOTHING;
 
 -- Settings (system configuration)
