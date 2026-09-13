@@ -1449,49 +1449,26 @@ const MetricsService = {
   },
 };
 
+// NAV_TOP/NAV_BOT badges default to null (no badge shown). Real counts are
+// computed from live repo data inside Sidebar/SidebarInner and merged in at
+// render time — never hardcode a badge number here, and never fall back to
+// a mock/demo count when real data is unavailable.
 const NAV_TOP = [
   { id:"dashboard",    label:"Ana Sayfa",      badge:null, icon:"M3 9.5L12 3l9 6.5V20a1 1 0 01-1 1H4a1 1 0 01-1-1V9.5z M9 21V12h6v9" },
-  { id:"leads",        label:"Talepler",        badge:DB.leads.filter(l=>["Yeni","İletişimde"].includes(l.status)).length,    icon:"M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" },
+  { id:"leads",        label:"Talepler",        badge:null, icon:"M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" },
   { id:"customers",    label:"Misafirler",      badge:null, icon:"M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2 M23 21v-2a4 4 0 00-3-3.87 M16 3.13a4 4 0 010 7.75" },
-  { id:"quotes",       label:"Teklifler",       badge:DB.quotes.filter(q=>q.status==="Taslak").length,    icon:"M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z M14 2v6h6 M16 13H8 M16 17H8 M10 9H8" },
+  { id:"quotes",       label:"Teklifler",       badge:null, icon:"M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z M14 2v6h6 M16 13H8 M16 17H8 M10 9H8" },
   { id:"reservations", label:"Rezervasyonlar",  badge:null, icon:"M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" },
   { id:"calendar",     label:"Takvim",          badge:null, icon:"M8 2v4M16 2v4M3 10h18M21 8a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2h14a2 2 0 002-2V8z" },
   { id:"tours",        label:"Turlar",          badge:null, icon:"M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z M9 22V12h6v10" },
 ];
 const NAV_BOT = [
-  { id:"tasks",      label:"Görevler",       badge:DB.tasks.filter(t=>t.status!=="Tamamlandı"&&t.dueDateRaw<=0).length,    icon:"M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" },
+  { id:"tasks",      label:"Görevler",       badge:null, icon:"M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" },
   { id:"payments",   label:"Ödemeler",      badge:null, icon:"M2 9a2 2 0 012-2h16a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V9zM2 13h20" },
-  { id:"messages",   label:"Mesajlar",      badge:7,   icon:"M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" },
-  { id:"reminders",  label:"Hatırlatmalar", badge:5,    icon:"M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0" },
+  { id:"messages",   label:"Mesajlar",      badge:null, icon:"M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" },
+  { id:"reminders",  label:"Hatırlatmalar", badge:null, icon:"M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0" },
   { id:"reports",    label:"Raporlar",      badge:null, icon:"M18 20V10M12 20V4M6 20v-6" },
   { id:"settings",   label:"Ayarlar",       badge:null, icon:"M12 15a3 3 0 100-6 3 3 0 000 6z M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" },
-];
-
-const URGENT = [
-  {
-    id:1, level:"high",
-    title:"Sarah Johnson için ödeme takibi yapılmalı",
-    sub:"Private Istanbul Experience · 22 Haz · €1.200 bekliyor",
-    tag:"Ödeme", tagColor:C.red, tagBg:C.redBg,
-    ago:"2 saat önce",
-    icon:"M2 9a2 2 0 012-2h16a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V9zM2 13h20",
-  },
-  {
-    id:2, level:"high",
-    title:"Emma Brown rezervasyonu için rehber atanmalı",
-    sub:"Private Istanbul Experience · 25 Haz · 6 kişi",
-    tag:"Rehber", tagColor:C.blue, tagBg:C.blueBg,
-    ago:"4 saat önce",
-    icon:"M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2 M23 21v-2a4 4 0 00-3-3.87 M16 3.13a4 4 0 010 7.75",
-  },
-  {
-    id:3, level:"medium",
-    title:"Michael Green için teklif hazırlanmalı",
-    sub:"Kapadokya Turu · 3 kişi · Kaynak: Instagram",
-    tag:"Teklif", tagColor:C.amber, tagBg:C.amberBg,
-    ago:"1 gün önce",
-    icon:"M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z M14 2v6h6 M16 13H8 M16 17H8 M10 9H8",
-  },
 ];
 
 const TODAY_TOURS = DB.reservations
@@ -1509,40 +1486,6 @@ const TODAY_TOURS = DB.reservations
       guideStatus: r.guide ? "Rehber Atandı" : "Rehber Atanmadı", ...gm,
     };
   }); // derived from DB
-
-const UPCOMING_RESERVATIONS = DB.reservations
-  .filter(r => !["Tamamlandı","İptal"].includes(r.opStatus))
-  .slice(0, 5)
-  .map(r => {
-    const cust = getCustomerById(r.customerId);
-    return {
-      date:r.date, day:"", customer:r.tour, flag:cust?.flag||"🏳",
-      pax:r.pax, guide:r.guide||"Atanmadı",
-      payStatus:r.payStatus, resId:r.id,
-    };
-  }); // derived from DB
-
-const ACTIVITIES = DB.activityLogs
-  .slice(-6)
-  .reverse()
-  .map(log => {
-    const typeMap = {
-      lead:        { type:"lead",    icon:"M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01", color:C.blue },
-      quote:       { type:"quote",   icon:"M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z M14 2v6h6", color:C.amber },
-      payment:     { type:"payment", icon:"M2 9a2 2 0 012-2h16a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V9zM2 13h20", color:C.green },
-      reservation: { type:"reservation", icon:"M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11", color:C.navy },
-      call:        { type:"call",    icon:"M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07", color:C.textMuted },
-    };
-    const meta = typeMap[log.entityType] || typeMap.lead;
-    const staff = DB.staff.find(s=>s.id===log.performedBy);
-    return {
-      ...meta,
-      action: log.description,
-      who: staff?.name || log.performedBy,
-      ago: log.createdAt.includes("T") ? log.createdAt.split("T")[0] : log.createdAt,
-      entityId: log.entityId,
-    };
-  }); // derived from DB.activityLogs
 
 function Ic({ d, size=16, sw=1.6 }) {
   return (
@@ -1639,7 +1582,7 @@ function NavItem({ item, currentBase }) {
         fontSize:13, fontWeight:on?500:400, flex:1, letterSpacing:"0.01em",
         fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap",
       }}>{item.label}</span>}
-      {!item._collapsed && item.badge && (
+      {!item._collapsed && item.badge > 0 && (
         <span style={{
           minWidth:18, height:18, borderRadius:99, padding:"0 5px",
           display:"inline-flex", alignItems:"center", justifyContent:"center",
@@ -1651,9 +1594,10 @@ function NavItem({ item, currentBase }) {
   );
 }
 
-function SidebarInner({ currentBase, onNavItem }) {
+function SidebarInner({ currentBase, onNavItem, liveBadges }) {
   const auth = getAuthContext();
   const role = auth.role;
+  const badgeFor = (it) => (liveBadges && liveBadges[it.id] !== undefined) ? liveBadges[it.id] : it.badge;
 
   function visibleItems(items) {
     return items.filter(it => canAccess(role, it.id));
@@ -1677,7 +1621,7 @@ function SidebarInner({ currentBase, onNavItem }) {
         />
         <div>
           <div style={{fontSize:13.5, fontWeight:600, color:C.ivory, fontFamily:"'Playfair Display',serif", lineHeight:1.2}}>Dese Tour</div>
-          <div style={{fontSize:10, color:"rgba(248,245,238,0.45)", fontFamily:"'DM Sans',sans-serif"}}>Operations Center</div>
+          <div style={{fontSize:10, color:"rgba(248,245,238,0.45)", fontFamily:"'DM Sans',sans-serif"}}>Operasyon Merkezi</div>
         </div>
       </div>
 
@@ -1701,7 +1645,7 @@ function SidebarInner({ currentBase, onNavItem }) {
                 <path d={it.icon}/>
               </svg>
               <span style={{fontSize:13, fontWeight:currentBase===it.id?500:400, fontFamily:"'DM Sans',sans-serif", flex:1, whiteSpace:"nowrap"}}>{it.label}</span>
-              {(()=>{ const b = it.id==="messages" ? (typeof MOCK_CONVERSATIONS!=="undefined"?MOCK_CONVERSATIONS.reduce((s,c)=>s+c.unread,0):it.badge) : it.badge; return b ? <span style={{minWidth:18,height:18,borderRadius:99,padding:"0 5px",display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:10.5,fontWeight:600,background:"rgba(184,151,58,0.18)",color:C.goldLight}}>{b}</span> : null; })()}
+              {badgeFor(it) ? <span style={{minWidth:18,height:18,borderRadius:99,padding:"0 5px",display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:10.5,fontWeight:600,background:"rgba(184,151,58,0.18)",color:C.goldLight}}>{badgeFor(it)}</span> : null}
             </button>
           ))}
         </div>
@@ -1723,7 +1667,7 @@ function SidebarInner({ currentBase, onNavItem }) {
                 <path d={it.icon}/>
               </svg>
               <span style={{fontSize:13, fontWeight:currentBase===it.id?500:400, fontFamily:"'DM Sans',sans-serif", flex:1, whiteSpace:"nowrap"}}>{it.label}</span>
-              {it.badge ? <span style={{minWidth:18,height:18,borderRadius:99,padding:"0 5px",display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:10.5,fontWeight:600,background:"rgba(184,151,58,0.18)",color:C.goldLight}}>{it.badge}</span> : null}
+              {badgeFor(it) ? <span style={{minWidth:18,height:18,borderRadius:99,padding:"0 5px",display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:10.5,fontWeight:600,background:"rgba(184,151,58,0.18)",color:C.goldLight}}>{badgeFor(it)}</span> : null}
             </button>
           ))}
         </div>
@@ -1765,6 +1709,27 @@ function Sidebar({ currentBase, collapsed, onToggle, mobileOpen, onMobileClose }
   const { isMobile } = useBreakpoint();
   const W = collapsed ? 64 : 208;
 
+  // Real sidebar badge counts — computed from live repo data (real Supabase
+  // rows in production, mock rows in demo mode via the same useRepo/mock
+  // fallback every other page already uses). Never hardcoded, never a mock
+  // fallback shown as if real. A 0 count renders no badge at all, since
+  // NavItem/SidebarInner already treat a falsy badge as "don't show".
+  const { data:navLeads }     = useRepo("lead",     "getAll");
+  const { data:navQuotes }    = useRepo("quote",    "getAll");
+  const { data:navTasks }     = useRepo("task",     "getAll");
+  const { data:navReminders } = useRepo("reminder", "getAll");
+  const liveBadges = {
+    leads:     (navLeads||[]).filter(l=>l.status==="Yeni").length,
+    quotes:    (navQuotes||[]).filter(q=>q.status==="Taslak").length,
+    tasks:     (navTasks||[]).filter(t=>t.status!=="Tamamlandı" && t.status!=="İptal").length,
+    reminders: (navReminders||[]).filter(r=>r.status==="Açık").length,
+    // Messages has no real backing table/repo at all (MessageRepository is
+    // mock-only, never wired into getActiveRepo) — never fabricate a count
+    // for it; always hide the badge.
+    messages:  0,
+  };
+  const withLiveBadge = (it) => (liveBadges[it.id] !== undefined) ? { ...it, badge: liveBadges[it.id] } : it;
+
   // Lock body scroll while the mobile drawer is open so the page behind it
   // can't be scrolled/dragged — the drawer must feel modal, not overlaid.
   useEffect(() => {
@@ -1797,7 +1762,7 @@ function Sidebar({ currentBase, collapsed, onToggle, mobileOpen, onMobileClose }
           boxShadow:"4px 0 24px rgba(0,0,0,0.35)",
           visibility: mobileOpen ? "visible" : "hidden",
         }}>
-          <SidebarInner currentBase={currentBase} onNavItem={onMobileClose}/>
+          <SidebarInner currentBase={currentBase} onNavItem={onMobileClose} liveBadges={liveBadges}/>
         </aside>
       </>
     );
@@ -1853,14 +1818,14 @@ function Sidebar({ currentBase, collapsed, onToggle, mobileOpen, onMobileClose }
           fontSize:9, letterSpacing:"0.16em", textTransform:"uppercase",
           color:"rgba(201,168,76,0.75)", fontFamily:"'DM Sans',sans-serif", fontWeight:500,
           marginTop:11, paddingLeft:2,
-        }}>Operations Center</div>}
+        }}>Operasyon Merkezi</div>}
       </div>
       <nav style={{padding:"12px 10px 0", display:"flex", flexDirection:"column", gap:2}}>
-        {NAV_TOP.map(it=><NavItem key={it.id} item={{...it,_collapsed:collapsed}} currentBase={currentBase}/>)}
+        {NAV_TOP.map(it=><NavItem key={it.id} item={{...withLiveBadge(it),_collapsed:collapsed}} currentBase={currentBase}/>)}
       </nav>
       <div style={{height:1, background:"rgba(255,255,255,0.07)", margin:"12px 18px"}}/>
       <nav style={{padding:"0 10px", display:"flex", flexDirection:"column", gap:2}}>
-        {NAV_BOT.map(it=><NavItem key={it.id} item={{...it,_collapsed:collapsed}} currentBase={currentBase}/>)}
+        {NAV_BOT.map(it=><NavItem key={it.id} item={{...withLiveBadge(it),_collapsed:collapsed}} currentBase={currentBase}/>)}
 
         {}
         <div style={{padding:"8px 10px", borderTop:"1px solid rgba(255,255,255,0.07)", marginTop:6}}>
@@ -10280,7 +10245,7 @@ function SettingsPage() {
         <div>
           <h1 style={{margin:0, fontSize:24, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif", marginBottom:4}}>Ayarlar</h1>
           <p style={{margin:0, fontSize:13.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif"}}>
-            Dese Tour Operations Center sistem ayarlarını yönetin.
+            Dese Tour Operasyon Merkezi sistem ayarlarını yönetin.
           </p>
         </div>
         <div style={{
@@ -13453,16 +13418,22 @@ function LoginPage({ onLogin, connectionError }) {
         {}
         <div style={{textAlign:"center", marginBottom:32}}>
           <div style={{marginBottom:14}}>
-            {/* Transparent-background export of the same logo asset used
-                elsewhere — the original file is a flattened JPEG with a
-                black canvas, which shows as a black box on this white
-                card. See seffafdeselogo-transparent.png. */}
-            <img src="/seffafdeselogo-transparent.png" alt="Dese Tour"
+            {/* Re-extracted transparent wordmark — the earlier transparent
+                export still left the letter interiors mottled/holed (the
+                source JPEG's brushed-texture shading dips to near-black in
+                places, which a simple brightness threshold treated as
+                background). dese-logo-mark.png fixes this with a
+                flood-fill from the image border so only pixels actually
+                connected to the outer black canvas are cut out — true
+                enclosed counters (the D, e, e) stay transparent, while
+                small interior dark texture speckles are inpainted with
+                the surrounding letter color instead of turning transparent. */}
+            <img src="/dese-logo-mark.png" alt="Dese Tour"
               style={{height:64, width:"auto"}}
             />
           </div>
           <div style={{fontSize:13, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>
-            Operations Center'a hoş geldiniz
+            Operasyon Merkezi'ne hoş geldiniz
           </div>
         </div>
 
@@ -13657,7 +13628,7 @@ function LoginPage({ onLogin, connectionError }) {
         )}
 
         <div style={{textAlign:"center", marginTop:20, fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>
-          Dese Tour Operations Center v1.0
+          Dese Tour Operasyon Merkezi v1.0
         </div>
       </div>
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
@@ -15413,7 +15384,7 @@ const PDFService = {
       title:    filename.replace('.pdf', ''),
       subject:  'Dese Tour Private Experience Proposal',
       author:   'Dese Tour',
-      creator:  'Dese Tour Operations Center',
+      creator:  'Dese Tour Operasyon Merkezi',
     });
 
     return {
@@ -16274,7 +16245,7 @@ function MobileMorePage({ navigate }) {
       </button>
 
       <div style={{ textAlign:"center", fontSize:11, color:C.textFaint, fontFamily:"'DM Sans',sans-serif" }}>
-        Dese Tour Operations Center · v1.0
+        Dese Tour Operasyon Merkezi · v1.0
       </div>
     </div>
   );
