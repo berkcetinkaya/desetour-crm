@@ -5697,6 +5697,7 @@ function GuideChip({ name }) {
 
 /* -- NewReservationModal -------------------------------------------- */
 function NewReservationModal({ onClose, onSuccess }) {
+  const { isMobile } = useBreakpoint();
   const { mutate: mutRes } = useRepoMutation("reservation");
   const { data: custList } = useRepo("customer", "getAll");
   const { data: tourList } = useRepo("tour",     "getAll");
@@ -5734,8 +5735,8 @@ function NewReservationModal({ onClose, onSuccess }) {
   }
 
   return (
-    <Modal title="Yeni Rezervasyon" onClose={onClose} onSubmit={handleSubmit}
-      submitLabel={busy ? "Kaydediliyor..." : "Rezervasyonu Kaydet"}>
+    <FormShell isMobile={isMobile} title="Yeni Rezervasyon" onClose={onClose} onSubmit={handleSubmit}
+      submitLabel="Rezervasyonu Kaydet" submitting={busy}>
       <FGrid>
         <FRow label="Musteri" required error={errs.custId}>
           <select value={custId} onChange={e=>setCustId(e.target.value)}
@@ -5769,7 +5770,7 @@ function NewReservationModal({ onClose, onSuccess }) {
       <FRow label="Notlar" full>
         <FTextArea value={notes} onChange={setNotes} rows={3}/>
       </FRow>
-    </Modal>
+    </FormShell>
   );
 }
 function ReservationsPage({ onSelect }) {
@@ -11155,7 +11156,7 @@ function ReportsPage() {
       </div>
 
       {}
-      <div style={{display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))", gap:12}}>
+      <div className="rsp-stat-grid-1" style={{display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))", gap:12}}>
         <RpKpiCard label="Toplam Talep"           value={kpi.leads}                             icon="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"                                                  color={C.blue}  bg={C.blueBg}   sub={`${period} döneminde`}/>
         <RpKpiCard label="Gönderilen Teklif"      value={kpi.quotes}                            icon="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z M14 2v6h6"                                    color={C.amber} bg={C.amberBg}  sub={`${safePct(kpi.quotes, kpi.leads)} talep → teklif`}/>
         <RpKpiCard label="Kesinleşen Rezervasyon" value={kpi.reservations}                      icon="M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"                              color={C.green} bg={C.greenBg}  sub={`${kpi.completed} tur tamamlandı`}/>
@@ -12703,6 +12704,7 @@ function MessagesPage() {
 }
 
 function NewGuestModal({ onClose }) {
+  const { isMobile } = useBreakpoint();
   const { getSourceId, sourceOptions } = useSources();
   const [name,setName]=useState(""); const [phone,setPhone]=useState(""); const [email,setEmail]=useState("");
   const [country,setCountry]=useState("Avustralya"); const [lang,setLang]=useState("İngilizce");
@@ -12727,8 +12729,8 @@ function NewGuestModal({ onClose }) {
     showToast("Misafir oluşturuldu ✓"); onClose();
   }
   return (
-    <Modal title="Yeni Misafir Ekle" onClose={onClose} onSubmit={handleSubmit}
-      submitLabel={guestMut?"Kaydediliyor…":"Misafiri Kaydet"}>
+    <FormShell isMobile={isMobile} title="Yeni Misafir Ekle" onClose={onClose} onSubmit={handleSubmit}
+      submitLabel="Misafiri Kaydet" submitting={guestMut}>
       <FGrid>
         <FRow label="Ad Soyad" required error={errs.name}><FText value={name} onChange={setName} placeholder="Sarah Johnson"/></FRow>
         <FRow label="Telefon"><FText value={phone} onChange={setPhone} placeholder="+90 555 000 0000" mono/></FRow>
@@ -12738,7 +12740,7 @@ function NewGuestModal({ onClose }) {
         <FRow label="Kaynak"><FSelect value={source} onChange={setSource} options={sourceOptions}/></FRow>
       </FGrid>
       <FRow label="Notlar"><FTextArea value={notes} onChange={setNotes} placeholder="Misafir hakkında notlar…"/></FRow>
-    </Modal>
+    </FormShell>
   );
 }
 
@@ -12854,6 +12856,7 @@ function NewReminderModal({ onClose }) {
 }
 
 function NewPaymentModal({ onClose }) {
+  const { isMobile } = useBreakpoint();
   const [custId,setCustId]=useState(DB.customers[0]?.id||"");
   const [resId,setResId]=useState("");
   const [amount,setAmount]=useState("");
@@ -12877,8 +12880,8 @@ function NewPaymentModal({ onClose }) {
     showToast("Ödeme kaydedildi ✓"); onClose();
   }
   return (
-    <Modal title="Ödeme Kaydı Ekle" onClose={onClose} onSubmit={handleSubmit}
-      submitLabel={payMut?"Kaydediliyor…":"Ödemeyi Kaydet"}>
+    <FormShell isMobile={isMobile} title="Ödeme Kaydı Ekle" onClose={onClose} onSubmit={handleSubmit}
+      submitLabel="Ödemeyi Kaydet" submitting={payMut}>
       <FRow label="Müşteri">
         <FSelect value={custId} onChange={v=>{setCustId(v);setResId("");}}
           options={DB.customers.map(c=>[c.id,c.name])}/>
@@ -12906,7 +12909,7 @@ function NewPaymentModal({ onClose }) {
       <FRow label="Notlar">
         <FTextArea value={notes} onChange={setNotes} placeholder="Referans numarası, not…"/>
       </FRow>
-    </Modal>
+    </FormShell>
   );
 }
 
@@ -13246,9 +13249,9 @@ function DataSourceBadge() {
 
 const ROLE_PERMISSIONS = {
   "Yönetici": null, // null = all pages
-  "Satış":    ["dashboard","leads","customers","quotes","tasks","reminders","messages","reports"],
-  "Operasyon":["dashboard","reservations","calendar","tours","tasks","reminders","payments","reports"],
-  "Rehber":   ["dashboard","calendar","reservations","tasks"],
+  "Satış":    ["dashboard","leads","customers","quotes","tasks","reminders","messages","reports","more"],
+  "Operasyon":["dashboard","reservations","calendar","tours","tasks","reminders","payments","reports","more"],
+  "Rehber":   ["dashboard","calendar","reservations","tasks","more"],
 };
 
 function canAccess(role, page) {
@@ -14072,6 +14075,7 @@ function useSources() {
   return { sources: sources || [], srcLoading, getSourceId, sourceOptions };
 }
 function NewLeadModal({ onClose, onSuccess }) {
+  const { isMobile } = useBreakpoint();
   const { getSourceId, sourceOptions } = useSources();
   const [name,    setName]    = useState("");
   const [phone,   setPhone]   = useState("");
@@ -14151,8 +14155,8 @@ function NewLeadModal({ onClose, onSuccess }) {
   }
 
   return (
-    <Modal title="Yeni Talep Ekle" onClose={onClose} onSubmit={handleSubmit}
-      submitLabel={busy?"Kaydediliyor…":"Talebi Kaydet"}>
+    <FormShell isMobile={isMobile} title="Yeni Talep Ekle" onClose={onClose} onSubmit={handleSubmit}
+      submitLabel="Talebi Kaydet" submitting={busy}>
       <FGrid>
         <FRow label="Ad Soyad" required error={errs.name}>
           <FText value={name} onChange={setName} placeholder="Sarah Johnson" error={errs.name}/>
@@ -14184,7 +14188,7 @@ function NewLeadModal({ onClose, onSuccess }) {
       <FRow label="Notlar" full>
         <FTextArea value={notes} onChange={setNotes} placeholder="Müşteri hakkında ekstra bilgi…"/>
       </FRow>
-    </Modal>
+    </FormShell>
   );
 }
 
@@ -14259,6 +14263,12 @@ function mapQuoteFromDB(r, items) {
     leadId:        r.lead_id       || null,
     customerId:    r.customer_id   || null,
     tourId:        r.tour_id       || null,
+    // Real Supabase rows never had this field, only mock data did — every
+    // consumer (QuotesPage's search filter, QuoteDetailPage) calls
+    // .toLowerCase() / renders it directly as a string, so a missing
+    // value here was a hard crash in Supabase mode, not just a blank cell.
+    customer:      r.customer?.full_name || '',
+    flag:          r.flag || '🌍',
     tour:          r.tour_name || (r.lead && r.lead.destination) || r.destination || '—',
     dateRange:     r.travel_start_date
       ? new Date(r.travel_start_date).toLocaleDateString('tr-TR',{day:'2-digit',month:'short',year:'numeric'})
@@ -15798,6 +15808,22 @@ function App() {
       return <AccessDenied page={base}/>;
     }
 
+    if (base === "more") return <MobileMorePage navigate={navigate}/>;
+
+    // ── Mobile: dedicated screens for the routes reachable from daily
+    // operations. Detail views (a specific record) still reuse the
+    // desktop detail pages, which already stack correctly on mobile —
+    // only the *list*/home-level information architecture differs.
+    if (isMobile) {
+      if (base === "dashboard") return <MobileHomePage navigate={navigate}/>;
+      if (base === "leads" && !param) return <MobileRequestsPage onSelectLead={id=>navigate('/leads/'+id)}/>;
+      if (base === "reservations" && !param) return <MobileReservationsPage onSelect={id=>navigate('/reservations/'+id)}/>;
+      if (base === "customers" && !param) return <MobileGuestsPage onSelectGuest={id=>navigate('/customers/'+id)}/>;
+      if (base === "quotes" && !param) return <MobileQuotesPage onSelectQuote={id=>navigate('/quotes/'+id)} onNewQuote={()=>navigate('/quotes/new')}/>;
+      if (base === "payments") return <MobilePaymentsPage/>;
+      if (base === "tasks" || base === "reminders") return <MobileTasksQueuePage/>;
+    }
+
     if (base === "dashboard") return <Dashboard/>;
 
     if (base === "leads" && param)
@@ -15914,47 +15940,40 @@ function App() {
         button, a { min-height: 36px; }
       `}</style>
 
-      <Sidebar
-        currentBase={base}
-        collapsed={sidebarCollapsed}
-        onToggle={()=>setSidebarCollapsed(c=>!c)}
-        mobileOpen={mobileSidebarOpen}
-        onMobileClose={()=>setMobileSidebarOpen(false)}
-      />
+      {!isMobile && (
+        <Sidebar
+          currentBase={base}
+          collapsed={sidebarCollapsed}
+          onToggle={()=>setSidebarCollapsed(c=>!c)}
+          mobileOpen={mobileSidebarOpen}
+          onMobileClose={()=>setMobileSidebarOpen(false)}
+        />
+      )}
 
       {isMobile && (
         <div style={{
           position:"fixed", top:0, left:0, right:0, zIndex:200,
           background:`linear-gradient(135deg,${C.navyDeep} 0%,${C.navy} 100%)`,
-          padding:"env(safe-area-inset-top, 0px) 12px 0",
-          height:"calc(52px + env(safe-area-inset-top, 0px))",
+          padding:"env(safe-area-inset-top, 0px) 16px 0",
+          height:"calc(48px + env(safe-area-inset-top, 0px))",
           display:"flex", alignItems:"center", justifyContent:"space-between",
           boxShadow:"0 2px 12px rgba(13,27,62,0.3)",
         }}>
-          <button onClick={()=>setMobileSidebarOpen(true)} aria-label="Menü" style={{
-            background:"rgba(255,255,255,0.1)", border:"1px solid rgba(255,255,255,0.15)",
-            borderRadius:8, width:44, height:44, cursor:"pointer",
-            display:"flex", alignItems:"center", justifyContent:"center",
-            color:C.ivory, flexShrink:0,
-          }}>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-              <path d="M3 12h18M3 6h18M3 18h18"/>
-            </svg>
-          </button>
-          <div style={{textAlign:"center"}}>
-            <div style={{fontSize:14,fontWeight:600,color:C.ivory,fontFamily:"'Playfair Display',serif"}}>Dese Tour</div>
-            <div style={{fontSize:10,color:"rgba(248,245,238,0.5)",fontFamily:"'DM Sans',sans-serif"}}>Operations Center</div>
+          <div style={{fontSize:15,fontWeight:600,color:C.ivory,fontFamily:"'Playfair Display',serif"}}>
+            {MOBILE_PAGE_TITLES[base] || "Dese Tour"}
           </div>
-          <div style={{width:44}}/>
+          <img src="/seffafdeselogo.png" alt="Dese Tour" style={{height:20, width:"auto", opacity:0.9}}/>
         </div>
       )}
 
+      {isMobile && <BottomNav active={base} navigate={navigate}/>}
+
       <main style={{
         marginLeft: isMobile ? 0 : (sidebarCollapsed ? 64 : 208),
-        marginTop: isMobile ? "calc(52px + env(safe-area-inset-top, 0px))" : 0,
+        marginTop: isMobile ? "calc(48px + env(safe-area-inset-top, 0px))" : 0,
         minHeight: isMobile ? "100dvh" : "100vh",
-        padding: isMobile ? "14px 12px calc(24px + env(safe-area-inset-bottom, 0px))" : isTablet ? "20px 18px 40px" : "26px 28px 52px",
-        background:"#EDE9DF",
+        padding: isMobile ? "14px 12px calc(68px + env(safe-area-inset-bottom, 0px))" : isTablet ? "20px 18px 40px" : "26px 28px 52px",
+        background: isMobile ? C.ivory : "#EDE9DF",
         transition:"margin-left 0.22s cubic-bezier(0.4,0,0.2,1)",
         overflowX:"hidden",
         maxWidth:"100vw",
@@ -16013,6 +16032,956 @@ function MobileCardList({ items, renderCard, emptyText }) {
     </div>
   );
   return <div>{items.map((item, i) => renderCard(item, i))}</div>;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   MOBILE PRODUCT PRIMITIVES
+   A dedicated visual/interaction language for the mobile surface —
+   calm, card-based, touch-first. Desktop components are untouched;
+   these are only ever used behind an isMobile check. All read/write
+   still goes through the same useRepo/useRepoMutation/getActiveRepo
+   plumbing as desktop — no business logic lives in this section.
+   ══════════════════════════════════════════════════════════════════════ */
+
+/* Compact status pill. tone: good|warn|bad|info|neutral */
+function MobileStatusChip({ label, tone = "neutral" }) {
+  const TONES = {
+    good:    { color:C.green,  bg:C.greenBg },
+    warn:    { color:C.amber,  bg:C.amberBg },
+    bad:     { color:C.red,    bg:C.redBg   },
+    info:    { color:C.blue,   bg:C.blueBg  },
+    gold:    { color:"#8A6D1F",bg:C.goldPale },
+    neutral: { color:C.textMuted, bg:C.ivoryDark },
+  };
+  const t = TONES[tone] || TONES.neutral;
+  return (
+    <span style={{
+      display:"inline-flex", alignItems:"center", gap:4,
+      padding:"3px 9px", borderRadius:99,
+      background:t.bg, color:t.color,
+      fontSize:11, fontWeight:600, fontFamily:"'DM Sans',sans-serif",
+      whiteSpace:"nowrap",
+    }}>{label}</span>
+  );
+}
+
+/* Elevated, rounded, restrained-shadow card — the primary "unit" of the
+   mobile product surface. One idea per card; no borders stacked on top
+   of the shadow. */
+function MobileEntityCard({ children, onClick, style }) {
+  return (
+    <div onClick={onClick} style={{
+      background:C.white, borderRadius:14,
+      padding:"14px 16px",
+      boxShadow:"0 1px 2px rgba(15,29,53,0.05), 0 1px 8px rgba(15,29,53,0.05)",
+      cursor: onClick ? "pointer" : "default",
+      WebkitTapHighlightColor:"transparent",
+      ...style,
+    }}>{children}</div>
+  );
+}
+
+/* Calm section wrapper: a small caption-style title, optional trailing
+   action, and vertically stacked content. No border/box by default —
+   sections are separated by rhythm (spacing), not chrome. */
+function MobileSection({ title, action, onAction, children, tight }) {
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap: tight ? 8 : 10 }}>
+      {(title || action) && (
+        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"0 2px" }}>
+          {title && (
+            <div style={{ fontSize:13, fontWeight:600, color:C.textMid, fontFamily:"'DM Sans',sans-serif", textTransform:"uppercase", letterSpacing:"0.04em" }}>
+              {title}
+            </div>
+          )}
+          {action && (
+            <button onClick={onAction} style={{
+              border:"none", background:"transparent", cursor:"pointer",
+              color:C.gold, fontSize:12.5, fontWeight:600, fontFamily:"'DM Sans',sans-serif",
+              padding:"4px 2px",
+            }}>{action}</button>
+          )}
+        </div>
+      )}
+      <div style={{ display:"flex", flexDirection:"column", gap:10 }}>{children}</div>
+    </div>
+  );
+}
+
+/* Sticky bottom action bar — for a page's one primary action, always
+   reachable, respecting the home-indicator safe area and (when the
+   bottom tab bar is also present) sitting above it. */
+function MobileActionBar({ children, aboveTabBar }) {
+  return (
+    <div style={{
+      position:"sticky", bottom: aboveTabBar ? 58 : 0, left:0, right:0,
+      background:"rgba(248,245,238,0.92)", backdropFilter:"blur(8px)",
+      borderTop:`1px solid ${C.borderLight}`,
+      padding:`10px 16px calc(10px + env(safe-area-inset-bottom, 0px))`,
+      display:"flex", gap:10, zIndex:40,
+      marginLeft:-12, marginRight:-12, marginBottom:-12,
+    }}>{children}</div>
+  );
+}
+
+/* Full-screen native-feeling form shell: fixed top bar (Cancel / Title /
+   Save), vertically scrolling body, page behind never scrolls. Replaces
+   the centered desktop modal on mobile — the fields passed as children
+   (FGrid/FRow/FText/etc.) and the submit handler are the same ones the
+   desktop <Modal> uses, so validation/business logic is never duplicated. */
+function MobileFullScreenForm({ title, onCancel, onSubmit, submitLabel, submitting, children }) {
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = prev; };
+  }, []);
+  return (
+    <div style={{
+      position:"fixed", inset:0, zIndex:1000, background:C.ivory,
+      display:"flex", flexDirection:"column",
+    }}>
+      {}
+      <div style={{
+        flexShrink:0, background:C.white, borderBottom:`1px solid ${C.border}`,
+        paddingTop:"env(safe-area-inset-top, 0px)",
+        display:"flex", alignItems:"center", justifyContent:"space-between",
+        padding:"calc(10px + env(safe-area-inset-top, 0px)) 8px 10px",
+      }}>
+        <button onClick={onCancel} style={{
+          border:"none", background:"transparent", cursor:"pointer",
+          color:C.textMid, fontSize:14.5, fontFamily:"'DM Sans',sans-serif",
+          padding:"8px 10px", minWidth:44,
+        }}>İptal</button>
+        <div style={{ fontSize:15.5, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif", textAlign:"center", flex:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", padding:"0 6px" }}>
+          {title}
+        </div>
+        <button onClick={onSubmit} disabled={submitting} style={{
+          border:"none", background:"transparent", cursor: submitting ? "default" : "pointer",
+          color: submitting ? C.textFaint : C.gold, fontSize:14.5, fontWeight:700,
+          fontFamily:"'DM Sans',sans-serif", padding:"8px 10px", minWidth:44,
+        }}>{submitLabel || "Kaydet"}</button>
+      </div>
+      {}
+      <div style={{ flex:1, overflowY:"auto", padding:"18px 16px calc(32px + env(safe-area-inset-bottom, 0px))" }}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+/* Chooses the desktop centered Modal or the mobile full-screen form shell
+   for the same fields/submit handler — the one place that decision is
+   made, so create/edit flows don't each re-implement it. */
+function FormShell({ isMobile, title, onClose, onSubmit, submitLabel, submitting, wide, danger, children }) {
+  if (isMobile) {
+    return (
+      <MobileFullScreenForm title={title} onCancel={onClose} onSubmit={onSubmit} submitLabel={submitting?"Kaydediliyor…":submitLabel} submitting={submitting}>
+        {children}
+      </MobileFullScreenForm>
+    );
+  }
+  return (
+    <Modal title={title} onClose={onClose} onSubmit={onSubmit} submitLabel={submitting?"Kaydediliyor…":submitLabel} wide={wide} danger={danger}>
+      {children}
+    </Modal>
+  );
+}
+
+/* Persistent bottom tab bar — the primary navigation surface on mobile.
+   Deliberately five destinations: three high-frequency daily-operations
+   routes, Calendar, and More (everything else, incl. logout). */
+const MOBILE_PAGE_TITLES = {
+  dashboard:"Bugün", leads:"Talepler", customers:"Misafirler", quotes:"Teklifler",
+  reservations:"Rezervasyonlar", calendar:"Takvim", tours:"Turlar", tasks:"Yapılacaklar",
+  payments:"Ödemeler", reminders:"Hatırlatmalar", reports:"Raporlar", settings:"Ayarlar",
+  messages:"Mesajlar", more:"Diğer",
+};
+const BOTTOM_NAV_ITEMS = [
+  { id:"dashboard",    label:"Bugün",   icon:"M3 9.5L12 3l9 6.5V20a1 1 0 01-1 1H4a1 1 0 01-1-1V9.5z M9 21V12h6v9" },
+  { id:"leads",        label:"Talepler",icon:"M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" },
+  { id:"reservations", label:"Rezerv.", icon:"M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" },
+  { id:"calendar",     label:"Takvim",  icon:"M8 2v4M16 2v4M3 10h18M21 8a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2h14a2 2 0 002-2V8z" },
+  { id:"more",         label:"Diğer",   icon:"M12 15a3 3 0 100-6 3 3 0 000 6z M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" },
+];
+function BottomNav({ active, navigate }) {
+  return (
+    <nav style={{
+      position:"fixed", left:0, right:0, bottom:0, zIndex:250,
+      background:"rgba(255,255,255,0.96)", backdropFilter:"blur(10px)",
+      borderTop:`1px solid ${C.border}`,
+      display:"flex",
+      paddingBottom:"env(safe-area-inset-bottom, 0px)",
+      boxShadow:"0 -2px 12px rgba(15,29,53,0.06)",
+    }}>
+      {BOTTOM_NAV_ITEMS.map(it=>{
+        const on = active === it.id;
+        return (
+          <button key={it.id} onClick={()=>navigate('/'+it.id)} style={{
+            flex:1, border:"none", background:"transparent", cursor:"pointer",
+            display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center",
+            gap:3, padding:"8px 4px 6px", minHeight:52,
+            color: on ? C.navy : C.textFaint,
+          }}>
+            <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={on?2:1.6} strokeLinecap="round" strokeLinejoin="round">
+              <path d={it.icon}/>
+            </svg>
+            <span style={{ fontSize:10, fontWeight: on?600:400, fontFamily:"'DM Sans',sans-serif" }}>{it.label}</span>
+          </button>
+        );
+      })}
+    </nav>
+  );
+}
+
+/* "More" screen: secondary modules + identity + logout. Replaces the
+   hamburger drawer as the primary way to reach everything not on the
+   bottom tab bar. */
+function MobileMorePage({ navigate }) {
+  const auth = getAuthContext();
+  const ALL_ITEMS = [
+    { id:"customers",  label:"Misafirler",     icon:"M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2 M23 21v-2a4 4 0 00-3-3.87 M16 3.13a4 4 0 010 7.75" },
+    { id:"quotes",     label:"Teklifler",      icon:"M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z M14 2v6h6" },
+    { id:"tours",      label:"Turlar",         icon:"M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z M9 22V12h6v10" },
+    { id:"payments",   label:"Ödemeler",       icon:"M2 9a2 2 0 012-2h16a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V9zM2 13h20" },
+    { id:"tasks",      label:"Yapılacaklar",   icon:"M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" },
+    { id:"reminders",  label:"Hatırlatmalar",  icon:"M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0" },
+    { id:"messages",   label:"Mesajlar",       icon:"M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" },
+    { id:"reports",    label:"Raporlar",       icon:"M18 20V10M12 20V4M6 20v-6" },
+    { id:"settings",   label:"Ayarlar",        icon:"M12 15a3 3 0 100-6 3 3 0 000 6z M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" },
+  ].filter(it => canAccess(auth.role, it.id));
+
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:22, paddingBottom:20 }}>
+      {}
+      <div style={{ display:"flex", alignItems:"center", gap:12 }}>
+        <div style={{
+          width:48, height:48, borderRadius:"50%", flexShrink:0,
+          background:C.goldPale, border:`1.5px solid ${C.gold}55`,
+          display:"flex", alignItems:"center", justifyContent:"center",
+        }}>
+          <span style={{ fontSize:16, fontWeight:700, color:"#8A6D1F", fontFamily:"'DM Sans',sans-serif" }}>{auth.initials}</span>
+        </div>
+        <div style={{ minWidth:0 }}>
+          <div style={{ fontSize:16, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{auth.displayName}</div>
+          <div style={{ fontSize:12.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif" }}>{auth.role}</div>
+        </div>
+      </div>
+
+      {}
+      <MobileEntityCard style={{ padding:0, overflow:"hidden" }}>
+        {ALL_ITEMS.map((it,i)=>(
+          <button key={it.id} onClick={()=>navigate('/'+it.id)} style={{
+            width:"100%", display:"flex", alignItems:"center", gap:12,
+            padding:"14px 16px", border:"none", background:"transparent", cursor:"pointer",
+            borderBottom: i<ALL_ITEMS.length-1 ? `1px solid ${C.borderLight}` : "none",
+            textAlign:"left",
+          }}>
+            <div style={{ width:32, height:32, borderRadius:8, flexShrink:0, background:C.ivory, display:"flex", alignItems:"center", justifyContent:"center" }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.navy} strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d={it.icon}/></svg>
+            </div>
+            <span style={{ flex:1, fontSize:14.5, color:C.text, fontFamily:"'DM Sans',sans-serif" }}>{it.label}</span>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={C.textFaint} strokeWidth="2" strokeLinecap="round"><path d="M9 18l6-6-6-6"/></svg>
+          </button>
+        ))}
+      </MobileEntityCard>
+
+      {}
+      <button onClick={()=>auth.logout()} style={{
+        display:"flex", alignItems:"center", justifyContent:"center", gap:8,
+        padding:"13px 16px", borderRadius:12, border:`1px solid ${C.border}`,
+        background:C.white, color:C.red, cursor:"pointer",
+        fontSize:14, fontWeight:500, fontFamily:"'DM Sans',sans-serif",
+      }}>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9"/></svg>
+        Çıkış Yap
+      </button>
+
+      <div style={{ textAlign:"center", fontSize:11, color:C.textFaint, fontFamily:"'DM Sans',sans-serif" }}>
+        Dese Tour Operations Center · v1.0
+      </div>
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   MOBILE HOME — an operations command center for *today*, built from
+   scratch. Not the desktop Dashboard's composition: no KPI wall, no
+   dense grids. Answers three questions: what's happening today, what
+   needs attention, what should I do next. Same data hooks as desktop
+   (useRepo/computeUrgent/etc.) — only the presentation is different.
+   ══════════════════════════════════════════════════════════════════════ */
+function MobileHomePage({ navigate }) {
+  const auth = getAuthContext();
+  const [quickAction, setQuickAction] = useState(null); // null|'guest'|'lead'|'reservation'|'payment'
+
+  const { data:repoLeads }  = useRepo("lead",        "getAll");
+  const { data:repoRes }    = useRepo("reservation", "getAll");
+  const { data:repoPays }   = useRepo("payment",     "getAll");
+  const { data:repoTasks }  = useRepo("task",        "getAll");
+  const { data:repoRems }   = useRepo("reminder",    "getAll");
+  const { data:repoAct }    = useRepo("activity",    "getAll", { limit:5 });
+
+  const urgentItems = useMemo(
+    () => computeUrgent(repoLeads, repoRes, repoPays, repoTasks, repoRems),
+    [repoLeads, repoRes, repoPays, repoTasks, repoRems]
+  );
+
+  const allRes = repoRes ?? [];
+  const todaysTours = allRes
+    .filter(r => r.date === _TODAY_STR || r.checkIn === _TODAY_ISO)
+    .sort((a,b) => (a.time||"").localeCompare(b.time||""));
+  const upcoming = allRes
+    .filter(r => !["Tamamlandı","İptal"].includes(r.opStatus) && r.date !== _TODAY_STR && r.checkIn !== _TODAY_ISO)
+    .slice(0, 4);
+
+  const hour = new Date().getHours();
+  const greeting = hour < 12 ? "Günaydın" : hour < 18 ? "İyi günler" : "İyi akşamlar";
+  const todayLabel = new Date().toLocaleDateString("tr-TR", { weekday:"long", day:"numeric", month:"long" });
+  const firstName = (auth.displayName||"").split(" ")[0] || "";
+
+  const QUICK_ACTIONS = [
+    { key:"lead",        label:"Yeni Talep",        icon:"M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" },
+    { key:"guest",       label:"Yeni Misafir",      icon:"M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2 M23 21v-2a4 4 0 00-3-3.87 M16 3.13a4 4 0 010 7.75" },
+    { key:"reservation", label:"Yeni Rezervasyon",  icon:"M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" },
+    { key:"payment",     label:"Ödeme Ekle",        icon:"M2 9a2 2 0 012-2h16a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V9zM2 13h20" },
+  ];
+
+  const PAY_TONE = { "Ödendi":"good", "Kapora Ödendi":"warn", "Bekliyor":"bad" };
+  const ACT_ICON = {
+    lead:{icon:"M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01", tone:"info"},
+    quote:{icon:"M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z M14 2v6h6", tone:"warn"},
+    payment:{icon:"M2 9a2 2 0 012-2h16a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V9zM2 13h20", tone:"good"},
+    reservation:{icon:"M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11", tone:"neutral"},
+    customer:{icon:"M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2", tone:"neutral"},
+  };
+
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:22 }}>
+
+      {}
+      <div>
+        <div style={{ fontSize:20, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif" }}>
+          {greeting}{firstName ? `, ${firstName}` : ""}
+        </div>
+        <div style={{ fontSize:13, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", marginTop:2, textTransform:"capitalize" }}>
+          {todayLabel}
+        </div>
+      </div>
+
+      {}
+      {urgentItems.length > 0 && (
+        <MobileSection title="Dikkat Gerektiren">
+          {urgentItems.slice(0,3).map(item=>(
+            <MobileEntityCard key={item.id} style={{ borderLeft:`3px solid ${item.level==="high"?C.red:C.amber}` }}>
+              <div style={{ display:"flex", alignItems:"flex-start", gap:10 }}>
+                <div style={{
+                  width:30, height:30, borderRadius:8, flexShrink:0,
+                  background: item.level==="high" ? C.redBg : C.amberBg,
+                  display:"flex", alignItems:"center", justifyContent:"center",
+                  color: item.level==="high" ? C.red : C.amber,
+                }}>
+                  <GIc d={item.icon} size={14} sw={1.7}/>
+                </div>
+                <div style={{ minWidth:0, flex:1 }}>
+                  <div style={{ fontSize:13, fontWeight:500, color:C.text, fontFamily:"'DM Sans',sans-serif", lineHeight:1.35 }}>{item.title}</div>
+                  <div style={{ fontSize:11.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", marginTop:3 }}>{item.sub}</div>
+                </div>
+              </div>
+            </MobileEntityCard>
+          ))}
+        </MobileSection>
+      )}
+
+      {}
+      <MobileSection title="Bugünkü Turlar" action={todaysTours.length>0?"Takvim":null} onAction={()=>navigate('/calendar')}>
+        {todaysTours.length === 0 ? (
+          <MobileEntityCard style={{ textAlign:"center", padding:"22px 16px" }}>
+            <div style={{ fontSize:12.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif" }}>Bugün için planlanmış tur yok.</div>
+          </MobileEntityCard>
+        ) : todaysTours.map((t,i)=>(
+          <MobileEntityCard key={t.id||i} onClick={()=>navigate('/reservations/'+t.id)}>
+            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:8, marginBottom:6 }}>
+              <span style={{ fontSize:14, fontWeight:700, color:C.navy, fontFamily:"'Playfair Display',serif" }}>{t.time||"—"}</span>
+              <MobileStatusChip label={t.payStatus||"—"} tone={PAY_TONE[t.payStatus]||"neutral"}/>
+            </div>
+            <div style={{ fontSize:14, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif" }}>{t.name || t.customer || "—"}</div>
+            <div style={{ fontSize:12.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", marginTop:2 }}>{t.tour || "—"} · {t.pax||1} kişi</div>
+            <div style={{ display:"flex", alignItems:"center", gap:6, marginTop:8 }}>
+              <MobileStatusChip label={t.guide ? `Rehber: ${t.guide}` : "Rehber Atanmadı"} tone={t.guide?"good":"bad"}/>
+            </div>
+          </MobileEntityCard>
+        ))}
+      </MobileSection>
+
+      {}
+      {upcoming.length > 0 && (
+        <MobileSection title="Yaklaşan Rezervasyonlar" action="Tümü" onAction={()=>navigate('/reservations')}>
+          <MobileEntityCard style={{ padding:0, overflow:"hidden" }}>
+            {upcoming.map((r,i)=>(
+              <div key={r.id||i}
+                onClick={()=>navigate('/reservations/'+r.id)}
+                style={{
+                  display:"flex", alignItems:"center", gap:10, padding:"12px 14px", cursor:"pointer",
+                  borderBottom: i<upcoming.length-1 ? `1px solid ${C.borderLight}` : "none",
+                }}>
+                <div style={{ display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", background:C.ivory, borderRadius:8, padding:"4px 8px", minWidth:44 }}>
+                  <span style={{ fontSize:11, fontWeight:700, color:C.navy, fontFamily:"'DM Sans',sans-serif" }}>{(r.date||"—").split(" ")[0]}</span>
+                  <span style={{ fontSize:9, color:C.textFaint, fontFamily:"'DM Sans',sans-serif" }}>{(r.date||"—").split(" ")[1]||""}</span>
+                </div>
+                <div style={{ flex:1, minWidth:0 }}>
+                  <div style={{ fontSize:13, fontWeight:500, color:C.text, fontFamily:"'DM Sans',sans-serif", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{r.name || r.customer || "—"}</div>
+                  <div style={{ fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif" }}>{r.tour||"—"}</div>
+                </div>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.textFaint} strokeWidth="2" strokeLinecap="round"><path d="M9 18l6-6-6-6"/></svg>
+              </div>
+            ))}
+          </MobileEntityCard>
+        </MobileSection>
+      )}
+
+      {}
+      <MobileSection title="Hızlı İşlemler">
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+          {QUICK_ACTIONS.map(a=>(
+            <button key={a.key} onClick={()=>setQuickAction(a.key)} style={{
+              display:"flex", flexDirection:"column", alignItems:"flex-start", gap:8,
+              padding:"14px", borderRadius:14, border:"none", cursor:"pointer",
+              background:C.white, textAlign:"left", minHeight:84,
+              boxShadow:"0 1px 2px rgba(15,29,53,0.05), 0 1px 8px rgba(15,29,53,0.05)",
+            }}>
+              <div style={{ width:32, height:32, borderRadius:8, background:C.goldPale, display:"flex", alignItems:"center", justifyContent:"center" }}>
+                <GIc d={a.icon} size={15} sw={1.8} color="#8A6D1F"/>
+              </div>
+              <span style={{ fontSize:12.5, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif" }}>{a.label}</span>
+            </button>
+          ))}
+        </div>
+      </MobileSection>
+
+      {}
+      {repoAct && repoAct.length > 0 && (
+        <MobileSection title="Son Aktiviteler">
+          <MobileEntityCard style={{ padding:0, overflow:"hidden" }}>
+            {repoAct.slice(0,5).map((a,i)=>{
+              const meta = ACT_ICON[a.type||a.entityType] || ACT_ICON.lead;
+              return (
+                <div key={i} style={{
+                  display:"flex", alignItems:"flex-start", gap:10, padding:"11px 14px",
+                  borderBottom: i<Math.min(repoAct.length,5)-1 ? `1px solid ${C.borderLight}` : "none",
+                }}>
+                  <div style={{ width:26, height:26, borderRadius:7, flexShrink:0, marginTop:1, background:C.ivory, display:"flex", alignItems:"center", justifyContent:"center" }}>
+                    <GIc d={meta.icon} size={12} sw={1.6}/>
+                  </div>
+                  <div style={{ minWidth:0, flex:1 }}>
+                    <div style={{ fontSize:12.5, color:C.text, fontFamily:"'DM Sans',sans-serif" }}>{a.description || a.detail || "—"}</div>
+                    <div style={{ fontSize:11, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:2 }}>{a.date||""} {a.time||""}</div>
+                  </div>
+                </div>
+              );
+            })}
+          </MobileEntityCard>
+        </MobileSection>
+      )}
+
+      {quickAction === "guest" && <NewGuestModal onClose={()=>setQuickAction(null)}/>}
+      {quickAction === "lead" && <NewLeadModal onClose={()=>setQuickAction(null)} onSuccess={()=>setQuickAction(null)}/>}
+      {quickAction === "reservation" && <NewReservationModal onClose={()=>setQuickAction(null)} onSuccess={()=>setQuickAction(null)}/>}
+      {quickAction === "payment" && <NewPaymentModal onClose={()=>setQuickAction(null)}/>}
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   MOBILE REQUESTS — a lightweight sales inbox, not the desktop leads
+   table. One card per request; the two most common next actions (call,
+   quote) are one tap away, everything else opens the (already mobile-
+   adapted) LeadDetailPage.
+   ══════════════════════════════════════════════════════════════════════ */
+function MobileRequestsPage({ onSelectLead }) {
+  const [filter, setFilter] = useState("Açık");
+  const { data:repoLeads, loading } = useRepo("lead", "getAll");
+  const { sources } = useSources();
+  const [showNew, setShowNew] = useState(false);
+
+  const all = repoLeads ?? [];
+  const FILTERS = ["Açık","Yeni","Teklif Gönderildi","Tümü"];
+  const filtered = all.filter(l => {
+    if (filter === "Tümü") return true;
+    if (filter === "Açık") return !["Onaylandı","İptal"].includes(l.status);
+    return l.status === filter;
+  });
+
+  const STATUS_TONE = {
+    "Yeni":"info", "Görüşüldü":"neutral", "Teklif Hazırlanıyor":"neutral",
+    "Teklif Gönderildi":"warn", "Teklif Onaylandı":"good", "Onaylandı":"good",
+    "İptal":"bad", "Beklemede":"neutral",
+  };
+
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
+      {}
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:10 }}>
+        <div style={{ fontSize:20, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif" }}>Talepler</div>
+        <button onClick={()=>setShowNew(true)} style={{
+          display:"flex", alignItems:"center", gap:6, padding:"9px 14px", borderRadius:10,
+          border:"none", background:C.navy, color:C.white, cursor:"pointer",
+          fontSize:13, fontWeight:600, fontFamily:"'DM Sans',sans-serif",
+        }}>
+          <GIc d="M12 5v14M5 12h14" size={14} sw={2.5} color="#fff"/>
+          Yeni
+        </button>
+      </div>
+
+      {}
+      <div className="rsp-scroll-x" style={{ display:"flex", gap:8 }}>
+        {FILTERS.map(f=>(
+          <button key={f} onClick={()=>setFilter(f)} style={{
+            flexShrink:0, padding:"7px 14px", borderRadius:99, cursor:"pointer",
+            border: filter===f ? "none" : `1px solid ${C.border}`,
+            background: filter===f ? C.navy : C.white,
+            color: filter===f ? C.white : C.textMid,
+            fontSize:12.5, fontWeight:500, fontFamily:"'DM Sans',sans-serif",
+          }}>{f}</button>
+        ))}
+      </div>
+
+      {}
+      {loading ? <LoadingState label="Talepler yükleniyor…"/> : filtered.length === 0 ? (
+        <MobileEntityCard style={{ textAlign:"center", padding:"36px 16px" }}>
+          <div style={{ fontSize:13, color:C.textFaint, fontFamily:"'DM Sans',sans-serif" }}>Bu filtre için talep yok.</div>
+        </MobileEntityCard>
+      ) : (
+        <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+          {filtered.map(l=>{
+            const srcLabel = (sources||[]).find(s=>s.id===l.sourceId)?.name || l.sourceId || "—";
+            return (
+              <MobileEntityCard key={l.id} onClick={()=>onSelectLead(l.id)}>
+                <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:8, marginBottom:6 }}>
+                  <div style={{ fontSize:14.5, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif" }}>{l.name}</div>
+                  <MobileStatusChip label={l.status} tone={STATUS_TONE[l.status]||"neutral"}/>
+                </div>
+                <div style={{ fontSize:12.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif" }}>{l.tour || "Deneyim belirtilmedi"}</div>
+                <div style={{ display:"flex", alignItems:"center", gap:8, marginTop:6, flexWrap:"wrap" }}>
+                  {l.dateRange && <span style={{ fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif" }}>📅 {l.dateRange}</span>}
+                  <span style={{ fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif" }}>{srcLabel}</span>
+                  <span style={{ fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif" }}>· {l.ago}</span>
+                </div>
+                {l.phone && (
+                  <div style={{ display:"flex", gap:8, marginTop:10 }}>
+                    <a href={`tel:${l.phone}`} onClick={e=>e.stopPropagation()} style={{
+                      flex:1, textAlign:"center", padding:"8px 0", borderRadius:8,
+                      border:`1px solid ${C.border}`, color:C.navy, fontSize:12.5, fontWeight:500,
+                      fontFamily:"'DM Sans',sans-serif", textDecoration:"none",
+                    }}>Ara</a>
+                    <button onClick={e=>{e.stopPropagation(); NAV_REF.fn && NAV_REF.fn('/quotes/new');}} style={{
+                      flex:1, textAlign:"center", padding:"8px 0", borderRadius:8, cursor:"pointer",
+                      border:"none", background:C.goldPale, color:"#8A6D1F", fontSize:12.5, fontWeight:600,
+                      fontFamily:"'DM Sans',sans-serif",
+                    }}>Teklif Oluştur</button>
+                  </div>
+                )}
+              </MobileEntityCard>
+            );
+          })}
+        </div>
+      )}
+
+      {showNew && <NewLeadModal onClose={()=>setShowNew(false)} onSuccess={()=>setShowNew(false)}/>}
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   MOBILE RESERVATIONS — operational cards. Status is legible at a
+   glance (confirmed / guide missing / payment pending) without opening
+   the record; no secondary metadata competing for attention.
+   ══════════════════════════════════════════════════════════════════════ */
+function MobileReservationsPage({ onSelect }) {
+  const [filter, setFilter] = useState("Yaklaşan");
+  const { data:repoRes, loading } = useRepo("reservation", "getAll");
+  const [showNew, setShowNew] = useState(false);
+
+  const all = repoRes ?? [];
+  const FILTERS = ["Yaklaşan","Bugün","Sorunlu","Tümü"];
+  const filtered = all.filter(r => {
+    if (filter === "Tümü") return true;
+    if (filter === "Bugün") return r.date === _TODAY_STR || r.checkIn === _TODAY_ISO;
+    if (filter === "Sorunlu") return !r.guide || r.payStatus === "Bekliyor" || !r.pickup;
+    return !["Tamamlandı","İptal"].includes(r.opStatus);
+  });
+
+  const OP_TONE = { "Onaylandı":"good", "Rehber Atandı":"good", "Hazırlanıyor":"warn", "Tur Günü":"info", "Tamamlandı":"neutral", "İptal":"bad" };
+  const PAY_TONE = { "Ödendi":"good", "Kapora Ödendi":"warn", "Kısmi Ödendi":"warn", "Bekliyor":"bad", "Gecikmiş":"bad", "İade Edildi":"neutral" };
+
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:10 }}>
+        <div style={{ fontSize:20, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif" }}>Rezervasyonlar</div>
+        <button onClick={()=>setShowNew(true)} style={{
+          display:"flex", alignItems:"center", gap:6, padding:"9px 14px", borderRadius:10,
+          border:"none", background:C.navy, color:C.white, cursor:"pointer",
+          fontSize:13, fontWeight:600, fontFamily:"'DM Sans',sans-serif",
+        }}>
+          <GIc d="M12 5v14M5 12h14" size={14} sw={2.5} color="#fff"/>
+          Yeni
+        </button>
+      </div>
+
+      <div className="rsp-scroll-x" style={{ display:"flex", gap:8 }}>
+        {FILTERS.map(f=>(
+          <button key={f} onClick={()=>setFilter(f)} style={{
+            flexShrink:0, padding:"7px 14px", borderRadius:99, cursor:"pointer",
+            border: filter===f ? "none" : `1px solid ${C.border}`,
+            background: filter===f ? C.navy : C.white,
+            color: filter===f ? C.white : C.textMid,
+            fontSize:12.5, fontWeight:500, fontFamily:"'DM Sans',sans-serif",
+          }}>{f}</button>
+        ))}
+      </div>
+
+      {loading ? <LoadingState label="Rezervasyonlar yükleniyor…"/> : filtered.length === 0 ? (
+        <MobileEntityCard style={{ textAlign:"center", padding:"36px 16px" }}>
+          <div style={{ fontSize:13, color:C.textFaint, fontFamily:"'DM Sans',sans-serif" }}>Bu filtre için rezervasyon yok.</div>
+        </MobileEntityCard>
+      ) : (
+        <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+          {filtered.map(r=>(
+            <MobileEntityCard key={r.id} onClick={()=>onSelect(r.id)}
+              style={{ borderLeft: !r.guide||r.payStatus==="Bekliyor" ? `3px solid ${C.red}` : `3px solid ${C.green}` }}>
+              <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:8, marginBottom:6 }}>
+                <div style={{ display:"flex", alignItems:"baseline", gap:8 }}>
+                  <span style={{ fontSize:14, fontWeight:700, color:C.navy, fontFamily:"'Playfair Display',serif" }}>{r.time||r.date||"—"}</span>
+                </div>
+                <MobileStatusChip label={r.opStatus||"—"} tone={OP_TONE[r.opStatus]||"neutral"}/>
+              </div>
+              <div style={{ fontSize:14, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif" }}>{r.name || "—"}</div>
+              <div style={{ fontSize:12.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", marginTop:2 }}>{r.tour || "—"} · {r.pax||1} kişi</div>
+              <div style={{ display:"flex", alignItems:"center", gap:6, marginTop:9, flexWrap:"wrap" }}>
+                <MobileStatusChip label={r.guide ? r.guide : "Rehber Atanmadı"} tone={r.guide ? "good" : "bad"}/>
+                <MobileStatusChip label={r.payStatus||"—"} tone={PAY_TONE[r.payStatus]||"neutral"}/>
+                {!r.pickup && <MobileStatusChip label="Karşılama Eksik" tone="warn"/>}
+              </div>
+            </MobileEntityCard>
+          ))}
+        </div>
+      )}
+
+      {showNew && <NewReservationModal onClose={()=>setShowNew(false)} onSuccess={()=>setShowNew(false)}/>}
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   MOBILE GUESTS — a clean contact-style list. No UUID, no data-table
+   columns; just who they are and how to reach them.
+   ══════════════════════════════════════════════════════════════════════ */
+function MobileGuestsPage({ onSelectGuest }) {
+  const [search, setSearch] = useState("");
+  const { data:repoCustomers, loading } = useRepo("customer", "getAll");
+  const [showNew, setShowNew] = useState(false);
+
+  const all = repoCustomers ?? [];
+  const q = search.toLowerCase();
+  const filtered = !q ? all : all.filter(g =>
+    (g.name||"").toLowerCase().includes(q) ||
+    (g.country||"").toLowerCase().includes(q) ||
+    (g.email||"").toLowerCase().includes(q) ||
+    (g.phone||"").includes(q)
+  );
+
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:10 }}>
+        <div style={{ fontSize:20, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif" }}>Misafirler</div>
+        <button onClick={()=>setShowNew(true)} style={{
+          display:"flex", alignItems:"center", gap:6, padding:"9px 14px", borderRadius:10,
+          border:"none", background:C.navy, color:C.white, cursor:"pointer",
+          fontSize:13, fontWeight:600, fontFamily:"'DM Sans',sans-serif",
+        }}>
+          <GIc d="M12 5v14M5 12h14" size={14} sw={2.5} color="#fff"/>
+          Yeni
+        </button>
+      </div>
+
+      <div style={{ position:"relative" }}>
+        <span style={{ position:"absolute", left:12, top:"50%", transform:"translateY(-50%)", color:C.textFaint, pointerEvents:"none" }}>
+          <GIc d="M21 21l-4.35-4.35 M17 11A6 6 0 105 11a6 6 0 0012 0z" size={14} sw={1.8}/>
+        </span>
+        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="İsim, ülke, telefon veya email ara…" style={{
+          width:"100%", boxSizing:"border-box", padding:"11px 12px 11px 36px", borderRadius:12,
+          border:`1px solid ${C.border}`, background:C.white, fontSize:14, color:C.text,
+          fontFamily:"'DM Sans',sans-serif", outline:"none",
+        }}/>
+      </div>
+
+      {loading ? <LoadingState label="Misafirler yükleniyor…"/> : filtered.length === 0 ? (
+        <MobileEntityCard style={{ textAlign:"center", padding:"36px 16px" }}>
+          <div style={{ fontSize:13, color:C.textFaint, fontFamily:"'DM Sans',sans-serif" }}>Kayıt bulunamadı.</div>
+        </MobileEntityCard>
+      ) : (
+        <MobileEntityCard style={{ padding:0, overflow:"hidden" }}>
+          {filtered.map((g,i)=>(
+            <div key={g.id} onClick={()=>onSelectGuest(g.id)} style={{
+              display:"flex", alignItems:"center", gap:12, padding:"13px 14px", cursor:"pointer",
+              borderBottom: i<filtered.length-1 ? `1px solid ${C.borderLight}` : "none",
+            }}>
+              <div style={{
+                width:40, height:40, borderRadius:"50%", flexShrink:0,
+                background:"rgba(27,45,79,0.08)", display:"flex", alignItems:"center", justifyContent:"center",
+              }}>
+                <span style={{ fontSize:13, fontWeight:700, color:C.navy, fontFamily:"'DM Sans',sans-serif" }}>{g.initials}</span>
+              </div>
+              <div style={{ flex:1, minWidth:0 }}>
+                <div style={{ fontSize:14, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{g.flag} {g.name}</div>
+                <div style={{ fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                  {g.country}{g.country && (g.phone||g.email) ? " · " : ""}{g.phone||g.email||""}
+                </div>
+              </div>
+              <MobileStatusChip label={g.status||"Aktif"} tone={g.status==="Arşiv"?"neutral":"good"}/>
+            </div>
+          ))}
+        </MobileEntityCard>
+      )}
+
+      {showNew && <NewGuestModal onClose={()=>setShowNew(false)}/>}
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   MOBILE QUOTES — a status-driven document list.
+   ══════════════════════════════════════════════════════════════════════ */
+function MobileQuotesPage({ onSelectQuote, onNewQuote }) {
+  const [filter, setFilter] = useState("Tümü");
+  const { data:repoQuotes, loading } = useRepo("quote", "getAll");
+
+  const all = repoQuotes ?? [];
+  const FILTERS = ["Tümü","Taslak","Gönderildi","Görüntülendi","Onaylandı"];
+  const filtered = filter==="Tümü" ? all : all.filter(q=>q.status===filter);
+
+  const STATUS_TONE = { "Taslak":"neutral", "Gönderildi":"info", "Görüntülendi":"warn", "Onaylandı":"good", "Reddedildi":"bad" };
+
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:10 }}>
+        <div style={{ fontSize:20, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif" }}>Teklifler</div>
+        <button onClick={onNewQuote} style={{
+          display:"flex", alignItems:"center", gap:6, padding:"9px 14px", borderRadius:10,
+          border:"none", background:C.navy, color:C.white, cursor:"pointer",
+          fontSize:13, fontWeight:600, fontFamily:"'DM Sans',sans-serif",
+        }}>
+          <GIc d="M12 5v14M5 12h14" size={14} sw={2.5} color="#fff"/>
+          Yeni
+        </button>
+      </div>
+
+      <div className="rsp-scroll-x" style={{ display:"flex", gap:8 }}>
+        {FILTERS.map(f=>(
+          <button key={f} onClick={()=>setFilter(f)} style={{
+            flexShrink:0, padding:"7px 14px", borderRadius:99, cursor:"pointer",
+            border: filter===f ? "none" : `1px solid ${C.border}`,
+            background: filter===f ? C.navy : C.white,
+            color: filter===f ? C.white : C.textMid,
+            fontSize:12.5, fontWeight:500, fontFamily:"'DM Sans',sans-serif",
+          }}>{f}</button>
+        ))}
+      </div>
+
+      {loading ? <LoadingState label="Teklifler yükleniyor…"/> : filtered.length === 0 ? (
+        <MobileEntityCard style={{ textAlign:"center", padding:"36px 16px" }}>
+          <div style={{ fontSize:13, color:C.textFaint, fontFamily:"'DM Sans',sans-serif" }}>Bu filtre için teklif yok.</div>
+        </MobileEntityCard>
+      ) : (
+        <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+          {filtered.map(q=>(
+            <MobileEntityCard key={q.id} onClick={()=>onSelectQuote(q.id)}>
+              <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:8, marginBottom:6 }}>
+                <div style={{ fontSize:14.5, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif" }}>{q.flag} {q.customer || "—"}</div>
+                <MobileStatusChip label={q.status} tone={STATUS_TONE[q.status]||"neutral"}/>
+              </div>
+              <div style={{ fontSize:12.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif" }}>{q.tour}</div>
+              <div style={{ display:"flex", alignItems:"baseline", justifyContent:"space-between", marginTop:8 }}>
+                <span style={{ fontSize:17, fontWeight:700, color:C.gold, fontFamily:"'Playfair Display',serif" }}>
+                  {q.currency==="TRY"?"₺":"€"}{q.total.toLocaleString("tr-TR")}
+                </span>
+                <span style={{ fontSize:11, color:C.textFaint, fontFamily:"'DM Sans',sans-serif" }}>
+                  {q.createdAt && `Gönderim: ${q.createdAt}`}{q.validUntil && ` · Geçerlilik: ${q.validUntil}`}
+                </span>
+              </div>
+            </MobileEntityCard>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   MOBILE PAYMENTS — unpaid/overdue first. Pending and Collected are
+   visually separate groups, not just filterable together.
+   ══════════════════════════════════════════════════════════════════════ */
+function MobilePaymentsPage() {
+  const { data:repoPays, loading } = useRepo("payment", "getAll");
+  const { mutate:mutPay, mutating } = useRepoMutation("payment");
+  const [showNew, setShowNew] = useState(false);
+  const [busyId, setBusyId] = useState(null);
+
+  const all = repoPays ?? [];
+  const pending = all.filter(p => ["Bekliyor","Kısmi Ödendi","Gecikmiş"].includes(p.status))
+    .sort((a,b)=>(a.dueDate||"").localeCompare(b.dueDate||""));
+  const collected = all.filter(p => ["Ödendi","Kapora Ödendi"].includes(p.status));
+
+  const STATUS_TONE = { "Bekliyor":"bad", "Gecikmiş":"bad", "Kısmi Ödendi":"warn", "Kapora Ödendi":"warn", "Ödendi":"good", "İade Edildi":"neutral" };
+
+  async function markPaid(p) {
+    setBusyId(p.id);
+    const { error } = await mutPay("update", p.id, { status:"paid" });
+    setBusyId(null);
+    if (error) showToast("Güncellenemedi: " + error);
+    else showToast("Ödeme tamamlandı olarak işaretlendi ✓");
+  }
+
+  function PayRow({ p, showMarkPaid }) {
+    return (
+      <MobileEntityCard key={p.id}>
+        <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:8, marginBottom:6 }}>
+          <div style={{ fontSize:14, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif" }}>{p.customerName || "—"}</div>
+          <MobileStatusChip label={p.status} tone={STATUS_TONE[p.status]||"neutral"}/>
+        </div>
+        <div style={{ fontSize:12.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif" }}>{p.resRef || "—"}</div>
+        <div style={{ display:"flex", alignItems:"baseline", justifyContent:"space-between", marginTop:8 }}>
+          <span style={{ fontSize:17, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif" }}>
+            {p.currency==="TRY"?"₺":"€"}{p.amount.toLocaleString("tr-TR")}
+          </span>
+          {p.dueDate && <span style={{ fontSize:11, color:C.textFaint, fontFamily:"'DM Sans',sans-serif" }}>Vade: {p.dueDate}</span>}
+        </div>
+        {showMarkPaid && (
+          <button onClick={()=>markPaid(p)} disabled={mutating && busyId===p.id} style={{
+            width:"100%", marginTop:10, padding:"9px 0", borderRadius:9, border:"none", cursor:"pointer",
+            background:C.greenBg, color:C.green, fontSize:12.5, fontWeight:600, fontFamily:"'DM Sans',sans-serif",
+          }}>{busyId===p.id ? "İşleniyor…" : "Ödendi Olarak İşaretle"}</button>
+        )}
+      </MobileEntityCard>
+    );
+  }
+
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:10 }}>
+        <div style={{ fontSize:20, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif" }}>Ödemeler</div>
+        <button onClick={()=>setShowNew(true)} style={{
+          display:"flex", alignItems:"center", gap:6, padding:"9px 14px", borderRadius:10,
+          border:"none", background:C.navy, color:C.white, cursor:"pointer",
+          fontSize:13, fontWeight:600, fontFamily:"'DM Sans',sans-serif",
+        }}>
+          <GIc d="M12 5v14M5 12h14" size={14} sw={2.5} color="#fff"/>
+          Ödeme Ekle
+        </button>
+      </div>
+
+      {loading ? <LoadingState label="Ödemeler yükleniyor…"/> : (
+        <>
+          <MobileSection title={`Bekleyen (${pending.length})`}>
+            {pending.length===0 ? (
+              <MobileEntityCard style={{ textAlign:"center", padding:"24px 16px" }}>
+                <div style={{ fontSize:12.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif" }}>Bekleyen ödeme yok 🎉</div>
+              </MobileEntityCard>
+            ) : pending.map(p=><PayRow key={p.id} p={p} showMarkPaid/>)}
+          </MobileSection>
+
+          <MobileSection title={`Tahsil Edilen (${collected.length})`}>
+            {collected.length===0 ? (
+              <MobileEntityCard style={{ textAlign:"center", padding:"24px 16px" }}>
+                <div style={{ fontSize:12.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif" }}>Henüz tahsilat yok.</div>
+              </MobileEntityCard>
+            ) : collected.map(p=><PayRow key={p.id} p={p}/>)}
+          </MobileSection>
+        </>
+      )}
+
+      {showNew && <NewPaymentModal onClose={()=>setShowNew(false)}/>}
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   MOBILE TASKS QUEUE — Tasks and Reminders stay separate backend
+   entities (separate tables, separate toggle() calls), but mobile
+   presents them as one "things to do" work queue, grouped by urgency.
+   ══════════════════════════════════════════════════════════════════════ */
+function MobileTasksQueuePage() {
+  const { data:repoTasks, loading:lt } = useRepo("task", "getAll");
+  const { data:repoRems,  loading:lr } = useRepo("reminder", "getAll");
+  const { mutate:mutTask } = useRepoMutation("task");
+  const { mutate:mutRem }  = useRepoMutation("reminder");
+  const [busyKey, setBusyKey] = useState(null);
+
+  const items = [
+    ...(repoTasks ?? []).filter(t=>t.status!=="Tamamlandı").map(t=>({...t, kind:"task"})),
+    ...(repoRems  ?? []).filter(r=>r.status!=="Tamamlandı").map(r=>({...r, kind:"reminder"})),
+  ].sort((a,b)=>(a.dueDateRaw||0)-(b.dueDateRaw||0));
+
+  const now = Date.now();
+  const startOfToday = new Date(); startOfToday.setHours(0,0,0,0);
+  const endOfToday = new Date(); endOfToday.setHours(23,59,59,999);
+  const overdue  = items.filter(i=>i.dueDateRaw && i.dueDateRaw < startOfToday.getTime());
+  const today    = items.filter(i=>i.dueDateRaw && i.dueDateRaw >= startOfToday.getTime() && i.dueDateRaw <= endOfToday.getTime());
+  const upcoming = items.filter(i=>!i.dueDateRaw || i.dueDateRaw > endOfToday.getTime());
+
+  const PRIORITY_TONE = { "Acil":"bad", "Yüksek":"warn", "Orta":"info", "Düşük":"neutral" };
+
+  async function complete(item) {
+    setBusyKey(item.kind+item.id);
+    const mutate = item.kind==="task" ? mutTask : mutRem;
+    const { error } = await mutate("toggle", item.id);
+    setBusyKey(null);
+    if (error) showToast("Güncellenemedi: " + error);
+    else showToast("Tamamlandı ✓");
+  }
+
+  function QueueGroup({ label, list, tone }) {
+    if (list.length===0) return null;
+    return (
+      <MobileSection title={`${label} (${list.length})`}>
+        {list.map(item=>(
+          <MobileEntityCard key={item.kind+item.id} style={{ borderLeft: tone ? `3px solid ${C.red}` : undefined }}>
+            <div style={{ display:"flex", alignItems:"flex-start", gap:10 }}>
+              <button onClick={()=>complete(item)} disabled={busyKey===item.kind+item.id} style={{
+                width:24, height:24, borderRadius:"50%", flexShrink:0, marginTop:1,
+                border:`1.5px solid ${C.border}`, background:C.white, cursor:"pointer", padding:0,
+              }} aria-label="Tamamla"/>
+              <div style={{ minWidth:0, flex:1 }}>
+                <div style={{ fontSize:13.5, fontWeight:500, color:C.text, fontFamily:"'DM Sans',sans-serif", lineHeight:1.35 }}>{item.title}</div>
+                <div style={{ display:"flex", alignItems:"center", gap:6, marginTop:6, flexWrap:"wrap" }}>
+                  <MobileStatusChip label={item.kind==="task"?"Görev":"Hatırlatma"} tone="neutral"/>
+                  <MobileStatusChip label={item.priority} tone={PRIORITY_TONE[item.priority]||"neutral"}/>
+                  {item.dueDate && item.dueDate!=="—" && <span style={{ fontSize:11, color:C.textFaint, fontFamily:"'DM Sans',sans-serif" }}>{item.dueDate}</span>}
+                </div>
+              </div>
+            </div>
+          </MobileEntityCard>
+        ))}
+      </MobileSection>
+    );
+  }
+
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
+      <div style={{ fontSize:20, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif" }}>Yapılacaklar</div>
+
+      {(lt||lr) ? <LoadingState label="Yükleniyor…"/> : items.length===0 ? (
+        <MobileEntityCard style={{ textAlign:"center", padding:"36px 16px" }}>
+          <div style={{ fontSize:13, color:C.textFaint, fontFamily:"'DM Sans',sans-serif" }}>Bekleyen görev veya hatırlatma yok 🎉</div>
+        </MobileEntityCard>
+      ) : (
+        <>
+          <QueueGroup label="Gecikmiş" list={overdue} tone/>
+          <QueueGroup label="Bugün" list={today}/>
+          <QueueGroup label="Yaklaşan" list={upcoming}/>
+        </>
+      )}
+    </div>
+  );
 }
 
 function Toast({ msg, onDone }) {
