@@ -119,6 +119,7 @@ const DB = {
     { id:"SRC-07", slug:"tripadvisor", label:"Tripadvisor", active:false },
     { id:"SRC-08", slug:"email",       label:"Email",       active:true  },
     { id:"SRC-09", slug:"manuel",      label:"Manuel",      active:true  },
+    { id:"SRC-10", slug:"civitatis",   label:"Civitatis",   active:true  },
   ],
 
   tours: [
@@ -2539,6 +2540,7 @@ const SOURCE_META = {
   "Instagram":    { color:"#C13584", bg:"#FAEAF5", icon:"M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zM12 0C8.741 0 8.333.014 7.053.072 2.695.272.273 2.69.073 7.052.014 8.333 0 8.741 0 12c0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98C8.333 23.986 8.741 24 12 24c3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98C15.668.014 15.259 0 12 0zm0 5.838a6.162 6.162 0 100 12.324 6.162 6.162 0 000-12.324zM12 16a4 4 0 110-8 4 4 0 010 8zm6.406-11.845a1.44 1.44 0 100 2.881 1.44 1.44 0 000-2.881z" },
   "Manuel":       { color:"#8A8070", bg:"#F3F1ED", icon:"M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" },
   "Tripadvisor":  { color:"#34E0A1", bg:"#E6FBF5", icon:"M12 2a10 10 0 100 20A10 10 0 0012 2z" },
+  "Civitatis":    { color:"#D2492A", bg:"#FBEAE4", icon:"M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5A2.5 2.5 0 1112 6.5a2.5 2.5 0 010 5z" },
 };
 
 const MOCK_LEADS = DB.leads; // → centralized DB
@@ -2548,7 +2550,7 @@ const STATUS_TABS = [
   "Teklif Gönderildi","Ödeme Bekleniyor","Onaylandı","İptal",
 ];
 
-const SOURCE_FILTERS = ["Tümü","Booking","WhatsApp","Website","Telefon","Instagram","Manuel","Tripadvisor"];
+const SOURCE_FILTERS = ["Tümü","Booking","Civitatis","WhatsApp","Website","Telefon","Instagram","Manuel","Tripadvisor"];
 
 function SourceBadge({ source }) {
   const m = SOURCE_META[source] || SOURCE_META["Manuel"];
@@ -2816,8 +2818,8 @@ function LeadsPage({ onSelectLead }) {
 
   const counts = STATUS_TABS.reduce((acc, tab) => {
     acc[tab] = tab === "Tümü"
-      ? MOCK_LEADS.length
-      : MOCK_LEADS.filter(l => l.status === tab).length;
+      ? _allLeads.length
+      : _allLeads.filter(l => l.status === tab).length;
     return acc;
   }, {});
 
@@ -3934,14 +3936,14 @@ function QuotesPage({ onSelectQuote, onNewQuote }) {
   });
 
   const counts = TABS.reduce((acc,t) => {
-    acc[t] = t === "Tümü" ? MOCK_QUOTES.length : MOCK_QUOTES.filter(q=>q.status===t).length;
+    acc[t] = t === "Tümü" ? allQuotes.length : allQuotes.filter(q=>q.status===t).length;
     return acc;
   }, {});
 
-  const totalSent     = MOCK_QUOTES.filter(q=>q.status==="Gönderildi").length;
-  const totalApproved = MOCK_QUOTES.filter(q=>q.status==="Onaylandı").length;
-  const totalValue    = MOCK_QUOTES.filter(q=>q.status==="Onaylandı").reduce((s,q)=>s+q.total,0);
-  const convRate      = Math.round((totalApproved/MOCK_QUOTES.length)*100);
+  const totalSent     = allQuotes.filter(q=>q.status==="Gönderildi").length;
+  const totalApproved = allQuotes.filter(q=>q.status==="Onaylandı").length;
+  const totalValue    = allQuotes.filter(q=>q.status==="Onaylandı").reduce((s,q)=>s+q.total,0);
+  const convRate      = allQuotes.length > 0 ? Math.round((totalApproved/allQuotes.length)*100) : 0;
 
   return (
     <div style={{ display:"flex", flexDirection:"column", gap:20 }}>
@@ -3997,7 +3999,7 @@ function QuotesPage({ onSelectQuote, onNewQuote }) {
       {}
       <div className="rsp-stat-grid" style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:14 }}>
         {[
-          { label:"Toplam Teklif",    val:MOCK_QUOTES.length, sub:"Tüm zamanlar", icon:"M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z M14 2v6h6" },
+          { label:"Toplam Teklif",    val:allQuotes.length, sub:"Tüm zamanlar", icon:"M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z M14 2v6h6" },
           { label:"Gönderildi",       val:totalSent,          sub:"Yanıt bekleniyor", icon:"M22 2L11 13 M22 2L15 22l-4-9-9-4 22-7z", alert:false },
           { label:"Onaylandı",        val:totalApproved,      sub:`€${totalValue} toplam değer`, icon:"M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11", green:true },
           { label:"Dönüşüm Oranı",    val:`%${convRate}`,     sub:"Onaylanan / Toplam", icon:"M18 20V10M12 20V4M6 20v-6", gold:true },
@@ -4113,7 +4115,7 @@ function QuotesPage({ onSelectQuote, onNewQuote }) {
               display:"flex", alignItems:"center", justifyContent:"space-between",
             }}>
               <span style={{ fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif" }}>
-                {filtered.length} / {MOCK_QUOTES.length} teklif gösteriliyor
+                {filtered.length} / {allQuotes.length} teklif gösteriliyor
               </span>
             </div>
           </>
@@ -5793,15 +5795,15 @@ function ReservationsPage({ onSelect }) {
   });
 
   const counts = TABS.reduce((acc, t) => {
-    acc[t] = t === "Tümü" ? MOCK_RESERVATIONS.length
-      : MOCK_RESERVATIONS.filter(r => r.opStatus === t).length;
+    acc[t] = t === "Tümü" ? _allRes.length
+      : _allRes.filter(r => r.opStatus === t).length;
     return acc;
   }, {});
 
-  const upcoming   = MOCK_RESERVATIONS.filter(r => !["Tamamlandı","İptal"].includes(r.opStatus)).length;
-  const noGuide    = MOCK_RESERVATIONS.filter(r => !r.guide && r.opStatus !== "İptal").length;
-  const pendingPay = MOCK_RESERVATIONS.filter(r => r.payStatus === "Kapora Ödendi" || r.payStatus === "Ödeme Bekliyor").length;
-  const completed  = MOCK_RESERVATIONS.filter(r => r.opStatus === "Tamamlandı").length;
+  const upcoming   = _allRes.filter(r => !["Tamamlandı","İptal"].includes(r.opStatus)).length;
+  const noGuide    = _allRes.filter(r => !r.guide && r.opStatus !== "İptal").length;
+  const pendingPay = _allRes.filter(r => r.payStatus === "Kapora Ödendi" || r.payStatus === "Ödeme Bekliyor").length;
+  const completed  = _allRes.filter(r => r.opStatus === "Tamamlandı").length;
 
   return (
     <div style={{ display:"flex", flexDirection:"column", gap:20 }}>
@@ -6040,7 +6042,7 @@ function ReservationsPage({ onSelect }) {
               display:"flex", alignItems:"center", justifyContent:"space-between",
             }}>
               <span style={{ fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif" }}>
-                {filtered.length} / {MOCK_RESERVATIONS.length} rezervasyon
+                {filtered.length} / {_allRes.length} rezervasyon
               </span>
             </div>
           </>
@@ -6546,113 +6548,7 @@ function ReservationDetailPage({ resId, onBack }) {
   );
 }
 
-const CAL_TODAY = new Date(2026, 5, 3); // June 3, 2026
-
-function calDate(offsetDays, hour, min=0) {
-  const d = new Date(CAL_TODAY);
-  d.setDate(d.getDate() + offsetDays);
-  d.setHours(hour, min, 0, 0);
-  return d;
-}
-
-const CAL_EVENTS = [
-  { id:"CE-001", date: calDate(-1, 10), endHour:16,
-    guest:"Luca Rossi",    flag:"🇮🇹", pax:3,
-    tour:"Old City Highlights Tour",
-    guide:"Fatma Ş.", guideOk:true,
-    opStatus:"Tamamlandı", payStatus:"Ödendi",
-    resId:"R-2026-003",
-    pickup:"Sultanahmet Meydanı",
-  },
-  { id:"CE-002", date: calDate(0, 9),  endHour:17,
-    guest:"Sarah Johnson", flag:"🇦🇺", pax:4,
-    tour:"Private Istanbul Experience",
-    guide:"Ahmet Y.", guideOk:true,
-    opStatus:"Hazır", payStatus:"Kapora Ödendi",
-    resId:"R-2026-001",
-    pickup:"The Marmara Pera, Lobby",
-  },
-  { id:"CE-003", date: calDate(0, 13), endHour:19,
-    guest:"John Smith",    flag:"🇺🇸", pax:2,
-    tour:"Bosphorus & Asian Side Tour",
-    guide:"", guideOk:false,
-    opStatus:"Hazırlanıyor", payStatus:"Ödeme Bekliyor",
-    resId:"R-2026-004",
-    pickup:"",
-  },
-  { id:"CE-004", date: calDate(0, 16), endHour:21,
-    guest:"Emma Brown",    flag:"🇬🇧", pax:6,
-    tour:"Old City Tour",
-    guide:"Ayşe G.", guideOk:true,
-    opStatus:"Rehber Atandı", payStatus:"Ödendi",
-    resId:"R-2026-002",
-    pickup:"Hilton Istanbul, Giriş",
-  },
-  { id:"CE-005", date: calDate(1, 9,30), endHour:15,
-    guest:"Ayşe Demir",    flag:"🇹🇷", pax:3,
-    tour:"Özel Kapadokya Turu",
-    guide:"Osman A.", guideOk:true,
-    opStatus:"Hazır", payStatus:"Ödendi",
-    resId:"R-2026-003",
-    pickup:"İstanbul Havalimanı",
-  },
-  { id:"CE-006", date: calDate(1, 14), endHour:20,
-    guest:"Hans Müller",   flag:"🇩🇪", pax:5,
-    tour:"Bosphorus & Asian Side Tour",
-    guide:"Ahmet Y.", guideOk:true,
-    opStatus:"Rehber Atandı", payStatus:"Kapora Ödendi",
-    resId:"R-2026-005",
-    pickup:"Park Hyatt Istanbul",
-  },
-  { id:"CE-007", date: calDate(2, 10), endHour:18,
-    guest:"Yuki Tanaka",   flag:"🇯🇵", pax:4,
-    tour:"Private Istanbul Experience",
-    guide:"", guideOk:false,
-    opStatus:"Hazırlanıyor", payStatus:"Kapora Ödendi",
-    resId:"R-2026-004",
-    pickup:"",
-  },
-  { id:"CE-008", date: calDate(2, 15,30), endHour:21,
-    guest:"Olivia Carter", flag:"🇦🇺", pax:2,
-    tour:"Bosphorus & Asian Side Tour",
-    guide:"Fatma Ş.", guideOk:true,
-    opStatus:"Rehber Atandı", payStatus:"Kapora Ödendi",
-    resId:"R-2026-006",
-    pickup:"Belirtilmedi",
-  },
-  { id:"CE-009", date: calDate(3, 9), endHour:13,
-    guest:"Marco Rossi",   flag:"🇮🇹", pax:2,
-    tour:"Old City Highlights Tour",
-    guide:"Ahmet Y.", guideOk:true,
-    opStatus:"Hazır", payStatus:"Ödendi",
-    resId:"R-2026-001",
-    pickup:"Hotel Amira, Lobby",
-  },
-  { id:"CE-010", date: calDate(4, 11), endHour:17,
-    guest:"Marie Dubois",  flag:"🇫🇷", pax:3,
-    tour:"Private Istanbul Experience",
-    guide:"Osman A.", guideOk:true,
-    opStatus:"Hazır", payStatus:"Ödendi",
-    resId:"R-2026-002",
-    pickup:"The Peninsula Istanbul",
-  },
-  { id:"CE-011", date: calDate(5, 9,30), endHour:15,
-    guest:"Chen Wei",      flag:"🇨🇳", pax:6,
-    tour:"Bosphorus & Asian Side Tour",
-    guide:"", guideOk:false,
-    opStatus:"Hazırlanıyor", payStatus:"Ödeme Bekliyor",
-    resId:"R-2026-005",
-    pickup:"",
-  },
-  { id:"CE-012", date: calDate(6, 10), endHour:18,
-    guest:"Anna Schmidt",  flag:"🇩🇪", pax:4,
-    tour:"Old City Highlights Tour",
-    guide:"Fatma Ş.", guideOk:true,
-    opStatus:"Rehber Atandı", payStatus:"Kapora Ödendi",
-    resId:"R-2026-006",
-    pickup:"Ritz Carlton Istanbul",
-  },
-];
+const CAL_TODAY = new Date(); // real current date — was hardcoded to a fixed demo date
 
 const CAL_OP_COLOR = {
   "Hazırlanıyor":  { border:"#6B3FA0", bg:"#F3EEF9", text:"#6B3FA0", stripe:"rgba(107,63,160,0.08)" },
@@ -7245,37 +7141,39 @@ function MobileAgendaView({ date, events }) {
 }
 
 /* Shared by CalendarPage (desktop) and MobileCalendarPage (mobile agenda):
-   builds calendar events from the reservations repo, falling back to
-   CAL_EVENTS mock data. Extracted so both surfaces read the exact same
-   data/business logic — only presentation differs. */
+   builds calendar events from the real reservations repo. Extracted so
+   both surfaces read the exact same data/business logic — only
+   presentation differs. */
 function useCalendarEvents() {
   const { data:calReservations } = useRepo("reservation", "getAll");
-  return calReservations && calReservations.length > 0
-    ? calReservations.map(r => {
-        const raw = r.checkIn || r.travelStart || r.check_in || r.date || null;
-        if (!raw) return null;
-        try {
-          const dateObj = new Date(raw + (raw.includes('T') ? '' : 'T09:00:00'));
-          if (isNaN(dateObj.getTime())) return null;
-          const guideName = r.guide || r.guideName || null;
-          return {
-            id:      r.id,
-            date:    dateObj,
-            endHour: Math.min((dateObj.getHours() || 9) + parseInt(r.duration || 4), 22),
-            guest:   r.name || r.customer || r.contactName || '—',
-            flag:    r.flag || '🏳',
-            pax:     parseInt(r.pax || r.paxAdult || 1),
-            tour:    r.tour || r.destination || '—',
-            guide:   guideName,
-            guideOk: !!guideName,
-            payStatus: r.payStatus || null,
-            pickup:  r.pickup || r.pickupLocation || null,
-            opStatus: r.opStatus || null,
-            color:   '#1B2D4F',
-          };
-        } catch(_) { return null; }
-      }).filter(Boolean)
-    : (typeof CAL_EVENTS !== 'undefined' ? CAL_EVENTS : []);
+  // Always derived from the real reservations repo (mock array in Mock mode,
+  // Supabase rows in production) — never a separate hardcoded event list, so
+  // an empty/loading result correctly renders as an empty calendar rather
+  // than fabricated tours.
+  return (calReservations || []).map(r => {
+    const raw = r.checkIn || r.travelStart || r.check_in || r.date || null;
+    if (!raw) return null;
+    try {
+      const dateObj = new Date(raw + (raw.includes('T') ? '' : 'T09:00:00'));
+      if (isNaN(dateObj.getTime())) return null;
+      const guideName = r.guide || r.guideName || null;
+      return {
+        id:      r.id,
+        date:    dateObj,
+        endHour: Math.min((dateObj.getHours() || 9) + parseInt(r.duration || 4), 22),
+        guest:   r.name || r.customer || r.contactName || '—',
+        flag:    r.flag || '🏳',
+        pax:     parseInt(r.pax || r.paxAdult || 1),
+        tour:    r.tour || r.destination || '—',
+        guide:   guideName,
+        guideOk: !!guideName,
+        payStatus: r.payStatus || null,
+        pickup:  r.pickup || r.pickupLocation || null,
+        opStatus: r.opStatus || null,
+        color:   '#1B2D4F',
+      };
+    } catch(_) { return null; }
+  }).filter(Boolean);
 }
 
 function CalendarPage() {
@@ -8499,7 +8397,7 @@ function PaymentsPage() {
     "Bekliyor":     _allPays.filter(p=>p.status==="Bekliyor").length,
     "Kısmi Ödendi": _allPays.filter(p=>p.status==="Kısmi Ödendi").length,
     "Tamamlandı":   _allPays.filter(p=>p.status==="Tamamlandı").length,
-    "İade":         MOCK_PAYMENTS.filter(p=>p.status==="İade Edildi").length,
+    "İade":         _allPays.filter(p=>p.status==="İade Edildi").length,
   };
 
   const eurPayments  = _allPays.filter(p=>p.currency==="EUR");
@@ -8584,14 +8482,14 @@ function PaymentsPage() {
             },
             {
               label:"Bekleyen Ödemeler", val:`€${totalPending.toLocaleString("tr-TR")}`,
-              sub:`${MOCK_PAYMENTS.filter(p=>p.remaining>0&&p.currency==="EUR"&&!["İade Edildi"].includes(p.status)).length} rezervasyon`,
+              sub:`${_allPays.filter(p=>p.remaining>0&&p.currency==="EUR"&&!["İade Edildi"].includes(p.status)).length} rezervasyon`,
               icon:"M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z",
               color:C.red, iconColor:C.red, iconBg:C.redBg,
               progress:null,
             },
             {
               label:"Bu Ayki Tahsilat", val:`€${thisMonth.toLocaleString("tr-TR")}`,
-              sub:"Haziran 2026",
+              sub:new Date().toLocaleDateString("tr-TR",{month:"long",year:"numeric"}),
               icon:"M8 2v4M16 2v4M3 10h18M21 8a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2h14a2 2 0 002-2V8z",
               color:C.gold, iconColor:C.gold, iconBg:C.goldPale,
               progress:null,
@@ -8723,7 +8621,7 @@ function PaymentsPage() {
                   display:"flex", alignItems:"center", justifyContent:"space-between",
                 }}>
                   <span style={{fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>
-                    {filtered.length} / {DB.payments.length} ödeme kaydı
+                    {filtered.length} / {_allPays.length} ödeme kaydı
                   </span>
                   <span style={{fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>
                     Satıra tıklayarak detayları görüntüleyin
@@ -8734,7 +8632,7 @@ function PaymentsPage() {
           </div>
 
           {}
-          <PaySidebar payments={MOCK_PAYMENTS}/>
+          <PaySidebar payments={_allPays}/>
         </div>
       </div>
     </>
@@ -9985,8 +9883,8 @@ function ToursPage({ onSelect }) {
     return tabOk && srchOk;
   });
 
-  const counts = TABS.reduce((acc,t)=>({...acc, [t]: t==="Tümü"?MOCK_TOURS.length:MOCK_TOURS.filter(x=>x.status===t).length}),{});
-  const activeRevenue = MOCK_TOURS.filter(t=>t.status==="Aktif").reduce((s,t)=>s+t.usageCount,0);
+  const counts = TABS.reduce((acc,t)=>({...acc, [t]: t==="Tümü"?allTours.length:allTours.filter(x=>x.status===t).length}),{});
+  const activeRevenue = allTours.filter(t=>t.status==="Aktif").reduce((s,t)=>s+(t.usageCount||0),0);
 
   return (
     <>
@@ -10042,9 +9940,9 @@ function ToursPage({ onSelect }) {
       {}
       <div className="rsp-stat-grid" style={{display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:14}}>
         {[
-          { label:"Toplam Tur",      val:MOCK_TOURS.length,                              icon:"M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z M9 22V12h6v10", color:C.text,  bg:C.ivoryDark },
-          { label:"Aktif Tur",       val:MOCK_TOURS.filter(t=>t.status==="Aktif").length,icon:"M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11", color:C.green, bg:C.greenBg },
-          { label:"Taslak",          val:MOCK_TOURS.filter(t=>t.status==="Taslak").length,icon:"M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z", color:C.amber, bg:C.amberBg },
+          { label:"Toplam Tur",      val:allTours.length,                              icon:"M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z M9 22V12h6v10", color:C.text,  bg:C.ivoryDark },
+          { label:"Aktif Tur",       val:allTours.filter(t=>t.status==="Aktif").length,icon:"M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11", color:C.green, bg:C.greenBg },
+          { label:"Taslak",          val:allTours.filter(t=>t.status==="Taslak").length,icon:"M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z", color:C.amber, bg:C.amberBg },
           { label:"Toplam Kullanım", val:`${activeRevenue} kez`,                         icon:"M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01", color:C.blue,  bg:C.blueBg },
         ].map((k,i)=>(
           <div key={i} style={{
@@ -10338,6 +10236,7 @@ function SettingsPage() {
     { id:7, label:"Tripadvisor", active:false },
     { id:8, label:"Email",       active:true  },
     { id:9, label:"Manuel",      active:true  },
+    { id:10, label:"Civitatis",  active:true  },
   ]);
   const [newSource, setNewSource] = useState("");
 
@@ -10891,15 +10790,9 @@ function calculateReportMetrics(period, leads, quotes, reservations, payments, c
     sourceMap[src].reservations++;
     sourceMap[src].revenue += parseFloat(r.total||0);
   });
-  const sources = Object.values(sourceMap)
+  const sourcesData = Object.values(sourceMap)
     .map(s => ({ ...s, conversion: s.leads>0 ? Math.round(s.reservations/s.leads*100) : 0 }))
     .sort((a,b)=>b.leads-a.leads);
-  const sourcesData = sources.length > 0 ? sources : [
-    { source:"Website",  leads:31, quotes:22, reservations:11, conversion:35, revenue:4820 },
-    { source:"WhatsApp", leads:27, quotes:18, reservations:9,  conversion:33, revenue:3960 },
-    { source:"Instagram",leads:23, quotes:14, reservations:7,  conversion:30, revenue:2940 },
-    { source:"Booking",  leads:19, quotes:12, reservations:6,  conversion:32, revenue:2640 },
-  ];
 
   const tourMap = {};
   fRes.forEach(r => {
@@ -10909,15 +10802,10 @@ function calculateReportMetrics(period, leads, quotes, reservations, payments, c
     tourMap[name].guests += parseInt(r.pax||1);
     tourMap[name].revenue += parseFloat(r.total||0);
   });
-  const tours = Object.values(tourMap)
+  const toursData = Object.values(tourMap)
     .map(t => ({ ...t, avgPrice: t.reservations>0 ? Math.round(t.revenue/t.reservations) : 0 }))
     .sort((a,b)=>b.revenue-a.revenue)
     .slice(0,6);
-  const toursData = tours.length > 0 ? tours : [
-    { name:"Private Istanbul Experience", reservations:18, guests:52, revenue:8400, avgPrice:467 },
-    { name:"Bosphorus & Asian Side Tour", reservations:11, guests:34, revenue:4200, avgPrice:382 },
-    { name:"Old City Highlights Tour",    reservations:9,  guests:21, revenue:3100, avgPrice:344 },
-  ];
 
   const countryMap = {};
   fLeads.forEach(l => {
@@ -10934,16 +10822,10 @@ function calculateReportMetrics(period, leads, quotes, reservations, payments, c
     countryMap[country].totalQuote += parseFloat(r.total||0);
     countryMap[country].count++;
   });
-  const countries = Object.values(countryMap)
+  const countriesData = Object.values(countryMap)
     .map(c => ({ ...c, avgQuote: c.count>0 ? Math.round(c.totalQuote/c.count) : 0 }))
     .sort((a,b)=>b.leads-a.leads)
     .slice(0,8);
-  const countriesData = countries.length > 0 ? countries : [
-    { country:"Avustralya", flag:"🇦🇺", leads:24, reservations:9,  avgQuote:420 },
-    { country:"İngiltere",  flag:"🇬🇧", leads:21, reservations:7,  avgQuote:390 },
-    { country:"ABD",        flag:"🇺🇸", leads:18, reservations:6,  avgQuote:460 },
-    { country:"Almanya",    flag:"🇩🇪", leads:13, reservations:4,  avgQuote:350 },
-  ];
 
   const totalExpected = fPays.filter(p=>p.currency==="EUR")
     .reduce((s,p)=>{ const r=getReservationById(p.resId||""); return s+(r?r.total:p.amount); },0);
@@ -10966,14 +10848,12 @@ function calculateReportMetrics(period, leads, quotes, reservations, payments, c
     });
 
   const paymentsData = {
-    expected: totalExpected || 18400,
-    collected: collected || 12750,
-    pending: pending || 4250,
-    partial: partial || 2800,
-    refunded: refunded || 0,
-    highValue: highValuePays.length > 0 ? highValuePays : [
-      { guest:"Sarah Johnson", flag:"🇦🇺", resId:"R-2026-001", remaining:2700, dueDate:"07 Haz 2026", urgent:true },
-    ],
+    expected: totalExpected,
+    collected,
+    pending,
+    partial,
+    refunded,
+    highValue: highValuePays,
   };
 
   const opsData = {
@@ -11225,6 +11105,9 @@ function ReportsPage() {
 
           {}
           <RpSection title="Kaynak Performansı" icon="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z">
+            {metrics.sources.length === 0 ? (
+              <EmptyState icon="📊" title="Bu dönem için veri yok" subtitle="Seçilen tarih aralığında kaynak bazlı talep bulunmuyor."/>
+            ) : (
             <table className="rsp-table" style={{width:"100%", borderCollapse:"collapse"}}>
               <thead>
                 <tr style={{borderBottom:`1px solid ${C.border}`}}>
@@ -11271,10 +11154,14 @@ function ReportsPage() {
                 })}
               </tbody>
             </table>
+            )}
           </RpSection>
 
           {}
           <RpSection title="En Çok Satan Turlar" icon="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z M9 22V12h6v10">
+            {metrics.tours.length === 0 ? (
+              <EmptyState icon="🗺️" title="Bu dönem için veri yok" subtitle="Seçilen tarih aralığında tamamlanan rezervasyon bulunmuyor."/>
+            ) : (
             <div style={{display:"flex", flexDirection:"column", gap:12}}>
               {metrics.tours.map((t,i)=>(
                 <div key={i} style={{
@@ -11317,10 +11204,14 @@ function ReportsPage() {
                 </div>
               ))}
             </div>
+            )}
           </RpSection>
 
           {}
           <RpSection title="Ülke Analizi" icon="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z">
+            {metrics.countries.length === 0 ? (
+              <EmptyState icon="🌍" title="Bu dönem için veri yok" subtitle="Seçilen tarih aralığında ülke bazlı talep bulunmuyor."/>
+            ) : (
             <table style={{width:"100%", borderCollapse:"collapse"}}>
               <thead>
                 <tr style={{borderBottom:`1px solid ${C.border}`}}>
@@ -11367,6 +11258,7 @@ function ReportsPage() {
                 })}
               </tbody>
             </table>
+            )}
           </RpSection>
 
           {}
@@ -11409,7 +11301,11 @@ function ReportsPage() {
             <div style={{fontSize:11.5, fontWeight:600, color:C.textFaint, textTransform:"uppercase", letterSpacing:"0.08em", fontFamily:"'DM Sans',sans-serif", marginBottom:10}}>
               Yüksek Tutarlı Bekleyenler
             </div>
-            {metrics.payments.highValue.map((p,i)=>(
+            {metrics.payments.highValue.length === 0 ? (
+              <div style={{fontSize:12.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", fontStyle:"italic", padding:"8px 2px"}}>
+                Yüksek tutarlı bekleyen ödeme yok.
+              </div>
+            ) : metrics.payments.highValue.map((p,i)=>(
               <div key={i} style={{
                 display:"flex", alignItems:"center", gap:12,
                 padding:"10px 12px", borderRadius:8, marginBottom:7,
@@ -11792,11 +11688,52 @@ function GuestDetailPage({ guestId, onBack, onNavigate }) {
 
   const { data:rawCust, loading:guestLoading, error:guestError }
     = useRepo("customer", "getById", guestId);
+  // Real per-customer aggregates for the Supabase path below — enrichCustomer()
+  // only ever resolves against the in-memory mock arrays, so a real guest must
+  // be enriched from these instead of trusting it to succeed.
+  const { data:custLeads }    = useRepo("lead",        "getByCustomerId", guestId);
+  const { data:custQuotes }   = useRepo("quote",       "getByCustomerId", guestId);
+  const { data:custRes }      = useRepo("reservation", "getByCustomerId", guestId);
+  const { data:custTasks }    = useRepo("task",        "getByCustomerId", guestId);
+  const { data:custPays }     = useRepo("payment",     "getByCustomerId", guestId);
+  const { data:custActivity } = useRepo("activity",    "getByCustomerId", guestId);
+  const { sources } = useSources();
+
+  const ACTIVITY_ACTION_LABEL = {
+    created:"Oluşturuldu", updated:"Güncellendi", status_changed:"Durum güncellendi",
+    sent:"Gönderildi", approved:"Onaylandı", payment:"Ödeme alındı", deposit:"Kapora alındı",
+    call:"Arama yapıldı", reply:"Yanıt alındı", cancelled:"İptal edildi",
+  };
+
   // In Supabase mode, a missing/blocked record must never be masked by mock data.
   // Mock demo data is only used when the app is genuinely running in Mock mode.
-  const g = rawCust
-    ? (enrichCustomer(rawCust.id) || rawCust)
-    : (!AppConfig.useSupabase && MOCK_GUESTS ? (MOCK_GUESTS.find(x=>x.id===guestId)||MOCK_GUESTS[0]) : null);
+  const mockEnriched = rawCust ? enrichCustomer(rawCust.id) : null;
+  const g = mockEnriched || (rawCust ? {
+    ...rawCust,
+    leads: (custLeads||[]).length,
+    quotes: (custQuotes||[]).length,
+    reservations: (custRes||[]).length,
+    openTasks: (custTasks||[]).filter(t=>t.status!=="Tamamlandı").length,
+    totalSpend: (custPays||[]).filter(p=>["Ödendi","Kapora Ödendi","Kısmi Ödendi"].includes(p.status)).reduce((s,p)=>s+(parseFloat(p.amount)||0),0),
+    currency: custPays?.[0]?.currency || custRes?.[0]?.currency || "EUR",
+    relatedLeads: (custLeads||[]).map(l => ({
+      id:l.id, date:l.dateRange||l.ago||"—",
+      source:(sources||[]).find(s=>s.id===l.sourceId)?.name || "—",
+      tour:l.tour||"—", status:l.status,
+    })),
+    relatedQuotes: (custQuotes||[]).map(q => ({
+      id:q.id, tour:q.tour||"—",
+      amount:`${q.currency==="TRY"?"₺":"€"}${(q.total||0).toLocaleString("tr-TR")}`,
+      status:q.status, date:q.dateRange||q.createdAt||"—",
+    })),
+    relatedReservations: (custRes||[]).map(r => ({
+      id:r.id, tour:r.tour||"—", date:r.date||"—", pax:r.pax||1,
+      opStatus:r.opStatus, payStatus:r.payStatus,
+    })),
+    timeline: (custActivity||[]).map(a => ({
+      ...a, action: ACTIVITY_ACTION_LABEL[a.action] || a.action || "Güncellendi",
+    })),
+  } : (!AppConfig.useSupabase && MOCK_GUESTS ? (MOCK_GUESTS.find(x=>x.id===guestId)||MOCK_GUESTS[0]) : null));
 
   const [activeTab, setActiveTab] = useState("genel");
 
@@ -12194,7 +12131,7 @@ function CustomersPage({ onSelectGuest }) {
     return tabOk && srchOk;
   });
 
-  const counts = TABS.reduce((acc,t)=>({...acc,[t]: t==="Tümü"?MOCK_GUESTS.length:MOCK_GUESTS.filter(tabMap[t]||tabMap["Tümü"]).length}),{});
+  const counts = TABS.reduce((acc,t)=>({...acc,[t]: t==="Tümü"?allGuests.length:allGuests.filter(tabMap[t]||tabMap["Tümü"]).length}),{});
 
   return (
     <div style={{display:"flex", flexDirection:"column", gap:20}}>
@@ -12394,7 +12331,7 @@ function CustomersPage({ onSelectGuest }) {
                 </MobileCard>
               )}/></div>
             <div style={{padding:"11px 20px", background:C.ivory, borderTop:`1px solid ${C.borderLight}`}}>
-              <span style={{fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>{filtered.length} / {MOCK_GUESTS.length} misafir · Satıra tıklayarak profili görüntüleyin</span>
+              <span style={{fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>{filtered.length} / {allGuests.length} misafir · Satıra tıklayarak profili görüntüleyin</span>
             </div>
           </>
         )}
@@ -13034,10 +12971,16 @@ function mapResFromDB(r) {
 function mapPayFromDB(r) {
   if(!r)return null;
   const tm={deposit:'Kapora',balance:'Kalan Ödeme',full:'Tam Ödeme',refund:'İade',extra:'Ek Ödeme'};
+  // Whole days from today to due_date (negative = overdue) — same convention
+  // PaySidebar/mock payment records use, so real Supabase payments group
+  // into "Geciken"/"Yaklaşan" correctly instead of always landing empty.
+  const dueDateRaw = r.due_date
+    ? Math.round((new Date(r.due_date+'T00:00:00') - new Date(new Date().toDateString())) / 86400000)
+    : 9999;
   return { id:r.id, payNumber:r.payment_number||r.id, resId:r.reservation_id||null,
     customerId:r.customer_id||null, paymentType:tm[r.payment_type]||r.payment_type||'Kapora',
     amount:parseFloat(r.amount)||0, currency:r.currency||'EUR', status:_p2App(r.status),
-    method:_mFromDB(r.method), dueDate:r.due_date||'',
+    method:_mFromDB(r.method), dueDate:r.due_date||'', dueDateRaw,
     depositDate:r.paid_at?new Date(r.paid_at).toLocaleDateString('tr-TR',{day:'2-digit',month:'short',year:'numeric'}):'—',
     notes:r.notes||'', createdAt:r.created_at?r.created_at.split('T')[0]:'',
     customerName:r.customer?.full_name||'', resRef:r.reservation?.reservation_number||r.reservation_id||'',
