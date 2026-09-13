@@ -14,6 +14,17 @@ function fmtMoney(v, currency) {
   return sym + n.toLocaleString("tr-TR", { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 }
 function safeNum(v) { const n = parseFloat(v); return isNaN(n) ? 0 : n; }
+/* Safe percentage helpers: never produce NaN/%NaN/Infinity. Zero (or
+   invalid) denominator → 0, per the project-wide convention. */
+function safePctNum(numerator, denominator) {
+  const num = parseFloat(numerator), den = parseFloat(denominator);
+  if (!den || isNaN(den) || isNaN(num)) return 0;
+  const pct = (num / den) * 100;
+  return isFinite(pct) ? Math.round(pct) : 0;
+}
+function safePct(numerator, denominator) {
+  return safePctNum(numerator, denominator) + "%";
+}
 
 
 const ROUTER_STATE = { setPath: null };
@@ -1717,16 +1728,31 @@ function SidebarInner({ currentBase, onNavItem }) {
       </nav>
 
       {}
-      <div style={{padding:"12px 16px", borderTop:"1px solid rgba(255,255,255,0.07)", flexShrink:0}}>
-        <div style={{display:"flex", alignItems:"center", gap:9}}>
+      <div style={{
+        padding:"12px 16px calc(12px + env(safe-area-inset-bottom, 0px))",
+        borderTop:"1px solid rgba(255,255,255,0.07)", flexShrink:0,
+      }}>
+        <div style={{display:"flex", alignItems:"center", gap:9, marginBottom:10}}>
           <div style={{width:30,height:30,borderRadius:"50%",background:"rgba(201,168,76,0.18)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-            <span style={{fontSize:11,fontWeight:700,color:C.goldLight,fontFamily:"'DM Sans',sans-serif"}}>BÇ</span>
+            <span style={{fontSize:11,fontWeight:700,color:C.goldLight,fontFamily:"'DM Sans',sans-serif"}}>{auth.initials}</span>
           </div>
           <div style={{minWidth:0}}>
-            <div style={{fontSize:12.5,fontWeight:500,color:C.ivory,fontFamily:"'DM Sans',sans-serif",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>Berk Çetinkaya</div>
-            <div style={{fontSize:10.5,color:"rgba(248,245,238,0.4)",fontFamily:"'DM Sans',sans-serif"}}>Yönetici</div>
+            <div style={{fontSize:12.5,fontWeight:500,color:C.ivory,fontFamily:"'DM Sans',sans-serif",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{auth.displayName}</div>
+            <div style={{fontSize:10.5,color:"rgba(248,245,238,0.4)",fontFamily:"'DM Sans',sans-serif"}}>{auth.role}</div>
           </div>
         </div>
+        <button onClick={()=>auth.logout()} style={{
+          display:"flex", alignItems:"center", gap:8, width:"100%",
+          minHeight:40, padding:"8px 10px", border:"none", borderRadius:7,
+          background:"rgba(255,255,255,0.04)", color:"rgba(248,245,238,0.5)",
+          cursor:"pointer", textAlign:"left", fontSize:12.5,
+          fontFamily:"'DM Sans',sans-serif",
+        }}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round">
+            <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9"/>
+          </svg>
+          Çıkış Yap
+        </button>
       </div>
     </>
   );
@@ -1736,6 +1762,17 @@ function Sidebar({ currentBase, collapsed, onToggle, mobileOpen, onMobileClose }
   const auth = getAuthContext();
   const { isMobile } = useBreakpoint();
   const W = collapsed ? 64 : 208;
+
+  // Lock body scroll while the mobile drawer is open so the page behind it
+  // can't be scrolled/dragged — the drawer must feel modal, not overlaid.
+  useEffect(() => {
+    if (!isMobile) return;
+    if (mobileOpen) {
+      const prev = document.body.style.overflow;
+      document.body.style.overflow = 'hidden';
+      return () => { document.body.style.overflow = prev; };
+    }
+  }, [isMobile, mobileOpen]);
 
   if (isMobile) {
     return (
@@ -1749,12 +1786,14 @@ function Sidebar({ currentBase, collapsed, onToggle, mobileOpen, onMobileClose }
         )}
         {}
         <aside style={{
-          position:"fixed", top:0, left:0, bottom:0, width:240,
+          position:"fixed", top:0, left:0, bottom:0, width:"min(240px, 82vw)",
+          paddingTop:"env(safe-area-inset-top, 0px)",
           background:`linear-gradient(180deg, ${C.navyDeep} 0%, ${C.navy} 100%)`,
           zIndex:300, display:"flex", flexDirection:"column",
           transform: mobileOpen ? "translateX(0)" : "translateX(-100%)",
           transition:"transform 0.25s cubic-bezier(0.4,0,0.2,1)",
           boxShadow:"4px 0 24px rgba(0,0,0,0.35)",
+          visibility: mobileOpen ? "visible" : "hidden",
         }}>
           <SidebarInner currentBase={currentBase} onNavItem={onMobileClose}/>
         </aside>
@@ -2055,7 +2094,7 @@ function KpiRow() {
     },
   ];
   return (
-    <div style={{display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:14}}>
+    <div className="rsp-stat-grid" style={{display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:14}}>
       {kpis.map((k,i)=><KpiCard key={i} kpi={k}/>)}
     </div>
   );
@@ -2164,6 +2203,7 @@ function UrgentPanel() {
 }
 
 function TodayTours() {
+  const { isMobile } = useBreakpoint();
   const { data:repoRes, loading:ttLoading } = useRepo("reservation", "getAll");
   const allRes    = repoRes ?? [];
   const todayList = allRes.filter(r => r.date===_TODAY_STR || r.checkIn===_TODAY_ISO);
@@ -2193,7 +2233,34 @@ function TodayTours() {
           Bugün için planlanmış tur bulunmuyor.
         </div>
       )}
-      {!ttLoading && rows.length > 0 && <div style={{display:"flex", flexDirection:"column", gap:0}}>
+      {!ttLoading && rows.length > 0 && isMobile && (
+        <div style={{display:"flex", flexDirection:"column", gap:10}}>
+          {rows.map((t,i)=>(
+            <div key={i} style={{
+              border:`1px solid ${C.borderLight}`, borderRadius:10, padding:"12px 14px",
+              display:"flex", flexDirection:"column", gap:8,
+            }}>
+              <div style={{display:"flex", alignItems:"center", justifyContent:"space-between", gap:8}}>
+                <div style={{display:"flex", alignItems:"center", gap:8, minWidth:0}}>
+                  <span style={{fontSize:13.5, fontWeight:700, color:C.navy, fontFamily:"'Playfair Display',serif", flexShrink:0}}>{t.time}</span>
+                  <span style={{fontSize:15, flexShrink:0}}>{t.flag}</span>
+                  <span style={{fontSize:13.5, fontWeight:500, color:C.text, fontFamily:"'DM Sans',sans-serif", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{t.customer}</span>
+                </div>
+                <div style={{display:"flex", alignItems:"center", gap:4, flexShrink:0}}>
+                  <Ic d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2 M23 21v-2a4 4 0 00-3-3.87 M16 3.13a4 4 0 010 7.75" size={12} sw={1.5}/>
+                  <span style={{fontSize:12.5, color:C.textMid, fontFamily:"'DM Sans',sans-serif"}}>{t.pax}</span>
+                </div>
+              </div>
+              <div style={{fontSize:12.5, color:C.textMid, fontFamily:"'DM Sans',sans-serif", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{t.tour}</div>
+              <div style={{display:"flex", alignItems:"center", gap:8, flexWrap:"wrap"}}>
+                <Pill label={t.payStatus} color={t.payColor} bg={t.payBg} small/>
+                <Pill label={t.guideStatus} color={t.guideColor} bg={t.guideBg} small/>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      {!ttLoading && rows.length > 0 && !isMobile && <div style={{display:"flex", flexDirection:"column", gap:0}}>
         {}
         <div style={{
           display:"grid",
@@ -2440,13 +2507,13 @@ function Dashboard() {
       <KpiRow/>
 
       {}
-      <div style={{display:"grid", gridTemplateColumns:"380px 1fr", gap:20, alignItems:"start"}}>
+      <div className="rsp-split" style={{display:"grid", gridTemplateColumns:"380px 1fr", gap:20, alignItems:"start"}}>
         <UrgentPanel/>
         <TodayTours/>
       </div>
 
       {}
-      <div style={{display:"grid", gridTemplateColumns:"1fr 400px", gap:20, alignItems:"start"}}>
+      <div className="rsp-split" style={{display:"grid", gridTemplateColumns:"1fr 400px", gap:20, alignItems:"start"}}>
         <UpcomingReservations/>
         <ActivityFeed/>
       </div>
@@ -2776,7 +2843,7 @@ function LeadsPage({ onSelectLead }) {
           </p>
         </div>
 
-        <div style={{display:"flex", alignItems:"center", gap:10, flexShrink:0}}>
+        <div className="page-header-actions" style={{display:"flex", alignItems:"center", gap:10, flexShrink:0}}>
           {}
           <div style={{position:"relative"}}>
             <span style={{
@@ -3704,7 +3771,7 @@ function LeadDetailPage({ onBack, leadId }) {
       </div>
 
       {}
-      <div style={{
+      <div className="rsp-split" style={{
         display: "grid",
         gridTemplateColumns: "260px 1fr 268px",
         gap: 18,
@@ -3891,7 +3958,7 @@ function QuotesPage({ onSelectQuote, onNewQuote }) {
             Tüm teklifleri yönetin ve satış sürecini takip edin.
           </p>
         </div>
-        <div style={{ display:"flex", alignItems:"center", gap:10, flexShrink:0 }}>
+        <div className="page-header-actions" style={{ display:"flex", alignItems:"center", gap:10, flexShrink:0 }}>
           {}
           <div style={{ position:"relative" }}>
             <span style={{ position:"absolute", left:10, top:"50%", transform:"translateY(-50%)", color:C.textFaint, pointerEvents:"none" }}>
@@ -3928,7 +3995,7 @@ function QuotesPage({ onSelectQuote, onNewQuote }) {
       </div>
 
       {}
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:14 }}>
+      <div className="rsp-stat-grid" style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:14 }}>
         {[
           { label:"Toplam Teklif",    val:MOCK_QUOTES.length, sub:"Tüm zamanlar", icon:"M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z M14 2v6h6" },
           { label:"Gönderildi",       val:totalSent,          sub:"Yanıt bekleniyor", icon:"M22 2L11 13 M22 2L15 22l-4-9-9-4 22-7z", alert:false },
@@ -4481,7 +4548,7 @@ function QuoteDetailPage({ quoteId, onBack }) {
       </div>
 
       {}
-      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 280px", gap:18, alignItems:"start" }}>
+      <div className="rsp-split" style={{ display:"grid", gridTemplateColumns:"1fr 1fr 280px", gap:18, alignItems:"start" }}>
 
         {}
         <div style={{ display:"flex", flexDirection:"column", gap:18 }}>
@@ -4583,11 +4650,11 @@ function QuoteDetailPage({ quoteId, onBack }) {
               <div style={{ display:"flex", justifyContent:"space-between", marginBottom:6 }}>
                 <span style={{ fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif" }}>Ödeme İlerlemesi</span>
                 <span style={{ fontSize:11.5, color:C.gold, fontFamily:"'DM Sans',sans-serif", fontWeight:600 }}>
-                  %{Math.round(q.deposit/q.total*100)}
+                  {safePct(q.deposit, q.total)}
                 </span>
               </div>
               <div style={{ height:6, background:C.ivoryDark, borderRadius:99, overflow:"hidden" }}>
-                <div style={{ width:`${Math.round(q.deposit/q.total*100)}%`, height:"100%", background:C.gold, borderRadius:99 }}/>
+                <div style={{ width:`${safePctNum(q.deposit, q.total)}%`, height:"100%", background:C.gold, borderRadius:99 }}/>
               </div>
               <div style={{ display:"flex", justifyContent:"space-between", marginTop:5 }}>
                 <span style={{ fontSize:11, color:C.textFaint, fontFamily:"'DM Sans',sans-serif" }}>{fmtQ(q.deposit)} ödendi</span>
@@ -5750,7 +5817,7 @@ function ReservationsPage({ onSelect }) {
             Onaylanan rezervasyonları ve operasyon süreçlerini yönetin.
           </p>
         </div>
-        <div style={{ display:"flex", alignItems:"center", gap:10, flexShrink:0 }}>
+        <div className="page-header-actions" style={{ display:"flex", alignItems:"center", gap:10, flexShrink:0 }}>
           <div style={{ position:"relative" }}>
             <span style={{ position:"absolute", left:10, top:"50%", transform:"translateY(-50%)", color:C.textFaint, pointerEvents:"none" }}>
               <RIc d="M21 21l-4.35-4.35 M17 11A6 6 0 105 11a6 6 0 0012 0z" size={14} sw={1.8}/>
@@ -5785,7 +5852,7 @@ function ReservationsPage({ onSelect }) {
       </div>
 
       {}
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:14 }}>
+      <div className="rsp-stat-grid" style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:14 }}>
         {[
           { label:"Aktif Rezervasyon",   val:upcoming,  icon:"M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11", color:C.blue, bg:C.blueBg },
           { label:"Rehber Atanmadı",     val:noGuide,   icon:"M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2 M23 21v-2a4 4 0 00-3-3.87 M16 3.13a4 4 0 010 7.75", color:C.red, bg:C.redBg },
@@ -6232,7 +6299,7 @@ function ReservationDetailPage({ resId, onBack }) {
   const sm = RES_STATUS[r.opStatus] || {};
   const pm = PAY_STATUS[r.payStatus] || {};
   const sym = r.currency === "TRY" ? "₺" : "€";
-  const paidPct = Math.round((r.total - r.remaining) / r.total * 100);
+  const paidPct = safePctNum(r.total - r.remaining, r.total);
 
   return (
     <div style={{ display:"flex", flexDirection:"column", gap:20 }}>
@@ -6290,7 +6357,7 @@ function ReservationDetailPage({ resId, onBack }) {
       </div>
 
       {}
-      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 272px", gap:18, alignItems:"start" }}>
+      <div className="rsp-split" style={{ display:"grid", gridTemplateColumns:"1fr 1fr 272px", gap:18, alignItems:"start" }}>
 
         {}
         <div style={{ display:"flex", flexDirection:"column", gap:18 }}>
@@ -7036,7 +7103,7 @@ function DailyView({ date, events }) {
   );
 }
 
-function MonthlyView({ monthStart, events }) {
+function MonthlyView({ monthStart, events, onSelectDay, isMobile }) {
   const firstDay = new Date(monthStart.getFullYear(), monthStart.getMonth(), 1);
   const startOffset = (firstDay.getDay() + 6) % 7; // Mon=0
   const gridStart = new Date(firstDay);
@@ -7076,15 +7143,22 @@ function MonthlyView({ monthStart, events }) {
           const today = isToday(cell);
           const inMo  = inMonth(cell);
           return (
-            <div key={i} style={{
-              minHeight:100,
-              borderRight: (i+1)%7===0 ? "none" : `1px solid ${C.borderLight}`,
-              borderBottom: i < 35 ? `1px solid ${C.borderLight}` : "none",
-              padding:"6px 6px 4px",
-              background: today ? C.goldPale : !inMo ? "rgba(240,235,225,0.4)" : C.white,
-            }}>
+            <div key={i}
+              onClick={() => onSelectDay && onSelectDay(cell)}
+              style={{
+                minHeight: isMobile ? 46 : 100,
+                borderRight: (i+1)%7===0 ? "none" : `1px solid ${C.borderLight}`,
+                borderBottom: i < 35 ? `1px solid ${C.borderLight}` : "none",
+                padding: isMobile ? "4px 2px" : "6px 6px 4px",
+                background: today ? C.goldPale : !inMo ? "rgba(240,235,225,0.4)" : C.white,
+                cursor: onSelectDay ? "pointer" : "default",
+                display: isMobile ? "flex" : "block",
+                flexDirection: isMobile ? "column" : undefined,
+                alignItems: isMobile ? "center" : undefined,
+                gap: isMobile ? 3 : 0,
+              }}>
               {}
-              <div style={{ marginBottom:4 }}>
+              <div style={{ marginBottom: isMobile ? 0 : 4 }}>
                 <span style={{
                   display:"inline-flex", alignItems:"center", justifyContent:"center",
                   width:22, height:22, borderRadius:"50%",
@@ -7094,27 +7168,39 @@ function MonthlyView({ monthStart, events }) {
                   fontFamily:"'DM Sans',sans-serif",
                 }}>{fmtDayNum(cell)}</span>
               </div>
-              {}
-              {cellEvents.slice(0,2).map((ev,ei) => {
-                const col = CAL_OP_COLOR[ev.opStatus] || CAL_OP_COLOR["Hazırlanıyor"];
-                return (
-                  <div key={ei} style={{
-                    padding:"2px 5px", borderRadius:4, marginBottom:2,
-                    background:col.bg, borderLeft:`3px solid ${col.border}`,
-                    fontSize:10.5, color:col.text,
-                    fontFamily:"'DM Sans',sans-serif",
-                    overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap",
-                    cursor:"pointer",
-                  }}>
-                    {fmtHHMM(ev.date).slice(0,5)} {ev.flag} {ev.guest.split(" ")[0]}
+              {isMobile ? (
+                cellEvents.length > 0 && (
+                  <div style={{ display:"flex", gap:2, flexWrap:"wrap", justifyContent:"center" }}>
+                    {cellEvents.slice(0,3).map((ev,ei) => {
+                      const col = CAL_OP_COLOR[ev.opStatus] || CAL_OP_COLOR["Hazırlanıyor"];
+                      return <span key={ei} style={{ width:5, height:5, borderRadius:"50%", background:col.border }}/>;
+                    })}
                   </div>
-                );
-              })}
-              {cellEvents.length > 2 && (
-                <div style={{
-                  fontSize:10.5, color:C.textFaint,
-                  fontFamily:"'DM Sans',sans-serif", paddingLeft:2,
-                }}>+{cellEvents.length-2} daha</div>
+                )
+              ) : (
+                <>
+                  {cellEvents.slice(0,2).map((ev,ei) => {
+                    const col = CAL_OP_COLOR[ev.opStatus] || CAL_OP_COLOR["Hazırlanıyor"];
+                    return (
+                      <div key={ei} style={{
+                        padding:"2px 5px", borderRadius:4, marginBottom:2,
+                        background:col.bg, borderLeft:`3px solid ${col.border}`,
+                        fontSize:10.5, color:col.text,
+                        fontFamily:"'DM Sans',sans-serif",
+                        overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap",
+                        cursor:"pointer",
+                      }}>
+                        {fmtHHMM(ev.date).slice(0,5)} {ev.flag} {ev.guest.split(" ")[0]}
+                      </div>
+                    );
+                  })}
+                  {cellEvents.length > 2 && (
+                    <div style={{
+                      fontSize:10.5, color:C.textFaint,
+                      fontFamily:"'DM Sans',sans-serif", paddingLeft:2,
+                    }}>+{cellEvents.length-2} daha</div>
+                  )}
+                </>
               )}
             </div>
           );
@@ -7124,8 +7210,43 @@ function MonthlyView({ monthStart, events }) {
   );
 }
 
+/* Mobile calendar primary view: a vertical agenda of one day's tours.
+   Replaces the desktop hourly grid, which does not fit a phone screen. */
+function MobileAgendaView({ date, events }) {
+  const dayEvents = events
+    .filter(e => isSameDay(e.date, date))
+    .sort((a,b) => a.date - b.date);
+
+  if (dayEvents.length === 0) {
+    return (
+      <div style={{
+        background:C.white, border:`1px solid ${C.border}`, borderRadius:12,
+        padding:"48px 24px", textAlign:"center",
+      }}>
+        <div style={{ fontSize:32, marginBottom:12, opacity:.25 }}>🗓</div>
+        <div style={{ fontSize:14.5, fontWeight:600, color:C.text, fontFamily:"'Playfair Display',serif", marginBottom:4 }}>
+          Bu gün için planlanmış tur yok.
+        </div>
+        <div style={{ fontSize:12.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif" }}>
+          Başka bir gün seçin veya yeni rezervasyon ekleyin.
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+      {dayEvents.map((ev,i) => (
+        <EventCard key={ev.id||i} ev={ev} compact={false}/>
+      ))}
+    </div>
+  );
+}
+
 function CalendarPage() {
-  const [view, setView]         = useState("weekly");   // "daily" | "weekly" | "monthly"
+  const { isMobile } = useBreakpoint();
+  // Mobile never opens on the desktop weekly grid (Phase 9).
+  const [view, setView]         = useState(() => isMobile ? "daily" : "weekly");   // "daily" | "weekly" | "monthly"
   const [weekOffset, setWeekOffset] = useState(0);
   const [dayOffset, setDayOffset]   = useState(0);
   const [monthOffset, setMonthOffset] = useState(0);
@@ -7151,6 +7272,7 @@ function CalendarPage() {
         try {
           const dateObj = new Date(raw + (raw.includes('T') ? '' : 'T09:00:00'));
           if (isNaN(dateObj.getTime())) return null;
+          const guideName = r.guide || r.guideName || null;
           return {
             id:      r.id,
             date:    dateObj,
@@ -7159,7 +7281,11 @@ function CalendarPage() {
             flag:    r.flag || '🏳',
             pax:     parseInt(r.pax || r.paxAdult || 1),
             tour:    r.tour || r.destination || '—',
-            guide:   r.guide || r.guideName || null,
+            guide:   guideName,
+            guideOk: !!guideName,
+            payStatus: r.payStatus || null,
+            pickup:  r.pickup || r.pickupLocation || null,
+            opStatus: r.opStatus || null,
             color:   '#1B2D4F',
           };
         } catch(_) { return null; }
@@ -7179,11 +7305,16 @@ function CalendarPage() {
 
   const todayEvents = CAL_EVENTS_LIVE.filter(e => isSameDay(e.date, CAL_TODAY));
 
+  // On mobile the weekly grid is never rendered (Phase 9) — treat a
+  // lingering "weekly" state as "daily" for the header/nav too, so the
+  // label and prev/next controls always match what's actually on screen.
+  const effectiveView = (isMobile && view === "weekly") ? "daily" : view;
+
   function navLabel() {
-    if (view === "daily") {
+    if (effectiveView === "daily") {
       return currentDay.toLocaleDateString("tr-TR",{weekday:"long",day:"numeric",month:"long",year:"numeric"});
     }
-    if (view === "weekly") {
+    if (effectiveView === "weekly") {
       const ws = weekStart.toLocaleDateString("tr-TR",{day:"numeric",month:"short"});
       const we = weekEnd.toLocaleDateString("tr-TR",{day:"numeric",month:"short",year:"numeric"});
       return `${ws} – ${we}`;
@@ -7191,9 +7322,18 @@ function CalendarPage() {
     return monthStart.toLocaleDateString("tr-TR",{month:"long",year:"numeric"});
   }
 
-  function goBack()    { view==="daily"?setDayOffset(o=>o-1):view==="weekly"?setWeekOffset(o=>o-1):setMonthOffset(o=>o-1); }
-  function goForward() { view==="daily"?setDayOffset(o=>o+1):view==="weekly"?setWeekOffset(o=>o+1):setMonthOffset(o=>o+1); }
+  function goBack()    { effectiveView==="daily"?setDayOffset(o=>o-1):effectiveView==="weekly"?setWeekOffset(o=>o-1):setMonthOffset(o=>o-1); }
+  function goForward() { effectiveView==="daily"?setDayOffset(o=>o+1):effectiveView==="weekly"?setWeekOffset(o=>o+1):setMonthOffset(o=>o+1); }
   function goToday()   { setDayOffset(0); setWeekOffset(0); setMonthOffset(0); }
+
+  const mobileViewTabs = [{k:"daily",l:"Gün"},{k:"monthly",l:"Ay"}];
+  const desktopViewTabs = [{k:"daily",l:"Günlük"},{k:"weekly",l:"Haftalık"},{k:"monthly",l:"Aylık"}];
+
+  function selectDayFromMonth(d) {
+    const diff = Math.round((new Date(d.getFullYear(),d.getMonth(),d.getDate()) - new Date(CAL_TODAY.getFullYear(),CAL_TODAY.getMonth(),CAL_TODAY.getDate())) / 86400000);
+    setDayOffset(diff);
+    setView("daily");
+  }
 
   return (
     <div style={{ display:"flex", flexDirection:"column", gap:20 }}>
@@ -7201,69 +7341,83 @@ function CalendarPage() {
       {}
       <div style={{
         background:C.white, border:`1px solid ${C.border}`, borderRadius:12,
-        padding:"20px 24px",
-        display:"flex", alignItems:"center", justifyContent:"space-between", gap:16,
+        padding: isMobile ? "16px" : "20px 24px",
+        display:"flex", flexDirection: isMobile ? "column" : "row",
+        alignItems: isMobile ? "stretch" : "center",
+        justifyContent:"space-between", gap: isMobile ? 14 : 16,
       }}>
         <div>
-          <h1 style={{ margin:0, fontSize:24, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif", marginBottom:4 }}>Takvim</h1>
-          <p style={{ margin:0, fontSize:13.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif" }}>
-            Yaklaşan turları, rezervasyonları ve operasyon planını takvim üzerinden takip edin.
-          </p>
+          <h1 style={{ margin:0, fontSize: isMobile ? 20 : 24, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif", marginBottom:4 }}>Takvim</h1>
+          {!isMobile && (
+            <p style={{ margin:0, fontSize:13.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif" }}>
+              Yaklaşan turları, rezervasyonları ve operasyon planını takvim üzerinden takip edin.
+            </p>
+          )}
         </div>
 
         {}
-        <div style={{ display:"flex", alignItems:"center", gap:10, flexShrink:0 }}>
+        <div style={{
+          display:"flex", flexDirection: isMobile ? "column" : "row",
+          alignItems:"center", gap:10, flexShrink:0,
+        }}>
           {}
-          <button onClick={goToday} style={{
-            padding:"7px 14px", borderRadius:7,
-            border:`1px solid ${C.border}`, background:C.ivory,
-            cursor:"pointer", color:C.text,
-            fontFamily:"'DM Sans',sans-serif", fontSize:12.5, fontWeight:500,
-          }}
-            onMouseEnter={e=>e.currentTarget.style.background=C.ivoryDark}
-            onMouseLeave={e=>e.currentTarget.style.background=C.ivory}
-          >Bugün</button>
+          <div style={{ display:"flex", alignItems:"center", gap:10, width: isMobile ? "100%" : "auto" }}>
+            <button onClick={goToday} style={{
+              padding: isMobile ? "9px 12px" : "7px 14px", borderRadius:7,
+              border:`1px solid ${C.border}`, background:C.ivory,
+              cursor:"pointer", color:C.text, flexShrink:0,
+              fontFamily:"'DM Sans',sans-serif", fontSize:12.5, fontWeight:500,
+            }}
+              onMouseEnter={e=>e.currentTarget.style.background=C.ivoryDark}
+              onMouseLeave={e=>e.currentTarget.style.background=C.ivory}
+            >Bugün</button>
 
-          {}
-          <div style={{ display:"flex", alignItems:"center", gap:0, border:`1px solid ${C.border}`, borderRadius:7, overflow:"hidden" }}>
-            <button onClick={goBack} style={{
-              padding:"7px 11px", border:"none", background:C.white,
-              cursor:"pointer", color:C.textMid,
-              borderRight:`1px solid ${C.border}`,
-              transition:"background .1s",
-            }}
-              onMouseEnter={e=>e.currentTarget.style.background=C.ivory}
-              onMouseLeave={e=>e.currentTarget.style.background=C.white}
-            >
-              <CIc d="M15 18l-6-6 6-6" size={15} sw={2}/>
-            </button>
+            {}
             <div style={{
-              padding:"7px 16px", fontFamily:"'DM Sans',sans-serif",
-              fontSize:13, fontWeight:500, color:C.text,
-              minWidth:180, textAlign:"center", background:C.white,
-            }}>{navLabel()}</div>
-            <button onClick={goForward} style={{
-              padding:"7px 11px", border:"none", background:C.white,
-              cursor:"pointer", color:C.textMid,
-              borderLeft:`1px solid ${C.border}`,
-              transition:"background .1s",
-            }}
-              onMouseEnter={e=>e.currentTarget.style.background=C.ivory}
-              onMouseLeave={e=>e.currentTarget.style.background=C.white}
-            >
-              <CIc d="M9 18l6-6-6-6" size={15} sw={2}/>
-            </button>
+              display:"flex", alignItems:"center", gap:0,
+              border:`1px solid ${C.border}`, borderRadius:7, overflow:"hidden",
+              flex: isMobile ? 1 : "none", minWidth:0,
+            }}>
+              <button onClick={goBack} style={{
+                padding: isMobile ? "9px 10px" : "7px 11px", border:"none", background:C.white,
+                cursor:"pointer", color:C.textMid, flexShrink:0,
+                borderRight:`1px solid ${C.border}`,
+                transition:"background .1s",
+              }}
+                onMouseEnter={e=>e.currentTarget.style.background=C.ivory}
+                onMouseLeave={e=>e.currentTarget.style.background=C.white}
+              >
+                <CIc d="M15 18l-6-6 6-6" size={15} sw={2}/>
+              </button>
+              <div style={{
+                padding: isMobile ? "7px 6px" : "7px 16px", fontFamily:"'DM Sans',sans-serif",
+                fontSize: isMobile ? 12 : 13, fontWeight:500, color:C.text,
+                flex:1, minWidth:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap",
+                textAlign:"center", background:C.white,
+              }}>{navLabel()}</div>
+              <button onClick={goForward} style={{
+                padding: isMobile ? "9px 10px" : "7px 11px", border:"none", background:C.white,
+                cursor:"pointer", color:C.textMid, flexShrink:0,
+                borderLeft:`1px solid ${C.border}`,
+                transition:"background .1s",
+              }}
+                onMouseEnter={e=>e.currentTarget.style.background=C.ivory}
+                onMouseLeave={e=>e.currentTarget.style.background=C.white}
+              >
+                <CIc d="M9 18l6-6-6-6" size={15} sw={2}/>
+              </button>
+            </div>
           </div>
 
           {}
           <div style={{
-            display:"flex", background:C.ivory,
+            display:"flex", background:C.ivory, width: isMobile ? "100%" : "auto",
             border:`1px solid ${C.border}`, borderRadius:8, padding:2,
           }}>
-            {[{k:"daily",l:"Günlük"},{k:"weekly",l:"Haftalık"},{k:"monthly",l:"Aylık"}].map(({k,l})=>(
+            {(isMobile ? mobileViewTabs : desktopViewTabs).map(({k,l})=>(
               <button key={k} onClick={()=>setView(k)} style={{
-                padding:"5px 13px", borderRadius:6, cursor:"pointer",
-                border:"none",
+                padding: isMobile ? "8px 13px" : "5px 13px", borderRadius:6, cursor:"pointer",
+                border:"none", flex: isMobile ? 1 : "none",
                 background: view===k ? C.navy : "transparent",
                 color: view===k ? C.white : C.textMuted,
                 fontFamily:"'DM Sans',sans-serif", fontSize:12.5,
@@ -7276,11 +7430,17 @@ function CalendarPage() {
       </div>
 
       {}
-      <div style={{ display:"grid", gridTemplateColumns:"minmax(0, 1fr) 280px", gap:20, alignItems:"start" }}>
+      <div className="rsp-split" style={{ display:"grid", gridTemplateColumns:"minmax(0, 1fr) 280px", gap:20, alignItems:"start" }}>
 
         {}
         <div>
-          {visibleEvents.length === 0 && view !== "monthly" && view !== "weekly" ? (
+          {isMobile ? (
+            effectiveView === "monthly" ? (
+              <MonthlyView monthStart={monthStart} events={visibleEvents} onSelectDay={selectDayFromMonth} isMobile/>
+            ) : (
+              <MobileAgendaView date={currentDay} events={visibleEvents}/>
+            )
+          ) : visibleEvents.length === 0 && view !== "monthly" && view !== "weekly" ? (
             <div style={{
               background:C.white, border:`1px solid ${C.border}`, borderRadius:12,
               padding:"80px 40px", textAlign:"center",
@@ -7294,11 +7454,11 @@ function CalendarPage() {
               </div>
             </div>
           ) : view === "weekly" ? (
-            <WeeklyView weekStart={weekStart} events={CAL_EVENTS}/>
+            <WeeklyView weekStart={weekStart} events={visibleEvents}/>
           ) : view === "daily" ? (
-            <DailyView date={currentDay} events={CAL_EVENTS}/>
+            <DailyView date={currentDay} events={visibleEvents}/>
           ) : (
-            <MonthlyView monthStart={monthStart} events={CAL_EVENTS}/>
+            <MonthlyView monthStart={monthStart} events={visibleEvents} onSelectDay={selectDayFromMonth}/>
           )}
         </div>
 
@@ -7708,7 +7868,7 @@ function TasksPage() {
             Satış ve operasyon ekibinin yapması gereken işleri takip edin.
           </p>
         </div>
-        <div style={{display:"flex", alignItems:"center", gap:10, flexShrink:0}}>
+        <div className="page-header-actions" style={{display:"flex", alignItems:"center", gap:10, flexShrink:0}}>
           {}
           <div style={{position:"relative"}}>
             <span style={{position:"absolute", left:10, top:"50%", transform:"translateY(-50%)", color:C.textFaint, pointerEvents:"none"}}>
@@ -7744,7 +7904,7 @@ function TasksPage() {
       </div>
 
       {}
-      <div style={{display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:14}}>
+      <div className="rsp-stat-grid" style={{display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:14}}>
         {[
           {
             label:"Bugünkü Görevler", val:todayCount,
@@ -7794,7 +7954,7 @@ function TasksPage() {
       </div>
 
       {}
-      <div style={{display:"grid", gridTemplateColumns:"1fr 280px", gap:20, alignItems:"start"}}>
+      <div className="rsp-split" style={{display:"grid", gridTemplateColumns:"1fr 280px", gap:20, alignItems:"start"}}>
 
         {}
         <div style={{background:C.white, border:`1px solid ${C.border}`, borderRadius:12, overflow:"hidden"}}>
@@ -8364,7 +8524,7 @@ function PaymentsPage() {
               Tüm tahsilatları, kaporaları ve bekleyen ödemeleri yönetin.
             </p>
           </div>
-          <div style={{display:"flex", alignItems:"center", gap:10, flexShrink:0}}>
+          <div className="page-header-actions" style={{display:"flex", alignItems:"center", gap:10, flexShrink:0}}>
             <div style={{position:"relative"}}>
               <span style={{position:"absolute", left:10, top:"50%", transform:"translateY(-50%)", color:C.textFaint, pointerEvents:"none"}}>
                 <PIc d="M21 21l-4.35-4.35 M17 11A6 6 0 105 11a6 6 0 0012 0z" size={14} sw={1.8}/>
@@ -8399,7 +8559,7 @@ function PaymentsPage() {
         </div>
 
         {}
-        <div style={{display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:14}}>
+        <div className="rsp-stat-grid" style={{display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:14}}>
           {[
             {
               label:"Beklenen Toplam Gelir", val:`€${totalExp.toLocaleString("tr-TR")}`,
@@ -8459,7 +8619,7 @@ function PaymentsPage() {
         </div>
 
         {}
-        <div style={{display:"grid", gridTemplateColumns:"1fr 300px", gap:20, alignItems:"start"}}>
+        <div className="rsp-split" style={{display:"grid", gridTemplateColumns:"1fr 300px", gap:20, alignItems:"start"}}>
 
           {}
           <div style={{background:C.white, border:`1px solid ${C.border}`, borderRadius:12, overflow:"hidden"}}>
@@ -9002,7 +9162,7 @@ function RemindersPage() {
             Operasyon, satış ve ödeme süreçlerini takip edin.
           </p>
         </div>
-        <div style={{display:"flex", alignItems:"center", gap:10, flexShrink:0}}>
+        <div className="page-header-actions" style={{display:"flex", alignItems:"center", gap:10, flexShrink:0}}>
           <div style={{position:"relative"}}>
             <span style={{position:"absolute", left:10, top:"50%", transform:"translateY(-50%)", color:C.textFaint, pointerEvents:"none"}}>
               <HIc d="M21 21l-4.35-4.35 M17 11A6 6 0 105 11a6 6 0 0012 0z" size={14} sw={1.8}/>
@@ -9037,7 +9197,7 @@ function RemindersPage() {
       </div>
 
       {}
-      <div style={{display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:14}}>
+      <div className="rsp-stat-grid" style={{display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:14}}>
         {[
           { label:"Açık Hatırlatmalar",  val:openCount,   icon:"M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0", color:C.blue,  bg:C.blueBg,  sub:`${reminders.length} toplam` },
           { label:"Acil Uyarılar",       val:acilCount,   icon:"M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z", color:C.red,   bg:C.redBg,   sub:"Hemen ilgilenilmeli" },
@@ -9064,7 +9224,7 @@ function RemindersPage() {
       </div>
 
       {}
-      <div style={{display:"grid", gridTemplateColumns:"1fr 300px", gap:20, alignItems:"start"}}>
+      <div className="rsp-split" style={{display:"grid", gridTemplateColumns:"1fr 300px", gap:20, alignItems:"start"}}>
 
         {}
         <div style={{background:C.white, border:`1px solid ${C.border}`, borderRadius:12, overflow:"hidden"}}>
@@ -9644,7 +9804,7 @@ function TourDetailPage({ tourId, onBack }) {
               ) : (
                 <div>
                   <div style={{fontSize:10.5, fontWeight:600, color:C.textFaint, textTransform:"uppercase", letterSpacing:"0.09em", fontFamily:"'DM Sans',sans-serif", marginBottom:8}}>Kişi Bazlı Fiyat Tablosu</div>
-                  <div style={{display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:8}}>
+                  <div className="rsp-stat-grid" style={{display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:8}}>
                     {Object.entries(tiers).map(([n,p])=>(
                       <div key={n} style={{
                         background:C.ivory, borderRadius:8, padding:"10px 12px",
@@ -9838,7 +9998,7 @@ function ToursPage({ onSelect }) {
             Teklif ve rezervasyonlarda kullanılacak tur seçeneklerini yönetin.
           </p>
         </div>
-        <div style={{display:"flex", alignItems:"center", gap:10, flexShrink:0}}>
+        <div className="page-header-actions" style={{display:"flex", alignItems:"center", gap:10, flexShrink:0}}>
           <div style={{position:"relative"}}>
             <span style={{position:"absolute", left:10, top:"50%", transform:"translateY(-50%)", color:C.textFaint, pointerEvents:"none"}}>
               <URIc d="M21 21l-4.35-4.35 M17 11A6 6 0 105 11a6 6 0 0012 0z" size={14} sw={1.8}/>
@@ -9873,7 +10033,7 @@ function ToursPage({ onSelect }) {
       </div>
 
       {}
-      <div style={{display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:14}}>
+      <div className="rsp-stat-grid" style={{display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:14}}>
         {[
           { label:"Toplam Tur",      val:MOCK_TOURS.length,                              icon:"M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z M9 22V12h6v10", color:C.text,  bg:C.ivoryDark },
           { label:"Aktif Tur",       val:MOCK_TOURS.filter(t=>t.status==="Aktif").length,icon:"M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11", color:C.green, bg:C.greenBg },
@@ -10226,7 +10386,7 @@ function SettingsPage() {
       </div>
 
       {}
-      <div style={{display:"grid", gridTemplateColumns:"220px 1fr", gap:20, alignItems:"start"}}>
+      <div className="rsp-split" style={{display:"grid", gridTemplateColumns:"220px 1fr", gap:20, alignItems:"start"}}>
 
         {}
         <div style={{
@@ -10997,11 +11157,11 @@ function ReportsPage() {
       {}
       <div style={{display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))", gap:12}}>
         <RpKpiCard label="Toplam Talep"           value={kpi.leads}                             icon="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"                                                  color={C.blue}  bg={C.blueBg}   sub={`${period} döneminde`}/>
-        <RpKpiCard label="Gönderilen Teklif"      value={kpi.quotes}                            icon="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z M14 2v6h6"                                    color={C.amber} bg={C.amberBg}  sub={`${Math.round(kpi.quotes/kpi.leads*100)}% talep → teklif`}/>
+        <RpKpiCard label="Gönderilen Teklif"      value={kpi.quotes}                            icon="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z M14 2v6h6"                                    color={C.amber} bg={C.amberBg}  sub={`${safePct(kpi.quotes, kpi.leads)} talep → teklif`}/>
         <RpKpiCard label="Kesinleşen Rezervasyon" value={kpi.reservations}                      icon="M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"                              color={C.green} bg={C.greenBg}  sub={`${kpi.completed} tur tamamlandı`}/>
         <RpKpiCard label="Dönüşüm Oranı"          value={`%${convRate}`}                        icon="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"                                                                      color={C.navy}  bg={C.ivoryDark} sub="Talep → Rezervasyon"/>
         <RpKpiCard label="Beklenen Gelir"          value={`€${kpi.expectedEur.toLocaleString("tr-TR")}`} icon="M12 2v20M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"                                    color={C.gold}  bg={C.goldPale}  sub="EUR bazlı tüm rezervasyonlar" highlight/>
-        <RpKpiCard label="Tahsil Edilen Gelir"    value={`€${kpi.collectedEur.toLocaleString("tr-TR")}`} icon="M22 11.08V12a10 10 0 11-5.93-9.14 M22 4L12 14.01l-3-3"                                    color={C.green} bg={C.greenBg}  sub={`%${Math.round(kpi.collectedEur/kpi.expectedEur*100)} tahsil edildi`} highlight/>
+        <RpKpiCard label="Tahsil Edilen Gelir"    value={`€${kpi.collectedEur.toLocaleString("tr-TR")}`} icon="M22 11.08V12a10 10 0 11-5.93-9.14 M22 4L12 14.01l-3-3"                                    color={C.green} bg={C.greenBg}  sub={`${safePct(kpi.collectedEur, kpi.expectedEur)} tahsil edildi`} highlight/>
       </div>
 
       {}
@@ -11012,12 +11172,12 @@ function ReportsPage() {
 
           {}
           <RpSection title="Satış Hunisi" icon="M3 4h13M3 8h9m-9 4h9m5-4v12m0 0l-4-4m4 4l4-4" action={period}>
-            <div style={{display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:12}}>
+            <div className="rsp-stat-grid" style={{display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:12}}>
               {[
                 { label:"Talep",           val:kpi.leads,        icon:"M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01",                            color:C.blue,  pct:100 },
-                { label:"Teklif",          val:kpi.quotes,       icon:"M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z M14 2v6h6",              color:C.amber, pct:Math.round(kpi.quotes/kpi.leads*100) },
-                { label:"Rezervasyon",     val:kpi.reservations, icon:"M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11",         color:C.gold,  pct:Math.round(kpi.reservations/kpi.leads*100) },
-                { label:"Tamamlanan Tur",  val:kpi.completed,    icon:"M22 11.08V12a10 10 0 11-5.93-9.14 M22 4L12 14.01l-3-3",                         color:C.green, pct:Math.round(kpi.completed/kpi.leads*100) },
+                { label:"Teklif",          val:kpi.quotes,       icon:"M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z M14 2v6h6",              color:C.amber, pct:safePctNum(kpi.quotes, kpi.leads) },
+                { label:"Rezervasyon",     val:kpi.reservations, icon:"M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11",         color:C.gold,  pct:safePctNum(kpi.reservations, kpi.leads) },
+                { label:"Tamamlanan Tur",  val:kpi.completed,    icon:"M22 11.08V12a10 10 0 11-5.93-9.14 M22 4L12 14.01l-3-3",                         color:C.green, pct:safePctNum(kpi.completed, kpi.leads) },
               ].map((step,i)=>(
                 <div key={i} style={{display:"flex", flexDirection:"column", alignItems:"center", gap:10, position:"relative"}}>
                   {}
@@ -11204,7 +11364,7 @@ function ReportsPage() {
 
           {}
           <RpSection title="Ödeme Analizi" icon="M2 9a2 2 0 012-2h16a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V9zM2 13h20">
-            <div style={{display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:12, marginBottom:20}}>
+            <div className="rsp-stat-grid" style={{display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:12, marginBottom:20}}>
               {[
                 { label:"Toplam Beklenen", val:`€${metrics.payments.expected.toLocaleString("tr-TR")}`,   color:C.text,  bg:C.ivoryDark },
                 { label:"Tahsil Edilen",   val:`€${metrics.payments.collected.toLocaleString("tr-TR")}`,  color:C.green, bg:C.greenBg },
@@ -11226,12 +11386,12 @@ function ReportsPage() {
               <div style={{display:"flex", justifyContent:"space-between", marginBottom:6}}>
                 <span style={{fontSize:12.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif"}}>Tahsilat Oranı</span>
                 <span style={{fontSize:12.5, fontWeight:600, color:C.gold, fontFamily:"'DM Sans',sans-serif"}}>
-                  %{Math.round(metrics.payments.collected/metrics.payments.expected*100)}
+                  {safePct(metrics.payments.collected, metrics.payments.expected)}
                 </span>
               </div>
               <div style={{height:8, background:C.ivoryDark, borderRadius:99, overflow:"hidden"}}>
                 <div style={{
-                  width:`${Math.round(metrics.payments.collected/metrics.payments.expected*100)}%`,
+                  width:`${safePctNum(metrics.payments.collected, metrics.payments.expected)}%`,
                   height:"100%",
                   background:`linear-gradient(90deg, ${C.green}, ${C.gold})`,
                   borderRadius:99,
@@ -11268,7 +11428,7 @@ function ReportsPage() {
 
           {}
           <RpSection title="Operasyon Analizi" icon="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" action={period}>
-            <div style={{display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:12}}>
+            <div className="rsp-stat-grid" style={{display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:12}}>
               {[
                 { label:"Yaklaşan Turlar",       val:metrics.ops.upcoming,   color:C.blue,   bg:C.blueBg,   icon:"M8 2v4M16 2v4M3 10h18M21 8a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2h14a2 2 0 002-2V8z" },
                 { label:"Tamamlanan Turlar",      val:metrics.ops.completed,  color:C.green,  bg:C.greenBg,  icon:"M22 11.08V12a10 10 0 11-5.93-9.14 M22 4L12 14.01l-3-3" },
@@ -11610,6 +11770,7 @@ function GuestTimeline({ events }) {
 }
 
 function GuestDetailPage({ guestId, onBack, onNavigate }) {
+  const { isMobile } = useBreakpoint();
   const _sp = safeParam(guestId);
   if (_sp.invalid) return (
     <div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',padding:60,gap:16}}>
@@ -11654,12 +11815,14 @@ function GuestDetailPage({ guestId, onBack, onNavigate }) {
       {}
       <div style={{
         background:C.white, border:`1px solid ${C.border}`, borderRadius:12,
-        padding:"15px 22px",
-        display:"flex", alignItems:"center", justifyContent:"space-between", gap:16,
+        padding: isMobile ? "14px 16px" : "15px 22px",
+        display:"flex", flexDirection: isMobile ? "column" : "row",
+        alignItems: isMobile ? "stretch" : "center",
+        justifyContent:"space-between", gap: isMobile ? 12 : 16,
       }}>
-        <div style={{display:"flex", alignItems:"center", gap:14}}>
+        <div style={{display:"flex", alignItems:"center", gap:14, minWidth:0}}>
           <button onClick={onBack} style={{
-            display:"flex", alignItems:"center", gap:6,
+            display:"flex", alignItems:"center", gap:6, flexShrink:0,
             background:C.ivory, border:`1px solid ${C.border}`,
             borderRadius:7, padding:"6px 12px", cursor:"pointer",
             color:C.textMid, fontFamily:"'DM Sans',sans-serif", fontSize:12.5,
@@ -11668,12 +11831,15 @@ function GuestDetailPage({ guestId, onBack, onNavigate }) {
             onMouseLeave={e=>e.currentTarget.style.background=C.ivory}
           >
             <GIc d="M15 18l-6-6 6-6" size={13} sw={2}/>
-            Misafirler
+            {!isMobile && "Misafirler"}
           </button>
-          <div style={{width:1, height:20, background:C.borderLight}}/>
-          <span style={{fontSize:12, color:C.textFaint, fontFamily:"'DM Mono',monospace", background:C.ivory, border:`1px solid ${C.borderLight}`, padding:"3px 8px", borderRadius:5}}>{g.id}</span>
-          <div>
-            <div style={{fontSize:17, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif", lineHeight:1.2}}>
+          {!isMobile && <div style={{width:1, height:20, background:C.borderLight, flexShrink:0}}/>}
+          {}
+          {!isMobile && (
+            <span style={{fontSize:12, color:C.textFaint, fontFamily:"'DM Mono',monospace", background:C.ivory, border:`1px solid ${C.borderLight}`, padding:"3px 8px", borderRadius:5, flexShrink:0}}>{g.id}</span>
+          )}
+          <div style={{minWidth:0}}>
+            <div style={{fontSize:17, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif", lineHeight:1.2, overflow:"hidden", textOverflow:"ellipsis", whiteSpace: isMobile ? "nowrap" : "normal"}}>
               {g.flag} {g.name}
             </div>
             <div style={{fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:2}}>
@@ -11681,7 +11847,7 @@ function GuestDetailPage({ guestId, onBack, onNavigate }) {
             </div>
           </div>
         </div>
-        <div style={{display:"flex", alignItems:"center", gap:10, flexShrink:0}}>
+        <div style={{display:"flex", alignItems:"center", gap:10, flexWrap:"wrap", flexShrink:0}}>
           {g.tags.map((t,i)=>(
             <span key={i} style={{
               fontSize:11, fontWeight:500, color:C.gold,
@@ -11689,13 +11855,13 @@ function GuestDetailPage({ guestId, onBack, onNavigate }) {
               padding:"2px 8px", borderRadius:5, fontFamily:"'DM Sans',sans-serif",
             }}>{t}</span>
           ))}
-          <div style={{width:1, height:20, background:C.borderLight}}/>
+          {!isMobile && <div style={{width:1, height:20, background:C.borderLight}}/>}
           <GStatusBadge status={g.status}/>
         </div>
       </div>
 
       {}
-      <div style={{display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:14}}>
+      <div className="rsp-stat-grid" style={{display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:14}}>
         {[
           { label:"Toplam Talep",      val:g.leads,        icon:"M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01", color:C.blue, bg:C.blueBg },
           { label:"Toplam Teklif",     val:g.quotes,       icon:"M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z M14 2v6h6", color:C.amber,bg:C.amberBg },
@@ -11719,7 +11885,7 @@ function GuestDetailPage({ guestId, onBack, onNavigate }) {
       </div>
 
       {}
-      <div style={{display:"grid", gridTemplateColumns:"1fr 280px", gap:20, alignItems:"start"}}>
+      <div className="rsp-split" style={{display:"grid", gridTemplateColumns:"1fr 280px", gap:20, alignItems:"start"}}>
 
         {}
         <div style={{display:"flex", flexDirection:"column", gap:18}}>
@@ -11991,6 +12157,7 @@ function GuestDetailPage({ guestId, onBack, onNavigate }) {
 }
 
 function CustomersPage({ onSelectGuest }) {
+  const { isMobile } = useBreakpoint();
   const [showNewGuest, setShowNewGuest] = useState(false);
   const [activeTab, setActiveTab] = useState("Tümü");
   const [search, setSearch]       = useState("");
@@ -12037,8 +12204,11 @@ function CustomersPage({ onSelectGuest }) {
             Dese Tour ile iletişime geçmiş tüm misafir profillerini ve geçmişlerini yönetin.
           </p>
         </div>
-        <div style={{display:"flex", alignItems:"center", gap:10, flexShrink:0}}>
-          <div style={{position:"relative"}}>
+        <div className="page-header-actions" style={{
+          display:"flex", flexDirection: isMobile ? "column" : "row",
+          alignItems: isMobile ? "stretch" : "center", gap:10, flexShrink:0,
+        }}>
+          <div style={{position:"relative", width: isMobile ? "100%" : "auto"}}>
             <span style={{position:"absolute", left:10, top:"50%", transform:"translateY(-50%)", color:C.textFaint, pointerEvents:"none"}}>
               <GIc d="M21 21l-4.35-4.35 M17 11A6 6 0 105 11a6 6 0 0012 0z" size={14} sw={1.8}/>
             </span>
@@ -12048,7 +12218,8 @@ function CustomersPage({ onSelectGuest }) {
                 paddingLeft:32, paddingRight:12, paddingTop:8, paddingBottom:8,
                 border:`1px solid ${C.border}`, borderRadius:8,
                 background:C.ivory, fontSize:13, color:C.text,
-                fontFamily:"'DM Sans',sans-serif", outline:"none", width:280,
+                fontFamily:"'DM Sans',sans-serif", outline:"none",
+                width: isMobile ? "100%" : 280, boxSizing:"border-box",
                 transition:"border-color .15s, box-shadow .15s",
               }}
               onFocus={e=>{ e.target.style.borderColor=C.gold; e.target.style.boxShadow=`0 0 0 3px ${C.gold}20`; }}
@@ -12056,14 +12227,13 @@ function CustomersPage({ onSelectGuest }) {
             />
           </div>
           <button onClick={()=>setShowNewGuest(true)} style={{
-            display:"flex", alignItems:"center", gap:7,
-            padding:"9px 16px", borderRadius:8,
+            display:"flex", alignItems:"center", justifyContent:"center", gap:7,
+            padding:"9px 16px", borderRadius:8, width: isMobile ? "100%" : "auto",
             border:"none", background:C.navy, cursor:"pointer", color:C.white,
             fontFamily:"'DM Sans',sans-serif", fontSize:13, fontWeight:500,
           }}
             onMouseEnter={e=>e.currentTarget.style.background=C.navyHover}
             onMouseLeave={e=>e.currentTarget.style.background=C.navy}
-            onClick={()=>setShowNewGuest(true)}
           >
             <GIc d="M12 5v14M5 12h14" size={14} sw={2.5} color="#fff"/>
             Yeni Misafir Ekle
@@ -13658,18 +13828,28 @@ function validate(rules, values) {
 }
 
 function Modal({ title, onClose, onSubmit, submitLabel, children, wide, danger }) {
+  const { isMobile } = useBreakpoint();
+  // Lock background scroll while any modal is open — the sheet behind it
+  // must not move underneath the user's thumb on mobile.
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = prev; };
+  }, []);
   return (
     <div style={{
       position:"fixed", inset:0, zIndex:1000,
       background:"rgba(13,27,62,0.55)", backdropFilter:"blur(3px)",
-      display:"flex", alignItems:"center", justifyContent:"center", padding:16,
+      display:"flex", alignItems:"center", justifyContent:"center",
+      padding: isMobile ? 0 : 16,
     }} onClick={e=>{ if(e.target===e.currentTarget) onClose(); }}>
       <div className="modal-inner" style={{
         background:C.white, borderRadius:12,
         width:"100%", maxWidth: wide ? 720 : 520,
-        maxHeight:"90vh", overflowY:"auto",
+        maxHeight:"90vh", overflowY:"auto", overflowX:"hidden",
         boxShadow:"0 24px 64px rgba(13,27,62,0.4)",
         display:"flex", flexDirection:"column",
+        boxSizing:"border-box",
       }}>
         {}
         <div style={{
@@ -13691,12 +13871,15 @@ function Modal({ title, onClose, onSubmit, submitLabel, children, wide, danger }
           </button>
         </div>
         {}
-        <div style={{padding:"22px 24px", flex:1, overflowY:"auto"}}>
+        <div style={{padding: isMobile ? "18px 16px" : "22px 24px", flex:1, overflowY:"auto"}}>
           {children}
         </div>
         {}
         <div style={{
-          padding:"14px 24px", borderTop:`1px solid ${C.borderLight}`,
+          padding: isMobile
+            ? "12px 16px calc(12px + env(safe-area-inset-bottom, 0px))"
+            : "14px 24px",
+          borderTop:`1px solid ${C.borderLight}`,
           display:"flex", justifyContent:"flex-end", gap:10, flexShrink:0,
           background:C.ivory,
         }}>
@@ -13704,6 +13887,7 @@ function Modal({ title, onClose, onSubmit, submitLabel, children, wide, danger }
             padding:"9px 18px", borderRadius:8, cursor:"pointer",
             border:`1px solid ${C.border}`, background:C.white,
             color:C.textMid, fontSize:13.5, fontFamily:"'DM Sans',sans-serif",
+            flex: isMobile ? 1 : "none",
           }}>İptal</button>
           <button onClick={onSubmit} style={{
             padding:"9px 20px", borderRadius:8, cursor:"pointer",
@@ -13712,6 +13896,7 @@ function Modal({ title, onClose, onSubmit, submitLabel, children, wide, danger }
             color:C.white, fontSize:13.5, fontWeight:500,
             fontFamily:"'DM Sans',sans-serif",
             boxShadow:`0 2px 8px rgba(13,27,62,0.25)`,
+            flex: isMobile ? 2 : "none",
           }}>{submitLabel || "Kaydet"}</button>
         </div>
       </div>
@@ -13720,10 +13905,11 @@ function Modal({ title, onClose, onSubmit, submitLabel, children, wide, danger }
 }
 
 function FGrid({ children, cols }) {
+  const { isMobile } = useBreakpoint();
   return (
     <div style={{
       display:"grid",
-      gridTemplateColumns: `repeat(${cols||2}, 1fr)`,
+      gridTemplateColumns: isMobile ? "1fr" : `repeat(${cols||2}, 1fr)`,
       gap:14, marginBottom:14,
     }}>{children}</div>
   );
@@ -15679,6 +15865,46 @@ function App() {
           .rsp-p-sm  { padding: 14px !important; }
           .rsp-gap-sm{ gap: 12px !important; }
           .modal-inner { max-height: 95vh !important; border-radius: 16px 16px 0 0 !important; align-self: flex-end !important; }
+
+          /* Page-header search+button rows: stack full-width instead of
+             fighting for space at a fixed pixel width each. */
+          .page-header-actions {
+            flex-direction: column !important;
+            align-items: stretch !important;
+            width: 100% !important;
+          }
+          .page-header-actions > * { width: 100% !important; }
+          .page-header-actions input { width: 100% !important; box-sizing: border-box !important; }
+
+          /* ── Shared mobile layout primitives ──────────────────────────
+             Apply these classNames alongside existing inline styles —
+             !important lets a single rule override desktop inline widths
+             everywhere at once, instead of hand-editing each page. */
+
+          /* Any "N stat/KPI cards in a row" grid → clean 2-column grid. */
+          .rsp-stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; gap: 10px !important; }
+          .rsp-stat-grid-1 { grid-template-columns: 1fr !important; }
+
+          /* Any "content 1fr + fixed-px side panel" split layout →
+             single column, panel stacks below content. */
+          .rsp-split { grid-template-columns: 1fr !important; }
+
+          /* Deliberate horizontal-scroll container (tab bars, chip rows) —
+             distinct from accidental page overflow: contained, momentum-
+             scrolled, and never expands the page itself. */
+          .rsp-scroll-x {
+            overflow-x: auto !important;
+            overflow-y: hidden !important;
+            -webkit-overflow-scrolling: touch;
+            overscroll-behavior-x: contain;
+            scrollbar-width: none;
+            flex-wrap: nowrap !important;
+          }
+          .rsp-scroll-x::-webkit-scrollbar { display: none; }
+
+          /* Comfortable touch targets for every interactive control. */
+          button, a, input, select, textarea { min-height: 44px; }
+          input, select, textarea { font-size: 16px; } /* prevents iOS auto-zoom on focus */
         }
         @media (min-width: 768px) {
           .rsp-table { display: table !important; }
@@ -15700,13 +15926,14 @@ function App() {
         <div style={{
           position:"fixed", top:0, left:0, right:0, zIndex:200,
           background:`linear-gradient(135deg,${C.navyDeep} 0%,${C.navy} 100%)`,
-          padding:"0 16px", height:52,
+          padding:"env(safe-area-inset-top, 0px) 12px 0",
+          height:"calc(52px + env(safe-area-inset-top, 0px))",
           display:"flex", alignItems:"center", justifyContent:"space-between",
           boxShadow:"0 2px 12px rgba(13,27,62,0.3)",
         }}>
-          <button onClick={()=>setMobileSidebarOpen(true)} style={{
+          <button onClick={()=>setMobileSidebarOpen(true)} aria-label="Menü" style={{
             background:"rgba(255,255,255,0.1)", border:"1px solid rgba(255,255,255,0.15)",
-            borderRadius:8, width:38, height:38, cursor:"pointer",
+            borderRadius:8, width:44, height:44, cursor:"pointer",
             display:"flex", alignItems:"center", justifyContent:"center",
             color:C.ivory, flexShrink:0,
           }}>
@@ -15718,18 +15945,20 @@ function App() {
             <div style={{fontSize:14,fontWeight:600,color:C.ivory,fontFamily:"'Playfair Display',serif"}}>Dese Tour</div>
             <div style={{fontSize:10,color:"rgba(248,245,238,0.5)",fontFamily:"'DM Sans',sans-serif"}}>Operations Center</div>
           </div>
-          <div style={{width:38}}/>
+          <div style={{width:44}}/>
         </div>
       )}
 
       <main style={{
         marginLeft: isMobile ? 0 : (sidebarCollapsed ? 64 : 208),
-        marginTop: isMobile ? 52 : 0,
-        minHeight:"100vh",
-        padding: isMobile ? "14px 12px 60px" : isTablet ? "20px 18px 40px" : "26px 28px 52px",
+        marginTop: isMobile ? "calc(52px + env(safe-area-inset-top, 0px))" : 0,
+        minHeight: isMobile ? "100dvh" : "100vh",
+        padding: isMobile ? "14px 12px calc(24px + env(safe-area-inset-bottom, 0px))" : isTablet ? "20px 18px 40px" : "26px 28px 52px",
         background:"#EDE9DF",
         transition:"margin-left 0.22s cubic-bezier(0.4,0,0.2,1)",
         overflowX:"hidden",
+        maxWidth:"100vw",
+        boxSizing:"border-box",
       }}>
         <div className="fade" key={path}>
           {renderPage()}
