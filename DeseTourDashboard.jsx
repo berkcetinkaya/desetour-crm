@@ -13505,7 +13505,11 @@ function LoginPage({ onLogin, connectionError }) {
         {}
         <div style={{textAlign:"center", marginBottom:32}}>
           <div style={{marginBottom:14}}>
-            <img src="/seffafdeselogo.png" alt="Dese Tour"
+            {/* Transparent-background export of the same logo asset used
+                elsewhere — the original file is a flattened JPEG with a
+                black canvas, which shows as a black box on this white
+                card. See seffafdeselogo-transparent.png. */}
+            <img src="/seffafdeselogo-transparent.png" alt="Dese Tour"
               style={{height:64, width:"auto"}}
             />
           </div>
