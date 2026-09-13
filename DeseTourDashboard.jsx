@@ -13154,39 +13154,60 @@ function useAuth() {
     }
 
     async function init() {
+      // Step 1: determine whether a session exists at all. Only a failure
+      // *here* means we genuinely can't tell if the user is logged in, so
+      // only this step is allowed to fail closed to the login screen.
+      let s = null;
       try {
-        const { data:{ session:s } } = await _withTimeout(sb.auth.getSession(), 12000, 'Oturum kontrolü');
-        const st = s?.user ? await _withTimeout(loadStaffData(s.user.id), 12000, 'Personel profili') : null;
-        const newState = { session:s, staff:st, authLoading:false, authError:null };
-        _authCache = newState;
-        setAuthState(newState);
-        _notifyAuthListeners();
+        const { data } = await _withTimeout(sb.auth.getSession(), 12000, 'Oturum kontrolü');
+        s = data?.session || null;
       } catch(e) {
-        // Never grant access on failure/timeout — fail closed to the login
-        // screen, but always finish loading so the app doesn't hang forever.
-        console.error('[Auth] session check failed:', e);
+        console.error('[Auth] getSession() failed:', e);
         const newState = { session:null, staff:null, authLoading:false, authError:e.message };
         _authCache = newState;
         setAuthState(newState);
         _notifyAuthListeners();
+        return;
       }
+      // Step 2: the session check above succeeded (session may legitimately
+      // be null, i.e. genuinely signed out). A failure fetching the staff
+      // profile below is a separate concern — it must NOT wipe out a valid
+      // session. Keep `s` as-is either way; only `staff`/`authError` reflect
+      // this step's outcome.
+      let st = null, staffErr = null;
+      if (s?.user) {
+        try {
+          st = await _withTimeout(loadStaffData(s.user.id), 12000, 'Personel profili');
+        } catch(e) {
+          console.error('[Auth] staff profile lookup failed (session kept):', e);
+          staffErr = e.message;
+        }
+      }
+      const newState = { session:s, staff:st, authLoading:false, authError:staffErr };
+      _authCache = newState;
+      setAuthState(newState);
+      _notifyAuthListeners();
     }
     init();
 
     const { data:{ subscription } } = sb.auth.onAuthStateChange(async (_ev, s) => {
-      try {
-        const st = s?.user ? await _withTimeout(loadStaffData(s.user.id), 12000, 'Personel profili') : null;
-        const newState = { session:s, staff:st, authLoading:false, authError:null };
-        _authCache = newState;
-        setAuthState(newState);
-        _notifyAuthListeners();
-      } catch(e) {
-        console.error('[Auth] onAuthStateChange failed:', e);
-        const newState = { session:null, staff:null, authLoading:false, authError:e.message };
-        _authCache = newState;
-        setAuthState(newState);
-        _notifyAuthListeners();
+      // Same principle: `s` (null or a session) comes straight from the
+      // auth event itself — a staff_users lookup failure must not override
+      // it with `null`, or a transient DB hiccup during an active session
+      // (e.g. right after some unrelated insert) would look like a logout.
+      let st = null, staffErr = null;
+      if (s?.user) {
+        try {
+          st = await _withTimeout(loadStaffData(s.user.id), 12000, 'Personel profili');
+        } catch(e) {
+          console.error('[Auth] onAuthStateChange staff lookup failed (session kept):', e);
+          staffErr = e.message;
+        }
       }
+      const newState = { session:s, staff:st, authLoading:false, authError:staffErr };
+      _authCache = newState;
+      setAuthState(newState);
+      _notifyAuthListeners();
     });
     return () => {
       subscription?.unsubscribe?.();
