@@ -12205,7 +12205,7 @@ function CustomersPage({ onSelectGuest }) {
                 })}
               </tbody>
             </table>
-            <div className="rsp-cards"><MobileCardList items={allCusts} renderCard={(item,i)=>(
+            <div className="rsp-cards"><MobileCardList items={filtered} renderCard={(item,i)=>(
                 <MobileCard key={item.id} onClick={()=>onSelectGuest&&onSelectGuest(item.id)}>
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                     <div>
