@@ -6885,7 +6885,7 @@ function WeeklyView({ weekStart, events }) {
   return (
     <div style={{
       display:"grid",
-      gridTemplateColumns: "52px repeat(7, 1fr)",
+      gridTemplateColumns: "52px repeat(7, minmax(0, 1fr))",
       background:C.white,
       border:`1px solid ${C.border}`,
       borderRadius:12,
@@ -6985,7 +6985,7 @@ function DailyView({ date, events }) {
 
   return (
     <div style={{
-      display:"grid", gridTemplateColumns:"52px 1fr",
+      display:"grid", gridTemplateColumns:"52px minmax(0, 1fr)",
       background:C.white, border:`1px solid ${C.border}`, borderRadius:12, overflow:"hidden",
     }}>
       {}
@@ -7056,7 +7056,7 @@ function MonthlyView({ monthStart, events }) {
       background:C.white, border:`1px solid ${C.border}`, borderRadius:12, overflow:"hidden",
     }}>
       {}
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(7,1fr)", borderBottom:`1px solid ${C.border}` }}>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(7, minmax(0, 1fr))", borderBottom:`1px solid ${C.border}` }}>
         {TR_DAYS_FULL.map(d => (
           <div key={d} style={{
             padding:"10px 0", textAlign:"center",
@@ -7070,7 +7070,7 @@ function MonthlyView({ monthStart, events }) {
       </div>
 
       {}
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(7,1fr)" }}>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(7, minmax(0, 1fr))" }}>
         {cells.map((cell,i) => {
           const cellEvents = events.filter(e => isSameDay(e.date, cell));
           const today = isToday(cell);
@@ -7276,7 +7276,7 @@ function CalendarPage() {
       </div>
 
       {}
-      <div style={{ display:"grid", gridTemplateColumns:"1fr 280px", gap:20, alignItems:"start" }}>
+      <div style={{ display:"grid", gridTemplateColumns:"minmax(0, 1fr) 280px", gap:20, alignItems:"start" }}>
 
         {}
         <div>
