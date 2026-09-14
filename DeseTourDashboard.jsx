@@ -10852,6 +10852,17 @@ function calculateReportMetrics(period, leads, quotes, reservations, payments, c
   };
 }
 
+// Explicit zero/empty shape returned whenever calculateReportMetrics cannot
+// run (or throws) — e.g. an unexpected real-data shape from Supabase.
+// Guarantees ReportsPage always has every field it reads, never fabricates
+// non-zero values, and never crashes.
+const EMPTY_REPORT_METRICS = {
+  kpi: { leads:0, quotes:0, reservations:0, completed:0, expectedEur:0, collectedEur:0 },
+  sources: [], tours: [], countries: [],
+  payments: { expected:0, collected:0, pending:0, partial:0, refunded:0, highValue:[] },
+  ops: { upcoming:0, completed:0, cancelled:0, noGuide:0, noPickup:0 },
+};
+
 function calculateDashboardMetrics(leads, reservations, payments, tasks, reminders) {
   // When Supabase is active, use empty arrays (not DB mock) if data not loaded yet
   // This prevents KPIs briefly showing mock values then disappearing
@@ -10970,11 +10981,15 @@ function ReportsPage() {
   const { sources } = useSources();
   const isLoading = rLeadsLoading || rResLoading || rPaysLoading;
 
-  const metrics = useMemo(
-    () => calculateReportMetrics(period, rLeads, rQuotes, rRes, rPays, rCusts, sources),
-    [period, rLeads, rQuotes, rRes, rPays, rCusts, sources]
-  );
-  const kpi       = metrics.kpi;
+  const metrics = useMemo(() => {
+    try {
+      return calculateReportMetrics(period, rLeads, rQuotes, rRes, rPays, rCusts, sources) || EMPTY_REPORT_METRICS;
+    } catch (e) {
+      console.error("[ReportsPage] calculateReportMetrics failed, showing zero-value report:", e);
+      return EMPTY_REPORT_METRICS;
+    }
+  }, [period, rLeads, rQuotes, rRes, rPays, rCusts, sources]);
+  const kpi       = metrics.kpi || EMPTY_REPORT_METRICS.kpi;
   const convRate  = kpi.leads > 0 ? Math.round(kpi.reservations/kpi.leads*100) : 0;
   const maxLeads  = Math.max(1, ...metrics.sources.map(s=>s.leads));
   const maxRev    = Math.max(1, ...metrics.tours.map(t=>t.revenue));
