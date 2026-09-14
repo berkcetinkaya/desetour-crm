@@ -10963,7 +10963,7 @@ function ReportsPage() {
   const PERIODS = ["Bugün","Bu Hafta","Bu Ay","Son 3 Ay"];
 
   const { data:rLeads, loading:rLeadsLoading, error:rLeadsError, reload:reloadLeads } = useRepo("lead",        "getAll");
-  const { data:rQuotes }                                                              = useRepo("payment",     "getAll");
+  const { data:rQuotes }                                                              = useRepo("quote",       "getAll");
   const { data:rRes,   loading:rResLoading,  error:rResError,   reload:reloadRes }   = useRepo("reservation", "getAll");
   const { data:rPays,  loading:rPaysLoading, error:rPaysError,  reload:reloadPays }  = useRepo("payment",     "getAll");
   const { data:rCusts }                                                               = useRepo("customer",    "getAll");
@@ -10971,8 +10971,8 @@ function ReportsPage() {
   const isLoading = rLeadsLoading || rResLoading || rPaysLoading;
 
   const metrics = useMemo(
-    () => calculateReportMetrics(period, rLeads, DB.quotes, rRes, rPays, rCusts, sources),
-    [period, rLeads, rRes, rPays, rCusts, sources]
+    () => calculateReportMetrics(period, rLeads, rQuotes, rRes, rPays, rCusts, sources),
+    [period, rLeads, rQuotes, rRes, rPays, rCusts, sources]
   );
   const kpi       = metrics.kpi;
   const convRate  = kpi.leads > 0 ? Math.round(kpi.reservations/kpi.leads*100) : 0;
@@ -11362,43 +11362,50 @@ function ReportsPage() {
 
             {}
             <div style={{padding:"12px 14px", display:"flex", flexDirection:"column", gap:8}}>
-              {[
+              {(() => {
+                const topSource  = metrics.sources.length  ? metrics.sources[0]  : null;
+                const topTour    = metrics.tours.length    ? metrics.tours[0]    : null;
+                const topCountry = metrics.countries.length ? [...metrics.countries].sort((a,b)=>b.avgQuote-a.avgQuote)[0] : null;
+                const pendingCount = metrics.payments.highValue.length;
+                const noGuide = metrics.ops.noGuide;
+                return [
                 {
                   icon:"M13 7h8m0 0v8m0-8l-8 8-4-4-6 6",
                   color:C.green, bg:C.greenBg,
                   label:"En Güçlü Kaynak",
-                  value:"Website",
-                  sub:`${metrics.sources[0].leads} talep · %${metrics.sources[0].conversion} dönüşüm`,
+                  value: topSource ? topSource.source : "Veri yok",
+                  sub: topSource ? `${topSource.leads} talep · %${topSource.conversion} dönüşüm` : "Bu dönem için veri yok",
                 },
                 {
                   icon:"M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z M9 22V12h6v10",
                   color:C.gold, bg:C.goldPale,
                   label:"En Çok Satan Tur",
-                  value:"Private Istanbul",
-                  sub:`${metrics.tours[0].reservations} rezervasyon · €${metrics.tours[0].revenue.toLocaleString("tr-TR")}`,
+                  value: topTour ? topTour.name : "Veri yok",
+                  sub: topTour ? `${topTour.reservations} rezervasyon · €${topTour.revenue.toLocaleString("tr-TR")}` : "Bu dönem için veri yok",
                 },
                 {
                   icon:"M12 2v20M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6",
                   color:C.blue, bg:C.blueBg,
                   label:"En Yüksek Ortalama",
-                  value:"ABD — €460",
+                  value: topCountry ? `${topCountry.country} — €${topCountry.avgQuote}` : "Veri yok",
                   sub:"Kişi başı ortalama teklif",
                 },
                 {
                   icon:"M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z",
                   color:C.amber, bg:C.amberBg,
                   label:"Bekleyen Ödeme",
-                  value:"€5.650",
-                  sub:"3 rezervasyon · Bu ay",
+                  value:`€${metrics.payments.pending.toLocaleString("tr-TR")}`,
+                  sub: pendingCount>0 ? `${pendingCount} rezervasyon` : "Bekleyen ödeme yok",
                 },
                 {
                   icon:"M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z",
                   color:C.red, bg:C.redBg,
                   label:"Operasyon Uyarısı",
-                  value:"3 Rehber Eksik",
-                  sub:"Tur öncesi atama yapılmalı",
+                  value: noGuide>0 ? `${noGuide} Rehber Eksik` : "Sorun yok",
+                  sub: noGuide>0 ? "Tur öncesi atama yapılmalı" : "Tüm turlar için rehber atandı",
                 },
-              ].map((ins,i)=>(
+              ];
+              })().map((ins,i)=>(
                 <div key={i} style={{
                   padding:"12px 12px", borderRadius:9,
                   background:ins.bg, border:`1px solid ${ins.color}22`,
