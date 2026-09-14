@@ -3714,14 +3714,15 @@ function LeadDetailPage({ onBack, leadId }) {
 
   const { data:lead, loading:leadLoading, error:leadError }
     = useRepo("lead", "getById", leadId || (DB.leads[0]?.id ?? null));
+  const { data:custTasks,  loading:tasksLoading }  = useRepo("task",        "getByCustomerId", lead?.customerId || null);
+  const { data:custQuotes, loading:quotesLoading } = useRepo("quote",       "getByCustomerId", lead?.customerId || null);
+  const { data:custRes,    loading:resLoading }    = useRepo("reservation", "getByCustomerId", lead?.customerId || null);
+
   if (leadLoading) return <LoadingState label="Talep yükleniyor…"/>;
   if (leadError)   return <ErrorState message={leadError} onRetry={()=>{}}/>;
   if (!lead)       return <NotFoundCard entityType="Talep" entityId={leadId} onBack={onBack}/>;
   const sm = STATUS_META[lead?.status] || { color: C.textMuted, bg: C.ivoryDark };
 
-  const { data:custTasks,  loading:tasksLoading }  = useRepo("task",        "getByCustomerId", lead.customerId || null);
-  const { data:custQuotes, loading:quotesLoading } = useRepo("quote",       "getByCustomerId", lead.customerId || null);
-  const { data:custRes,    loading:resLoading }    = useRepo("reservation", "getByCustomerId", lead.customerId || null);
   const leadTasks = (custTasks||[]).filter(t => t.leadId === lead.id);
   const leadQuotes = (custQuotes||[]).filter(q => q.leadId === lead.id);
   const leadReservations = (custRes||[]).filter(r => r.leadId === lead.id);
@@ -3931,7 +3932,7 @@ function QuoteRow({ q, isLast, onSelect }) {
       {}
       <td style={{ padding:"14px 12px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle" }}>
         <div style={{ fontSize:15, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif" }}>
-          {q.currency === "EUR" ? "€" : "₺"}{q.fmtNum(total)}
+          {q.currency === "EUR" ? "€" : "₺"}{fmtNum(q.total)}
         </div>
         <div style={{ fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:2 }}>{q.currency}</div>
       </td>
