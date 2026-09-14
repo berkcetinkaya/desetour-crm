@@ -12514,33 +12514,49 @@ function ConvContext({ conv }) {
 function MessagesPage() {
   const { isMobile } = useBreakpoint();
   const [activeFilter, setActiveFilter] = useState("Tümü");
-  const [selectedId, setSelectedId]     = useState("CONV-001");
+  const [selectedId, setSelectedId]     = useState(null);
   const [mobileView, setMobileView]     = useState("list");
 
+  const conversations = AppConfig.useSupabase ? [] : MOCK_CONVERSATIONS;
+
   const FILTERS = [
-    { key:"Tümü",      count:MOCK_CONVERSATIONS.length },
-    { key:"Okunmamış", count:MOCK_CONVERSATIONS.filter(c=>c.unread>0).length },
-    { key:"WhatsApp",  count:MOCK_CONVERSATIONS.filter(c=>c.channel==="whatsapp").length },
-    { key:"E-posta",   count:MOCK_CONVERSATIONS.filter(c=>c.channel==="email").length },
-    { key:"Booking",   count:MOCK_CONVERSATIONS.filter(c=>c.channel==="booking").length },
-    { key:"Telefon",   count:MOCK_CONVERSATIONS.filter(c=>c.channel==="telefon").length },
+    { key:"Tümü",      count:conversations.length },
+    { key:"Okunmamış", count:conversations.filter(c=>c.unread>0).length },
+    { key:"WhatsApp",  count:conversations.filter(c=>c.channel==="whatsapp").length },
+    { key:"E-posta",   count:conversations.filter(c=>c.channel==="email").length },
+    { key:"Booking",   count:conversations.filter(c=>c.channel==="booking").length },
+    { key:"Telefon",   count:conversations.filter(c=>c.channel==="telefon").length },
   ];
 
-  const filtered = MOCK_CONVERSATIONS.filter(c=>{
+  const filtered = conversations.filter(c=>{
     if(activeFilter==="Tümü")return true;
     if(activeFilter==="Okunmamış")return c.unread>0;
     const label=MSG_CHANNELS[c.channel]?.label;
     return label===activeFilter||c.channel===activeFilter.toLowerCase();
   });
 
-  const selectedConv = MOCK_CONVERSATIONS.find(c=>c.id===selectedId);
-  const totalUnread  = MOCK_CONVERSATIONS.reduce((s,c)=>s+c.unread,0);
+  const selectedConv = conversations.find(c=>c.id===selectedId);
+  const totalUnread  = conversations.reduce((s,c)=>s+c.unread,0);
 
   function selectConv(id) {
     setSelectedId(id);
     if(isMobile)setMobileView("detail");
-    const c=MOCK_CONVERSATIONS.find(x=>x.id===id);
+    const c=conversations.find(x=>x.id===id);
     if(c)c.unread=0;
+  }
+
+  if (conversations.length === 0) {
+    return (
+      <div style={{background:C.white,border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden",height:isMobile?"calc(100vh - 52px)":"calc(100vh - 80px)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:14}}>
+        <div style={{width:64,height:64,borderRadius:"50%",background:"rgba(27,45,79,0.07)",display:"flex",alignItems:"center",justifyContent:"center"}}>
+          <MsgIc d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" size={28} sw={1.3} color={C.textMuted}/>
+        </div>
+        <div style={{textAlign:"center",padding:"0 24px"}}>
+          <div style={{fontSize:16,fontWeight:600,color:C.text,fontFamily:"'Playfair Display',serif",marginBottom:6}}>Henüz mesaj bulunmuyor.</div>
+          <div style={{fontSize:13,color:C.textFaint,fontFamily:"'DM Sans',sans-serif",maxWidth:340}}>Gmail ve WhatsApp entegrasyonları etkinleştirildiğinde müşteri konuşmaları burada görüntülenecek.</div>
+        </div>
+      </div>
+    );
   }
 
   const ListPanel = (
@@ -17902,17 +17918,19 @@ function MobileMessagesPage() {
   const [draft, setDraft] = useState("");
   const [, forceTick] = useState(0);
 
+  const conversations = AppConfig.useSupabase ? [] : MOCK_CONVERSATIONS;
+
   const FILTERS = ["Tümü","Okunmamış","WhatsApp","E-posta"];
-  const filtered = MOCK_CONVERSATIONS.filter(c=>{
+  const filtered = conversations.filter(c=>{
     if (filter==="Tümü") return true;
     if (filter==="Okunmamış") return c.unread>0;
     return MSG_CHANNELS[c.channel]?.label === filter;
   });
-  const totalUnread = MOCK_CONVERSATIONS.reduce((s,c)=>s+c.unread,0);
-  const selected = MOCK_CONVERSATIONS.find(c=>c.id===selectedId);
+  const totalUnread = conversations.reduce((s,c)=>s+c.unread,0);
+  const selected = conversations.find(c=>c.id===selectedId);
 
   function open(id) {
-    const c = MOCK_CONVERSATIONS.find(x=>x.id===id);
+    const c = conversations.find(x=>x.id===id);
     if (c) c.unread = 0;
     setSelectedId(id);
     setView("detail");
@@ -17926,6 +17944,20 @@ function MobileMessagesPage() {
     selected.lastMessage = draft.trim();
     setDraft("");
     forceTick(t=>t+1);
+  }
+
+  if (conversations.length === 0) {
+    return (
+      <div style={{ display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:14, textAlign:"center", padding:"60px 24px" }}>
+        <div style={{ width:64, height:64, borderRadius:"50%", background:"rgba(27,45,79,0.07)", display:"flex", alignItems:"center", justifyContent:"center" }}>
+          <GIc d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" size={28} sw={1.3} color={C.textMuted}/>
+        </div>
+        <div>
+          <div style={{ fontSize:16, fontWeight:600, color:C.text, fontFamily:"'Playfair Display',serif", marginBottom:6 }}>Henüz mesaj bulunmuyor.</div>
+          <div style={{ fontSize:13, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", maxWidth:320 }}>Gmail ve WhatsApp entegrasyonları etkinleştirildiğinde müşteri konuşmaları burada görüntülenecek.</div>
+        </div>
+      </div>
+    );
   }
 
   if (view==="detail" && selected) {
