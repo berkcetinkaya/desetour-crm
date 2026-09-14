@@ -714,11 +714,23 @@ function computeUrgent(leads, reservations, payments, tasks, reminders) {
   return items.slice(0,5);
 }
 
+// Shared in-flight/resolved fetch cache for useRepo, keyed by
+// "entity:method:arg". Without this, every component that calls
+// useRepo("lead","getAll") (Sidebar, Dashboard, LeadsPage, ...) issued its
+// own independent Supabase request for the exact same rows — visiting
+// /leads alone fired the leads table query twice (once from Sidebar's
+// badge count, once from LeadsPage itself), and the Dashboard fired it
+// three times over (Sidebar + Welcome + KpiRow). Cleared on every
+// Store.notify() so a mutation still forces a fresh read everywhere, same
+// as before — this only removes *redundant simultaneous* requests for
+// identical data, it never serves stale data past a mutation.
+const _repoFetchCache = new Map();
+
 const Store = (() => {
   const listeners = new Set();
   return {
     subscribe(fn)   { listeners.add(fn); return () => listeners.delete(fn); },
-    notify()        { listeners.forEach(fn => fn()); },
+    notify()        { _repoFetchCache.clear(); listeners.forEach(fn => fn()); },
   };
 })();
 
@@ -13099,17 +13111,34 @@ function getActiveRepo(entity) {
 function useRepo(entity, method, arg) {
   const [state, setState] = useState({ data:null, loading:true, error:null });
   const tick = useStore();
+  const argKey = JSON.stringify(arg ?? null);
   useEffect(() => {
     let dead = false;
     setState(p => ({ ...p, loading:true, error:null }));
     const repo = getActiveRepo(entity);
     if(!repo || typeof repo[method]!=='function'){setState({data:null,loading:false,error:`Unknown: ${entity}.${method}`});return;}
-    Promise.resolve(repo[method].call(repo, arg))
+    // Share one in-flight/resolved fetch across every component asking for
+    // the same entity+method+arg right now (e.g. Sidebar's badge counts and
+    // a page's own list both wanting all leads) instead of each issuing its
+    // own Supabase request. _repoFetchCache is fully cleared on every
+    // Store.notify(), so this never serves data older than the last mutation.
+    const cacheKey = `${entity}:${method}:${argKey}`;
+    let fetchPromise = _repoFetchCache.get(cacheKey);
+    if (!fetchPromise) {
+      fetchPromise = Promise.resolve(repo[method].call(repo, arg));
+      _repoFetchCache.set(cacheKey, fetchPromise);
+    }
+    fetchPromise
       .then(data => { if(!dead) setState({data, loading:false, error:null}); })
       .catch(err  => { if(!dead) setState({data:null, loading:false, error:err.message}); });
     return () => { dead = true; };
-  }, [entity, method, JSON.stringify(arg ?? null), tick]);
-  function reload(){setState(p=>({...p,loading:true}));const repo=getActiveRepo(entity);Promise.resolve(repo[method].call(repo,arg)).then(data=>setState({data,loading:false,error:null})).catch(err=>setState({data:null,loading:false,error:err.message}));}
+  }, [entity, method, argKey, tick]);
+  function reload(){
+    setState(p=>({...p,loading:true}));
+    _repoFetchCache.clear();
+    const repo=getActiveRepo(entity);
+    Promise.resolve(repo[method].call(repo,arg)).then(data=>setState({data,loading:false,error:null})).catch(err=>setState({data:null,loading:false,error:err.message}));
+  }
   return { ...state, reload };
 }
 
