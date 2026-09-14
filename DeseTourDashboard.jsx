@@ -100,6 +100,24 @@ const C = {
   orange:"#C05621", orangeBg:"#FEF0E8",
 };
 
+// Shared desktop visual tokens — one place to keep radius/spacing/shadow/
+// control-height decisions consistent instead of re-picking a value per
+// component. Not exhaustive: existing per-component values that already
+// match these are left as literals rather than churned into references.
+const T = {
+  radius:      12,   // cards, panels, modals
+  radiusSm:    8,    // inputs, buttons, small chips
+  radiusPill:  99,   // badges
+  gutter:      24,   // page-level horizontal gutter
+  cardPad:     "20px 24px",
+  sectionGap:  20,
+  shadowSoft:  "0 1px 2px rgba(15,29,53,0.05)",
+  shadowCard:  "0 1px 3px rgba(15,29,53,0.06)",
+  controlH:    38,   // inputs, selects, filter buttons
+  buttonH:     40,   // primary/secondary buttons
+  rowH:        48,   // table row target height
+};
+
 const DB = {
 
   staff: [
@@ -119,6 +137,7 @@ const DB = {
     { id:"SRC-07", slug:"tripadvisor", label:"Tripadvisor", active:false },
     { id:"SRC-08", slug:"email",       label:"Email",       active:true  },
     { id:"SRC-09", slug:"manuel",      label:"Manuel",      active:true  },
+    { id:"SRC-10", slug:"civitatis",   label:"Civitatis",   active:true  },
   ],
 
   tours: [
@@ -695,28 +714,23 @@ function computeUrgent(leads, reservations, payments, tasks, reminders) {
   return items.slice(0,5);
 }
 
-const METRICS = {
-  get newLeads()            { return DB.leads.filter(l=>l.status==="Yeni").length; },
-  get openLeads()           { return DB.leads.filter(l=>!["Onaylandı","İptal"].includes(l.status)).length; },
-  get todayTourCount()      { return DB.reservations.filter(r=>r.date===_TODAY_STR||r.checkIn===_TODAY_ISO).length; },
-  get todayTours()          { return DB.reservations.filter(r=>r.date===_TODAY_STR||r.checkIn===_TODAY_ISO); },
-  get upcomingReservations(){ return DB.reservations.filter(r=>!["Tamamlandı","İptal"].includes(r.opStatus)); },
-  get pendingPaymentsCount(){ return DB.payments.filter(p=>["Bekliyor","Kısmi Ödendi"].includes(p.status)).length; },
-  get pendingPaymentsEUR()  {
-    return DB.payments.filter(p=>p.currency==="EUR"&&["Bekliyor","Kısmi Ödendi"].includes(p.status))
-      .reduce((s,p)=> s + (p.resId ? (getReservationById(p.resId)||{remaining:0}).remaining : p.amount), 0);
-  },
-  get expectedRevenueEUR()  { return DB.payments.filter(p=>p.currency==="EUR").reduce((s,p)=>s+(getReservationById(p.resId||"")||{total:p.amount}).total,0); },
-  get collectedEUR()        { return DB.payments.filter(p=>p.currency==="EUR"&&p.status!=="Bekliyor").reduce((s,p)=>s+p.amount,0); },
-  get noGuideCount()        { return DB.reservations.filter(r=>!r.guide&&!["Tamamlandı","İptal"].includes(r.opStatus)).length; },
-  get activeTasksToday()    { return DB.tasks.filter(t=>t.dueDateRaw===0&&t.status!=="Tamamlandı").length; },
-};
+// Shared in-flight/resolved fetch cache for useRepo, keyed by
+// "entity:method:arg". Without this, every component that calls
+// useRepo("lead","getAll") (Sidebar, Dashboard, LeadsPage, ...) issued its
+// own independent Supabase request for the exact same rows — visiting
+// /leads alone fired the leads table query twice (once from Sidebar's
+// badge count, once from LeadsPage itself), and the Dashboard fired it
+// three times over (Sidebar + Welcome + KpiRow). Cleared on every
+// Store.notify() so a mutation still forces a fresh read everywhere, same
+// as before — this only removes *redundant simultaneous* requests for
+// identical data, it never serves stale data past a mutation.
+const _repoFetchCache = new Map();
 
 const Store = (() => {
   const listeners = new Set();
   return {
     subscribe(fn)   { listeners.add(fn); return () => listeners.delete(fn); },
-    notify()        { listeners.forEach(fn => fn()); },
+    notify()        { _repoFetchCache.clear(); listeners.forEach(fn => fn()); },
   };
 })();
 
@@ -1447,49 +1461,26 @@ const MetricsService = {
   },
 };
 
+// NAV_TOP/NAV_BOT badges default to null (no badge shown). Real counts are
+// computed from live repo data inside Sidebar/SidebarInner and merged in at
+// render time — never hardcode a badge number here, and never fall back to
+// a mock/demo count when real data is unavailable.
 const NAV_TOP = [
   { id:"dashboard",    label:"Ana Sayfa",      badge:null, icon:"M3 9.5L12 3l9 6.5V20a1 1 0 01-1 1H4a1 1 0 01-1-1V9.5z M9 21V12h6v9" },
-  { id:"leads",        label:"Talepler",        badge:DB.leads.filter(l=>["Yeni","İletişimde"].includes(l.status)).length,    icon:"M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" },
+  { id:"leads",        label:"Talepler",        badge:null, icon:"M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" },
   { id:"customers",    label:"Misafirler",      badge:null, icon:"M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2 M23 21v-2a4 4 0 00-3-3.87 M16 3.13a4 4 0 010 7.75" },
-  { id:"quotes",       label:"Teklifler",       badge:DB.quotes.filter(q=>q.status==="Taslak").length,    icon:"M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z M14 2v6h6 M16 13H8 M16 17H8 M10 9H8" },
+  { id:"quotes",       label:"Teklifler",       badge:null, icon:"M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z M14 2v6h6 M16 13H8 M16 17H8 M10 9H8" },
   { id:"reservations", label:"Rezervasyonlar",  badge:null, icon:"M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" },
   { id:"calendar",     label:"Takvim",          badge:null, icon:"M8 2v4M16 2v4M3 10h18M21 8a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2h14a2 2 0 002-2V8z" },
   { id:"tours",        label:"Turlar",          badge:null, icon:"M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z M9 22V12h6v10" },
 ];
 const NAV_BOT = [
-  { id:"tasks",      label:"Görevler",       badge:DB.tasks.filter(t=>t.status!=="Tamamlandı"&&t.dueDateRaw<=0).length,    icon:"M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" },
+  { id:"tasks",      label:"Görevler",       badge:null, icon:"M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" },
   { id:"payments",   label:"Ödemeler",      badge:null, icon:"M2 9a2 2 0 012-2h16a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V9zM2 13h20" },
-  { id:"messages",   label:"Mesajlar",      badge:7,   icon:"M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" },
-  { id:"reminders",  label:"Hatırlatmalar", badge:5,    icon:"M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0" },
+  { id:"messages",   label:"Mesajlar",      badge:null, icon:"M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" },
+  { id:"reminders",  label:"Hatırlatmalar", badge:null, icon:"M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0" },
   { id:"reports",    label:"Raporlar",      badge:null, icon:"M18 20V10M12 20V4M6 20v-6" },
   { id:"settings",   label:"Ayarlar",       badge:null, icon:"M12 15a3 3 0 100-6 3 3 0 000 6z M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" },
-];
-
-const URGENT = [
-  {
-    id:1, level:"high",
-    title:"Sarah Johnson için ödeme takibi yapılmalı",
-    sub:"Private Istanbul Experience · 22 Haz · €1.200 bekliyor",
-    tag:"Ödeme", tagColor:C.red, tagBg:C.redBg,
-    ago:"2 saat önce",
-    icon:"M2 9a2 2 0 012-2h16a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V9zM2 13h20",
-  },
-  {
-    id:2, level:"high",
-    title:"Emma Brown rezervasyonu için rehber atanmalı",
-    sub:"Private Istanbul Experience · 25 Haz · 6 kişi",
-    tag:"Rehber", tagColor:C.blue, tagBg:C.blueBg,
-    ago:"4 saat önce",
-    icon:"M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2 M23 21v-2a4 4 0 00-3-3.87 M16 3.13a4 4 0 010 7.75",
-  },
-  {
-    id:3, level:"medium",
-    title:"Michael Green için teklif hazırlanmalı",
-    sub:"Kapadokya Turu · 3 kişi · Kaynak: Instagram",
-    tag:"Teklif", tagColor:C.amber, tagBg:C.amberBg,
-    ago:"1 gün önce",
-    icon:"M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z M14 2v6h6 M16 13H8 M16 17H8 M10 9H8",
-  },
 ];
 
 const TODAY_TOURS = DB.reservations
@@ -1507,40 +1498,6 @@ const TODAY_TOURS = DB.reservations
       guideStatus: r.guide ? "Rehber Atandı" : "Rehber Atanmadı", ...gm,
     };
   }); // derived from DB
-
-const UPCOMING_RESERVATIONS = DB.reservations
-  .filter(r => !["Tamamlandı","İptal"].includes(r.opStatus))
-  .slice(0, 5)
-  .map(r => {
-    const cust = getCustomerById(r.customerId);
-    return {
-      date:r.date, day:"", customer:r.tour, flag:cust?.flag||"🏳",
-      pax:r.pax, guide:r.guide||"Atanmadı",
-      payStatus:r.payStatus, resId:r.id,
-    };
-  }); // derived from DB
-
-const ACTIVITIES = DB.activityLogs
-  .slice(-6)
-  .reverse()
-  .map(log => {
-    const typeMap = {
-      lead:        { type:"lead",    icon:"M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01", color:C.blue },
-      quote:       { type:"quote",   icon:"M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z M14 2v6h6", color:C.amber },
-      payment:     { type:"payment", icon:"M2 9a2 2 0 012-2h16a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V9zM2 13h20", color:C.green },
-      reservation: { type:"reservation", icon:"M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11", color:C.navy },
-      call:        { type:"call",    icon:"M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07", color:C.textMuted },
-    };
-    const meta = typeMap[log.entityType] || typeMap.lead;
-    const staff = DB.staff.find(s=>s.id===log.performedBy);
-    return {
-      ...meta,
-      action: log.description,
-      who: staff?.name || log.performedBy,
-      ago: log.createdAt.includes("T") ? log.createdAt.split("T")[0] : log.createdAt,
-      entityId: log.entityId,
-    };
-  }); // derived from DB.activityLogs
 
 function Ic({ d, size=16, sw=1.6 }) {
   return (
@@ -1618,17 +1575,17 @@ function NavItem({ item, currentBase }) {
       style={{
         textDecoration:"none",
         display:"flex", alignItems:"center", gap:10, width:"100%",
-        padding: item._collapsed ? "10px 0" : "8.5px 14px",
+        padding: item._collapsed ? "10px 0" : "9px 14px",
         justifyContent: item._collapsed ? "center" : "flex-start",
-        border:"none", borderRadius:7,
-        background: on ? "rgba(184,151,58,0.13)" : hov ? "rgba(255,255,255,0.06)" : "transparent",
-        color: on ? C.goldLight : hov ? "rgba(248,245,238,0.9)" : "rgba(248,245,238,0.58)",
+        border:"none", borderRadius:T.radiusSm,
+        background: on ? "rgba(184,151,58,0.10)" : hov ? "rgba(255,255,255,0.05)" : "transparent",
+        color: on ? C.goldLight : hov ? "rgba(248,245,238,0.9)" : "rgba(248,245,238,0.56)",
         cursor:"pointer", textAlign:"left", position:"relative",
         transition:"background 0.12s, color 0.12s",
       }}>
       {on && <span style={{
         position:"absolute", left:0, top:"50%", transform:"translateY(-50%)",
-        width:3, height:20, borderRadius:"0 3px 3px 0", background:C.goldLight,
+        width:2.5, height:16, borderRadius:2, background:C.goldLight,
       }}/>}
       <span style={{flexShrink:0, opacity:on?1:0.85}}>
         <Ic d={item.icon} size={15} sw={on?2:1.6}/>
@@ -1637,7 +1594,7 @@ function NavItem({ item, currentBase }) {
         fontSize:13, fontWeight:on?500:400, flex:1, letterSpacing:"0.01em",
         fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap",
       }}>{item.label}</span>}
-      {!item._collapsed && item.badge && (
+      {!item._collapsed && item.badge > 0 && (
         <span style={{
           minWidth:18, height:18, borderRadius:99, padding:"0 5px",
           display:"inline-flex", alignItems:"center", justifyContent:"center",
@@ -1649,9 +1606,10 @@ function NavItem({ item, currentBase }) {
   );
 }
 
-function SidebarInner({ currentBase, onNavItem }) {
+function SidebarInner({ currentBase, onNavItem, liveBadges }) {
   const auth = getAuthContext();
   const role = auth.role;
+  const badgeFor = (it) => (liveBadges && liveBadges[it.id] !== undefined) ? liveBadges[it.id] : it.badge;
 
   function visibleItems(items) {
     return items.filter(it => canAccess(role, it.id));
@@ -1675,7 +1633,7 @@ function SidebarInner({ currentBase, onNavItem }) {
         />
         <div>
           <div style={{fontSize:13.5, fontWeight:600, color:C.ivory, fontFamily:"'Playfair Display',serif", lineHeight:1.2}}>Dese Tour</div>
-          <div style={{fontSize:10, color:"rgba(248,245,238,0.45)", fontFamily:"'DM Sans',sans-serif"}}>Operations Center</div>
+          <div style={{fontSize:10, color:"rgba(248,245,238,0.45)", fontFamily:"'DM Sans',sans-serif"}}>Operasyon Merkezi</div>
         </div>
       </div>
 
@@ -1699,7 +1657,7 @@ function SidebarInner({ currentBase, onNavItem }) {
                 <path d={it.icon}/>
               </svg>
               <span style={{fontSize:13, fontWeight:currentBase===it.id?500:400, fontFamily:"'DM Sans',sans-serif", flex:1, whiteSpace:"nowrap"}}>{it.label}</span>
-              {(()=>{ const b = it.id==="messages" ? (typeof MOCK_CONVERSATIONS!=="undefined"?MOCK_CONVERSATIONS.reduce((s,c)=>s+c.unread,0):it.badge) : it.badge; return b ? <span style={{minWidth:18,height:18,borderRadius:99,padding:"0 5px",display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:10.5,fontWeight:600,background:"rgba(184,151,58,0.18)",color:C.goldLight}}>{b}</span> : null; })()}
+              {badgeFor(it) ? <span style={{minWidth:18,height:18,borderRadius:99,padding:"0 5px",display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:10.5,fontWeight:600,background:"rgba(184,151,58,0.18)",color:C.goldLight}}>{badgeFor(it)}</span> : null}
             </button>
           ))}
         </div>
@@ -1721,7 +1679,7 @@ function SidebarInner({ currentBase, onNavItem }) {
                 <path d={it.icon}/>
               </svg>
               <span style={{fontSize:13, fontWeight:currentBase===it.id?500:400, fontFamily:"'DM Sans',sans-serif", flex:1, whiteSpace:"nowrap"}}>{it.label}</span>
-              {it.badge ? <span style={{minWidth:18,height:18,borderRadius:99,padding:"0 5px",display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:10.5,fontWeight:600,background:"rgba(184,151,58,0.18)",color:C.goldLight}}>{it.badge}</span> : null}
+              {badgeFor(it) ? <span style={{minWidth:18,height:18,borderRadius:99,padding:"0 5px",display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:10.5,fontWeight:600,background:"rgba(184,151,58,0.18)",color:C.goldLight}}>{badgeFor(it)}</span> : null}
             </button>
           ))}
         </div>
@@ -1763,6 +1721,27 @@ function Sidebar({ currentBase, collapsed, onToggle, mobileOpen, onMobileClose }
   const { isMobile } = useBreakpoint();
   const W = collapsed ? 64 : 208;
 
+  // Real sidebar badge counts — computed from live repo data (real Supabase
+  // rows in production, mock rows in demo mode via the same useRepo/mock
+  // fallback every other page already uses). Never hardcoded, never a mock
+  // fallback shown as if real. A 0 count renders no badge at all, since
+  // NavItem/SidebarInner already treat a falsy badge as "don't show".
+  const { data:navLeads }     = useRepo("lead",     "getAll");
+  const { data:navQuotes }    = useRepo("quote",    "getAll");
+  const { data:navTasks }     = useRepo("task",     "getAll");
+  const { data:navReminders } = useRepo("reminder", "getAll");
+  const liveBadges = {
+    leads:     (navLeads||[]).filter(l=>l.status==="Yeni").length,
+    quotes:    (navQuotes||[]).filter(q=>q.status==="Taslak").length,
+    tasks:     (navTasks||[]).filter(t=>t.status!=="Tamamlandı" && t.status!=="İptal").length,
+    reminders: (navReminders||[]).filter(r=>r.status==="Açık").length,
+    // Messages has no real backing table/repo at all (MessageRepository is
+    // mock-only, never wired into getActiveRepo) — never fabricate a count
+    // for it; always hide the badge.
+    messages:  0,
+  };
+  const withLiveBadge = (it) => (liveBadges[it.id] !== undefined) ? { ...it, badge: liveBadges[it.id] } : it;
+
   // Lock body scroll while the mobile drawer is open so the page behind it
   // can't be scrolled/dragged — the drawer must feel modal, not overlaid.
   useEffect(() => {
@@ -1795,7 +1774,7 @@ function Sidebar({ currentBase, collapsed, onToggle, mobileOpen, onMobileClose }
           boxShadow:"4px 0 24px rgba(0,0,0,0.35)",
           visibility: mobileOpen ? "visible" : "hidden",
         }}>
-          <SidebarInner currentBase={currentBase} onNavItem={onMobileClose}/>
+          <SidebarInner currentBase={currentBase} onNavItem={onMobileClose} liveBadges={liveBadges}/>
         </aside>
       </>
     );
@@ -1834,36 +1813,37 @@ function Sidebar({ currentBase, collapsed, onToggle, mobileOpen, onMobileClose }
           }
         </svg>
       </button>
-      <div style={{padding:"20px 16px 14px", borderBottom:"1px solid rgba(255,255,255,0.08)"}}>
+      <div style={{padding:"22px 16px 16px", borderBottom:"1px solid rgba(255,255,255,0.08)"}}>
         {}
         <img
           src="/seffafdeselogo.png"
           alt="Dese Tour"
           style={{
-            width:"100%", maxWidth:168,
+            width:"100%", maxWidth:collapsed?40:160,
             height:"auto", display:"block",
             mixBlendMode:"screen",
             opacity:0.95,
+            transition:"max-width 0.22s cubic-bezier(0.4,0,0.2,1)",
           }}
         />
-        <div style={{
-          fontSize:9, letterSpacing:"0.18em", textTransform:"uppercase",
-          color:C.goldLight, fontFamily:"'DM Sans',sans-serif", fontWeight:500,
-          marginTop:10, paddingLeft:2,
-        }}>Operations Center</div>
+        {!collapsed && <div style={{
+          fontSize:9, letterSpacing:"0.16em", textTransform:"uppercase",
+          color:"rgba(201,168,76,0.75)", fontFamily:"'DM Sans',sans-serif", fontWeight:500,
+          marginTop:11, paddingLeft:2,
+        }}>Operasyon Merkezi</div>}
       </div>
-      <nav style={{padding:"10px 10px 0", display:"flex", flexDirection:"column", gap:1}}>
-        {NAV_TOP.map(it=><NavItem key={it.id} item={{...it,_collapsed:collapsed}} currentBase={currentBase}/>)}
+      <nav style={{padding:"12px 10px 0", display:"flex", flexDirection:"column", gap:2}}>
+        {NAV_TOP.map(it=><NavItem key={it.id} item={{...withLiveBadge(it),_collapsed:collapsed}} currentBase={currentBase}/>)}
       </nav>
-      <div style={{height:1, background:"rgba(255,255,255,0.07)", margin:"10px 18px"}}/>
-      <nav style={{padding:"0 10px", display:"flex", flexDirection:"column", gap:1}}>
-        {NAV_BOT.map(it=><NavItem key={it.id} item={{...it,_collapsed:collapsed}} currentBase={currentBase}/>)}
+      <div style={{height:1, background:"rgba(255,255,255,0.07)", margin:"12px 18px"}}/>
+      <nav style={{padding:"0 10px", display:"flex", flexDirection:"column", gap:2}}>
+        {NAV_BOT.map(it=><NavItem key={it.id} item={{...withLiveBadge(it),_collapsed:collapsed}} currentBase={currentBase}/>)}
 
         {}
-        <div style={{padding:"8px 10px", borderTop:"1px solid rgba(255,255,255,0.07)", marginTop:4}}>
+        <div style={{padding:"8px 10px", borderTop:"1px solid rgba(255,255,255,0.07)", marginTop:6}}>
           <button onClick={()=>auth.logout()} style={{
             display:"flex", alignItems:"center", gap:9, width:"100%",
-            padding:"8px 14px", border:"none", borderRadius:7,
+            padding:"9px 14px", border:"none", borderRadius:T.radiusSm,
             background:"transparent", color:"rgba(248,245,238,0.45)",
             cursor:"pointer", textAlign:"left", transition:"color .12s, background .12s",
           }}
@@ -1912,18 +1892,34 @@ function Welcome() {
   const firstName = auth.displayName.split(" ")[0] || "Hoş geldiniz";
   const hour = new Date().getHours();
   const greeting = hour < 12 ? "Günaydın" : hour < 18 ? "İyi günler" : "İyi akşamlar";
+  const [showNewLead, setShowNewLead] = useState(false);
+
+  // Real urgent-item count for the context line below — this used to be a
+  // hardcoded "3 acil işlem" regardless of actual data.
+  const { data:repoLeads, loading:l1 } = useRepo("lead",        "getAll");
+  const { data:repoRes,   loading:l2 } = useRepo("reservation", "getAll");
+  const { data:repoPays,  loading:l3 } = useRepo("payment",     "getAll");
+  const { data:repoTasks, loading:l4 } = useRepo("task",        "getAll");
+  const { data:repoRems,  loading:l5 } = useRepo("reminder",    "getAll");
+  const urgentLoading = l1||l2||l3||l4||l5;
+  const urgentCount = useMemo(
+    () => computeUrgent(repoLeads, repoRes, repoPays, repoTasks, repoRems).length,
+    [repoLeads, repoRes, repoPays, repoTasks, repoRems]
+  );
+
   return (
     <div style={{
       background: C.white,
       border:`1px solid ${C.border}`,
-      borderRadius:12,
-      padding:"24px 28px",
+      borderRadius:T.radius,
+      padding:"22px 28px",
       display:"flex", alignItems:"center", justifyContent:"space-between", gap:24,
+      boxShadow:T.shadowSoft,
     }}>
       <div>
         <div style={{
-          fontSize:11, letterSpacing:"0.12em", textTransform:"uppercase",
-          color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginBottom:6,
+          fontSize:10.5, letterSpacing:"0.12em", textTransform:"uppercase",
+          color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginBottom:7,
         }}>
           {new Date().toLocaleDateString("tr-TR",{day:"2-digit",month:"long",year:"numeric",weekday:"long"})}
         </div>
@@ -1937,11 +1933,18 @@ function Welcome() {
           margin:"6px 0 0", fontSize:13.5, color:C.textMuted,
           fontFamily:"'DM Sans',sans-serif", lineHeight:1.5,
         }}>
-          Bugünkü operasyon özetiniz — <span style={{color:C.amber, fontWeight:500}}>3 acil işlem</span> dikkat bekliyor.
+          {urgentLoading ? (
+            "Bugünkü operasyon özetiniz hazırlanıyor…"
+          ) : urgentCount > 0 ? (
+            <>Bugünkü operasyon özetiniz — <span style={{color:C.amber, fontWeight:500}}>{urgentCount} acil işlem</span> dikkat bekliyor.</>
+          ) : (
+            "Bugünkü operasyon özetiniz — dikkat bekleyen acil işlem yok."
+          )}
         </p>
       </div>
 
       {}
+      {showNewLead && <NewLeadModal onClose={()=>setShowNewLead(false)} onSuccess={()=>setShowNewLead(false)}/>}
       <button style={{
         display:"flex", alignItems:"center", gap:8,
         padding:"10px 18px", borderRadius:8, flexShrink:0,
@@ -1950,7 +1953,8 @@ function Welcome() {
         fontFamily:"'DM Sans',sans-serif", fontSize:13, fontWeight:500,
         transition:"background 0.12s",
       }}
-        onMouseEnter={e=>e.currentTarget.style.background=C.gold === C.gold ? "#EDE3C0" : C.goldPale}
+        onClick={()=>setShowNewLead(true)}
+        onMouseEnter={e=>e.currentTarget.style.background="#EDE3C0"}
         onMouseLeave={e=>e.currentTarget.style.background=C.goldPale}
       >
         <Ic d="M12 5v14M5 12h14" size={15} sw={2}/>
@@ -1960,63 +1964,27 @@ function Welcome() {
   );
 }
 
-const KPI_DATA = [
-  {
-    label:"Bugünkü Turlar",
-    value:String(METRICS.todayTourCount),
-    sub:`Toplam ${METRICS.todayTours.reduce((s,r)=>s+r.pax,0)} misafir`,
-    icon:"M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z M9 22V12h6v10",
-    accent: false,
-  },
-  {
-    label:"Yeni Talepler",
-    value:String(METRICS.openLeads),
-    sub:"Aktif talepler",
-    icon:"M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01",
-    alert: METRICS.openLeads > 0,
-  },
-  {
-    label:"Bekleyen Ödemeler",
-    value:`€${METRICS.pendingPaymentsEUR.toLocaleString("tr-TR")}`,
-    sub:`${METRICS.pendingPaymentsCount} rezervasyon`,
-    icon:"M2 9a2 2 0 012-2h16a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V9zM2 13h20",
-    alert: METRICS.pendingPaymentsCount > 0,
-  },
-  {
-    label:"Yaklaşan Rezervasyonlar",
-    value:String(METRICS.upcomingReservations.length),
-    sub:"Onaylı rezervasyonlar",
-    icon:"M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11",
-  },
-  {
-    label:"Bu Ay Beklenen Ciro",
-    value:`€${METRICS.expectedRevenueEUR.toLocaleString("tr-TR")}`,
-    sub:`€${METRICS.collectedEUR.toLocaleString("tr-TR")} tahsil edildi`,
-    icon:"M12 2v20M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6",
-    progress: METRICS.expectedRevenueEUR > 0 ? Math.round(METRICS.collectedEUR/METRICS.expectedRevenueEUR*100) : 0,
-  },
-]; // values derived from DB via METRICS
 
 function KpiCard({ kpi }) {
   return (
     <div style={{
-      background:C.white, border:`1px solid ${C.border}`, borderRadius:12,
-      padding:"18px 20px", display:"flex", flexDirection:"column", gap:12,
-      position:"relative", overflow:"hidden",
+      background:C.white, border:`1px solid ${C.border}`, borderRadius:T.radius,
+      padding:"19px 20px", display:"flex", flexDirection:"column", gap:14,
+      position:"relative", overflow:"hidden", boxShadow:T.shadowSoft,
     }}>
       {}
       <div style={{display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:10}}>
         <div style={{
-          width:40, height:40, borderRadius:10, flexShrink:0,
+          width:34, height:34, borderRadius:T.radiusSm, flexShrink:0,
           background: kpi.alert ? C.redBg : C.goldPale,
           display:"flex", alignItems:"center", justifyContent:"center",
           color: kpi.alert ? C.red : C.gold,
         }}>
-          <Ic d={kpi.icon} size={18} sw={1.6}/>
+          <Ic d={kpi.icon} size={16} sw={1.6}/>
         </div>
         {kpi.alert && (
           <div style={{
-            width:8, height:8, borderRadius:"50%",
+            width:7, height:7, borderRadius:"50%",
             background:C.red, marginTop:4, flexShrink:0,
           }}/>
         )}
@@ -2025,10 +1993,11 @@ function KpiCard({ kpi }) {
       {}
       <div>
         <div style={{
-          fontSize:26, fontWeight:700, color: kpi.alert ? C.red : C.text,
-          fontFamily:"'Playfair Display',serif", lineHeight:1, marginBottom:4,
+          fontSize:28, fontWeight:700, color: kpi.alert ? C.red : C.text,
+          fontFamily:"'Playfair Display',serif", lineHeight:1, marginBottom:5,
+          letterSpacing:"-0.01em",
         }}>{kpi.value}</div>
-        <div style={{fontSize:12, color:C.textMuted, fontFamily:"'DM Sans',sans-serif"}}>{kpi.label}</div>
+        <div style={{fontSize:11.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", letterSpacing:"0.01em"}}>{kpi.label}</div>
       </div>
 
       {}
@@ -2344,9 +2313,7 @@ function TodayTours() {
 
 function UpcomingResRow({ r, isLast }) {
   return (
-    <div key={r.id}
-      onMouseEnter={()=>setHov(true)}
-      onMouseLeave={()=>setHov(false)}
+    <div key={r.id} className="dt-row"
       style={{
         display:"grid", gridTemplateColumns:"56px 1fr 80px 120px",
         gap:12, padding:"14px 0",
@@ -2525,7 +2492,7 @@ const STATUS_META = {
   "Yeni":                 { color:"#1A6FAE", bg:"#E8F2FB" },
   "Görüşüldü":            { color:"#B45309", bg:"#FEF3E2" },
   "Teklif Hazırlanıyor":  { color:"#6B3FA0", bg:"#F3EEF9" },
-  "Teklif Gönderildi":    { color:"#B8973A", bg:"#F5EDD4" },
+  "Teklif Gönderildi":    { color:"#0E7490", bg:"#ECFEFF" },
   "Ödeme Bekleniyor":     { color:"#C05621", bg:"#FEF0E8" },
   "Onaylandı":            { color:"#2E7D52", bg:"#EBF5EF" },
   "İptal":                { color:"#C0392B", bg:"#FDECEC" },
@@ -2539,6 +2506,7 @@ const SOURCE_META = {
   "Instagram":    { color:"#C13584", bg:"#FAEAF5", icon:"M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zM12 0C8.741 0 8.333.014 7.053.072 2.695.272.273 2.69.073 7.052.014 8.333 0 8.741 0 12c0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98C8.333 23.986 8.741 24 12 24c3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98C15.668.014 15.259 0 12 0zm0 5.838a6.162 6.162 0 100 12.324 6.162 6.162 0 000-12.324zM12 16a4 4 0 110-8 4 4 0 010 8zm6.406-11.845a1.44 1.44 0 100 2.881 1.44 1.44 0 000-2.881z" },
   "Manuel":       { color:"#8A8070", bg:"#F3F1ED", icon:"M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" },
   "Tripadvisor":  { color:"#34E0A1", bg:"#E6FBF5", icon:"M12 2a10 10 0 100 20A10 10 0 0012 2z" },
+  "Civitatis":    { color:"#D2492A", bg:"#FBEAE4", icon:"M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5A2.5 2.5 0 1112 6.5a2.5 2.5 0 010 5z" },
 };
 
 const MOCK_LEADS = DB.leads; // → centralized DB
@@ -2548,7 +2516,7 @@ const STATUS_TABS = [
   "Teklif Gönderildi","Ödeme Bekleniyor","Onaylandı","İptal",
 ];
 
-const SOURCE_FILTERS = ["Tümü","Booking","WhatsApp","Website","Telefon","Instagram","Manuel","Tripadvisor"];
+const SOURCE_FILTERS = ["Tümü","Booking","Civitatis","WhatsApp","Website","Telefon","Instagram","Manuel","Tripadvisor"];
 
 function SourceBadge({ source }) {
   const m = SOURCE_META[source] || SOURCE_META["Manuel"];
@@ -2620,9 +2588,7 @@ function LeadRow({ lead, isLast, onSelect }) {
   const isUrgent = lead.status === "Ödeme Bekleniyor";
 
   return (
-    <tr
-      onMouseEnter={() => setHov(true)}
-      onMouseLeave={() => setHov(false)}
+    <tr className="dt-row"
       onClick={() => onSelect && onSelect(lead.id)}
       style={{
         background:C.white,
@@ -2816,8 +2782,8 @@ function LeadsPage({ onSelectLead }) {
 
   const counts = STATUS_TABS.reduce((acc, tab) => {
     acc[tab] = tab === "Tümü"
-      ? MOCK_LEADS.length
-      : MOCK_LEADS.filter(l => l.status === tab).length;
+      ? _allLeads.length
+      : _allLeads.filter(l => l.status === tab).length;
     return acc;
   }, {});
 
@@ -2827,7 +2793,7 @@ function LeadsPage({ onSelectLead }) {
       {}
       <div className="page-header" style={{
         background:C.white, border:`1px solid ${C.border}`,
-        borderRadius:12, padding:"22px 26px",
+        borderRadius:12, padding:"20px 24px",
         display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:20,
       }}>
         <div>
@@ -3064,58 +3030,9 @@ function LeadsPage({ onSelectLead }) {
   );
 }
 
-const LEAD_TIMELINE = [
-  {
-    date: "02 Haz",
-    weekday: "Pazartesi",
-    action: "Talep oluşturuldu",
-    detail: "Booking.com üzerinden gelen talep sisteme eklendi.",
-    type: "lead",
-    time: "09:14",
-    who: "Berk Çetinkaya",
-  },
-  {
-    date: "03 Haz",
-    weekday: "Salı",
-    action: "Telefon görüşmesi yapıldı",
-    detail: "Sarah Johnson ile 18 dakika görüşüldü. Tur detayları ve konaklama tercihleri paylaşıldı.",
-    type: "call",
-    time: "14:32",
-    who: "Berk Çetinkaya",
-  },
-  {
-    date: "04 Haz",
-    weekday: "Çarşamba",
-    action: "Teklif hazırlandı ve gönderildi",
-    detail: "Private Istanbul Experience · 4 kişi · €3.600 tutarında teklif e-posta ile iletildi.",
-    type: "quote",
-    time: "11:05",
-    who: "Berk Çetinkaya",
-  },
-  {
-    date: "05 Haz",
-    weekday: "Perşembe",
-    action: "Müşteri dönüş yaptı",
-    detail: "\"Boğaz turu seçeneği hakkında daha fazla bilgi alabilir miyiz?\" sorusu iletildi.",
-    type: "reply",
-    time: "16:48",
-    who: "Sarah Johnson",
-  },
-  {
-    date: "06 Haz",
-    weekday: "Cuma",
-    action: "Ödeme bekleniyor",
-    detail: "€900 kapora ödemesi için son tarih 07 Haziran 2026 olarak belirlendi.",
-    type: "payment",
-    time: "09:30",
-    who: "Berk Çetinkaya",
-  },
-];
-
-const OPEN_TASKS = [
-  { id:1, title:"Kapora ödemesini takip et", due:"07 Haz 2026", priority:"Acil" },
-  { id:2, title:"Boğaz turu seçeneği hakkında bilgi gönder", due:"06 Haz 2026", priority:"Yüksek" },
-];
+const LEAD_ACTIVITY_LABEL = {
+  created: "Talep oluşturuldu", updated: "Güncellendi", status_changed: "Durum güncellendi",
+};
 
 const TIMELINE_TYPE_META = {
   lead:    { color: C.blue,   bg: C.blueBg,   icon: "M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" },
@@ -3307,9 +3224,8 @@ function TravelCard({ lead }) {
 
         {}
         {[
-          { label: "Tarih Aralığı",      val: lead.dateRange,       icon: "M8 2v4M16 2v4M3 10h18M21 8a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2h14a2 2 0 002-2V8z" },
+          { label: "Tarih Aralığı",      val: lead.dateRange || "—", icon: "M8 2v4M16 2v4M3 10h18M21 8a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2h14a2 2 0 002-2V8z" },
           { label: "Kişi Sayısı",        val: `${lead.pax} Kişi`,   icon: "M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2 M23 21v-2a4 4 0 00-3-3.87 M16 3.13a4 4 0 010 7.75" },
-          { label: "Karşılama",          val: lead.pickup,           icon: "M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z M12 10a1 1 0 100-2 1 1 0 000 2z" },
         ].map((r, i) => (
           <div key={i} style={{
             display: "flex", gap: 12, alignItems: "flex-start",
@@ -3333,10 +3249,11 @@ function TravelCard({ lead }) {
             Özel Talepler
           </div>
           <div style={{
-            fontSize: 13, color: C.textMid, fontFamily: "'DM Sans',sans-serif",
+            fontSize: 13, color: lead.notes ? C.textMid : C.textFaint, fontFamily: "'DM Sans',sans-serif",
             lineHeight: 1.65, background: C.ivory, borderRadius: 8,
             padding: "10px 12px", border: `1px solid ${C.borderLight}`,
-          }}>{lead.specialRequests}</div>
+            fontStyle: lead.notes ? "normal" : "italic",
+          }}>{lead.notes || "Özel talep belirtilmedi."}</div>
         </div>
       </div>
     </DetailCard>
@@ -3366,42 +3283,54 @@ function SalesCard({ lead }) {
         </div>
 
         {}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 16 }}>
-          {[
-            { label: "Teklif Tutarı", val: lead.quoteAmount, color: C.text },
-            { label: "Kapora",        val: lead.deposit,      color: C.amber },
-            { label: "Kalan",         val: lead.remaining,    color: C.red },
-          ].map((a, i) => (
-            <div key={i} style={{
-              background: C.ivory, borderRadius: 8, padding: "12px 12px",
-              border: `1px solid ${C.borderLight}`, textAlign: "center",
-            }}>
-              <div style={{ fontSize: 10.5, color: C.textFaint, fontFamily: "'DM Sans',sans-serif", marginBottom: 6 }}>{a.label}</div>
-              <div style={{ fontSize: 16, fontWeight: 700, color: a.color, fontFamily: "'Playfair Display',serif" }}>{a.val}</div>
+        {lead.budget > 0 ? (
+          <div style={{
+            background: C.ivory, borderRadius: 8, padding: "12px 12px",
+            border: `1px solid ${C.borderLight}`, textAlign: "center", marginBottom: 12,
+          }}>
+            <div style={{ fontSize: 10.5, color: C.textFaint, fontFamily: "'DM Sans',sans-serif", marginBottom: 6 }}>Belirtilen Bütçe</div>
+            <div style={{ fontSize: 16, fontWeight: 700, color: C.text, fontFamily: "'Playfair Display',serif" }}>
+              {lead.currency === "TRY" ? "₺" : "€"}{Number(lead.budget).toLocaleString("tr-TR")}
             </div>
-          ))}
-        </div>
+          </div>
+        ) : null}
 
         {}
-        <div>
-          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
-            <span style={{ fontSize: 11.5, color: C.textFaint, fontFamily: "'DM Sans',sans-serif" }}>Ödeme İlerlemesi</span>
-            <span style={{ fontSize: 11.5, color: C.gold, fontFamily: "'DM Sans',sans-serif", fontWeight: 600 }}>%25</span>
-          </div>
-          <div style={{ height: 6, background: C.ivoryDark, borderRadius: 99, overflow: "hidden" }}>
-            <div style={{ width: "25%", height: "100%", background: C.gold, borderRadius: 99 }}/>
-          </div>
-          <div style={{ display: "flex", justifyContent: "space-between", marginTop: 5 }}>
-            <span style={{ fontSize: 11, color: C.textFaint, fontFamily: "'DM Sans',sans-serif" }}>€900 ödendi</span>
-            <span style={{ fontSize: 11, color: C.textFaint, fontFamily: "'DM Sans',sans-serif" }}>€2.700 kaldı</span>
-          </div>
+        <div style={{
+          fontSize: 12, color: C.textFaint, fontFamily: "'DM Sans',sans-serif",
+          fontStyle: "italic", textAlign: "center", padding: "8px 4px",
+        }}>
+          Ödeme bilgisi bu talep için bir teklif oluşturulduğunda görünecek.
         </div>
       </div>
     </DetailCard>
   );
 }
 
-function TimelineCard() {
+function TimelineCard({ lead }) {
+  const { data:activity, loading } = useRepo("activity", "getAll", { entityType:"lead", entityId:lead.id });
+  const events = (activity||[]).map(a => ({
+    type: "lead", date: a.date, time: a.time, who: a.who,
+    action: LEAD_ACTIVITY_LABEL[a.action] || a.action,
+    detail: a.description || "",
+  }));
+
+  if (loading) return (
+    <DetailCard>
+      <CardHeader title="Aktivite Zaman Çizelgesi"/>
+      <div style={{ padding: "28px 20px", textAlign: "center", fontSize: 12.5, color: C.textFaint, fontFamily: "'DM Sans',sans-serif" }}>Yükleniyor…</div>
+    </DetailCard>
+  );
+
+  if (events.length === 0) return (
+    <DetailCard>
+      <CardHeader title="Aktivite Zaman Çizelgesi"/>
+      <div style={{ padding: "28px 20px", textAlign: "center", fontSize: 12.5, color: C.textFaint, fontFamily: "'DM Sans',sans-serif", fontStyle: "italic" }}>
+        Bu talep için henüz aktivite kaydı yok.
+      </div>
+    </DetailCard>
+  );
+
   return (
     <DetailCard>
       <CardHeader title="Aktivite Zaman Çizelgesi" action="Tümünü Gör"/>
@@ -3412,9 +3341,9 @@ function TimelineCard() {
           width: 1, background: C.borderLight,
         }}/>
 
-        {LEAD_TIMELINE.map((item, i) => {
+        {events.map((item, i) => {
           const m = TIMELINE_TYPE_META[item.type] || TIMELINE_TYPE_META.lead;
-          const isLast = i === LEAD_TIMELINE.length - 1;
+          const isLast = i === events.length - 1;
           return (
             <div key={i} style={{
               display: "flex", gap: 16, alignItems: "flex-start",
@@ -3478,19 +3407,18 @@ const QUICK_ACTIONS = [
 
 function QuickActionsCard({ lead, navigate }) {
   const [hov, setHov] = useState(false);
+  const { data:cust } = useRepo("customer", "getById", lead?.customerId || null);
   function handleTeklif() {
     if (lead) {
-      const cust = getCustomerById(lead.customerId);
       SESSION.setPrefill({
         fromLead:      lead.id,
-        guestName:     cust?.name || "",
-        nationality:   cust?.country || "",
-        email:         cust?.email || "",
-        phone:         cust?.phone || "",
+        guestName:     cust?.name || lead.name || "",
+        nationality:   cust?.country || lead.country || "",
+        email:         cust?.email || lead.email || "",
+        phone:         cust?.phone || lead.phone || "",
         tourName:      lead.tour || "",
         tourDate:      lead.dateRange || "",
         guestCount:    lead.paxAdult || 2,
-        proposalNo:    "Q-2026-" + String(DB.quotes.length + 1).padStart(3,"0"),
       });
     }
     if (navigate) navigate("/quotes/new");
@@ -3540,37 +3468,48 @@ function QuickActionsCard({ lead, navigate }) {
   );
 }
 
-function NextActionCard({ lead }) {
+function NextActionCard({ lead, openTasks, tasksLoading }) {
+  const next = (openTasks||[])[0] || null;
   return (
     <DetailCard>
       <CardHeader title="Sonraki Aksiyon"/>
       <div style={{ padding: "18px 20px" }}>
-        <div style={{
-          background: C.amberBg, borderRadius: 10, padding: "14px 16px",
-          border: `1px solid ${C.amber}22`, marginBottom: 14,
-          display: "flex", gap: 12, alignItems: "flex-start",
-        }}>
+        {tasksLoading ? (
+          <div style={{ fontSize: 12.5, color: C.textFaint, fontFamily: "'DM Sans',sans-serif", textAlign: "center", padding: "8px 0 14px" }}>Yükleniyor…</div>
+        ) : next ? (
           <div style={{
-            width: 36, height: 36, borderRadius: 8, flexShrink: 0,
-            background: "rgba(180,83,9,0.12)",
-            display: "flex", alignItems: "center", justifyContent: "center",
-            color: C.amber,
+            background: C.amberBg, borderRadius: 10, padding: "14px 16px",
+            border: `1px solid ${C.amber}22`, marginBottom: 14,
+            display: "flex", gap: 12, alignItems: "flex-start",
           }}>
-            <IcD d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" size={16} sw={1.7}/>
-          </div>
-          <div>
-            <div style={{ fontSize: 14, fontWeight: 600, color: C.amber, fontFamily: "'DM Sans',sans-serif", marginBottom: 4 }}>
-              {lead.nextAction}
+            <div style={{
+              width: 36, height: 36, borderRadius: 8, flexShrink: 0,
+              background: "rgba(180,83,9,0.12)",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              color: C.amber,
+            }}>
+              <IcD d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" size={16} sw={1.7}/>
             </div>
-            <div style={{ fontSize: 12, color: C.textMuted, fontFamily: "'DM Sans',sans-serif", lineHeight: 1.5 }}>
-              Kapora ödemesi bekleniyor. Müşteri ile iletişime geçilmeli.
+            <div>
+              <div style={{ fontSize: 14, fontWeight: 600, color: C.amber, fontFamily: "'DM Sans',sans-serif", marginBottom: 4 }}>
+                {next.title}
+              </div>
+              {next.description && (
+                <div style={{ fontSize: 12, color: C.textMuted, fontFamily: "'DM Sans',sans-serif", lineHeight: 1.5 }}>
+                  {next.description}
+                </div>
+              )}
             </div>
           </div>
-        </div>
+        ) : (
+          <div style={{ fontSize: 12.5, color: C.textFaint, fontFamily: "'DM Sans',sans-serif", fontStyle: "italic", textAlign: "center", padding: "8px 0 14px" }}>
+            Bu talep için tanımlı bir sonraki aksiyon yok.
+          </div>
+        )}
 
         {[
-          { label: "Son Tarih", val: lead.nextDeadline, urgent: true },
-          { label: "Sorumlu",   val: lead.assignee },
+          { label: "Son Tarih", val: next?.dueDate || "—", urgent: !!next },
+          { label: "Sorumlu",   val: lead.assignee || "—" },
         ].map((r, i) => (
           <div key={i} style={{
             display: "flex", justifyContent: "space-between", alignItems: "center",
@@ -3590,12 +3529,12 @@ function NextActionCard({ lead }) {
   );
 }
 
-function ActivitySummaryCard({ lead }) {
+function ActivitySummaryCard({ lead, totalQuotes, totalReservations, openTasksCount, loading }) {
   const stats = [
-    { label: "Son İletişim",         val: lead.lastContact },
-    { label: "Toplam Teklif",        val: lead.totalQuotes },
-    { label: "Toplam Rezervasyon",   val: lead.totalReservations },
-    { label: "Açık Görevler",        val: lead.openTasks, alert: lead.openTasks > 0 },
+    { label: "Son İletişim",         val: lead.updatedAt || lead.createdAt || "—" },
+    { label: "Toplam Teklif",        val: loading ? "…" : totalQuotes },
+    { label: "Toplam Rezervasyon",   val: loading ? "…" : totalReservations },
+    { label: "Açık Görevler",        val: loading ? "…" : openTasksCount, alert: !loading && openTasksCount > 0 },
   ];
   return (
     <DetailCard>
@@ -3620,15 +3559,22 @@ function ActivitySummaryCard({ lead }) {
   );
 }
 
-function OpenTasksCard() {
+function OpenTasksCard({ tasks, loading }) {
+  const list = tasks || [];
   return (
     <DetailCard>
       <CardHeader title="Açık Görevler" action="Tümü"/>
       <div style={{ padding: "4px 0 8px" }}>
-        {OPEN_TASKS.map((t, i) => (
+        {loading ? (
+          <div style={{ padding: "20px", textAlign: "center", fontSize: 12.5, color: C.textFaint, fontFamily: "'DM Sans',sans-serif" }}>Yükleniyor…</div>
+        ) : list.length === 0 ? (
+          <div style={{ padding: "20px", textAlign: "center", fontSize: 12.5, color: C.textFaint, fontFamily: "'DM Sans',sans-serif", fontStyle: "italic" }}>
+            Bu talep için açık görev yok.
+          </div>
+        ) : list.map((t, i) => (
           <div key={t.id} style={{
             padding: "11px 20px",
-            borderBottom: i < OPEN_TASKS.length - 1 ? `1px solid ${C.borderLight}` : "none",
+            borderBottom: i < list.length - 1 ? `1px solid ${C.borderLight}` : "none",
             display: "flex", alignItems: "flex-start", gap: 10,
           }}>
             <div style={{
@@ -3645,7 +3591,7 @@ function OpenTasksCard() {
                   padding: "1px 6px", borderRadius: 4,
                   fontFamily: "'DM Sans',sans-serif",
                 }}>{t.priority}</span>
-                <span style={{ fontSize: 11, color: C.textFaint, fontFamily: "'DM Sans',sans-serif" }}>{t.due}</span>
+                <span style={{ fontSize: 11, color: C.textFaint, fontFamily: "'DM Sans',sans-serif" }}>{t.dueDate}</span>
               </div>
             </div>
           </div>
@@ -3673,16 +3619,24 @@ function LeadDetailPage({ onBack, leadId }) {
   if (leadLoading) return <LoadingState label="Talep yükleniyor…"/>;
   if (leadError)   return <ErrorState message={leadError} onRetry={()=>{}}/>;
   if (!lead)       return <NotFoundCard entityType="Talep" entityId={leadId} onBack={onBack}/>;
-  const customer = lead ? getCustomerById(lead.customerId) : null;
   const sm = STATUS_META[lead?.status] || { color: C.textMuted, bg: C.ivoryDark };
+
+  const { data:custTasks,  loading:tasksLoading }  = useRepo("task",        "getByCustomerId", lead.customerId || null);
+  const { data:custQuotes, loading:quotesLoading } = useRepo("quote",       "getByCustomerId", lead.customerId || null);
+  const { data:custRes,    loading:resLoading }    = useRepo("reservation", "getByCustomerId", lead.customerId || null);
+  const leadTasks = (custTasks||[]).filter(t => t.leadId === lead.id);
+  const leadQuotes = (custQuotes||[]).filter(q => q.leadId === lead.id);
+  const leadReservations = (custRes||[]).filter(r => r.leadId === lead.id);
+  const openTasks = leadTasks.filter(t => t.status !== "Tamamlandı" && t.status !== "İptal")
+    .sort((a,b) => (a.dueDate==="—"?1:0) - (b.dueDate==="—"?1:0));
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
 
       {}
       <div style={{
-        background: C.white, border: `1px solid ${C.border}`, borderRadius: 12,
-        padding: "16px 22px", marginBottom: 20,
+        background: C.white, border: `1px solid ${C.border}`, borderRadius: T.radius,
+        padding: "15px 22px", marginBottom: 20,
         display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16,
       }}>
         {}
@@ -3690,7 +3644,7 @@ function LeadDetailPage({ onBack, leadId }) {
           <button onClick={onBack} style={{
             display: "flex", alignItems: "center", gap: 6,
             background: C.ivory, border: `1px solid ${C.border}`,
-            borderRadius: 7, padding: "6px 12px", cursor: "pointer",
+            borderRadius: T.radiusSm, padding: "6px 12px", cursor: "pointer",
             color: C.textMid, fontFamily: "'DM Sans',sans-serif", fontSize: 12.5,
             transition: "background 0.1s",
           }}
@@ -3784,15 +3738,16 @@ function LeadDetailPage({ onBack, leadId }) {
         <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
           <TravelCard lead={lead}/>
           <SalesCard lead={lead}/>
-          <TimelineCard/>
+          <TimelineCard lead={lead}/>
         </div>
 
         {}
         <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
           <QuickActionsCard lead={lead}/>
-          <NextActionCard lead={lead}/>
-          <ActivitySummaryCard lead={lead}/>
-          <OpenTasksCard/>
+          <NextActionCard lead={lead} openTasks={openTasks} tasksLoading={tasksLoading}/>
+          <ActivitySummaryCard lead={lead} totalQuotes={leadQuotes.length} totalReservations={leadReservations.length}
+            openTasksCount={openTasks.length} loading={tasksLoading||quotesLoading||resLoading}/>
+          <OpenTasksCard tasks={openTasks} loading={tasksLoading}/>
         </div>
       </div>
     </div>
@@ -3801,7 +3756,7 @@ function LeadDetailPage({ onBack, leadId }) {
 
 const QUOTE_STATUS = {
   "Taslak":        { color:"#6B3FA0", bg:"#F3EEF9" },
-  "Gönderildi":    { color:"#B8973A", bg:"#F5EDD4" },
+  "Gönderildi":    { color:"#0E7490", bg:"#ECFEFF" },
   "Görüldü":       { color:"#1A6FAE", bg:"#E8F2FB" },
   "Onaylandı":     { color:"#2E7D52", bg:"#EBF5EF" },
   "Reddedildi":    { color:"#C0392B", bg:"#FDECEC" },
@@ -3850,9 +3805,7 @@ function QuoteRow({ q, isLast, onSelect }) {
   const expired = q.status === "Süresi Doldu" || q.status === "Reddedildi";
 
   return (
-    <tr
-      onMouseEnter={()=>setHov(true)}
-      onMouseLeave={()=>setHov(false)}
+    <tr className="dt-row"
       onClick={()=>onSelect&&onSelect(q.id)}
       style={{
         background:C.white,
@@ -3934,14 +3887,14 @@ function QuotesPage({ onSelectQuote, onNewQuote }) {
   });
 
   const counts = TABS.reduce((acc,t) => {
-    acc[t] = t === "Tümü" ? MOCK_QUOTES.length : MOCK_QUOTES.filter(q=>q.status===t).length;
+    acc[t] = t === "Tümü" ? allQuotes.length : allQuotes.filter(q=>q.status===t).length;
     return acc;
   }, {});
 
-  const totalSent     = MOCK_QUOTES.filter(q=>q.status==="Gönderildi").length;
-  const totalApproved = MOCK_QUOTES.filter(q=>q.status==="Onaylandı").length;
-  const totalValue    = MOCK_QUOTES.filter(q=>q.status==="Onaylandı").reduce((s,q)=>s+q.total,0);
-  const convRate      = Math.round((totalApproved/MOCK_QUOTES.length)*100);
+  const totalSent     = allQuotes.filter(q=>q.status==="Gönderildi").length;
+  const totalApproved = allQuotes.filter(q=>q.status==="Onaylandı").length;
+  const totalValue    = allQuotes.filter(q=>q.status==="Onaylandı").reduce((s,q)=>s+q.total,0);
+  const convRate      = allQuotes.length > 0 ? Math.round((totalApproved/allQuotes.length)*100) : 0;
 
   return (
     <div style={{ display:"flex", flexDirection:"column", gap:20 }}>
@@ -3949,7 +3902,7 @@ function QuotesPage({ onSelectQuote, onNewQuote }) {
       {}
       <div className="page-header" style={{
         background:C.white, border:`1px solid ${C.border}`, borderRadius:12,
-        padding:"22px 26px",
+        padding:"20px 24px",
         display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:20,
       }}>
         <div>
@@ -3997,7 +3950,7 @@ function QuotesPage({ onSelectQuote, onNewQuote }) {
       {}
       <div className="rsp-stat-grid" style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:14 }}>
         {[
-          { label:"Toplam Teklif",    val:MOCK_QUOTES.length, sub:"Tüm zamanlar", icon:"M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z M14 2v6h6" },
+          { label:"Toplam Teklif",    val:allQuotes.length, sub:"Tüm zamanlar", icon:"M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z M14 2v6h6" },
           { label:"Gönderildi",       val:totalSent,          sub:"Yanıt bekleniyor", icon:"M22 2L11 13 M22 2L15 22l-4-9-9-4 22-7z", alert:false },
           { label:"Onaylandı",        val:totalApproved,      sub:`€${totalValue} toplam değer`, icon:"M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11", green:true },
           { label:"Dönüşüm Oranı",    val:`%${convRate}`,     sub:"Onaylanan / Toplam", icon:"M18 20V10M12 20V4M6 20v-6", gold:true },
@@ -4113,7 +4066,7 @@ function QuotesPage({ onSelectQuote, onNewQuote }) {
               display:"flex", alignItems:"center", justifyContent:"space-between",
             }}>
               <span style={{ fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif" }}>
-                {filtered.length} / {MOCK_QUOTES.length} teklif gösteriliyor
+                {filtered.length} / {allQuotes.length} teklif gösteriliyor
               </span>
             </div>
           </>
@@ -4453,6 +4406,31 @@ function QuoteDetailPage({ quoteId, onBack }) {
 
   const { data:q, loading:qLoading, error:qError } = useRepo("quote", "getById", quoteId);
   const { mutate:mutQuote, mutating:quoteMut }      = useRepoMutation("quote");
+  const { mutate:mutQuoteRes, mutating:convertingRes } = useRepoMutation("reservation");
+  // Real guest contact info — getCustomerById() only ever resolves mock
+  // records, so it always returned undefined for a real Supabase quote.
+  const { data:quoteCustomer } = useRepo("customer", "getById", q?.customerId || null);
+
+  // "Rezervasyona Dönüştür" previously called a handler that only exists in
+  // a different component (NewProposalPage) — clicking it threw a
+  // ReferenceError. Wired to the real quote/reservation repos instead.
+  async function handleConvertToReservation() {
+    if (!q?.customerId) { showToast("Bu teklifin bağlı bir misafiri yok."); return; }
+    const { data:newRes, error } = await mutQuoteRes("create", {
+      customerId: q.customerId, tourId: q.tourId||null, quoteId: q.id, tour: q.tour,
+      checkIn: q.travelStart||null, checkOut: q.travelStart||null,
+      pax: q.pax, total: q.total, deposit: q.deposit, currency: q.currency, notes: q.notes||"",
+    });
+    if (error) { showToast("Rezervasyona dönüştürülemedi: " + error); return; }
+    await mutQuote("update", q.id, { status:"Onaylandı" });
+    showToast("Rezervasyon oluşturuldu ✓");
+    if (newRes?.id && NAV_REF.fn) NAV_REF.fn('/reservations/'+newRes.id);
+  }
+  async function handleMarkApproved() {
+    const { error } = await mutQuote("update", q.id, { status:"Onaylandı" });
+    if (error) showToast("Güncellenemedi: " + error);
+    else showToast("Teklif onaylandı olarak işaretlendi ✓");
+  }
 
   const [convertBusy,  setConvertBusy]  = useState(false);
   const [convertDone,  setConvertDone]  = useState(false);
@@ -4557,14 +4535,14 @@ function QuoteDetailPage({ quoteId, onBack }) {
           <QCard>
             <QCardHead title="Misafir Bilgileri"/>
             <QInfoRow label="Ad Soyad"  value={`${q.flag} ${q.customer}`} bold/>
-            <QInfoRow label="Ülke"      value={q.country}/>
-            <QInfoRow label="E-posta"   value="sarah.johnson@email.com" mono/>
-            <QInfoRow label="Telefon"   value="+61 412 855 903" mono/>
+            <QInfoRow label="Ülke"      value={quoteCustomer?.country || q.country || "—"}/>
+            <QInfoRow label="E-posta"   value={quoteCustomer?.email || "—"} mono/>
+            <QInfoRow label="Telefon"   value={quoteCustomer?.phone || "—"} mono/>
             <div style={{ padding:"10px 20px" }}>
               <span style={{
                 fontSize:11.5, color:C.textFaint,
-                fontFamily:"'DM Sans',sans-serif",
-              }}>Talep: <a style={{ color:C.blue, textDecoration:"none", fontWeight:500 }}>LEAD-001 →</a></span>
+                fontFamily:"'DM Sans',sans-serif", display:"flex", alignItems:"center", gap:6,
+              }}>Talep: <IDLink id={q.leadId} type="lead"/></span>
             </div>
           </QCard>
 
@@ -4574,15 +4552,15 @@ function QuoteDetailPage({ quoteId, onBack }) {
             <QInfoRow label="Tur"         value={q.tour} bold/>
             <QInfoRow label="Tarih"       value={q.dateRange}/>
             <QInfoRow label="Kişi Sayısı" value={`${q.pax} kişi`}/>
-            <QInfoRow label="Karşılama"   value="Otel Karşılama (The Marmara Pera)"/>
             <div style={{ padding:"12px 20px" }}>
               <div style={{ fontSize:11, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginBottom:6 }}>Özel Talepler</div>
               <div style={{
-                fontSize:13, color:C.textMid, fontFamily:"'DM Sans',sans-serif",
+                fontSize:13, color: q.notes ? C.textMid : C.textFaint, fontFamily:"'DM Sans',sans-serif",
                 background:C.ivory, borderRadius:8, padding:"10px 12px",
                 border:`1px solid ${C.borderLight}`, lineHeight:1.6,
+                fontStyle: q.notes ? "normal" : "italic",
               }}>
-                Boğaz turu seçeneğiyle ilgileniyor. Vejetaryen yemek tercihi.
+                {q.notes || "Özel talep belirtilmedi."}
               </div>
             </div>
           </QCard>
@@ -4727,6 +4705,7 @@ function QuoteDetailPage({ quoteId, onBack }) {
                       else if(a.label==="PDF İndir") { setShowPreview(true); }
                       else if(a.label==="Email Teklifi Oluştur") setShowPreview(true);
                       else if(a.label==="Rezervasyona Dönüştür") handleConvertToReservation();
+                      else if(a.label==="Onaylandı Olarak İşaretle") handleMarkApproved();
                     }}
                     style={{
                       display:"flex", alignItems:"center", gap:10,
@@ -5620,27 +5599,19 @@ function NewProposalPage({ onBack }) {
 const RES_STATUS = {
   "Hazırlanıyor":  { color:"#6B3FA0", bg:"#F3EEF9", dot:"#6B3FA0" },
   "Rehber Atandı": { color:"#1A6FAE", bg:"#E8F2FB", dot:"#1A6FAE" },
-  "Hazır":         { color:"#B8973A", bg:"#F5EDD4", dot:"#B8973A" },
+  "Hazır":         { color:"#B45309", bg:"#FEF3E2", dot:"#B45309" },
   "Tamamlandı":    { color:"#2E7D52", bg:"#EBF5EF", dot:"#2E7D52" },
   "İptal":         { color:"#C0392B", bg:"#FDECEC", dot:"#C0392B" },
 };
 
 const PAY_STATUS = {
   "Ödendi":           { color:"#2E7D52", bg:"#EBF5EF" },
-  "Kapora Ödendi":    { color:"#B8973A", bg:"#F5EDD4" },
+  "Kapora Ödendi":    { color:"#B45309", bg:"#FEF3E2" },
   "Ödeme Bekliyor":   { color:"#C05621", bg:"#FEF0E8" },
   "Gecikmiş":         { color:"#C0392B", bg:"#FDECEC" },
 };
 
 const MOCK_RESERVATIONS = DB.reservations; // → centralized DB
-
-const RES_TIMELINE_TEMPLATES = [
-  { type:"created",  action:"Rezervasyon oluşturuldu",     icon:"M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z M14 2v6h6", dot:"#1A6FAE" },
-  { type:"guide",    action:"Rehber atandı",               icon:"M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2 M23 21v-2a4 4 0 00-3-3.87 M16 3.13a4 4 0 010 7.75", dot:"#6B3FA0" },
-  { type:"pickup",   action:"Pickup bilgisi gönderildi",   icon:"M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z M12 10a1 1 0 100-2 1 1 0 000 2z", dot:"#B8973A" },
-  { type:"payment",  action:"Ödeme alındı",                icon:"M2 9a2 2 0 012-2h16a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V9zM2 13h20", dot:"#2E7D52" },
-  { type:"complete", action:"Tur tamamlandı",              icon:"M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11", dot:"#2E7D52" },
-];
 
 function RIc({ d, size=16, sw=1.6, color }) {
   return (
@@ -5793,15 +5764,15 @@ function ReservationsPage({ onSelect }) {
   });
 
   const counts = TABS.reduce((acc, t) => {
-    acc[t] = t === "Tümü" ? MOCK_RESERVATIONS.length
-      : MOCK_RESERVATIONS.filter(r => r.opStatus === t).length;
+    acc[t] = t === "Tümü" ? _allRes.length
+      : _allRes.filter(r => r.opStatus === t).length;
     return acc;
   }, {});
 
-  const upcoming   = MOCK_RESERVATIONS.filter(r => !["Tamamlandı","İptal"].includes(r.opStatus)).length;
-  const noGuide    = MOCK_RESERVATIONS.filter(r => !r.guide && r.opStatus !== "İptal").length;
-  const pendingPay = MOCK_RESERVATIONS.filter(r => r.payStatus === "Kapora Ödendi" || r.payStatus === "Ödeme Bekliyor").length;
-  const completed  = MOCK_RESERVATIONS.filter(r => r.opStatus === "Tamamlandı").length;
+  const upcoming   = _allRes.filter(r => !["Tamamlandı","İptal"].includes(r.opStatus)).length;
+  const noGuide    = _allRes.filter(r => !r.guide && r.opStatus !== "İptal").length;
+  const pendingPay = _allRes.filter(r => r.payStatus === "Kapora Ödendi" || r.payStatus === "Ödeme Bekliyor").length;
+  const completed  = _allRes.filter(r => r.opStatus === "Tamamlandı").length;
 
   return (
     <div style={{ display:"flex", flexDirection:"column", gap:20 }}>
@@ -5809,7 +5780,7 @@ function ReservationsPage({ onSelect }) {
       {}
       <div className="page-header" style={{
         background:C.white, border:`1px solid ${C.border}`, borderRadius:12,
-        padding:"22px 26px",
+        padding:"20px 24px",
         display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:20,
       }}>
         <div>
@@ -5948,9 +5919,7 @@ function ReservationsPage({ onSelect }) {
                   const isLast = i === filtered.length - 1;
                   const urgent = !r.guide && r.opStatus !== "İptal" && r.opStatus !== "Tamamlandı";
                   return (
-                    <tr key={r.id}
-                      onMouseEnter={()=>setHov(true)}
-                      onMouseLeave={()=>setHov(false)}
+                    <tr key={r.id} className="dt-row"
                       onClick={()=>onSelect&&onSelect(r.id)}
                       style={{
                         background:C.white,
@@ -6040,7 +6009,7 @@ function ReservationsPage({ onSelect }) {
               display:"flex", alignItems:"center", justifyContent:"space-between",
             }}>
               <span style={{ fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif" }}>
-                {filtered.length} / {MOCK_RESERVATIONS.length} rezervasyon
+                {filtered.length} / {_allRes.length} rezervasyon
               </span>
             </div>
           </>
@@ -6169,15 +6138,29 @@ function StatusStepper({ current }) {
   );
 }
 
+const RES_ACTIVITY_LABEL = {
+  created:"Oluşturuldu", updated:"Güncellendi", status_changed:"Durum güncellendi",
+  payment:"Ödeme alındı", deposit:"Kapora alındı", cancelled:"İptal edildi",
+};
+
 function ResTimeline({ r }) {
-  const opIdx = ["Hazırlanıyor","Rehber Atandı","Hazır","Tamamlandı"].indexOf(r.opStatus);
-  const events = [
-    { ...RES_TIMELINE_TEMPLATES[0], date:r.createdAt, time:"09:14", who:"Berk Çetinkaya", show:true },
-    { ...RES_TIMELINE_TEMPLATES[1], date:"04 Haz 2026", time:"11:30", who:"Berk Çetinkaya", show: opIdx >= 1 || !!r.guide },
-    { ...RES_TIMELINE_TEMPLATES[2], date:"05 Haz 2026", time:"16:00", who:"Berk Çetinkaya", show: opIdx >= 2 },
-    { ...RES_TIMELINE_TEMPLATES[3], date:"06 Haz 2026", time:"10:15", who:"Sarah Johnson", show: opIdx >= 2 },
-    { ...RES_TIMELINE_TEMPLATES[4], date:r.date,        time:"18:00", who:"Ahmet Yıldız",   show: opIdx >= 3 },
-  ].filter(e => e.show);
+  // Real activity log for this reservation — the fixed 5-step template with
+  // hardcoded dates/staff names below always showed the same fake sequence
+  // for every reservation, regardless of what actually happened.
+  const { data:activity, loading } = useRepo("activity", "getAll", { entityType:"reservation", entityId:r.id });
+  const events = (activity||[]).map(a => ({
+    icon: "M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z M14 2v6h6",
+    dot: C.navy,
+    date: a.date, time: a.time, who: a.who,
+    action: RES_ACTIVITY_LABEL[a.action] || a.description || a.action,
+  }));
+
+  if (loading) return <div style={{ padding:"20px", fontSize:12.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif" }}>Yükleniyor…</div>;
+  if (events.length === 0) return (
+    <div style={{ padding:"28px 20px", textAlign:"center", fontSize:12.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", fontStyle:"italic" }}>
+      Bu rezervasyon için henüz aktivite kaydı yok.
+    </div>
+  );
 
   return (
     <div style={{ padding:"20px 20px 8px", position:"relative" }}>
@@ -6293,13 +6276,15 @@ function ReservationDetailPage({ resId, onBack }) {
 
   const { data:_resRec, loading:resDetLoading, error:resDetError }
     = useRepo("reservation", "getById", resId);
+  // Real guest contact info — mapResFromDB has no phone/email/country of its
+  // own (those live on the customer record), so this used to render blank.
+  const { data:resCustomer } = useRepo("customer", "getById", _resRec?.customerId || null);
   if (resDetLoading) return <LoadingState label="Rezervasyon yükleniyor…"/>;
   if (resDetError)   return <ErrorState message={resDetError} onRetry={()=>{}}/>;
   if (!_resRec)      return <NotFoundCard entityType="Rezervasyon" entityId={resId} onBack={onBack}/>;
   const r = _resRec;
   const sm = RES_STATUS[r.opStatus] || {};
   const pm = PAY_STATUS[r.payStatus] || {};
-  const sym = r.currency === "TRY" ? "₺" : "€";
   const paidPct = safePctNum(r.total - r.remaining, r.total);
 
   return (
@@ -6332,7 +6317,7 @@ function ReservationDetailPage({ resId, onBack }) {
           }}>{r.id}</span>
           <div>
             <div style={{ fontSize:17, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif", lineHeight:1.2 }}>
-              {r.flag} {r.name}
+              {resCustomer?.flag||"🌍"} {r.name}
             </div>
             <div style={{ fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:2 }}>
               {r.tour} · {r.date} · {r.time}
@@ -6366,12 +6351,12 @@ function ReservationDetailPage({ resId, onBack }) {
           {}
           <RCard>
             <RCardHead title="Misafir Bilgileri"/>
-            <RInfoRow label="Ad Soyad" value={`${r.flag} ${r.name}`} bold/>
-            <RInfoRow label="Telefon"  value={r.phone} mono icon="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07A19.5 19.5 0 013.07 9.81a19.79 19.79 0 01-3.07-8.63A2 2 0 012 .18h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L6.09 7.91a16 16 0 006 6l1.09-1.09a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z"/>
-            <RInfoRow label="E-posta"  value={r.email} mono icon="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z M22 6l-10 7L2 6"/>
+            <RInfoRow label="Ad Soyad" value={`${resCustomer?.flag||"🌍"} ${r.name}`} bold/>
+            <RInfoRow label="Telefon"  value={resCustomer?.phone||"—"} mono icon="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07A19.5 19.5 0 013.07 9.81a19.79 19.79 0 01-3.07-8.63A2 2 0 012 .18h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L6.09 7.91a16 16 0 006 6l1.09-1.09a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z"/>
+            <RInfoRow label="E-posta"  value={resCustomer?.email||"—"} mono icon="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z M22 6l-10 7L2 6"/>
             <div style={{ padding:"10px 20px", display:"flex", gap:8, alignItems:"center" }}>
               <span style={{ fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", minWidth:130 }}>Ülke</span>
-              <span style={{ fontSize:13, color:C.textMid, fontFamily:"'DM Sans',sans-serif" }}>{r.flag} {r.country}</span>
+              <span style={{ fontSize:13, color:C.textMid, fontFamily:"'DM Sans',sans-serif" }}>{resCustomer?.country||"—"}</span>
             </div>
           </RCard>
 
@@ -6384,12 +6369,11 @@ function ReservationDetailPage({ resId, onBack }) {
               background:C.navy, borderRadius:10, marginBottom:0,
             }}>
               <div style={{ fontSize:15, fontWeight:700, color:C.ivory, fontFamily:"'Playfair Display',serif", lineHeight:1.3 }}>{r.tour}</div>
-              <div style={{ fontSize:12, color:"rgba(248,245,238,0.55)", fontFamily:"'DM Sans',sans-serif", marginTop:4 }}>{r.date} · {r.time} · {r.duration}</div>
+              <div style={{ fontSize:12, color:"rgba(248,245,238,0.55)", fontFamily:"'DM Sans',sans-serif", marginTop:4 }}>{r.date} · {r.time}</div>
             </div>
             <div style={{ height:10 }}/>
             <RInfoRow label="Tarih"       value={r.date} icon="M8 2v4M16 2v4M3 10h18M21 8a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2h14a2 2 0 002-2V8z"/>
             <RInfoRow label="Saat"        value={r.time} icon="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
-            <RInfoRow label="Süre"        value={r.duration}/>
             <div style={{ padding:"10px 20px", display:"flex", gap:8, alignItems:"center", borderBottom:`1px solid ${C.borderLight}` }}>
               <span style={{ fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", minWidth:130, display:"flex", alignItems:"center", gap:5 }}>
                 <RIc d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2 M23 21v-2a4 4 0 00-3-3.87 M16 3.13a4 4 0 010 7.75" size={12} sw={1.5}/>
@@ -6408,7 +6392,7 @@ function ReservationDetailPage({ resId, onBack }) {
                 display:"flex", alignItems:"baseline", gap:8, marginBottom:14,
                 paddingBottom:14, borderBottom:`1px solid ${C.borderLight}`,
               }}>
-                <span style={{ fontSize:32, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif" }}>{sym}{r.fmtNum(total)}</span>
+                <span style={{ fontSize:32, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif" }}>{fmtMoney(r.total, r.currency)}</span>
                 <span style={{ fontSize:13, color:C.textFaint, fontFamily:"'DM Sans',sans-serif" }}>{r.currency}</span>
               </div>
               {}
@@ -6423,8 +6407,8 @@ function ReservationDetailPage({ resId, onBack }) {
               </div>
             </div>
             {[
-              { label:"Kapora", val:`${sym}${r.fmtNum(deposit)}`, color:C.amber },
-              { label:"Kalan Ödeme", val:`${sym}${r.fmtNum(remaining)}`, color: r.remaining > 0 ? C.red : C.green, alert: r.remaining > 0 },
+              { label:"Kapora", val:fmtMoney(r.deposit, r.currency), color:C.amber },
+              { label:"Kalan Ödeme", val:fmtMoney(r.remaining, r.currency), color: r.remaining > 0 ? C.red : C.green, alert: r.remaining > 0 },
               { label:"Ödeme Durumu", val:null, badge:r.payStatus },
             ].map((row, i, arr) => (
               <div key={i} style={{
@@ -6546,118 +6530,12 @@ function ReservationDetailPage({ resId, onBack }) {
   );
 }
 
-const CAL_TODAY = new Date(2026, 5, 3); // June 3, 2026
-
-function calDate(offsetDays, hour, min=0) {
-  const d = new Date(CAL_TODAY);
-  d.setDate(d.getDate() + offsetDays);
-  d.setHours(hour, min, 0, 0);
-  return d;
-}
-
-const CAL_EVENTS = [
-  { id:"CE-001", date: calDate(-1, 10), endHour:16,
-    guest:"Luca Rossi",    flag:"🇮🇹", pax:3,
-    tour:"Old City Highlights Tour",
-    guide:"Fatma Ş.", guideOk:true,
-    opStatus:"Tamamlandı", payStatus:"Ödendi",
-    resId:"R-2026-003",
-    pickup:"Sultanahmet Meydanı",
-  },
-  { id:"CE-002", date: calDate(0, 9),  endHour:17,
-    guest:"Sarah Johnson", flag:"🇦🇺", pax:4,
-    tour:"Private Istanbul Experience",
-    guide:"Ahmet Y.", guideOk:true,
-    opStatus:"Hazır", payStatus:"Kapora Ödendi",
-    resId:"R-2026-001",
-    pickup:"The Marmara Pera, Lobby",
-  },
-  { id:"CE-003", date: calDate(0, 13), endHour:19,
-    guest:"John Smith",    flag:"🇺🇸", pax:2,
-    tour:"Bosphorus & Asian Side Tour",
-    guide:"", guideOk:false,
-    opStatus:"Hazırlanıyor", payStatus:"Ödeme Bekliyor",
-    resId:"R-2026-004",
-    pickup:"",
-  },
-  { id:"CE-004", date: calDate(0, 16), endHour:21,
-    guest:"Emma Brown",    flag:"🇬🇧", pax:6,
-    tour:"Old City Tour",
-    guide:"Ayşe G.", guideOk:true,
-    opStatus:"Rehber Atandı", payStatus:"Ödendi",
-    resId:"R-2026-002",
-    pickup:"Hilton Istanbul, Giriş",
-  },
-  { id:"CE-005", date: calDate(1, 9,30), endHour:15,
-    guest:"Ayşe Demir",    flag:"🇹🇷", pax:3,
-    tour:"Özel Kapadokya Turu",
-    guide:"Osman A.", guideOk:true,
-    opStatus:"Hazır", payStatus:"Ödendi",
-    resId:"R-2026-003",
-    pickup:"İstanbul Havalimanı",
-  },
-  { id:"CE-006", date: calDate(1, 14), endHour:20,
-    guest:"Hans Müller",   flag:"🇩🇪", pax:5,
-    tour:"Bosphorus & Asian Side Tour",
-    guide:"Ahmet Y.", guideOk:true,
-    opStatus:"Rehber Atandı", payStatus:"Kapora Ödendi",
-    resId:"R-2026-005",
-    pickup:"Park Hyatt Istanbul",
-  },
-  { id:"CE-007", date: calDate(2, 10), endHour:18,
-    guest:"Yuki Tanaka",   flag:"🇯🇵", pax:4,
-    tour:"Private Istanbul Experience",
-    guide:"", guideOk:false,
-    opStatus:"Hazırlanıyor", payStatus:"Kapora Ödendi",
-    resId:"R-2026-004",
-    pickup:"",
-  },
-  { id:"CE-008", date: calDate(2, 15,30), endHour:21,
-    guest:"Olivia Carter", flag:"🇦🇺", pax:2,
-    tour:"Bosphorus & Asian Side Tour",
-    guide:"Fatma Ş.", guideOk:true,
-    opStatus:"Rehber Atandı", payStatus:"Kapora Ödendi",
-    resId:"R-2026-006",
-    pickup:"Belirtilmedi",
-  },
-  { id:"CE-009", date: calDate(3, 9), endHour:13,
-    guest:"Marco Rossi",   flag:"🇮🇹", pax:2,
-    tour:"Old City Highlights Tour",
-    guide:"Ahmet Y.", guideOk:true,
-    opStatus:"Hazır", payStatus:"Ödendi",
-    resId:"R-2026-001",
-    pickup:"Hotel Amira, Lobby",
-  },
-  { id:"CE-010", date: calDate(4, 11), endHour:17,
-    guest:"Marie Dubois",  flag:"🇫🇷", pax:3,
-    tour:"Private Istanbul Experience",
-    guide:"Osman A.", guideOk:true,
-    opStatus:"Hazır", payStatus:"Ödendi",
-    resId:"R-2026-002",
-    pickup:"The Peninsula Istanbul",
-  },
-  { id:"CE-011", date: calDate(5, 9,30), endHour:15,
-    guest:"Chen Wei",      flag:"🇨🇳", pax:6,
-    tour:"Bosphorus & Asian Side Tour",
-    guide:"", guideOk:false,
-    opStatus:"Hazırlanıyor", payStatus:"Ödeme Bekliyor",
-    resId:"R-2026-005",
-    pickup:"",
-  },
-  { id:"CE-012", date: calDate(6, 10), endHour:18,
-    guest:"Anna Schmidt",  flag:"🇩🇪", pax:4,
-    tour:"Old City Highlights Tour",
-    guide:"Fatma Ş.", guideOk:true,
-    opStatus:"Rehber Atandı", payStatus:"Kapora Ödendi",
-    resId:"R-2026-006",
-    pickup:"Ritz Carlton Istanbul",
-  },
-];
+const CAL_TODAY = new Date(); // real current date — was hardcoded to a fixed demo date
 
 const CAL_OP_COLOR = {
   "Hazırlanıyor":  { border:"#6B3FA0", bg:"#F3EEF9", text:"#6B3FA0", stripe:"rgba(107,63,160,0.08)" },
   "Rehber Atandı": { border:"#1A6FAE", bg:"#EBF4FC", text:"#1A6FAE", stripe:"rgba(26,111,174,0.08)" },
-  "Hazır":         { border:"#B8973A", bg:"#FDF8EC", text:"#B8973A", stripe:"rgba(184,151,58,0.08)" },
+  "Hazır":         { border:"#B45309", bg:"#FEF3E2", text:"#B45309", stripe:"rgba(180,83,9,0.08)" },
   "Tamamlandı":    { border:"#2E7D52", bg:"#EBF5EF", text:"#2E7D52", stripe:"rgba(46,125,82,0.08)"  },
   "İptal":         { border:"#C0392B", bg:"#FDECEC", text:"#C0392B", stripe:"rgba(192,57,43,0.08)"  },
 };
@@ -6707,13 +6585,13 @@ function EventCard({ ev, compact }) {
       onMouseLeave={()=>setHov(false)}
       style={{
         background:C.white,
-        border:`1.5px solid ${col.border}`,
-        borderLeft:`4px solid ${col.border}`,
-        borderRadius:8,
+        border:`1px solid ${C.borderLight}`,
+        borderLeft:`3px solid ${col.border}`,
+        borderRadius:T.radiusSm,
         padding: compact ? "7px 10px" : "10px 12px",
         cursor:"pointer",
         transition:"background .12s, box-shadow .12s",
-        boxShadow: hov ? `0 2px 8px rgba(27,45,79,0.28)` : "0 1px 3px rgba(0,0,0,0.06)",
+        boxShadow: hov ? `0 2px 6px rgba(27,45,79,0.14)` : T.shadowSoft,
         position:"relative",
         overflow:"hidden",
       }}
@@ -6766,8 +6644,8 @@ function EventCard({ ev, compact }) {
             }}>{ev.pax} kişi</span>
             <span style={{
               fontSize:10.5, padding:"2px 6px", borderRadius:4,
-              background: ev.payStatus==="Ödendi" ? C.greenBg : ev.payStatus==="Kapora Ödendi" ? C.goldPale : C.redBg,
-              color: ev.payStatus==="Ödendi" ? C.green : ev.payStatus==="Kapora Ödendi" ? C.gold : C.red,
+              background: ev.payStatus==="Ödendi" ? C.greenBg : ev.payStatus==="Kapora Ödendi" ? C.amberBg : C.redBg,
+              color: ev.payStatus==="Ödendi" ? C.green : ev.payStatus==="Kapora Ödendi" ? C.amber : C.red,
               fontFamily:"'DM Sans',sans-serif",
             }}>{ev.payStatus}</span>
           </div>
@@ -7245,37 +7123,39 @@ function MobileAgendaView({ date, events }) {
 }
 
 /* Shared by CalendarPage (desktop) and MobileCalendarPage (mobile agenda):
-   builds calendar events from the reservations repo, falling back to
-   CAL_EVENTS mock data. Extracted so both surfaces read the exact same
-   data/business logic — only presentation differs. */
+   builds calendar events from the real reservations repo. Extracted so
+   both surfaces read the exact same data/business logic — only
+   presentation differs. */
 function useCalendarEvents() {
   const { data:calReservations } = useRepo("reservation", "getAll");
-  return calReservations && calReservations.length > 0
-    ? calReservations.map(r => {
-        const raw = r.checkIn || r.travelStart || r.check_in || r.date || null;
-        if (!raw) return null;
-        try {
-          const dateObj = new Date(raw + (raw.includes('T') ? '' : 'T09:00:00'));
-          if (isNaN(dateObj.getTime())) return null;
-          const guideName = r.guide || r.guideName || null;
-          return {
-            id:      r.id,
-            date:    dateObj,
-            endHour: Math.min((dateObj.getHours() || 9) + parseInt(r.duration || 4), 22),
-            guest:   r.name || r.customer || r.contactName || '—',
-            flag:    r.flag || '🏳',
-            pax:     parseInt(r.pax || r.paxAdult || 1),
-            tour:    r.tour || r.destination || '—',
-            guide:   guideName,
-            guideOk: !!guideName,
-            payStatus: r.payStatus || null,
-            pickup:  r.pickup || r.pickupLocation || null,
-            opStatus: r.opStatus || null,
-            color:   '#1B2D4F',
-          };
-        } catch(_) { return null; }
-      }).filter(Boolean)
-    : (typeof CAL_EVENTS !== 'undefined' ? CAL_EVENTS : []);
+  // Always derived from the real reservations repo (mock array in Mock mode,
+  // Supabase rows in production) — never a separate hardcoded event list, so
+  // an empty/loading result correctly renders as an empty calendar rather
+  // than fabricated tours.
+  return (calReservations || []).map(r => {
+    const raw = r.checkIn || r.travelStart || r.check_in || r.date || null;
+    if (!raw) return null;
+    try {
+      const dateObj = new Date(raw + (raw.includes('T') ? '' : 'T09:00:00'));
+      if (isNaN(dateObj.getTime())) return null;
+      const guideName = r.guide || r.guideName || null;
+      return {
+        id:      r.id,
+        date:    dateObj,
+        endHour: Math.min((dateObj.getHours() || 9) + parseInt(r.duration || 4), 22),
+        guest:   r.name || r.customer || r.contactName || '—',
+        flag:    r.flag || '🏳',
+        pax:     parseInt(r.pax || r.paxAdult || 1),
+        tour:    r.tour || r.destination || '—',
+        guide:   guideName,
+        guideOk: !!guideName,
+        payStatus: r.payStatus || null,
+        pickup:  r.pickup || r.pickupLocation || null,
+        opStatus: r.opStatus || null,
+        color:   '#1B2D4F',
+      };
+    } catch(_) { return null; }
+  }).filter(Boolean);
 }
 
 function CalendarPage() {
@@ -7519,8 +7399,8 @@ function TPill({ label, map, small }) {
   const m = map[label] || { color:"#6B7280", bg:"#F3F4F6" };
   return (
     <span style={{
-      display:"inline-flex", alignItems:"center", gap:4,
-      padding: small ? "2px 7px" : "3px 9px",
+      display:"inline-flex", alignItems:"center", gap:5,
+      padding: small ? "3px 8px" : "4px 10px",
       borderRadius:99, fontSize: small ? 10.5 : 11.5,
       fontWeight:500, color:m.color, background:m.bg,
       fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap",
@@ -7590,9 +7470,7 @@ function TaskRow({ task, isLast, onToggle }) {
   const pMeta = TASK_PRIORITY[task.priority] || {};
 
   return (
-    <tr
-      onMouseEnter={()=>setHov(true)}
-      onMouseLeave={()=>setHov(false)}
+    <tr className="dt-row"
       style={{
         background:C.white,
         transition:"background .1s",
@@ -8095,7 +7973,7 @@ function TasksPage() {
 
 const PAY_STATUS_MAP = {
   "Bekliyor":      { color:"#C05621", bg:"#FEF0E8", dot:"#C05621" },
-  "Kısmi Ödendi":  { color:"#B8973A", bg:"#F5EDD4", dot:"#B8973A" },
+  "Kısmi Ödendi":  { color:"#B45309", bg:"#FEF3E2", dot:"#B45309" },
   "Tamamlandı":    { color:"#2E7D52", bg:"#EBF5EF", dot:"#2E7D52" },
   "İade Edildi":   { color:"#6B3FA0", bg:"#F3EEF9", dot:"#6B3FA0" },
 };
@@ -8126,8 +8004,8 @@ function PBadge({ label, small }) {
   return (
     <span style={{
       display:"inline-flex", alignItems:"center", gap:5,
-      padding: small ? "3px 8px" : "4px 11px",
-      borderRadius:99, fontSize: small ? 11 : 12, fontWeight:500,
+      padding: small ? "3px 8px" : "4px 10px",
+      borderRadius:99, fontSize: small ? 10.5 : 11.5, fontWeight:500,
       color:m.color, background:m.bg, whiteSpace:"nowrap",
       fontFamily:"'DM Sans',sans-serif",
     }}>
@@ -8320,9 +8198,7 @@ function PaymentRow({ p, isLast, onOpen }) {
   const pct = p.total > 0 ? Math.round(p.paid / p.total * 100) : 0;
 
   return (
-    <tr
-      onMouseEnter={()=>setHov(true)}
-      onMouseLeave={()=>setHov(false)}
+    <tr className="dt-row"
       onClick={()=>onOpen(p)}
       style={{
         background:C.white,
@@ -8499,7 +8375,7 @@ function PaymentsPage() {
     "Bekliyor":     _allPays.filter(p=>p.status==="Bekliyor").length,
     "Kısmi Ödendi": _allPays.filter(p=>p.status==="Kısmi Ödendi").length,
     "Tamamlandı":   _allPays.filter(p=>p.status==="Tamamlandı").length,
-    "İade":         MOCK_PAYMENTS.filter(p=>p.status==="İade Edildi").length,
+    "İade":         _allPays.filter(p=>p.status==="İade Edildi").length,
   };
 
   const eurPayments  = _allPays.filter(p=>p.currency==="EUR");
@@ -8584,14 +8460,14 @@ function PaymentsPage() {
             },
             {
               label:"Bekleyen Ödemeler", val:`€${totalPending.toLocaleString("tr-TR")}`,
-              sub:`${MOCK_PAYMENTS.filter(p=>p.remaining>0&&p.currency==="EUR"&&!["İade Edildi"].includes(p.status)).length} rezervasyon`,
+              sub:`${_allPays.filter(p=>p.remaining>0&&p.currency==="EUR"&&!["İade Edildi"].includes(p.status)).length} rezervasyon`,
               icon:"M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z",
               color:C.red, iconColor:C.red, iconBg:C.redBg,
               progress:null,
             },
             {
               label:"Bu Ayki Tahsilat", val:`€${thisMonth.toLocaleString("tr-TR")}`,
-              sub:"Haziran 2026",
+              sub:new Date().toLocaleDateString("tr-TR",{month:"long",year:"numeric"}),
               icon:"M8 2v4M16 2v4M3 10h18M21 8a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2h14a2 2 0 002-2V8z",
               color:C.gold, iconColor:C.gold, iconBg:C.goldPale,
               progress:null,
@@ -8723,7 +8599,7 @@ function PaymentsPage() {
                   display:"flex", alignItems:"center", justifyContent:"space-between",
                 }}>
                   <span style={{fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>
-                    {filtered.length} / {DB.payments.length} ödeme kaydı
+                    {filtered.length} / {_allPays.length} ödeme kaydı
                   </span>
                   <span style={{fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>
                     Satıra tıklayarak detayları görüntüleyin
@@ -8734,7 +8610,7 @@ function PaymentsPage() {
           </div>
 
           {}
-          <PaySidebar payments={MOCK_PAYMENTS}/>
+          <PaySidebar payments={_allPays}/>
         </div>
       </div>
     </>
@@ -8765,14 +8641,6 @@ const REM_TYPE_COLOR = {
 };
 
 const MOCK_REMINDERS = DB.reminders; // → centralized DB
-
-const ALERTS_STATIC = [
-  { level:"acil",   text:"Sarah Johnson için €2.700 ödeme bekleniyor",           icon:"M2 9a2 2 0 012-2h16a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V9zM2 13h20" },
-  { level:"high",   text:"Emma Brown rezervasyonunda rehber atanmadı",             icon:"M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2 M23 21v-2a4 4 0 00-3-3.87 M16 3.13a4 4 0 010 7.75" },
-  { level:"high",   text:"Yarın 4 tur bulunuyor — operasyon hazır mı?",           icon:"M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z M9 22V12h6v10" },
-  { level:"medium", text:"Yuki Tanaka ve Olivia Carter için pickup bilgisi eksik", icon:"M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z M12 10a1 1 0 100-2 1 1 0 000 2z" },
-  { level:"medium", text:"Michael Green teklifine 48 saattir yanıt gelmedi",      icon:"M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z M14 2v6h6" },
-];
 
 const AUTOMATIONS = [
   {
@@ -8819,9 +8687,9 @@ function HBadge({ label, map, small }) {
   const m = (map||{})[label] || { color:"#6B7280", bg:"#F3F4F6" };
   return (
     <span style={{
-      display:"inline-flex", alignItems:"center", gap:4,
-      padding: small ? "2px 7px" : "3px 9px",
-      borderRadius:99, fontSize: small ? 11 : 11.5, fontWeight:500,
+      display:"inline-flex", alignItems:"center", gap:5,
+      padding: small ? "3px 8px" : "4px 10px",
+      borderRadius:99, fontSize: small ? 10.5 : 11.5, fontWeight:500,
       color:m.color, background:m.bg, whiteSpace:"nowrap",
       fontFamily:"'DM Sans',sans-serif",
     }}>
@@ -8868,9 +8736,7 @@ function ReminderRow({ rem, isLast, onToggle }) {
   const pMeta = REM_PRIORITY[rem.priority] || {};
 
   return (
-    <tr
-      onMouseEnter={()=>setHov(true)}
-      onMouseLeave={()=>setHov(false)}
+    <tr className="dt-row"
       style={{
         background:C.white,
         transition:"background .1s",
@@ -8970,7 +8836,15 @@ function ReminderRow({ rem, isLast, onToggle }) {
   );
 }
 
-function RemSidebar() {
+function RemSidebar({ reminders, loading }) {
+  const alerts = (reminders||[])
+    .filter(r => r.status !== "Tamamlandı" && r.status !== "Ertelendi")
+    .sort((a,b) => (REM_PRIORITY[a.priority]?.order||9) - (REM_PRIORITY[b.priority]?.order||9) || a.dueDateRaw - b.dueDateRaw)
+    .slice(0, 5)
+    .map(r => ({
+      level: r.priority==="Acil" ? "acil" : r.priority==="Yüksek" ? "high" : "medium",
+      text: r.title,
+    }));
   return (
     <div style={{display:"flex", flexDirection:"column", gap:18}}>
 
@@ -8995,20 +8869,21 @@ function RemSidebar() {
         </div>
 
         <div style={{padding:"8px 0"}}>
-          {ALERTS_STATIC.map((a,i)=>{
+          {loading ? (
+            <div style={{padding:"20px 16px", textAlign:"center", fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>Yükleniyor…</div>
+          ) : alerts.length === 0 ? (
+            <div style={{padding:"20px 16px", textAlign:"center", fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", fontStyle:"italic"}}>
+              Şu anda dikkat gereken bir uyarı yok.
+            </div>
+          ) : alerts.map((a,i)=>{
             const borderColor = a.level==="acil" ? C.red : a.level==="high" ? C.amber : C.blue;
             const bgColor     = a.level==="acil" ? C.redBg : a.level==="high" ? C.amberBg : C.blueBg;
             return (
               <div key={i}
-                onMouseEnter={()=>setHov(true)}
-                onMouseLeave={()=>setHov(false)}
                 style={{
                   padding:"11px 16px",
-                  borderBottom: i<ALERTS_STATIC.length-1 ? `1px solid ${C.borderLight}` : "none",
+                  borderBottom: i<alerts.length-1 ? `1px solid ${C.borderLight}` : "none",
                   display:"flex", alignItems:"flex-start", gap:10,
-                  cursor:"pointer",
-                  background:"transparent",
-                  transition:"background .1s",
                 }}
               >
                 <div style={{
@@ -9017,7 +8892,7 @@ function RemSidebar() {
                   display:"flex", alignItems:"center", justifyContent:"center",
                   color:borderColor,
                 }}>
-                  <HIc d={a.icon} size={13} sw={1.7} color={borderColor}/>
+                  <HIc d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" size={13} sw={1.7} color={borderColor}/>
                 </div>
                 <div style={{
                   flex:1, fontSize:12.5, color:C.text,
@@ -9119,7 +8994,7 @@ function RemindersPage() {
   const reminders = repoRems ?? [];
   const filtered = reminders.filter(r => {
     if (search && !r.title.toLowerCase().includes(search.toLowerCase()) &&
-        !r.guest.toLowerCase().includes(search.toLowerCase())) return false;
+        !(r.guest||'').toLowerCase().includes(search.toLowerCase())) return false;
     if (activeTab==="Bugün")      return r.dueDateRaw===0 && r.status!=="Tamamlandı";
     if (activeTab==="Bu Hafta")   return r.dueDateRaw>=0 && r.dueDateRaw<=7 && r.status!=="Tamamlandı";
     if (activeTab==="Acil")       return r.priority==="Acil" && r.status!=="Tamamlandı";
@@ -9339,7 +9214,7 @@ function RemindersPage() {
         </div>
 
         {}
-        <RemSidebar/>
+        <RemSidebar reminders={reminders} loading={remsLoading}/>
       </div>
     </div>
     </>
@@ -9348,7 +9223,7 @@ function RemindersPage() {
 
 const TOUR_STATUS_CFG = {
   "Aktif":  { color:"#2E7D52", bg:"#EBF5EF", dot:"#2E7D52" },
-  "Taslak": { color:"#B8973A", bg:"#F5EDD4", dot:"#B8973A" },
+  "Taslak": { color:"#6B3FA0", bg:"#F3EEF9", dot:"#6B3FA0" },
   "Arşiv":  { color:"#6B7280", bg:"#F3F4F6", dot:"#9CA3AF" },
 };
 const TOUR_CATEGORY_CFG = {
@@ -9985,8 +9860,8 @@ function ToursPage({ onSelect }) {
     return tabOk && srchOk;
   });
 
-  const counts = TABS.reduce((acc,t)=>({...acc, [t]: t==="Tümü"?MOCK_TOURS.length:MOCK_TOURS.filter(x=>x.status===t).length}),{});
-  const activeRevenue = MOCK_TOURS.filter(t=>t.status==="Aktif").reduce((s,t)=>s+t.usageCount,0);
+  const counts = TABS.reduce((acc,t)=>({...acc, [t]: t==="Tümü"?allTours.length:allTours.filter(x=>x.status===t).length}),{});
+  const activeRevenue = allTours.filter(t=>t.status==="Aktif").reduce((s,t)=>s+(t.usageCount||0),0);
 
   return (
     <>
@@ -10042,9 +9917,9 @@ function ToursPage({ onSelect }) {
       {}
       <div className="rsp-stat-grid" style={{display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:14}}>
         {[
-          { label:"Toplam Tur",      val:MOCK_TOURS.length,                              icon:"M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z M9 22V12h6v10", color:C.text,  bg:C.ivoryDark },
-          { label:"Aktif Tur",       val:MOCK_TOURS.filter(t=>t.status==="Aktif").length,icon:"M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11", color:C.green, bg:C.greenBg },
-          { label:"Taslak",          val:MOCK_TOURS.filter(t=>t.status==="Taslak").length,icon:"M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z", color:C.amber, bg:C.amberBg },
+          { label:"Toplam Tur",      val:allTours.length,                              icon:"M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z M9 22V12h6v10", color:C.text,  bg:C.ivoryDark },
+          { label:"Aktif Tur",       val:allTours.filter(t=>t.status==="Aktif").length,icon:"M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11", color:C.green, bg:C.greenBg },
+          { label:"Taslak",          val:allTours.filter(t=>t.status==="Taslak").length,icon:"M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z", color:C.amber, bg:C.amberBg },
           { label:"Toplam Kullanım", val:`${activeRevenue} kez`,                         icon:"M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01", color:C.blue,  bg:C.blueBg },
         ].map((k,i)=>(
           <div key={i} style={{
@@ -10123,9 +9998,7 @@ function ToursPage({ onSelect }) {
                   const isLast=i===filtered.length-1;
                   const sym=tour.currency==="TRY"?"₺":"€";
                   return (
-                    <tr key={tour.id}
-                      onMouseEnter={()=>setHov(true)}
-                      onMouseLeave={()=>setHov(false)}
+                    <tr key={tour.id} className="dt-row"
                       onClick={()=>onSelect&&onSelect(tour.id)}
                       style={{
                         background:C.white, cursor:"pointer", transition:"background .1s",
@@ -10273,21 +10146,24 @@ function SSelect({ value, onChange, options }) {
   );
 }
 
-function SSection({ id, title, icon, children }) {
+function SSection({ id, title, desc, icon, children }) {
   return (
-    <div id={id} style={{background:C.white, border:`1px solid ${C.border}`, borderRadius:12, overflow:"hidden"}}>
+    <div id={id} style={{background:C.white, border:`1px solid ${C.border}`, borderRadius:T.radius, overflow:"hidden", boxShadow:T.shadowSoft}}>
       <div style={{
-        padding:"16px 24px",
+        padding: desc ? "15px 24px" : "16px 24px",
         background:C.ivory, borderBottom:`1px solid ${C.border}`,
         display:"flex", alignItems:"center", gap:10,
       }}>
         <div style={{
-          width:32, height:32, borderRadius:8,
+          width:32, height:32, borderRadius:T.radiusSm, flexShrink:0,
           background:C.navy, display:"flex", alignItems:"center", justifyContent:"center",
         }}>
           <SIc d={icon} size={15} sw={1.8} color={C.goldLight}/>
         </div>
-        <span style={{fontSize:15, fontWeight:600, color:C.text, fontFamily:"'Playfair Display',serif"}}>{title}</span>
+        <div>
+          <div style={{fontSize:15, fontWeight:600, color:C.text, fontFamily:"'Playfair Display',serif", lineHeight:1.2}}>{title}</div>
+          {desc && <div style={{fontSize:12, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", marginTop:2}}>{desc}</div>}
+        </div>
       </div>
       <div style={{padding:"4px 24px 16px"}}>{children}</div>
     </div>
@@ -10338,6 +10214,7 @@ function SettingsPage() {
     { id:7, label:"Tripadvisor", active:false },
     { id:8, label:"Email",       active:true  },
     { id:9, label:"Manuel",      active:true  },
+    { id:10, label:"Civitatis",  active:true  },
   ]);
   const [newSource, setNewSource] = useState("");
 
@@ -10380,7 +10257,7 @@ function SettingsPage() {
         <div>
           <h1 style={{margin:0, fontSize:24, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif", marginBottom:4}}>Ayarlar</h1>
           <p style={{margin:0, fontSize:13.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif"}}>
-            Dese Tour Operations Center sistem ayarlarını yönetin.
+            Dese Tour Operasyon Merkezi sistem ayarlarını yönetin.
           </p>
         </div>
         <div style={{
@@ -10431,7 +10308,7 @@ function SettingsPage() {
 
           {}
           {activeSection==="sirket" && (
-            <SSection id="sirket" title="Şirket Bilgileri" icon="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4">
+            <SSection id="sirket" title="Şirket Bilgileri" desc="İletişim ve fatura bilgileriniz" icon="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4">
               <SField label="Şirket Adı" hint="Tekliflerde ve belgelerde görünür">
                 <SInput value={companyName} onChange={setCompanyName} placeholder="Şirket adı"/>
               </SField>
@@ -10465,7 +10342,7 @@ function SettingsPage() {
 
           {}
           {activeSection==="marka" && (
-            <SSection id="marka" title="Marka Ayarları" icon="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01">
+            <SSection id="marka" title="Marka Ayarları" desc="Teklif ve doküman görünümü" icon="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01">
               {}
               <SField label="Şirket Logosu" hint="Teklifler ve PDF'lerde kullanılır">
                 <div style={{
@@ -10542,7 +10419,7 @@ function SettingsPage() {
 
           {}
           {activeSection==="kullanicilar" && (
-            <SSection id="kullanicilar" title="Kullanıcılar" icon="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z">
+            <SSection id="kullanicilar" title="Kullanıcılar" desc="Ekip üyeleri ve rolleri" icon="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z">
               {}
               <div style={{marginTop:8}}>
                 {users.map((u,i)=>(
@@ -10600,7 +10477,7 @@ function SettingsPage() {
 
           {}
           {activeSection==="kaynaklar" && (
-            <SSection id="kaynaklar" title="Lead Kaynakları" icon="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z">
+            <SSection id="kaynaklar" title="Lead Kaynakları" desc="Talep ve misafir kaynak listesi" icon="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z">
               <div style={{marginTop:8}}>
                 {sources.map((s,i)=>(
                   <div key={s.id} style={{
@@ -10650,7 +10527,7 @@ function SettingsPage() {
 
           {}
           {activeSection==="durumlar" && (
-            <SSection id="durumlar" title="Durum Ayarları" icon="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4">
+            <SSection id="durumlar" title="Durum Ayarları" desc="Talep, rezervasyon ve ödeme durumları" icon="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4">
               <div style={{display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:20, marginTop:8}}>
                 {[
                   {
@@ -10660,7 +10537,7 @@ function SettingsPage() {
                       {label:"Yeni Talep",          color:"#1A6FAE", bg:"#E8F2FB"},
                       {label:"Görüşüldü",            color:"#B45309", bg:"#FEF3E2"},
                       {label:"Teklif Hazırlanıyor",  color:"#6B3FA0", bg:"#F3EEF9"},
-                      {label:"Teklif Gönderildi",    color:"#B8973A", bg:"#F5EDD4"},
+                      {label:"Teklif Gönderildi",    color:"#0E7490", bg:"#ECFEFF"},
                       {label:"Ödeme Bekleniyor",     color:"#C05621", bg:"#FEF0E8"},
                       {label:"Onaylandı",            color:"#2E7D52", bg:"#EBF5EF"},
                       {label:"İptal",                color:"#C0392B", bg:"#FDECEC"},
@@ -10672,7 +10549,7 @@ function SettingsPage() {
                     items:[
                       {label:"Hazırlanıyor",  color:"#6B3FA0", bg:"#F3EEF9"},
                       {label:"Rehber Atandı", color:"#1A6FAE", bg:"#E8F2FB"},
-                      {label:"Hazır",         color:"#B8973A", bg:"#F5EDD4"},
+                      {label:"Hazır",         color:"#B45309", bg:"#FEF3E2"},
                       {label:"Tamamlandı",    color:"#2E7D52", bg:"#EBF5EF"},
                       {label:"İptal",         color:"#C0392B", bg:"#FDECEC"},
                     ],
@@ -10682,7 +10559,7 @@ function SettingsPage() {
                     icon:"M2 9a2 2 0 012-2h16a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V9zM2 13h20",
                     items:[
                       {label:"Bekliyor",       color:"#C05621", bg:"#FEF0E8"},
-                      {label:"Kısmi Ödendi",   color:"#B8973A", bg:"#F5EDD4"},
+                      {label:"Kısmi Ödendi",   color:"#B45309", bg:"#FEF3E2"},
                       {label:"Tamamlandı",     color:"#2E7D52", bg:"#EBF5EF"},
                       {label:"İade Edildi",    color:"#6B3FA0", bg:"#F3EEF9"},
                     ],
@@ -10721,7 +10598,7 @@ function SettingsPage() {
 
           {}
           {activeSection==="bildirimler" && (
-            <SSection id="bildirimler" title="Bildirim Ayarları" icon="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9">
+            <SSection id="bildirimler" title="Bildirim Ayarları" desc="Otomatik uyarı kanalları" icon="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9">
               {[
                 {
                   id:"whatsapp", label:"WhatsApp Business",
@@ -10782,7 +10659,7 @@ function SettingsPage() {
 
           {}
           {activeSection==="otomasyon" && (
-            <SSection id="otomasyon" title="Otomasyon Kuralları" icon="M13 10V3L4 14h7v7l9-11h-7z">
+            <SSection id="otomasyon" title="Otomasyon Kuralları" desc="Tetiklenen sistem eylemleri" icon="M13 10V3L4 14h7v7l9-11h-7z">
               <div style={{
                 padding:"12px 14px", borderRadius:9, marginTop:8, marginBottom:16,
                 background:C.goldPale, border:`1px solid ${C.gold}30`,
@@ -10843,12 +10720,18 @@ const _COUNTRY_FLAG = {
   "Kanada":"🇨🇦","Brezilya":"🇧🇷","Diğer":"🌍",
 };
 
-function calculateReportMetrics(period, leads, quotes, reservations, payments, customers) {
+function calculateReportMetrics(period, leads, quotes, reservations, payments, customers, sources) {
   const _leads   = leads        ?? [];
   const _quotes  = quotes       ?? [];
   const _res     = reservations ?? [];
   const _pays    = payments     ?? [];
   const _custs   = customers    ?? [];
+  // Source lookup must use the live sources list — DB.sources is mock-only
+  // data with mock ids, so it never matched a real Supabase source_id and
+  // every real lead/quote/reservation fell into "Diğer" regardless of its
+  // actual source.
+  const _sources = sources && sources.length ? sources : DB.sources;
+  const srcName  = (id) => { const s=_sources.find(x=>x.id===id); return s?.name || s?.label || "Diğer"; };
 
   const fLeads = filterByDateRange(_leads,   "createdAt",  period);
   const fQuotes= filterByDateRange(_quotes,  "createdAt",  period);
@@ -10868,38 +10751,26 @@ function calculateReportMetrics(period, leads, quotes, reservations, payments, c
 
   const sourceMap = {};
   fLeads.forEach(l => {
-    const src = l.sourceId
-      ? (DB.sources.find(s=>s.id===l.sourceId)?.label || "Diğer")
-      : (l.importType === "manual" ? "Manuel" : "Diğer");
+    const src = l.sourceId ? srcName(l.sourceId) : (l.importType === "manual" ? "Manuel" : "Diğer");
     if (!sourceMap[src]) sourceMap[src] = { source:src, leads:0, quotes:0, reservations:0, revenue:0 };
     sourceMap[src].leads++;
   });
   fQuotes.forEach(q => {
     const lead = _leads.find(l=>l.id===q.leadId);
-    const src  = lead?.sourceId
-      ? (DB.sources.find(s=>s.id===lead.sourceId)?.label || "Diğer")
-      : "Diğer";
+    const src  = lead?.sourceId ? srcName(lead.sourceId) : "Diğer";
     if (!sourceMap[src]) sourceMap[src] = { source:src, leads:0, quotes:0, reservations:0, revenue:0 };
     sourceMap[src].quotes++;
   });
   fRes.forEach(r => {
     const lead = _leads.find(l=>l.id===r.leadId);
-    const src  = lead?.sourceId
-      ? (DB.sources.find(s=>s.id===lead.sourceId)?.label || "Diğer")
-      : "Diğer";
+    const src  = lead?.sourceId ? srcName(lead.sourceId) : "Diğer";
     if (!sourceMap[src]) sourceMap[src] = { source:src, leads:0, quotes:0, reservations:0, revenue:0 };
     sourceMap[src].reservations++;
     sourceMap[src].revenue += parseFloat(r.total||0);
   });
-  const sources = Object.values(sourceMap)
+  const sourcesData = Object.values(sourceMap)
     .map(s => ({ ...s, conversion: s.leads>0 ? Math.round(s.reservations/s.leads*100) : 0 }))
     .sort((a,b)=>b.leads-a.leads);
-  const sourcesData = sources.length > 0 ? sources : [
-    { source:"Website",  leads:31, quotes:22, reservations:11, conversion:35, revenue:4820 },
-    { source:"WhatsApp", leads:27, quotes:18, reservations:9,  conversion:33, revenue:3960 },
-    { source:"Instagram",leads:23, quotes:14, reservations:7,  conversion:30, revenue:2940 },
-    { source:"Booking",  leads:19, quotes:12, reservations:6,  conversion:32, revenue:2640 },
-  ];
 
   const tourMap = {};
   fRes.forEach(r => {
@@ -10909,15 +10780,10 @@ function calculateReportMetrics(period, leads, quotes, reservations, payments, c
     tourMap[name].guests += parseInt(r.pax||1);
     tourMap[name].revenue += parseFloat(r.total||0);
   });
-  const tours = Object.values(tourMap)
+  const toursData = Object.values(tourMap)
     .map(t => ({ ...t, avgPrice: t.reservations>0 ? Math.round(t.revenue/t.reservations) : 0 }))
     .sort((a,b)=>b.revenue-a.revenue)
     .slice(0,6);
-  const toursData = tours.length > 0 ? tours : [
-    { name:"Private Istanbul Experience", reservations:18, guests:52, revenue:8400, avgPrice:467 },
-    { name:"Bosphorus & Asian Side Tour", reservations:11, guests:34, revenue:4200, avgPrice:382 },
-    { name:"Old City Highlights Tour",    reservations:9,  guests:21, revenue:3100, avgPrice:344 },
-  ];
 
   const countryMap = {};
   fLeads.forEach(l => {
@@ -10934,16 +10800,10 @@ function calculateReportMetrics(period, leads, quotes, reservations, payments, c
     countryMap[country].totalQuote += parseFloat(r.total||0);
     countryMap[country].count++;
   });
-  const countries = Object.values(countryMap)
+  const countriesData = Object.values(countryMap)
     .map(c => ({ ...c, avgQuote: c.count>0 ? Math.round(c.totalQuote/c.count) : 0 }))
     .sort((a,b)=>b.leads-a.leads)
     .slice(0,8);
-  const countriesData = countries.length > 0 ? countries : [
-    { country:"Avustralya", flag:"🇦🇺", leads:24, reservations:9,  avgQuote:420 },
-    { country:"İngiltere",  flag:"🇬🇧", leads:21, reservations:7,  avgQuote:390 },
-    { country:"ABD",        flag:"🇺🇸", leads:18, reservations:6,  avgQuote:460 },
-    { country:"Almanya",    flag:"🇩🇪", leads:13, reservations:4,  avgQuote:350 },
-  ];
 
   const totalExpected = fPays.filter(p=>p.currency==="EUR")
     .reduce((s,p)=>{ const r=getReservationById(p.resId||""); return s+(r?r.total:p.amount); },0);
@@ -10966,14 +10826,12 @@ function calculateReportMetrics(period, leads, quotes, reservations, payments, c
     });
 
   const paymentsData = {
-    expected: totalExpected || 18400,
-    collected: collected || 12750,
-    pending: pending || 4250,
-    partial: partial || 2800,
-    refunded: refunded || 0,
-    highValue: highValuePays.length > 0 ? highValuePays : [
-      { guest:"Sarah Johnson", flag:"🇦🇺", resId:"R-2026-001", remaining:2700, dueDate:"07 Haz 2026", urgent:true },
-    ],
+    expected: totalExpected,
+    collected,
+    pending,
+    partial,
+    refunded,
+    highValue: highValuePays,
   };
 
   const opsData = {
@@ -11084,11 +10942,11 @@ function RpKpiCard({ label, value, sub, icon, color, bg, highlight }) {
   return (
     <div style={{
       background:C.white, border:`1px solid ${highlight?color+"44":C.border}`,
-      borderRadius:12, padding:"18px 20px",
+      borderRadius:T.radius, padding:"18px 20px",
       display:"flex", alignItems:"flex-start", gap:14,
-      boxShadow: highlight?`0 0 0 1px ${color}22`:"none",
+      boxShadow: highlight?`0 0 0 1px ${color}22`:T.shadowSoft,
     }}>
-      <div style={{width:42, height:42, borderRadius:10, flexShrink:0, background:bg, display:"flex", alignItems:"center", justifyContent:"center"}}>
+      <div style={{width:36, height:36, borderRadius:T.radiusSm, flexShrink:0, background:bg, display:"flex", alignItems:"center", justifyContent:"center"}}>
         <RpIc d={icon} size={18} sw={1.6} color={color}/>
       </div>
       <div style={{flex:1, minWidth:0}}>
@@ -11109,11 +10967,12 @@ function ReportsPage() {
   const { data:rRes,   loading:rResLoading,  error:rResError,   reload:reloadRes }   = useRepo("reservation", "getAll");
   const { data:rPays,  loading:rPaysLoading, error:rPaysError,  reload:reloadPays }  = useRepo("payment",     "getAll");
   const { data:rCusts }                                                               = useRepo("customer",    "getAll");
+  const { sources } = useSources();
   const isLoading = rLeadsLoading || rResLoading || rPaysLoading;
 
   const metrics = useMemo(
-    () => calculateReportMetrics(period, rLeads, DB.quotes, rRes, rPays, rCusts),
-    [period, rLeads, rRes, rPays, rCusts]
+    () => calculateReportMetrics(period, rLeads, DB.quotes, rRes, rPays, rCusts, sources),
+    [period, rLeads, rRes, rPays, rCusts, sources]
   );
   const kpi       = metrics.kpi;
   const convRate  = kpi.leads > 0 ? Math.round(kpi.reservations/kpi.leads*100) : 0;
@@ -11183,7 +11042,7 @@ function ReportsPage() {
               {[
                 { label:"Talep",           val:kpi.leads,        icon:"M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01",                            color:C.blue,  pct:100 },
                 { label:"Teklif",          val:kpi.quotes,       icon:"M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z M14 2v6h6",              color:C.amber, pct:safePctNum(kpi.quotes, kpi.leads) },
-                { label:"Rezervasyon",     val:kpi.reservations, icon:"M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11",         color:C.gold,  pct:safePctNum(kpi.reservations, kpi.leads) },
+                { label:"Rezervasyon",     val:kpi.reservations, icon:"M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11",         color:"#0E7490",  pct:safePctNum(kpi.reservations, kpi.leads) },
                 { label:"Tamamlanan Tur",  val:kpi.completed,    icon:"M22 11.08V12a10 10 0 11-5.93-9.14 M22 4L12 14.01l-3-3",                         color:C.green, pct:safePctNum(kpi.completed, kpi.leads) },
               ].map((step,i)=>(
                 <div key={i} style={{display:"flex", flexDirection:"column", alignItems:"center", gap:10, position:"relative"}}>
@@ -11225,6 +11084,9 @@ function ReportsPage() {
 
           {}
           <RpSection title="Kaynak Performansı" icon="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z">
+            {metrics.sources.length === 0 ? (
+              <EmptyState icon="📊" title="Bu dönem için veri yok" subtitle="Seçilen tarih aralığında kaynak bazlı talep bulunmuyor."/>
+            ) : (
             <table className="rsp-table" style={{width:"100%", borderCollapse:"collapse"}}>
               <thead>
                 <tr style={{borderBottom:`1px solid ${C.border}`}}>
@@ -11241,9 +11103,7 @@ function ReportsPage() {
               <tbody>
                 {metrics.sources.map((s,i)=>{
                   return (
-                    <tr key={i}
-                      onMouseEnter={()=>setHov(true)}
-                      onMouseLeave={()=>setHov(false)}
+                    <tr key={i} className="dt-row"
                       style={{background:C.white, transition:"background .1s"}}>
                       <td style={{padding:"12px 10px", borderBottom:`1px solid ${C.borderLight}`, verticalAlign:"middle"}}>
                         <span style={{fontSize:13.5, fontWeight:500, color:C.text, fontFamily:"'DM Sans',sans-serif"}}>{s.source}</span>
@@ -11271,10 +11131,14 @@ function ReportsPage() {
                 })}
               </tbody>
             </table>
+            )}
           </RpSection>
 
           {}
           <RpSection title="En Çok Satan Turlar" icon="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z M9 22V12h6v10">
+            {metrics.tours.length === 0 ? (
+              <EmptyState icon="🗺️" title="Bu dönem için veri yok" subtitle="Seçilen tarih aralığında tamamlanan rezervasyon bulunmuyor."/>
+            ) : (
             <div style={{display:"flex", flexDirection:"column", gap:12}}>
               {metrics.tours.map((t,i)=>(
                 <div key={i} style={{
@@ -11317,10 +11181,14 @@ function ReportsPage() {
                 </div>
               ))}
             </div>
+            )}
           </RpSection>
 
           {}
           <RpSection title="Ülke Analizi" icon="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z">
+            {metrics.countries.length === 0 ? (
+              <EmptyState icon="🌍" title="Bu dönem için veri yok" subtitle="Seçilen tarih aralığında ülke bazlı talep bulunmuyor."/>
+            ) : (
             <table style={{width:"100%", borderCollapse:"collapse"}}>
               <thead>
                 <tr style={{borderBottom:`1px solid ${C.border}`}}>
@@ -11339,9 +11207,7 @@ function ReportsPage() {
                   const maxLeadsC = Math.max(...metrics.countries.map(x=>x.leads));
                   const isTop = i===0;
                   return (
-                    <tr key={i}
-                      onMouseEnter={()=>setHov(true)}
-                      onMouseLeave={()=>setHov(false)}
+                    <tr key={i} className="dt-row"
                       style={{background:C.white, transition:"background .1s"}}>
                       <td style={{padding:"11px 12px", borderBottom:`1px solid ${C.borderLight}`, verticalAlign:"middle"}}>
                         <div style={{display:"flex", alignItems:"center", gap:8}}>
@@ -11367,6 +11233,7 @@ function ReportsPage() {
                 })}
               </tbody>
             </table>
+            )}
           </RpSection>
 
           {}
@@ -11409,7 +11276,11 @@ function ReportsPage() {
             <div style={{fontSize:11.5, fontWeight:600, color:C.textFaint, textTransform:"uppercase", letterSpacing:"0.08em", fontFamily:"'DM Sans',sans-serif", marginBottom:10}}>
               Yüksek Tutarlı Bekleyenler
             </div>
-            {metrics.payments.highValue.map((p,i)=>(
+            {metrics.payments.highValue.length === 0 ? (
+              <div style={{fontSize:12.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", fontStyle:"italic", padding:"8px 2px"}}>
+                Yüksek tutarlı bekleyen ödeme yok.
+              </div>
+            ) : metrics.payments.highValue.map((p,i)=>(
               <div key={i} style={{
                 display:"flex", alignItems:"center", gap:12,
                 padding:"10px 12px", borderRadius:8, marginBottom:7,
@@ -11574,7 +11445,7 @@ function ReportsPage() {
 const GUEST_STATUS_CFG = {
   "Aktif":              { color:"#2E7D52", bg:"#EBF5EF", dot:"#2E7D52" },
   "Rezervasyonu Var":   { color:"#1A6FAE", bg:"#E8F2FB", dot:"#1A6FAE" },
-  "Tekrar Gelen":       { color:"#B8973A", bg:"#F5EDD4", dot:"#B8973A" },
+  "Tekrar Gelen":       { color:"#0E7490", bg:"#ECFEFF", dot:"#0E7490" },
   "Teklif Bekliyor":    { color:"#B45309", bg:"#FEF3E2", dot:"#B45309" },
   "Arşiv":              { color:"#6B7280", bg:"#F3F4F6", dot:"#9CA3AF" },
 };
@@ -11690,8 +11561,8 @@ function GStatusBadge({ status, small }) {
   return (
     <span style={{
       display:"inline-flex", alignItems:"center", gap:5,
-      padding: small ? "3px 8px" : "4px 11px",
-      borderRadius:99, fontSize: small ? 11 : 12, fontWeight:500,
+      padding: small ? "3px 8px" : "4px 10px",
+      borderRadius:99, fontSize: small ? 10.5 : 11.5, fontWeight:500,
       color:m.color, background:m.bg, whiteSpace:"nowrap",
       fontFamily:"'DM Sans',sans-serif",
     }}>
@@ -11792,11 +11663,52 @@ function GuestDetailPage({ guestId, onBack, onNavigate }) {
 
   const { data:rawCust, loading:guestLoading, error:guestError }
     = useRepo("customer", "getById", guestId);
+  // Real per-customer aggregates for the Supabase path below — enrichCustomer()
+  // only ever resolves against the in-memory mock arrays, so a real guest must
+  // be enriched from these instead of trusting it to succeed.
+  const { data:custLeads }    = useRepo("lead",        "getByCustomerId", guestId);
+  const { data:custQuotes }   = useRepo("quote",       "getByCustomerId", guestId);
+  const { data:custRes }      = useRepo("reservation", "getByCustomerId", guestId);
+  const { data:custTasks }    = useRepo("task",        "getByCustomerId", guestId);
+  const { data:custPays }     = useRepo("payment",     "getByCustomerId", guestId);
+  const { data:custActivity } = useRepo("activity",    "getByCustomerId", guestId);
+  const { sources } = useSources();
+
+  const ACTIVITY_ACTION_LABEL = {
+    created:"Oluşturuldu", updated:"Güncellendi", status_changed:"Durum güncellendi",
+    sent:"Gönderildi", approved:"Onaylandı", payment:"Ödeme alındı", deposit:"Kapora alındı",
+    call:"Arama yapıldı", reply:"Yanıt alındı", cancelled:"İptal edildi",
+  };
+
   // In Supabase mode, a missing/blocked record must never be masked by mock data.
   // Mock demo data is only used when the app is genuinely running in Mock mode.
-  const g = rawCust
-    ? (enrichCustomer(rawCust.id) || rawCust)
-    : (!AppConfig.useSupabase && MOCK_GUESTS ? (MOCK_GUESTS.find(x=>x.id===guestId)||MOCK_GUESTS[0]) : null);
+  const mockEnriched = rawCust ? enrichCustomer(rawCust.id) : null;
+  const g = mockEnriched || (rawCust ? {
+    ...rawCust,
+    leads: (custLeads||[]).length,
+    quotes: (custQuotes||[]).length,
+    reservations: (custRes||[]).length,
+    openTasks: (custTasks||[]).filter(t=>t.status!=="Tamamlandı").length,
+    totalSpend: (custPays||[]).filter(p=>["Ödendi","Kapora Ödendi","Kısmi Ödendi"].includes(p.status)).reduce((s,p)=>s+(parseFloat(p.amount)||0),0),
+    currency: custPays?.[0]?.currency || custRes?.[0]?.currency || "EUR",
+    relatedLeads: (custLeads||[]).map(l => ({
+      id:l.id, date:l.dateRange||l.ago||"—",
+      source:(sources||[]).find(s=>s.id===l.sourceId)?.name || "—",
+      tour:l.tour||"—", status:l.status,
+    })),
+    relatedQuotes: (custQuotes||[]).map(q => ({
+      id:q.id, tour:q.tour||"—",
+      amount:`${q.currency==="TRY"?"₺":"€"}${(q.total||0).toLocaleString("tr-TR")}`,
+      status:q.status, date:q.dateRange||q.createdAt||"—",
+    })),
+    relatedReservations: (custRes||[]).map(r => ({
+      id:r.id, tour:r.tour||"—", date:r.date||"—", pax:r.pax||1,
+      opStatus:r.opStatus, payStatus:r.payStatus,
+    })),
+    timeline: (custActivity||[]).map(a => ({
+      ...a, action: ACTIVITY_ACTION_LABEL[a.action] || a.action || "Güncellendi",
+    })),
+  } : (!AppConfig.useSupabase && MOCK_GUESTS ? (MOCK_GUESTS.find(x=>x.id===guestId)||MOCK_GUESTS[0]) : null));
 
   const [activeTab, setActiveTab] = useState("genel");
 
@@ -11985,7 +11897,7 @@ function GuestDetailPage({ guestId, onBack, onNavigate }) {
                   <tbody>
                     {g.relatedLeads.map((lead,i)=>{
                       return (
-                        <tr key={i} onMouseEnter={()=>setHov(true)} onMouseLeave={()=>setHov(false)} style={{background:C.white, cursor:"pointer", transition:"background .1s"}}>
+                        <tr key={i} className="dt-row" style={{background:C.white, cursor:"pointer", transition:"background .1s"}}>
                           <td style={{padding:"12px 16px", borderBottom:`1px solid ${C.borderLight}`, fontSize:13, color:C.text, fontFamily:"'DM Sans',sans-serif"}}>{lead.date}</td>
                           <td style={{padding:"12px 16px", borderBottom:`1px solid ${C.borderLight}`}}>
                             <span style={{fontSize:12.5, color:C.textMid, fontFamily:"'DM Sans',sans-serif"}}>{lead.source}</span>
@@ -12027,7 +11939,7 @@ function GuestDetailPage({ guestId, onBack, onNavigate }) {
                     {g.relatedQuotes.map((q,i)=>{
                       const qm = QUOTE_STATUS[q.status]||{color:C.textMuted,bg:C.ivoryDark};
                       return (
-                        <tr key={i} onMouseEnter={()=>setHov(true)} onMouseLeave={()=>setHov(false)} style={{background:C.white, cursor:"pointer", transition:"background .1s"}}>
+                        <tr key={i} className="dt-row" style={{background:C.white, cursor:"pointer", transition:"background .1s"}}>
                           <td style={{padding:"12px 16px", borderBottom:`1px solid ${C.borderLight}`}}>
                             <span style={{fontSize:12, fontWeight:600, color:C.navy, fontFamily:"'DM Mono',monospace", background:C.ivory, border:`1px solid ${C.borderLight}`, padding:"2px 7px", borderRadius:5}}>{q.id}</span>
                           </td>
@@ -12065,7 +11977,7 @@ function GuestDetailPage({ guestId, onBack, onNavigate }) {
                       const rsm = RES_STATUS[r.opStatus]||{color:C.textMuted,bg:C.ivoryDark};
                       const rpm = PAY_STATUS_MAP[r.payStatus]||{color:C.textMuted,bg:C.ivoryDark};
                       return (
-                        <tr key={i} onMouseEnter={()=>setHov(true)} onMouseLeave={()=>setHov(false)} style={{background:C.white, cursor:"pointer", transition:"background .1s"}}>
+                        <tr key={i} className="dt-row" style={{background:C.white, cursor:"pointer", transition:"background .1s"}}>
                           <td style={{padding:"12px 16px", borderBottom:`1px solid ${C.borderLight}`}}>
                             <span style={{fontSize:12, fontWeight:600, color:C.navy, fontFamily:"'DM Mono',monospace", background:C.ivory, border:`1px solid ${C.borderLight}`, padding:"2px 7px", borderRadius:5}}>{r.id}</span>
                           </td>
@@ -12194,7 +12106,7 @@ function CustomersPage({ onSelectGuest }) {
     return tabOk && srchOk;
   });
 
-  const counts = TABS.reduce((acc,t)=>({...acc,[t]: t==="Tümü"?MOCK_GUESTS.length:MOCK_GUESTS.filter(tabMap[t]||tabMap["Tümü"]).length}),{});
+  const counts = TABS.reduce((acc,t)=>({...acc,[t]: t==="Tümü"?allGuests.length:allGuests.filter(tabMap[t]||tabMap["Tümü"]).length}),{});
 
   return (
     <div style={{display:"flex", flexDirection:"column", gap:20}}>
@@ -12316,9 +12228,7 @@ function CustomersPage({ onSelectGuest }) {
                 {filtered.map((g,i)=>{
                   const isLast=i===filtered.length-1;
                   return (
-                    <tr key={g.id}
-                      onMouseEnter={()=>setHov(true)}
-                      onMouseLeave={()=>setHov(false)}
+                    <tr key={g.id} className="dt-row"
                       onClick={()=>onSelectGuest&&onSelectGuest(g.id)}
                       style={{background:C.white, cursor:"pointer", transition:"background .1s"}}>
                       {}
@@ -12394,7 +12304,7 @@ function CustomersPage({ onSelectGuest }) {
                 </MobileCard>
               )}/></div>
             <div style={{padding:"11px 20px", background:C.ivory, borderTop:`1px solid ${C.borderLight}`}}>
-              <span style={{fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>{filtered.length} / {MOCK_GUESTS.length} misafir · Satıra tıklayarak profili görüntüleyin</span>
+              <span style={{fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>{filtered.length} / {allGuests.length} misafir · Satıra tıklayarak profili görüntüleyin</span>
             </div>
           </>
         )}
@@ -12993,16 +12903,25 @@ const _S2A={'new':'Yeni','contacted':'Görüşüldü','quote_sent':'Teklif Gönd
 const _A2S={'Yeni':'new','Görüşüldü':'contacted','Teklif Hazırlanıyor':'contacted','Teklif Gönderildi':'quote_sent','Teklif Onaylandı':'quote_approved','Ödeme Bekleniyor':'quote_approved','Onaylandı':'won','İptal':'lost','Beklemede':'on_hold'};
 function _tAgo(d){const m=Math.floor((Date.now()-d)/60000);if(m<60)return m+'dk önce';const h=Math.floor(m/60);if(h<24)return h+'sa önce';const dy=Math.floor(h/24);if(dy<7)return dy+'g önce';return d.toLocaleDateString('tr-TR',{day:'2-digit',month:'short'});}
 function mapLeadFromDB(r) {
-  if(!r)return null; const c=r.customer;
+  if(!r)return null; const c=r.customer; const a=r.assignee;
+  const fullName=c?.full_name||r.contact_name||'—';
   return { id:r.id, leadNumber:r.lead_number||r.id, customerId:r.customer_id||null,
-    name:c?.full_name||r.contact_name||'—', phone:c?.phone||r.contact_phone||'',
+    name:fullName, phone:c?.phone||r.contact_phone||'',
     email:c?.email||r.contact_email||'', tour:r.destination||'',
     dateRange:r.travel_start_date?new Date(r.travel_start_date).toLocaleDateString('tr-TR',{day:'2-digit',month:'long',year:'numeric'}):'',
     travelStart:r.travel_start_date||'', paxAdult:r.pax_adult||1, paxChild:r.pax_child||0,
+    pax:(r.pax_adult||0)+(r.pax_child||0)||1,
+    initials:fullName.split(' ').map(w=>w[0]||'').join('').slice(0,2).toUpperCase(),
+    country:c?.nationality||'', language:c?.language||'', flag:'🌍',
     status:_S2A[r.status]||r.status||'Yeni', sourceId:r.source_id||null,
-    assigneeId:r.assigned_to||null, currency:r.currency||'EUR', notes:r.notes||'',
+    source:r.source?.name||r.source?.label||r.source?.slug||'',
+    assigneeId:r.assigned_to||null, assignee:a?.full_name||'',
+    assigneeInitials:(a?.full_name||'').split(' ').map(w=>w[0]||'').join('').slice(0,2).toUpperCase(),
+    currency:r.currency||'EUR', notes:r.notes||'',
     importType:r.import_type||'manual',
     ago:r.created_at?_tAgo(new Date(r.created_at)):'—',
+    amount:r.budget?fmtMoney(r.budget,r.currency||'EUR'):'—',
+    updatedAt:r.updated_at?r.updated_at.split('T')[0]:'',
     createdAt:r.created_at?r.created_at.split('T')[0]:'', budget:r.budget||0, _fromDB:true };
 }
 const _RES_S_DB={'Hazırlanıyor':'pending_confirmation','Onaylandı':'confirmed','Rehber Atandı':'confirmed','Tur Günü':'in_progress','Tamamlandı':'completed','İptal':'cancelled'};
@@ -13034,10 +12953,16 @@ function mapResFromDB(r) {
 function mapPayFromDB(r) {
   if(!r)return null;
   const tm={deposit:'Kapora',balance:'Kalan Ödeme',full:'Tam Ödeme',refund:'İade',extra:'Ek Ödeme'};
+  // Whole days from today to due_date (negative = overdue) — same convention
+  // PaySidebar/mock payment records use, so real Supabase payments group
+  // into "Geciken"/"Yaklaşan" correctly instead of always landing empty.
+  const dueDateRaw = r.due_date
+    ? Math.round((new Date(r.due_date+'T00:00:00') - new Date(new Date().toDateString())) / 86400000)
+    : 9999;
   return { id:r.id, payNumber:r.payment_number||r.id, resId:r.reservation_id||null,
     customerId:r.customer_id||null, paymentType:tm[r.payment_type]||r.payment_type||'Kapora',
     amount:parseFloat(r.amount)||0, currency:r.currency||'EUR', status:_p2App(r.status),
-    method:_mFromDB(r.method), dueDate:r.due_date||'',
+    method:_mFromDB(r.method), dueDate:r.due_date||'', dueDateRaw,
     depositDate:r.paid_at?new Date(r.paid_at).toLocaleDateString('tr-TR',{day:'2-digit',month:'short',year:'numeric'}):'—',
     notes:r.notes||'', createdAt:r.created_at?r.created_at.split('T')[0]:'',
     customerName:r.customer?.full_name||'', resRef:r.reservation?.reservation_number||r.reservation_id||'',
@@ -13110,8 +13035,8 @@ const SupabaseCustomerRepo = {
 };
 
 const SupabaseLeadRepo = {
-  async getAll(f={}){const sb=getSB();if(!sb)return LeadRepository.getAll(f);let q=sb.from('leads').select('*,customer:customers(id,full_name,email,phone,nationality)').order('created_at',{ascending:false});if(f?.status)q=q.eq('status',_A2S[f.status]||f.status);if(f?.customerId)q=q.eq('customer_id',f.customerId);if(f?.search)q=q.or(`contact_name.ilike.%${f.search}%,destination.ilike.%${f.search}%,lead_number.ilike.%${f.search}%`);const{data,error}=await q;if(error)throw new Error(error.message);return(data||[]).map(mapLeadFromDB);},
-  async getById(id){const sb=getSB();if(!sb)return LeadRepository.getById(id);const{data,error}=await sb.from('leads').select('*,customer:customers(*),source:sources(*)').eq('id',id).maybeSingle();if(error)throw new Error(error.message);return mapLeadFromDB(data);},
+  async getAll(f={}){const sb=getSB();if(!sb)return LeadRepository.getAll(f);let q=sb.from('leads').select('*,customer:customers(id,full_name,email,phone,nationality,language),source:sources(id,slug,name),assignee:staff_users!assigned_to(id,full_name)').order('created_at',{ascending:false});if(f?.status)q=q.eq('status',_A2S[f.status]||f.status);if(f?.customerId)q=q.eq('customer_id',f.customerId);if(f?.search)q=q.or(`contact_name.ilike.%${f.search}%,destination.ilike.%${f.search}%,lead_number.ilike.%${f.search}%`);const{data,error}=await q;if(error)throw new Error(error.message);return(data||[]).map(mapLeadFromDB);},
+  async getById(id){const sb=getSB();if(!sb)return LeadRepository.getById(id);const{data,error}=await sb.from('leads').select('*,customer:customers(*),source:sources(*),assignee:staff_users!assigned_to(id,full_name)').eq('id',id).maybeSingle();if(error)throw new Error(error.message);return mapLeadFromDB(data);},
   async getByCustomerId(cid){const sb=getSB();if(!sb)return LeadRepository.getByCustomerId(cid);const{data,error}=await sb.from('leads').select('*').eq('customer_id',cid).order('created_at',{ascending:false});if(error)throw new Error(error.message);return(data||[]).map(mapLeadFromDB);},
   async create(d){const sb=getSB();if(!sb)return LeadRepository.create(d);let ln=`LEAD-${new Date().getFullYear()}-${String(Date.now()).slice(-4)}`;try{const{data:ref}=await sb.rpc('next_ref_number',{prefix:'LEAD',table_name:'leads',number_col:'lead_number'});if(ref)ln=ref;}catch(_){}const row={lead_number:ln,customer_id:d.customerId||null,contact_name:d.name||d.contact_name||'Bilinmiyor',contact_phone:d.phone||null,contact_email:d.email||null,status:'new',source_id:d.sourceId||null,import_type:d.importType||'manual',destination:d.tour||d.destination||null,travel_start_date:d.travelStart||null,pax_adult:parseInt(d.paxAdult)||1,pax_child:parseInt(d.paxChild)||0,currency:d.currency||'EUR',notes:d.notes||null,assigned_to:d.assigneeId||null};const{data:c,error}=await sb.from('leads').insert(row).select().single();if(error)throw new Error(error.message);try{await _sbLog('lead',c.id,'created',`Yeni talep: ${c.destination||c.lead_number}`);}catch(_){}return mapLeadFromDB(c);},
   async update(id,p){const sb=getSB();if(!sb)return LeadRepository.update(id,p);const fm={status:'status',notes:'notes',assigneeId:'assigned_to',paxAdult:'pax_adult',currency:'currency',travelStart:'travel_start_date'};const row={};for(const[k,v]of Object.entries(p)){const col=fm[k]||k;row[col]=col==='status'?(_A2S[v]||v):v;}const{data:u,error}=await sb.from('leads').update(row).eq('id',id).select().single();if(error)throw new Error(error.message);if(p.status)await _sbLog('lead',id,'status_changed',`Durum → ${p.status}`);return mapLeadFromDB(u);},
@@ -13186,17 +13111,34 @@ function getActiveRepo(entity) {
 function useRepo(entity, method, arg) {
   const [state, setState] = useState({ data:null, loading:true, error:null });
   const tick = useStore();
+  const argKey = JSON.stringify(arg ?? null);
   useEffect(() => {
     let dead = false;
     setState(p => ({ ...p, loading:true, error:null }));
     const repo = getActiveRepo(entity);
     if(!repo || typeof repo[method]!=='function'){setState({data:null,loading:false,error:`Unknown: ${entity}.${method}`});return;}
-    Promise.resolve(repo[method].call(repo, arg))
+    // Share one in-flight/resolved fetch across every component asking for
+    // the same entity+method+arg right now (e.g. Sidebar's badge counts and
+    // a page's own list both wanting all leads) instead of each issuing its
+    // own Supabase request. _repoFetchCache is fully cleared on every
+    // Store.notify(), so this never serves data older than the last mutation.
+    const cacheKey = `${entity}:${method}:${argKey}`;
+    let fetchPromise = _repoFetchCache.get(cacheKey);
+    if (!fetchPromise) {
+      fetchPromise = Promise.resolve(repo[method].call(repo, arg));
+      _repoFetchCache.set(cacheKey, fetchPromise);
+    }
+    fetchPromise
       .then(data => { if(!dead) setState({data, loading:false, error:null}); })
       .catch(err  => { if(!dead) setState({data:null, loading:false, error:err.message}); });
     return () => { dead = true; };
-  }, [entity, method, JSON.stringify(arg ?? null), tick]);
-  function reload(){setState(p=>({...p,loading:true}));const repo=getActiveRepo(entity);Promise.resolve(repo[method].call(repo,arg)).then(data=>setState({data,loading:false,error:null})).catch(err=>setState({data:null,loading:false,error:err.message}));}
+  }, [entity, method, argKey, tick]);
+  function reload(){
+    setState(p=>({...p,loading:true}));
+    _repoFetchCache.clear();
+    const repo=getActiveRepo(entity);
+    Promise.resolve(repo[method].call(repo,arg)).then(data=>setState({data,loading:false,error:null})).catch(err=>setState({data:null,loading:false,error:err.message}));
+  }
   return { ...state, reload };
 }
 
@@ -13234,8 +13176,8 @@ function ErrorState({ message, onRetry }) {
 }
 function EmptyState({ icon, title, subtitle, action }) {
   return (
-    <div style={{padding:"60px 20px",textAlign:"center",display:"flex",flexDirection:"column",alignItems:"center",gap:8}}>
-      <div style={{fontSize:34,opacity:.18,marginBottom:4}}>{icon||"📭"}</div>
+    <div style={{padding:"44px 20px",textAlign:"center",display:"flex",flexDirection:"column",alignItems:"center",gap:8}}>
+      <div style={{fontSize:30,opacity:.18,marginBottom:4}}>{icon||"📭"}</div>
       <div style={{fontSize:15,fontWeight:600,color:C.text,fontFamily:"'Playfair Display',serif"}}>{title||"Henüz kayıt bulunmuyor."}</div>
       {subtitle && <div style={{fontSize:13,color:C.textMuted,fontFamily:"'DM Sans',sans-serif",maxWidth:280}}>{subtitle}</div>}
       {action && <div style={{marginTop:6}}>{action}</div>}
@@ -13505,12 +13447,22 @@ function LoginPage({ onLogin, connectionError }) {
         {}
         <div style={{textAlign:"center", marginBottom:32}}>
           <div style={{marginBottom:14}}>
-            <img src="/seffafdeselogo.png" alt="Dese Tour"
+            {/* Re-extracted transparent wordmark — the earlier transparent
+                export still left the letter interiors mottled/holed (the
+                source JPEG's brushed-texture shading dips to near-black in
+                places, which a simple brightness threshold treated as
+                background). dese-logo-mark.png fixes this with a
+                flood-fill from the image border so only pixels actually
+                connected to the outer black canvas are cut out — true
+                enclosed counters (the D, e, e) stay transparent, while
+                small interior dark texture speckles are inpainted with
+                the surrounding letter color instead of turning transparent. */}
+            <img src="/dese-logo-mark.png" alt="Dese Tour"
               style={{height:64, width:"auto"}}
             />
           </div>
           <div style={{fontSize:13, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>
-            Operations Center'a hoş geldiniz
+            Operasyon Merkezi'ne hoş geldiniz
           </div>
         </div>
 
@@ -13705,7 +13657,7 @@ function LoginPage({ onLogin, connectionError }) {
         )}
 
         <div style={{textAlign:"center", marginTop:20, fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>
-          Dese Tour Operations Center v1.0
+          Dese Tour Operasyon Merkezi v1.0
         </div>
       </div>
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
@@ -13853,10 +13805,10 @@ function Modal({ title, onClose, onSubmit, submitLabel, children, wide, danger }
       padding: isMobile ? 0 : 16,
     }} onClick={e=>{ if(e.target===e.currentTarget) onClose(); }}>
       <div className="modal-inner" style={{
-        background:C.white, borderRadius:12,
+        background:C.white, borderRadius:T.radius,
         width:"100%", maxWidth: wide ? 720 : 520,
         maxHeight:"90vh", overflowY:"auto", overflowX:"hidden",
-        boxShadow:"0 24px 64px rgba(13,27,62,0.4)",
+        boxShadow:"0 16px 40px rgba(13,27,62,0.22)",
         display:"flex", flexDirection:"column",
         boxSizing:"border-box",
       }}>
@@ -13899,12 +13851,11 @@ function Modal({ title, onClose, onSubmit, submitLabel, children, wide, danger }
             flex: isMobile ? 1 : "none",
           }}>İptal</button>
           <button onClick={onSubmit} style={{
-            padding:"9px 20px", borderRadius:8, cursor:"pointer",
+            padding:"9px 20px", borderRadius:T.radiusSm, cursor:"pointer",
             border:"none",
-            background: danger ? C.red : `linear-gradient(135deg,${C.navyDeep},${C.navy})`,
+            background: danger ? C.red : C.navy,
             color:C.white, fontSize:13.5, fontWeight:500,
             fontFamily:"'DM Sans',sans-serif",
-            boxShadow:`0 2px 8px rgba(13,27,62,0.25)`,
             flex: isMobile ? 2 : "none",
           }}>{submitLabel || "Kaydet"}</button>
         </div>
@@ -13958,15 +13909,15 @@ function FText({ value, onChange, placeholder, type, mono, error, disabled, maxL
       placeholder={placeholder} disabled={disabled} maxLength={maxLength}
       style={{
         width:"100%", boxSizing:"border-box",
-        padding:"9px 12px", borderRadius:7,
+        padding:"9px 12px", borderRadius:T.radiusSm,
         border:`1.5px solid ${error ? C.red : C.border}`,
         fontSize:13.5, color:C.text,
         fontFamily: mono ? "'DM Mono',monospace" : "'DM Sans',sans-serif",
         outline:"none", background: disabled ? C.ivory : C.white,
-        transition:"border-color .15s",
+        transition:"border-color .15s, box-shadow .15s",
       }}
-      onFocus={e=>{ if(!error) e.target.style.borderColor=C.navy; }}
-      onBlur={e=>{ e.target.style.borderColor=error?C.red:C.border; }}
+      onFocus={e=>{ if(!error){ e.target.style.borderColor=C.navy; e.target.style.boxShadow=`0 0 0 3px rgba(27,45,79,0.10)`; } }}
+      onBlur={e=>{ e.target.style.borderColor=error?C.red:C.border; e.target.style.boxShadow="none"; }}
     />
   );
 }
@@ -13976,7 +13927,7 @@ function FSelect({ value, onChange, options, error, disabled }) {
     <select value={value} onChange={e=>onChange(e.target.value)} disabled={disabled}
       style={{
         width:"100%", boxSizing:"border-box",
-        padding:"9px 12px", borderRadius:7,
+        padding:"9px 12px", borderRadius:T.radiusSm,
         border:`1.5px solid ${error ? C.red : C.border}`,
         fontSize:13.5, color:C.text, fontFamily:"'DM Sans',sans-serif",
         outline:"none", background: disabled ? C.ivory : C.white,
@@ -13986,7 +13937,11 @@ function FSelect({ value, onChange, options, error, disabled }) {
         backgroundRepeat:"no-repeat",
         backgroundPosition:"right 10px center",
         paddingRight:30,
-      }}>
+        transition:"border-color .15s, box-shadow .15s",
+      }}
+      onFocus={e=>{ if(!error){ e.target.style.borderColor=C.navy; e.target.style.boxShadow=`0 0 0 3px rgba(27,45,79,0.10)`; } }}
+      onBlur={e=>{ e.target.style.borderColor=error?C.red:C.border; e.target.style.boxShadow="none"; }}
+    >
       {(options||[]).map(opt => {
         if (Array.isArray(opt)) {
           return <option key={opt[0]} value={opt[0]}>{opt[1]}</option>;
@@ -14004,15 +13959,15 @@ function FTextArea({ value, onChange, placeholder, rows, error, disabled }) {
       placeholder={placeholder} rows={rows||3} disabled={disabled}
       style={{
         width:"100%", boxSizing:"border-box",
-        padding:"9px 12px", borderRadius:7,
+        padding:"9px 12px", borderRadius:T.radiusSm,
         border:`1.5px solid ${error ? C.red : C.border}`,
         fontSize:13.5, color:C.text, fontFamily:"'DM Sans',sans-serif",
         outline:"none", background: disabled ? C.ivory : C.white,
         resize:"vertical", lineHeight:1.55,
-        transition:"border-color .15s",
+        transition:"border-color .15s, box-shadow .15s",
       }}
-      onFocus={e=>{ if(!error) e.target.style.borderColor=C.navy; }}
-      onBlur={e=>{ e.target.style.borderColor=error?C.red:C.border; }}
+      onFocus={e=>{ if(!error){ e.target.style.borderColor=C.navy; e.target.style.boxShadow=`0 0 0 3px rgba(27,45,79,0.10)`; } }}
+      onBlur={e=>{ e.target.style.borderColor=error?C.red:C.border; e.target.style.boxShadow="none"; }}
     />
   );
 }
@@ -15458,7 +15413,7 @@ const PDFService = {
       title:    filename.replace('.pdf', ''),
       subject:  'Dese Tour Private Experience Proposal',
       author:   'Dese Tour',
-      creator:  'Dese Tour Operations Center',
+      creator:  'Dese Tour Operasyon Merkezi',
     });
 
     return {
@@ -15899,6 +15854,11 @@ function App() {
         @keyframes slideIn { from { transform:translateX(-100%); } to { transform:translateX(0); } }
         .fade { animation: fadeUp 0.25s ease both; }
         a { cursor: pointer; }
+
+        /* ── Shared desktop table/row hover — CSS-driven so a row never
+           needs its own hover state just to tint on mouseover. ── */
+        .dt-row { transition: background 0.12s ease; }
+        .dt-row:hover { background: #F7F3E9 !important; }
         @media (max-width: 767px) {
           .rsp-table { display: none !important; }
           .rsp-cards { display: flex !important; }
@@ -16314,7 +16274,7 @@ function MobileMorePage({ navigate }) {
       </button>
 
       <div style={{ textAlign:"center", fontSize:11, color:C.textFaint, fontFamily:"'DM Sans',sans-serif" }}>
-        Dese Tour Operations Center · v1.0
+        Dese Tour Operasyon Merkezi · v1.0
       </div>
     </div>
   );
