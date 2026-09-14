@@ -1480,6 +1480,8 @@ const NAV_BOT = [
   { id:"messages",   label:"Mesajlar",      badge:null, icon:"M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" },
   { id:"reminders",  label:"Hatırlatmalar", badge:null, icon:"M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0" },
   { id:"reports",    label:"Raporlar",      badge:null, icon:"M18 20V10M12 20V4M6 20v-6" },
+];
+const NAV_SETTINGS = [
   { id:"settings",   label:"Ayarlar",       badge:null, icon:"M12 15a3 3 0 100-6 3 3 0 000 6z M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" },
 ];
 
@@ -1683,6 +1685,27 @@ function SidebarInner({ currentBase, onNavItem, liveBadges }) {
             </button>
           ))}
         </div>
+        <div style={{height:1, background:"rgba(255,255,255,0.07)", margin:"8px 10px"}}/>
+        <div>
+          {visibleItems(NAV_SETTINGS).map(it=>(
+            <button key={it.id} onClick={()=>handleItemClick(it.id)} style={{
+              display:"flex", alignItems:"center", gap:10, width:"100%",
+              padding:"9px 14px", border:"none", borderRadius:7, marginBottom:2,
+              background: currentBase===it.id ? "rgba(184,151,58,0.13)" : "transparent",
+              color: currentBase===it.id ? C.goldLight : "rgba(248,245,238,0.6)",
+              cursor:"pointer", textAlign:"left",
+              borderLeft: currentBase===it.id ? "3px solid "+C.goldLight : "3px solid transparent",
+              transition:"background 0.12s, color 0.12s",
+            }}>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" strokeWidth={currentBase===it.id ? 2 : 1.6}
+                strokeLinecap="round" strokeLinejoin="round">
+                <path d={it.icon}/>
+              </svg>
+              <span style={{fontSize:13, fontWeight:currentBase===it.id?500:400, fontFamily:"'DM Sans',sans-serif", flex:1, whiteSpace:"nowrap"}}>{it.label}</span>
+            </button>
+          ))}
+        </div>
       </nav>
 
       {}
@@ -1838,23 +1861,10 @@ function Sidebar({ currentBase, collapsed, onToggle, mobileOpen, onMobileClose }
       <div style={{height:1, background:"rgba(255,255,255,0.07)", margin:"12px 18px"}}/>
       <nav style={{padding:"0 10px", display:"flex", flexDirection:"column", gap:2}}>
         {NAV_BOT.map(it=><NavItem key={it.id} item={{...withLiveBadge(it),_collapsed:collapsed}} currentBase={currentBase}/>)}
-
-        {}
-        <div style={{padding:"8px 10px", borderTop:"1px solid rgba(255,255,255,0.07)", marginTop:6}}>
-          <button onClick={()=>auth.logout()} style={{
-            display:"flex", alignItems:"center", gap:9, width:"100%",
-            padding:"9px 14px", border:"none", borderRadius:T.radiusSm,
-            background:"transparent", color:"rgba(248,245,238,0.45)",
-            cursor:"pointer", textAlign:"left", transition:"color .12s, background .12s",
-          }}
-            onMouseEnter={e=>{e.currentTarget.style.background="rgba(220,38,38,0.15)";e.currentTarget.style.color="#FCA5A5";}}
-            onMouseLeave={e=>{e.currentTarget.style.background="transparent";e.currentTarget.style.color="rgba(248,245,238,0.45)";}}>
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round">
-              <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9"/>
-            </svg>
-            <span style={{fontSize:13, fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap"}}>Çıkış Yap</span>
-          </button>
-        </div>
+      </nav>
+      <div style={{height:1, background:"rgba(255,255,255,0.07)", margin:"12px 18px"}}/>
+      <nav style={{padding:"0 10px", display:"flex", flexDirection:"column", gap:2}}>
+        {NAV_SETTINGS.map(it=><NavItem key={it.id} item={{...withLiveBadge(it),_collapsed:collapsed}} currentBase={currentBase}/>)}
       </nav>
       <div style={{flex:1}}/>
       <div style={{
@@ -1878,9 +1888,31 @@ function Sidebar({ currentBase, collapsed, onToggle, mobileOpen, onMobileClose }
           </div>
         )}
       </div>
+      <div style={{padding:"0 10px 8px"}}>
+        <button onClick={()=>auth.logout()} title={collapsed?"Çıkış Yap":undefined} style={{
+          display:"flex", alignItems:"center", gap:9, width:"100%",
+          padding: collapsed ? "9px 0" : "8px 14px",
+          justifyContent: collapsed ? "center" : "flex-start",
+          border:"none", borderRadius:T.radiusSm,
+          background:"transparent", color:"rgba(248,245,238,0.45)",
+          cursor:"pointer", textAlign:"left", transition:"color .12s, background .12s",
+        }}
+          onMouseEnter={e=>{e.currentTarget.style.background="rgba(220,38,38,0.15)";e.currentTarget.style.color="#FCA5A5";}}
+          onMouseLeave={e=>{e.currentTarget.style.background="transparent";e.currentTarget.style.color="rgba(248,245,238,0.45)";}}>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round">
+            <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9"/>
+          </svg>
+          {!collapsed && <span style={{fontSize:13, fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap"}}>Çıkış Yap</span>}
+        </button>
+      </div>
       {!collapsed && (
-        <div style={{padding:"6px 16px 12px", textAlign:"center"}}>
-          <div style={{fontSize:10, color:"rgba(248,245,238,0.22)", fontFamily:"'DM Sans',sans-serif"}}>© 2026 Dese Tour · Tüm hakları saklıdır.</div>
+        <div style={{padding:"10px 16px 16px", textAlign:"center", borderTop:"1px solid rgba(255,255,255,0.06)"}}>
+          <div style={{
+            fontSize:9.5, letterSpacing:"0.14em", color:"rgba(201,168,76,0.4)",
+            fontFamily:"'Playfair Display',serif", fontStyle:"italic", lineHeight:1.7,
+          }}>
+            MORE THAN A TRIP<br/>A STORY
+          </div>
         </div>
       )}
     </aside>
@@ -1909,58 +1941,95 @@ function Welcome() {
 
   return (
     <div style={{
-      background: C.white,
-      border:`1px solid ${C.border}`,
-      borderRadius:T.radius,
-      padding:"22px 28px",
-      display:"flex", alignItems:"center", justifyContent:"space-between", gap:24,
-      boxShadow:T.shadowSoft,
+      position:"relative", overflow:"hidden",
+      background:C.white, border:`1px solid ${C.border}`, borderRadius:T.radius,
+      boxShadow:T.shadowSoft, display:"flex", minHeight:230,
     }}>
-      <div>
-        <div style={{
-          fontSize:10.5, letterSpacing:"0.12em", textTransform:"uppercase",
-          color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginBottom:7,
-        }}>
+      {showNewLead && <NewLeadModal onClose={()=>setShowNewLead(false)} onSuccess={()=>setShowNewLead(false)}/>}
+
+      {}
+      <div style={{flex:"1 1 58%", padding:"32px 36px", display:"flex", flexDirection:"column", justifyContent:"center", gap:13, minWidth:0}}>
+        <div style={{fontSize:10.5, letterSpacing:"0.14em", textTransform:"uppercase", color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>
           {new Date().toLocaleDateString("tr-TR",{day:"2-digit",month:"long",year:"numeric",weekday:"long"})}
         </div>
         <h1 style={{
-          margin:0, fontSize:26, fontWeight:700, color:C.text,
-          fontFamily:"'Playfair Display',serif", lineHeight:1.2,
+          margin:0, fontSize:32, fontWeight:700, color:C.text,
+          fontFamily:"'Playfair Display',serif", lineHeight:1.15,
+          display:"flex", alignItems:"center", gap:10,
         }}>
-          {greeting}, {firstName} 👋
+          {greeting}, {firstName}
+          <span style={{fontSize:24}}>☀️</span>
         </h1>
         <p style={{
-          margin:"6px 0 0", fontSize:13.5, color:C.textMuted,
+          margin:0, fontSize:14, color:C.textMid,
           fontFamily:"'DM Sans',sans-serif", lineHeight:1.5,
         }}>
           {urgentLoading ? (
             "Bugünkü operasyon özetiniz hazırlanıyor…"
           ) : urgentCount > 0 ? (
-            <>Bugünkü operasyon özetiniz — <span style={{color:C.amber, fontWeight:500}}>{urgentCount} acil işlem</span> dikkat bekliyor.</>
+            <>Bugünkü operasyon özetiniz — <span style={{color:C.amber, fontWeight:600}}>{urgentCount} acil işlem</span> dikkat bekliyor.</>
           ) : (
-            "Bugünkü operasyon özetiniz — dikkat bekleyen acil işlem yok."
+            "Bugünkü operasyon özetiniz — her şey kontrol altında."
           )}
         </p>
+        <div style={{
+          fontSize:13, color:C.textMuted, fontFamily:"'Playfair Display',serif", fontStyle:"italic",
+          borderLeft:`2px solid rgba(184,151,58,0.4)`, paddingLeft:12, lineHeight:1.5,
+        }}>
+          "Güzel yolculuklar, iyi insanlarla başlar."
+          <div style={{fontStyle:"normal", fontSize:10, letterSpacing:"0.1em", color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:3}}>— DESE TOUR</div>
+        </div>
+        <div style={{marginTop:2}}>
+          <button style={{
+            display:"inline-flex", alignItems:"center", gap:8,
+            padding:"11px 20px", borderRadius:T.radiusSm,
+            border:"none", background:C.navy,
+            cursor:"pointer", color:C.white,
+            fontFamily:"'DM Sans',sans-serif", fontSize:13, fontWeight:600,
+            transition:"background 0.12s",
+          }}
+            onClick={()=>setShowNewLead(true)}
+            onMouseEnter={e=>e.currentTarget.style.background=C.navyHover}
+            onMouseLeave={e=>e.currentTarget.style.background=C.navy}
+          >
+            <Ic d="M12 5v14M5 12h14" size={15} sw={2}/>
+            Yeni Talep Ekle
+          </button>
+        </div>
       </div>
 
       {}
-      {showNewLead && <NewLeadModal onClose={()=>setShowNewLead(false)} onSuccess={()=>setShowNewLead(false)}/>}
-      <button style={{
-        display:"flex", alignItems:"center", gap:8,
-        padding:"10px 18px", borderRadius:8, flexShrink:0,
-        border:`1.5px solid ${C.gold}`, background:C.goldPale,
-        cursor:"pointer", color:C.gold,
-        fontFamily:"'DM Sans',sans-serif", fontSize:13, fontWeight:500,
-        transition:"background 0.12s",
-      }}
-        onClick={()=>setShowNewLead(true)}
-        onMouseEnter={e=>e.currentTarget.style.background="#EDE3C0"}
-        onMouseLeave={e=>e.currentTarget.style.background=C.goldPale}
-      >
-        <Ic d="M12 5v14M5 12h14" size={15} sw={2}/>
-        Yeni Talep Ekle
-      </button>
+      <div style={{
+        flex:"1 1 42%", position:"relative", minWidth:220,
+        backgroundImage:"url('/hero-istanbul.jpg')",
+        backgroundSize:"cover", backgroundPosition:"center",
+        backgroundColor:C.navyDeep,
+      }}>
+        <HeroSkyline/>
+        <div style={{position:"absolute", inset:0, background:`linear-gradient(115deg, ${C.navyDeep} 0%, rgba(15,29,53,0.5) 45%, rgba(15,29,53,0.1) 100%)`}}/>
+        <div style={{position:"absolute", top:26, right:30, textAlign:"right", maxWidth:210}}>
+          <div style={{fontSize:15, fontWeight:600, color:C.ivory, fontFamily:"'Playfair Display',serif", fontStyle:"italic", lineHeight:1.4}}>
+            Bugün harika yolculuklar planlayalım.
+          </div>
+        </div>
+      </div>
     </div>
+  );
+}
+
+// Original vector skyline silhouette — a graceful fallback (and subtle
+// texture even once the real photo is in place) so the hero never looks
+// broken if /hero-istanbul.jpg hasn't been added yet. Not a photo, not
+// hotlinked — inline SVG shapes only.
+function HeroSkyline() {
+  return (
+    <svg viewBox="0 0 400 220" preserveAspectRatio="xMidYMax slice"
+      style={{position:"absolute", inset:0, width:"100%", height:"100%", opacity:0.4}}>
+      <path
+        d="M0 220 L0 172 L18 172 L18 152 L32 152 L32 166 L46 166 L46 142 L58 142 L58 160 L88 160 L88 122 L96 98 L104 122 L104 160 L138 160 L138 132 L148 132 L148 112 L156 88 L164 112 L164 132 L172 132 L172 160 L208 160 L208 100 L216 78 L224 100 L224 160 L258 160 L258 146 L268 146 L268 126 L278 126 L278 146 L288 146 L288 166 L328 166 L328 150 L338 150 L338 134 L348 134 L348 150 L358 150 L358 176 L400 176 L400 220 Z"
+        fill={C.navyDeep}
+      />
+    </svg>
   );
 }
 
@@ -1968,52 +2037,34 @@ function Welcome() {
 function KpiCard({ kpi }) {
   return (
     <div style={{
-      background:C.white, border:`1px solid ${C.border}`, borderRadius:T.radius,
-      padding:"19px 20px", display:"flex", flexDirection:"column", gap:14,
+      background: kpi.accent ? "#FBF7EC" : C.white,
+      border:`1px solid ${kpi.accent ? "rgba(184,151,58,0.25)" : C.border}`, borderRadius:T.radius,
+      padding:"15px 16px", display:"flex", flexDirection:"column", gap:10,
       position:"relative", overflow:"hidden", boxShadow:T.shadowSoft,
     }}>
       {}
-      <div style={{display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:10}}>
+      <div style={{display:"flex", alignItems:"center", justifyContent:"space-between", gap:10}}>
         <div style={{
-          width:34, height:34, borderRadius:T.radiusSm, flexShrink:0,
-          background: kpi.alert ? C.redBg : C.goldPale,
+          width:30, height:30, borderRadius:T.radiusSm, flexShrink:0,
+          background:C.goldPale,
           display:"flex", alignItems:"center", justifyContent:"center",
-          color: kpi.alert ? C.red : C.gold,
+          color:C.gold,
         }}>
-          <Ic d={kpi.icon} size={16} sw={1.6}/>
+          <Ic d={kpi.icon} size={14} sw={1.6}/>
         </div>
-        {kpi.alert && (
-          <div style={{
-            width:7, height:7, borderRadius:"50%",
-            background:C.red, marginTop:4, flexShrink:0,
-          }}/>
-        )}
+        <span style={{fontSize:11, color:C.textMuted, fontFamily:"'DM Sans',sans-serif"}}>{kpi.label}</span>
+        <span style={{color:C.textFaint, flexShrink:0}}><Ic d="M9 18l6-6-6-6" size={13} sw={1.8}/></span>
       </div>
 
       {}
-      <div>
-        <div style={{
-          fontSize:28, fontWeight:700, color: kpi.alert ? C.red : C.text,
-          fontFamily:"'Playfair Display',serif", lineHeight:1, marginBottom:5,
-          letterSpacing:"-0.01em",
-        }}>{kpi.value}</div>
-        <div style={{fontSize:11.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", letterSpacing:"0.01em"}}>{kpi.label}</div>
-      </div>
+      <div style={{
+        fontSize:24, fontWeight:700, color:C.text,
+        fontFamily:"'Playfair Display',serif", lineHeight:1,
+        letterSpacing:"-0.01em",
+      }}>{kpi.value}</div>
 
       {}
-      {kpi.progress != null ? (
-        <div>
-          <div style={{height:3, background:C.ivoryDark, borderRadius:99, overflow:"hidden", marginBottom:4}}>
-            <div style={{width:`${kpi.progress}%`, height:"100%", background:C.gold, borderRadius:99}}/>
-          </div>
-          <div style={{fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>{kpi.sub}</div>
-        </div>
-      ) : (
-        <div style={{
-          fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif",
-          paddingTop:4, borderTop:`1px solid ${C.borderLight}`,
-        }}>{kpi.sub}</div>
-      )}
+      <div style={{fontSize:11, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>{kpi.sub}</div>
     </div>
   );
 }
@@ -2038,14 +2089,12 @@ function KpiRow() {
       value:String(m.openLeadsCount),
       sub:"Aktif talepler",
       icon:"M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01",
-      alert:m.openLeadsCount>0,
     },
     {
       label:"Bekleyen Ödemeler",
       value:`€${m.pendingEUR.toLocaleString("tr-TR",{maximumFractionDigits:0})}`,
       sub:`${m.pendingPaysCount} rezervasyon`,
       icon:"M2 9a2 2 0 012-2h16a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V9zM2 13h20",
-      alert:m.pendingPaysCount>0,
     },
     {
       label:"Yaklaşan Rezervasyonlar",
@@ -2358,11 +2407,59 @@ function UpcomingReservations() {
     <Card>
       <SectionHeader title="Yaklaşan Rezervasyonlar" action="Tümünü Gör"/>
       {upLoading  ? <LoadingState label="Yükleniyor…"/> : null}
-      <div style={{display:"flex", flexDirection:"column", gap:0}}>
-        {upcoming.map((r,i)=>(
-          <UpcomingResRow key={i} r={r} isLast={i===upcoming.length-1}/>
-        ))}
-      </div>
+      {!upLoading && upcoming.length === 0 && (
+        <EmptyState icon="📅" title="Yaklaşan rezervasyon bulunmuyor." subtitle="Onaylanan rezervasyonlar burada listelenecek."/>
+      )}
+      {!upLoading && upcoming.length > 0 && (
+        <div style={{display:"flex", flexDirection:"column", gap:0}}>
+          {upcoming.map((r,i)=>(
+            <UpcomingResRow key={i} r={r} isLast={i===upcoming.length-1}/>
+          ))}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function PendingPaymentsWidget() {
+  const { data:repoPays, loading:ppLoading } = useRepo("payment", "getAll");
+  const allPays = repoPays ?? [];
+  const pending = allPays
+    .filter(p => ["Bekliyor","Kısmi Ödendi"].includes(p.status))
+    .slice(0,5)
+    .map(p => {
+      const cust = getCustomerById(p.customerId);
+      const res  = getReservationById(p.resId||"");
+      return { ...p, customerName: cust?.name || res?.tour || "—", tourName: res?.tour || "—" };
+    });
+  return (
+    <Card>
+      <SectionHeader title="Bekleyen Ödemeler" action="Tümünü Gör"/>
+      {ppLoading  ? <LoadingState label="Yükleniyor…"/> : null}
+      {!ppLoading && pending.length === 0 && (
+        <EmptyState icon="💳" title="Bekleyen ödeme bulunmuyor." subtitle="Ödeme planları burada listelenecek."/>
+      )}
+      {!ppLoading && pending.length > 0 && (
+        <div style={{display:"flex", flexDirection:"column", gap:0}}>
+          {pending.map((p,i)=>(
+            <div key={i} className="dt-row" style={{
+              display:"flex", alignItems:"center", justifyContent:"space-between", gap:10,
+              padding:"12px 4px",
+              borderBottom: i<pending.length-1 ? `1px solid ${C.borderLight}` : "none",
+              borderRadius:6,
+            }}>
+              <div style={{minWidth:0}}>
+                <div style={{fontSize:13, fontWeight:500, color:C.text, fontFamily:"'DM Sans',sans-serif", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{p.customerName}</div>
+                <div style={{fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{p.tourName}</div>
+              </div>
+              <div style={{textAlign:"right", flexShrink:0}}>
+                <div style={{fontSize:13.5, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif"}}>{p.currency==="EUR"?"€":"₺"}{parseFloat(p.amount||0).toLocaleString("tr-TR")}</div>
+                <Pill label={p.status} color={C.amber} bg={C.amberBg} small/>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </Card>
   );
 }
@@ -2474,14 +2571,15 @@ function Dashboard() {
       <KpiRow/>
 
       {}
-      <div className="rsp-split" style={{display:"grid", gridTemplateColumns:"380px 1fr", gap:20, alignItems:"start"}}>
-        <UrgentPanel/>
+      <div className="rsp-split" style={{display:"grid", gridTemplateColumns:"1.85fr 1fr", gap:20, alignItems:"start"}}>
         <TodayTours/>
+        <UrgentPanel/>
       </div>
 
       {}
-      <div className="rsp-split" style={{display:"grid", gridTemplateColumns:"1fr 400px", gap:20, alignItems:"start"}}>
+      <div className="rsp-split" style={{display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:20, alignItems:"start"}}>
         <UpcomingReservations/>
+        <PendingPaymentsWidget/>
         <ActivityFeed/>
       </div>
     </div>
@@ -15478,6 +15576,64 @@ function ResetPasswordPage() {
   );
 }
 
+// Thin persistent desktop top bar (search shell + notification + identity).
+// Global search and notifications are not implemented anywhere in the app —
+// the controls here are a real visual shell, explicitly disabled rather
+// than wired to fake behavior, per the "never pretend it works" rule.
+function DesktopTopBar({ leftOffset }) {
+  const auth = getAuthContext();
+  return (
+    <div style={{
+      position:"fixed", top:0, left:leftOffset, right:0, height:56, zIndex:40,
+      background:C.white, borderBottom:`1px solid ${C.border}`,
+      display:"flex", alignItems:"center", justifyContent:"space-between",
+      padding:"0 28px", gap:20,
+      transition:"left 0.22s cubic-bezier(0.4,0,0.2,1)",
+    }}>
+      <div style={{position:"relative", width:360, maxWidth:"38vw"}}>
+        <span style={{position:"absolute", left:12, top:"50%", transform:"translateY(-50%)", color:C.textFaint, pointerEvents:"none", display:"flex"}}>
+          <Ic d="M21 21l-4.35-4.35 M17 11A6 6 0 105 11a6 6 0 0012 0z" size={14} sw={1.8}/>
+        </span>
+        <input
+          disabled
+          placeholder="Müşteri, talep, rezervasyon ara…"
+          title="Genel arama henüz aktif değil"
+          style={{
+            width:"100%", boxSizing:"border-box", padding:"9px 54px 9px 34px",
+            border:`1px solid ${C.border}`, borderRadius:T.radiusSm, background:C.ivory,
+            fontSize:13, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", outline:"none",
+            cursor:"not-allowed",
+          }}
+        />
+        <span style={{
+          position:"absolute", right:8, top:"50%", transform:"translateY(-50%)",
+          fontSize:10.5, color:C.textFaint, fontFamily:"'DM Mono',monospace",
+          border:`1px solid ${C.borderLight}`, borderRadius:5, padding:"2px 6px",
+          background:C.white, pointerEvents:"none",
+        }}>Ctrl + K</span>
+      </div>
+      <div style={{display:"flex", alignItems:"center", gap:18, flexShrink:0}}>
+        <button disabled title="Bildirimler henüz aktif değil" style={{
+          border:"none", background:"transparent", color:C.textMuted,
+          cursor:"not-allowed", padding:6, display:"flex",
+        }}>
+          <Ic d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0" size={18} sw={1.6}/>
+        </button>
+        <div style={{width:1, height:24, background:C.borderLight}}/>
+        <div style={{display:"flex", alignItems:"center", gap:9}}>
+          <div style={{width:32, height:32, borderRadius:"50%", flexShrink:0, background:C.goldPale, border:`1.5px solid ${C.gold}40`, display:"flex", alignItems:"center", justifyContent:"center"}}>
+            <span style={{fontSize:12, fontWeight:700, color:C.gold, fontFamily:"'DM Sans',sans-serif"}}>{auth.initials}</span>
+          </div>
+          <div>
+            <div style={{fontSize:12.5, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif", lineHeight:1.2, whiteSpace:"nowrap"}}>{auth.displayName}</div>
+            <div style={{fontSize:10.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>{auth.role}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function App() {
   const { base, param, subParam, navigate, path } = useHashRouter();
   const { isMobile, isTablet } = useBreakpoint();
@@ -15665,6 +15821,8 @@ function App() {
         />
       )}
 
+      {!isMobile && <DesktopTopBar leftOffset={sidebarCollapsed ? 64 : 208}/>}
+
       {isMobile && (
         <div style={{
           position:"fixed", top:0, left:0, right:0, zIndex:200,
@@ -15685,8 +15843,8 @@ function App() {
 
       <main style={{
         marginLeft: isMobile ? 0 : (sidebarCollapsed ? 64 : 208),
-        marginTop: isMobile ? "calc(48px + env(safe-area-inset-top, 0px))" : 0,
-        minHeight: isMobile ? "100dvh" : "100vh",
+        marginTop: isMobile ? "calc(48px + env(safe-area-inset-top, 0px))" : 56,
+        minHeight: isMobile ? "100dvh" : "calc(100vh - 56px)",
         padding: isMobile ? "14px 12px calc(68px + env(safe-area-inset-bottom, 0px))" : isTablet ? "20px 18px 40px" : "26px 28px 52px",
         background: isMobile ? C.ivory : "#EDE9DF",
         transition:"margin-left 0.22s cubic-bezier(0.4,0,0.2,1)",
