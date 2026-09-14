@@ -1943,12 +1943,23 @@ function Welcome() {
     <div style={{
       position:"relative", overflow:"hidden",
       background:C.white, border:`1px solid ${C.border}`, borderRadius:T.radius,
-      boxShadow:T.shadowSoft, display:"flex", minHeight:230,
+      boxShadow:T.shadowSoft, minHeight:230,
     }}>
       {showNewLead && <NewLeadModal onClose={()=>setShowNewLead(false)} onSuccess={()=>setShowNewLead(false)}/>}
 
+      {/* Photo layer — spans the full hero; hero-fade above it hides the
+          left portion so the photo reads as emerging from the ivory
+          background rather than sitting behind a hard-edged panel. */}
+      <div className="hero-photo" style={{
+        position:"absolute", inset:0,
+        backgroundImage:"url('/hero-crm.png')",
+        backgroundSize:"cover",
+        backgroundColor:C.navyDeep,
+      }}/>
+      <div className="hero-fade" style={{ position:"absolute", inset:0 }}/>
+
       {}
-      <div style={{flex:"1 1 58%", padding:"32px 36px", display:"flex", flexDirection:"column", justifyContent:"center", gap:13, minWidth:0}}>
+      <div style={{position:"relative", maxWidth:460, padding:"32px 36px", display:"flex", flexDirection:"column", justifyContent:"center", gap:13, minWidth:0}}>
         <div style={{fontSize:10.5, letterSpacing:"0.14em", textTransform:"uppercase", color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>
           {new Date().toLocaleDateString("tr-TR",{day:"2-digit",month:"long",year:"numeric",weekday:"long"})}
         </div>
@@ -1997,42 +2008,9 @@ function Welcome() {
           </button>
         </div>
       </div>
-
-      {}
-      <div className="hero-photo" style={{
-        flex:"1 1 42%", position:"relative", minWidth:220,
-        backgroundImage:"url('/hero-crm.png')",
-        backgroundSize:"cover",
-        backgroundColor:C.navyDeep,
-      }}>
-        <HeroSkyline/>
-        <div style={{position:"absolute", inset:0, background:`linear-gradient(115deg, ${C.navyDeep} 0%, rgba(15,29,53,0.5) 45%, rgba(15,29,53,0.1) 100%)`}}/>
-        <div style={{position:"absolute", top:26, right:30, textAlign:"right", maxWidth:210}}>
-          <div style={{fontSize:15, fontWeight:600, color:C.ivory, fontFamily:"'Playfair Display',serif", fontStyle:"italic", lineHeight:1.4}}>
-            Bugün harika yolculuklar planlayalım.
-          </div>
-        </div>
-      </div>
     </div>
   );
 }
-
-// Original vector skyline silhouette — a graceful fallback (and subtle
-// texture even once the real photo is in place) so the hero never looks
-// broken if /hero-crm.png hasn't been added yet. Not a photo, not
-// hotlinked — inline SVG shapes only.
-function HeroSkyline() {
-  return (
-    <svg viewBox="0 0 400 220" preserveAspectRatio="xMidYMax slice"
-      style={{position:"absolute", inset:0, width:"100%", height:"100%", opacity:0.4}}>
-      <path
-        d="M0 220 L0 172 L18 172 L18 152 L32 152 L32 166 L46 166 L46 142 L58 142 L58 160 L88 160 L88 122 L96 98 L104 122 L104 160 L138 160 L138 132 L148 132 L148 112 L156 88 L164 112 L164 132 L172 132 L172 160 L208 160 L208 100 L216 78 L224 100 L224 160 L258 160 L258 146 L268 146 L268 126 L278 126 L278 146 L288 146 L288 166 L328 166 L328 150 L338 150 L338 134 L348 134 L348 150 L358 150 L358 176 L400 176 L400 220 Z"
-        fill={C.navyDeep}
-      />
-    </svg>
-  );
-}
-
 
 function KpiCard({ kpi }) {
   return (
@@ -13143,7 +13121,20 @@ function useAuth() {
     if (typeof NAV_REF.fn === 'function') NAV_REF.fn('/login');
   }
 
-  const displayName = staff?.full_name || staff?.name || "—";
+  // staff_users lookup can legitimately come back empty even with a valid
+  // session (missing/mismatched profile row) — that must never surface as
+  // a bare "—". Fall back to the real authenticated account's own email
+  // (already sitting on the session, no extra fetch) rather than any
+  // invented name, and only use a generic non-personal label if even that
+  // is unavailable.
+  const emailDerivedName = (() => {
+    const local = (session?.user?.email || "").split("@")[0];
+    if (!local) return null;
+    const parts = local.split(/[._\-]+/).filter(Boolean);
+    if (!parts.length) return null;
+    return parts.map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+  })();
+  const displayName = staff?.full_name || staff?.name || emailDerivedName || "Kullanıcı";
   const initials    = displayName.split(" ").map(w=>w[0]||"").join("").slice(0,2).toUpperCase() || "?";
   // Map Supabase DB role values → Turkish display roles used in ROLE_PERMISSIONS
   const ROLE_MAP = {
@@ -13513,10 +13504,16 @@ function AuthGuard({ children }) {
   );
 }
 
+// AuthGuard._current is set synchronously during AuthGuard's own render,
+// before any child (which is everything that calls getAuthContext) can
+// render — so this fallback is only ever reached if a component somehow
+// calls it outside the AuthGuard tree. Kept generic and non-personal
+// rather than a specific person's name, matching the real fallback chain
+// in useAuth() above.
 function getAuthContext() {
   return AuthGuard._current || {
-    displayName: DB.staff[0]?.name || "Berk Çetinkaya",
-    initials:    "BÇ",
+    displayName: "Kullanıcı",
+    initials:    "?",
     role:        "Yönetici",
     isLoggedIn:  true,
     logout:      ()=>{},
@@ -13577,17 +13574,24 @@ function Modal({ title, onClose, onSubmit, submitLabel, children, wide, danger }
     document.body.style.overflow = 'hidden';
     return () => { document.body.style.overflow = prev; };
   }, []);
-  return (
+  // Portal straight to <body> — a fixed-position overlay is only guaranteed
+  // to size against the real viewport when nothing between it and <body>
+  // has a transform/filter/will-change (e.g. the page's own .fade mount
+  // animation), any of which silently turns position:fixed into something
+  // else's containing block instead and is exactly what let this modal
+  // grow past the viewport with no way to reach its footer.
+  return ReactDOM.createPortal((
     <div style={{
       position:"fixed", inset:0, zIndex:1000,
       background:"rgba(13,27,62,0.55)", backdropFilter:"blur(3px)",
       display:"flex", alignItems:"center", justifyContent:"center",
       padding: isMobile ? 0 : 16,
+      overflowY:"auto", // safety fallback if the modal is ever taller than the viewport
     }} onClick={e=>{ if(e.target===e.currentTarget) onClose(); }}>
       <div className="modal-inner" style={{
         background:C.white, borderRadius:T.radius,
         width:"100%", maxWidth: wide ? 720 : 520,
-        maxHeight:"90vh", overflowY:"auto", overflowX:"hidden",
+        maxHeight:"calc(100vh - 48px)", overflow:"hidden", minHeight:0,
         boxShadow:"0 16px 40px rgba(13,27,62,0.22)",
         display:"flex", flexDirection:"column",
         boxSizing:"border-box",
@@ -13611,8 +13615,11 @@ function Modal({ title, onClose, onSubmit, submitLabel, children, wide, danger }
             </svg>
           </button>
         </div>
-        {}
-        <div style={{padding: isMobile ? "18px 16px" : "22px 24px", flex:1, overflowY:"auto"}}>
+        {/* Independently scrollable body — minHeight:0 overrides the flex
+            default (min-height:auto) that would otherwise let this child's
+            content force the whole modal taller than maxHeight instead of
+            scrolling within it. */}
+        <div style={{padding: isMobile ? "18px 16px" : "22px 24px", flex:"1 1 auto", minHeight:0, overflowY:"auto"}}>
           {children}
         </div>
         {}
@@ -13641,7 +13648,7 @@ function Modal({ title, onClose, onSubmit, submitLabel, children, wide, danger }
         </div>
       </div>
     </div>
-  );
+  ), document.body);
 }
 
 function FGrid({ children, cols }) {
@@ -15577,10 +15584,165 @@ function ResetPasswordPage() {
   );
 }
 
+// Result row shown inside a GlobalSearch group — id kept small/mono so it
+// reads as a real record reference, title+sub carry the identifying info.
+function SearchResultRow({ item, onSelect }) {
+  const [hover, setHover] = useState(false);
+  return (
+    <button
+      onMouseDown={e=>e.preventDefault()}
+      onClick={()=>onSelect(item.route)}
+      onMouseEnter={()=>setHover(true)}
+      onMouseLeave={()=>setHover(false)}
+      style={{
+        display:"flex", flexDirection:"column", gap:1,
+        width:"100%", textAlign:"left", padding:"7px 12px", borderRadius:6,
+        border:"none", background:hover?C.ivory:"transparent", cursor:"pointer",
+      }}
+    >
+      <span style={{fontSize:12.5, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}}>{item.title}</span>
+      {item.sub && <span style={{fontSize:11, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}}>{item.sub}</span>}
+    </button>
+  );
+}
+
+function SearchResultGroup({ label, items, onSelect }) {
+  if (!items.length) return null;
+  return (
+    <div style={{padding:"6px 4px"}}>
+      <div style={{fontSize:10, fontWeight:600, letterSpacing:"0.08em", textTransform:"uppercase", color:C.textFaint, fontFamily:"'DM Sans',sans-serif", padding:"4px 12px"}}>{label}</div>
+      {items.map(it => <SearchResultRow key={it.route} item={it} onSelect={onSelect}/>)}
+    </div>
+  );
+}
+
+// Real lightweight global search — reuses the same getAll() repo calls (and
+// their shared fetch cache) every list page already issues, and filters
+// client-side across each entity's identifying fields. No new backend/
+// search service, no added dependency.
+function GlobalSearch() {
+  const [query, setQuery]   = useState("");
+  const [open,  setOpen]    = useState(false);
+  const inputRef            = useRef(null);
+  const containerRef        = useRef(null);
+
+  const { data:repoCust,   error:errCust }   = useRepo("customer",    "getAll");
+  const { data:repoLeads,  error:errLeads }  = useRepo("lead",        "getAll");
+  const { data:repoQuotes, error:errQuotes } = useRepo("quote",       "getAll");
+  const { data:repoRes,    error:errRes }    = useRepo("reservation", "getAll");
+
+  useEffect(() => {
+    function onKeyDown(e) {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        inputRef.current?.focus();
+        inputRef.current?.select();
+      }
+    }
+    function onMouseDown(e) {
+      if (containerRef.current && !containerRef.current.contains(e.target)) setOpen(false);
+    }
+    window.addEventListener("keydown", onKeyDown);
+    document.addEventListener("mousedown", onMouseDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      document.removeEventListener("mousedown", onMouseDown);
+    };
+  }, []);
+
+  const q = query.trim().toLowerCase();
+  const active = q.length >= 2;
+  const allFailed = !!(errCust && errLeads && errQuotes && errRes);
+
+  const results = useMemo(() => {
+    if (!active) return null;
+    const hit = (...vals) => vals.some(v => (v != null ? String(v) : "").toLowerCase().includes(q));
+    const customers = (repoCust||[])
+      .filter(c => hit(c.name, c.email, c.phone))
+      .slice(0, 5)
+      .map(c => ({ route:`/customers/${c.id}`, title:c.name||c.id, sub:[c.email,c.phone].filter(Boolean).join(" · ") }));
+    const leads = (repoLeads||[])
+      .filter(l => hit(l.name, l.leadNumber, l.tour, l.email, l.phone))
+      .slice(0, 5)
+      .map(l => ({ route:`/leads/${l.id}`, title:l.name||l.leadNumber||l.id, sub:[l.tour,l.leadNumber].filter(Boolean).join(" · ") }));
+    const quotes = (repoQuotes||[])
+      .filter(qt => hit(qt.quoteNumber, qt.id, qt.customer, qt.tour))
+      .slice(0, 5)
+      .map(qt => ({ route:`/quotes/${qt.id}`, title:qt.quoteNumber||qt.id, sub:[qt.customer,qt.tour].filter(Boolean).join(" · ") }));
+    const reservations = (repoRes||[])
+      .filter(r => hit(r.resNumber, r.id, r.name, r.tour))
+      .slice(0, 5)
+      .map(r => ({ route:`/reservations/${r.id}`, title:r.resNumber||r.id, sub:[r.name,r.tour].filter(Boolean).join(" · ") }));
+    return { customers, leads, quotes, reservations };
+  }, [active, q, repoCust, repoLeads, repoQuotes, repoRes]);
+
+  const totalCount = results
+    ? results.customers.length + results.leads.length + results.quotes.length + results.reservations.length
+    : 0;
+
+  function goTo(route) {
+    setOpen(false);
+    setQuery("");
+    if (typeof NAV_REF.fn === 'function') NAV_REF.fn(route);
+  }
+
+  return (
+    <div ref={containerRef} style={{position:"relative", width:360, maxWidth:"38vw"}}>
+      <span style={{position:"absolute", left:12, top:"50%", transform:"translateY(-50%)", color:C.textFaint, pointerEvents:"none", display:"flex"}}>
+        <Ic d="M21 21l-4.35-4.35 M17 11A6 6 0 105 11a6 6 0 0012 0z" size={14} sw={1.8}/>
+      </span>
+      <input
+        ref={inputRef}
+        value={query}
+        onChange={e=>{ setQuery(e.target.value); setOpen(true); }}
+        onFocus={()=>setOpen(true)}
+        onKeyDown={e=>{ if (e.key === "Escape") { setOpen(false); inputRef.current?.blur(); } }}
+        placeholder="Müşteri, talep, rezervasyon ara…"
+        style={{
+          width:"100%", boxSizing:"border-box", padding:"9px 54px 9px 34px",
+          border:`1px solid ${C.border}`, borderRadius:T.radiusSm, background:C.ivory,
+          fontSize:13, color:C.text, fontFamily:"'DM Sans',sans-serif", outline:"none",
+        }}
+      />
+      {!query && (
+        <span style={{
+          position:"absolute", right:8, top:"50%", transform:"translateY(-50%)",
+          fontSize:10.5, color:C.textFaint, fontFamily:"'DM Mono',monospace",
+          border:`1px solid ${C.borderLight}`, borderRadius:5, padding:"2px 6px",
+          background:C.white, pointerEvents:"none",
+        }}>Ctrl + K</span>
+      )}
+
+      {open && active && (
+        <div style={{
+          position:"absolute", top:"calc(100% + 6px)", left:0, right:0,
+          background:C.white, border:`1px solid ${C.border}`, borderRadius:T.radiusSm,
+          boxShadow:"0 12px 32px rgba(13,27,62,0.16)", maxHeight:420, overflowY:"auto",
+          zIndex:100, padding:"4px",
+        }}>
+          {allFailed ? (
+            <div style={{padding:"14px 12px", fontSize:12.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>
+              Arama şu anda kullanılamıyor.
+            </div>
+          ) : totalCount === 0 ? (
+            <div style={{padding:"14px 12px", fontSize:12.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>
+              Sonuç bulunamadı.
+            </div>
+          ) : (
+            <>
+              <SearchResultGroup label="Misafirler"     items={results.customers}    onSelect={goTo}/>
+              <SearchResultGroup label="Talepler"       items={results.leads}        onSelect={goTo}/>
+              <SearchResultGroup label="Teklifler"      items={results.quotes}       onSelect={goTo}/>
+              <SearchResultGroup label="Rezervasyonlar" items={results.reservations} onSelect={goTo}/>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Thin persistent desktop top bar (search shell + notification + identity).
-// Global search and notifications are not implemented anywhere in the app —
-// the controls here are a real visual shell, explicitly disabled rather
-// than wired to fake behavior, per the "never pretend it works" rule.
 function DesktopTopBar({ leftOffset }) {
   const auth = getAuthContext();
   return (
@@ -15591,28 +15753,7 @@ function DesktopTopBar({ leftOffset }) {
       padding:"0 28px", gap:20,
       transition:"left 0.22s cubic-bezier(0.4,0,0.2,1)",
     }}>
-      <div style={{position:"relative", width:360, maxWidth:"38vw"}}>
-        <span style={{position:"absolute", left:12, top:"50%", transform:"translateY(-50%)", color:C.textFaint, pointerEvents:"none", display:"flex"}}>
-          <Ic d="M21 21l-4.35-4.35 M17 11A6 6 0 105 11a6 6 0 0012 0z" size={14} sw={1.8}/>
-        </span>
-        <input
-          disabled
-          placeholder="Müşteri, talep, rezervasyon ara…"
-          title="Genel arama henüz aktif değil"
-          style={{
-            width:"100%", boxSizing:"border-box", padding:"9px 54px 9px 34px",
-            border:`1px solid ${C.border}`, borderRadius:T.radiusSm, background:C.ivory,
-            fontSize:13, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", outline:"none",
-            cursor:"not-allowed",
-          }}
-        />
-        <span style={{
-          position:"absolute", right:8, top:"50%", transform:"translateY(-50%)",
-          fontSize:10.5, color:C.textFaint, fontFamily:"'DM Mono',monospace",
-          border:`1px solid ${C.borderLight}`, borderRadius:5, padding:"2px 6px",
-          background:C.white, pointerEvents:"none",
-        }}>Ctrl + K</span>
-      </div>
+      <GlobalSearch/>
       <div style={{display:"flex", alignItems:"center", gap:18, flexShrink:0}}>
         <button disabled title="Bildirimler henüz aktif değil" style={{
           border:"none", background:"transparent", color:C.textMuted,
@@ -16009,7 +16150,10 @@ function MobileFullScreenForm({ title, onCancel, onSubmit, submitLabel, submitti
     document.body.style.overflow = 'hidden';
     return () => { document.body.style.overflow = prev; };
   }, []);
-  return (
+  // Same portal-to-<body> rationale as the desktop Modal above — keeps
+  // this fixed-position sheet sized against the real viewport regardless
+  // of any ancestor transform.
+  return ReactDOM.createPortal((
     <div style={{
       position:"fixed", inset:0, zIndex:1000, background:C.ivory,
       display:"flex", flexDirection:"column",
@@ -16036,11 +16180,11 @@ function MobileFullScreenForm({ title, onCancel, onSubmit, submitLabel, submitti
         }}>{submitLabel || "Kaydet"}</button>
       </div>
       {}
-      <div style={{ flex:1, overflowY:"auto", padding:"18px 16px calc(32px + env(safe-area-inset-bottom, 0px))" }}>
+      <div style={{ flex:"1 1 auto", minHeight:0, overflowY:"auto", padding:"18px 16px calc(32px + env(safe-area-inset-bottom, 0px))" }}>
         {children}
       </div>
     </div>
-  );
+  ), document.body);
 }
 
 /* Chooses the desktop centered Modal or the mobile full-screen form shell

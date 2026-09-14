@@ -74,16 +74,52 @@
     }
     .fade { animation: fadeInUp 0.18s ease; }
 
-    /* Dashboard hero photo — keeps Galata Tower toward the right of the
-       frame; the narrower the hero panel gets, the more aggressively
-       background-size:cover crops it, so smaller desktop widths need a
-       stronger rightward bias to keep the tower from being cut off. */
-    .hero-photo { background-position: 88% 42%; }
+    /* Dashboard hero photo — now spans the full hero width (hero-fade
+       below fades its left edge into the card background), so cover
+       scales it to match the hero's width rather than its height, and
+       cropping happens on the vertical axis. background-position-y keeps
+       the Galata Tower's full silhouette in frame instead of clipping
+       its spire or the rooftops. */
+    .hero-photo { background-position: 50% 32%; }
     @media (min-width: 1440px) {
-      .hero-photo { background-position: 80% 40%; }
+      .hero-photo { background-position: 50% 30%; }
     }
     @media (min-width: 1920px) {
-      .hero-photo { background-position: 68% 38%; }
+      .hero-photo { background-position: 50% 28%; }
+    }
+
+    /* Left-to-right fade so the photo emerges from the hero's white
+       background instead of sitting behind a hard-edged panel. The text
+       column is ~460px + 36px padding, so the solid-white zone widens at
+       narrower breakpoints to keep it fully readable, and the photo
+       reaches full visibility earlier at wider ones. */
+    .hero-fade {
+      background: linear-gradient(to right,
+        #FFFFFF 0%, #FFFFFF 46%,
+        rgba(255,255,255,0.75) 58%,
+        rgba(255,255,255,0.32) 68%,
+        rgba(255,255,255,0.06) 78%,
+        rgba(255,255,255,0) 84%);
+    }
+    @media (min-width: 1440px) {
+      .hero-fade {
+        background: linear-gradient(to right,
+          #FFFFFF 0%, #FFFFFF 40%,
+          rgba(255,255,255,0.7) 52%,
+          rgba(255,255,255,0.28) 64%,
+          rgba(255,255,255,0.05) 74%,
+          rgba(255,255,255,0) 80%);
+      }
+    }
+    @media (min-width: 1920px) {
+      .hero-fade {
+        background: linear-gradient(to right,
+          #FFFFFF 0%, #FFFFFF 30%,
+          rgba(255,255,255,0.65) 42%,
+          rgba(255,255,255,0.25) 54%,
+          rgba(255,255,255,0.04) 64%,
+          rgba(255,255,255,0) 70%);
+      }
     }
   </style>
 </head>
@@ -163,7 +199,7 @@
 
 
   <!-- App (pre-transpiled JSX — no Babel needed in browser) -->
-  <script src="app.js?v=0ecf54f1af"></script>
+  <script src="app.js?v=e9c9055028"></script>
 
   <!-- Hide boot screen once React renders -->
   <script>
