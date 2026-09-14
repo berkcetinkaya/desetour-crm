@@ -5336,13 +5336,13 @@ function FormSections({
 function NewProposalPage({ onBack }) {
 
   const _pf = SESSION.getPrefill() || {};
-  const [guestName,      setGuestName]      = useState(_pf.guestName     || "Sarah Johnson");
-  const [nationality,    setNationality]    = useState(_pf.nationality   || "Australia");
-  const [email,          setEmail]          = useState(_pf.email         || "sarah.johnson@email.com");
-  const [phone,          setPhone]          = useState(_pf.phone         || "+61 412 855 903");
-  const [tourName,       setTourName]       = useState(_pf.tourName      || "Private Istanbul Experience");
-  const [tourDate,       setTourDate]       = useState(_pf.tourDate      || "22 June 2026");
-  const [duration,       setDuration]       = useState(_pf.duration      || "8 Hours");
+  const [guestName,      setGuestName]      = useState(_pf.guestName     || "");
+  const [nationality,    setNationality]    = useState(_pf.nationality   || "");
+  const [email,          setEmail]          = useState(_pf.email         || "");
+  const [phone,          setPhone]          = useState(_pf.phone         || "");
+  const [tourName,       setTourName]       = useState(_pf.tourName      || "");
+  const [tourDate,       setTourDate]       = useState(_pf.tourDate      || "");
+  const [duration,       setDuration]       = useState(_pf.duration      || "");
   const [guestCount,     setGuestCount]     = useState(_pf.guestCount    || 4);
   const [pickup,         setPickup]         = useState(_pf.pickup        || "Hotel Pickup");
   const [pricePerPerson, setPricePerPerson] = useState(_pf.pricePerPerson|| 90);
@@ -5352,7 +5352,7 @@ function NewProposalPage({ onBack }) {
   const [saveBusy,  setSaveBusy]  = useState(false);
   const [depositPct,     setDepositPct]     = useState(_pf.depositPct    || 25);
   const [specialReqs,    setSpecialReqs]    = useState(_pf.specialReqs   || "");
-  const [proposalNo,     setProposalNo]     = useState(_pf.proposalNo    || "Q-2026-007");
+  const [proposalNo,     setProposalNo]     = useState(_pf.proposalNo    || "");
   const [fromLeadId,     setFromLeadId]     = useState(_pf.fromLead      || null);
 
   const [included, setIncluded] = useState(
@@ -5389,7 +5389,6 @@ function NewProposalPage({ onBack }) {
 
     const total = Math.round((pricePerPerson||0)*guestCount*(1-discountPct/100));
     if (total <= 0) errs.pricePerPerson = "Toplam tutar sıfırdan büyük olmalıdır";
-    if (status === "Gönderildi" && !validUntil) errs.validUntil = "Geçerlilik tarihi zorunludur";
 
     setSaveErrs(errs);
     if (Object.keys(errs).length) { showToast("Lütfen form hatalarını düzeltin."); return; }
@@ -5412,10 +5411,10 @@ function NewProposalPage({ onBack }) {
       }
 
       const items = [
-        ...includedItems.filter(i=>i.on).map((i,idx) => ({
+        ...included.filter(i=>i.on).map((i,idx) => ({
           type:"Dahil", label:i.label, quantity:1, unitPrice:0, total:0, sortOrder:idx,
         })),
-        ...excludedItems.map((i,idx) => ({
+        ...excluded.map((i,idx) => ({
           type:"Hariç", label:i.label, quantity:1, unitPrice:0, total:0, sortOrder:idx+50,
         })),
         { type:"Fiyat", label:`${guestCount} kişi × ${pricePerPerson} ${currency}`,
@@ -5429,7 +5428,7 @@ function NewProposalPage({ onBack }) {
         guestCount, pricePerPerson, currency,
         discountPct, discountAmount: Math.round(pricePerPerson*guestCount*discountPct/100),
         total, deposit: Math.round(total*0.25),
-        validUntil: validUntil||null, notes: specialReqs||"",
+        validUntil: null, notes: specialReqs||"",
         items,
       }));
 
@@ -5486,19 +5485,6 @@ function NewProposalPage({ onBack }) {
           </div>
         </div>
         <div style={{display:"flex", alignItems:"center", gap:10, flexShrink:0}}>
-          {}
-          <div style={{display:"flex", background:C.ivory, border:`1px solid ${C.border}`, borderRadius:8, padding:2}}>
-            {[{k:"form",l:"Form"},{k:"preview",l:"Önizleme"}].map(({k,l})=>(
-              <button key={k} onClick={()=>setTab(k)} style={{
-                padding:"5px 14px", borderRadius:6, cursor:"pointer",
-                border:"none",
-                background:tab===k?C.navy:"transparent",
-                color:tab===k?C.white:C.textMuted,
-                fontSize:12.5, fontWeight:tab===k?500:400,
-                fontFamily:"DM Sans,sans-serif", transition:"all .12s",
-              }}>{l}</button>
-            ))}
-          </div>
           {}
           {[
             { label:"PDF İndir",          icon:"M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4 M7 10l5 5 5-5 M12 15V3", style:{} },
