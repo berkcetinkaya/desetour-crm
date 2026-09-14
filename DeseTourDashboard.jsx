@@ -84,7 +84,7 @@ function useHashRouter() {
   }, [navigate]);
 
   const segs = path.replace(/^\//, '').split('/').filter(Boolean);
-  return { path, base: segs[0] || 'dashboard', param: segs[1] || null, navigate };
+  return { path, base: segs[0] || 'dashboard', param: segs[1] || null, subParam: segs[2] || null, navigate };
 }
 
 const C = {
@@ -3763,15 +3763,6 @@ const QUOTE_STATUS = {
   "Süresi Doldu":  { color:"#8A8070", bg:"#F3F1ED" },
 };
 
-const TOUR_CATALOG = DB.tours
-  .filter(t => t.status === "Aktif" && t.tiers)
-  .map(t => ({
-    id: t.id, name: t.name,
-    basePrice: t.basePrice, currency: t.currency,
-    tiers: t.tiers,
-    included: t.included, excluded: t.excluded,
-  })); // derived from DB.tours
-
 const MOCK_QUOTES = DB.quotes; // → centralized DB
 
 function QIc({ d, size=16, sw=1.6, color }) {
@@ -4076,252 +4067,6 @@ function QuotesPage({ onSelectQuote, onNewQuote }) {
   );
 }
 
-function QuoteBuilder() {
-  const [selectedTourId, setSelectedTourId] = useState("T1");
-  const [pax, setPax]                       = useState(4);
-  const [currency, setCurrency]             = useState("EUR");
-  const [discountPct, setDiscountPct]       = useState(0);
-  const [depositPct, setDepositPct]         = useState(25);
-
-  const tour       = TOUR_CATALOG.find(t=>t.id===selectedTourId);
-  const maxPax     = 8;
-  const baseTotal  = tour ? (tour.tiers[pax] || tour.tiers[maxPax]) : 0;
-  const discount   = Math.round(baseTotal * discountPct / 100);
-  const afterDisc  = baseTotal - discount;
-  const deposit    = Math.round(afterDisc * depositPct / 100);
-  const remaining  = afterDisc - deposit;
-
-  const fmtC = (n) => `${currency === "EUR" ? "€" : "₺"}${n.toLocaleString()}`;
-  const fmtUnit = () => `${currency === "EUR" ? "€" : "₺"}${Math.round(baseTotal/pax)}`;
-
-  const DISC_OPTIONS = [0,5,10,15,20];
-  const DEP_OPTIONS  = [20,25,30,50];
-
-  return (
-    <div style={{
-      background:C.white, border:`1px solid ${C.border}`, borderRadius:12, overflow:"hidden",
-    }}>
-      {}
-      <div style={{
-        background:`linear-gradient(135deg, ${C.navyDeep} 0%, ${C.navy} 100%)`,
-        padding:"18px 22px",
-        display:"flex", alignItems:"center", justifyContent:"space-between",
-      }}>
-        <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-          <div style={{
-            width:34, height:34, borderRadius:8,
-            background:"rgba(201,168,76,0.15)", border:"1px solid rgba(201,168,76,0.3)",
-            display:"flex", alignItems:"center", justifyContent:"center", color:C.goldLight,
-          }}>
-            <QIc d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 11h.01M12 11h.01M15 11h.01M9 7h6m0 10v-3m-3 3h.01" size={16} sw={1.8}/>
-          </div>
-          <div>
-            <div style={{ fontSize:14, fontWeight:600, color:C.ivory, fontFamily:"'Playfair Display',serif" }}>Teklif Oluşturucu</div>
-            <div style={{ fontSize:11.5, color:"rgba(248,245,238,0.5)", fontFamily:"'DM Sans',sans-serif" }}>Fiyat otomatik hesaplanır</div>
-          </div>
-        </div>
-        <div style={{
-          background:"rgba(201,168,76,0.15)", border:"1px solid rgba(201,168,76,0.3)",
-          borderRadius:8, padding:"8px 16px",
-          display:"flex", alignItems:"baseline", gap:6,
-        }}>
-          <span style={{ fontSize:26, fontWeight:700, color:C.goldLight, fontFamily:"'Playfair Display',serif" }}>{fmtC(afterDisc)}</span>
-          <span style={{ fontSize:12, color:"rgba(201,168,76,0.65)", fontFamily:"'DM Sans',sans-serif" }}>{currency} · {pax} kişi</span>
-        </div>
-      </div>
-
-      <div style={{ padding:"22px", display:"grid", gridTemplateColumns:"1fr 1fr", gap:22 }}>
-        {}
-        <div style={{ display:"flex", flexDirection:"column", gap:18 }}>
-
-          {}
-          <div>
-            <label style={{ fontSize:11, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", textTransform:"uppercase", letterSpacing:"0.08em", display:"block", marginBottom:8 }}>Tur Seçin</label>
-            <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
-              {TOUR_CATALOG.map(t => {
-                const on = t.id === selectedTourId;
-                return (
-                  <button key={t.id} onClick={()=>setSelectedTourId(t.id)} style={{
-                    display:"flex", alignItems:"center", justifyContent:"space-between",
-                    padding:"10px 14px", borderRadius:8, cursor:"pointer",
-                    border: on ? `1.5px solid ${C.gold}` : `1px solid ${C.border}`,
-                    background: on ? C.goldPale : C.white,
-                    transition:"all 0.12s",
-                  }}>
-                    <span style={{ fontSize:13, fontWeight: on ? 600 : 400, color: on ? C.gold : C.text, fontFamily:"'DM Sans',sans-serif" }}>{t.name}</span>
-                    <span style={{ fontSize:12, color: on ? C.gold : C.textFaint, fontFamily:"'DM Mono',monospace" }}>
-                      {currency==="EUR"?"€":"₺"}{t.tiers[1]}/kişi
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          {}
-          <div>
-            <label style={{ fontSize:11, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", textTransform:"uppercase", letterSpacing:"0.08em", display:"block", marginBottom:8 }}>
-              Kişi Sayısı — <span style={{ color:C.text, fontWeight:600 }}>{pax} kişi</span>
-            </label>
-            <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
-              {[1,2,3,4,5,6,7,8].map(n => (
-                <button key={n} onClick={()=>setPax(n)} style={{
-                  width:40, height:36, borderRadius:7, cursor:"pointer",
-                  border: n===pax ? `1.5px solid ${C.gold}` : `1px solid ${C.border}`,
-                  background: n===pax ? C.goldPale : C.white,
-                  color: n===pax ? C.gold : C.textMid,
-                  fontSize:13.5, fontWeight: n===pax ? 700 : 400,
-                  fontFamily:"'DM Sans',sans-serif",
-                  transition:"all 0.12s",
-                }}>{n}</button>
-              ))}
-            </div>
-          </div>
-
-          {}
-          <div>
-            <label style={{ fontSize:11, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", textTransform:"uppercase", letterSpacing:"0.08em", display:"block", marginBottom:8 }}>Para Birimi</label>
-            <div style={{ display:"flex", gap:8 }}>
-              {["EUR","TRY","USD"].map(cur=>(
-                <button key={cur} onClick={()=>setCurrency(cur)} style={{
-                  padding:"7px 16px", borderRadius:7, cursor:"pointer",
-                  border: cur===currency ? `1.5px solid ${C.gold}` : `1px solid ${C.border}`,
-                  background: cur===currency ? C.goldPale : C.white,
-                  color: cur===currency ? C.gold : C.textMid,
-                  fontSize:13, fontWeight: cur===currency ? 600 : 400,
-                  fontFamily:"'DM Sans',sans-serif",
-                  transition:"all 0.12s",
-                }}>{cur}</button>
-              ))}
-            </div>
-          </div>
-
-          {}
-          <div>
-            <label style={{ fontSize:11, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", textTransform:"uppercase", letterSpacing:"0.08em", display:"block", marginBottom:8 }}>
-              İndirim — <span style={{ color:C.text, fontWeight:600 }}>%{discountPct}</span>
-              {discount > 0 && <span style={{ color:C.red, marginLeft:6 }}>(-{fmtC(discount)})</span>}
-            </label>
-            <div style={{ display:"flex", gap:6 }}>
-              {DISC_OPTIONS.map(d=>(
-                <button key={d} onClick={()=>setDiscountPct(d)} style={{
-                  padding:"7px 12px", borderRadius:7, cursor:"pointer",
-                  border: d===discountPct ? `1.5px solid ${C.red}` : `1px solid ${C.border}`,
-                  background: d===discountPct ? "#FDECEC" : C.white,
-                  color: d===discountPct ? C.red : C.textMid,
-                  fontSize:12.5, fontWeight: d===discountPct ? 600 : 400,
-                  fontFamily:"'DM Sans',sans-serif",
-                  transition:"all 0.12s",
-                }}>%{d}</button>
-              ))}
-            </div>
-          </div>
-
-          {}
-          <div>
-            <label style={{ fontSize:11, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", textTransform:"uppercase", letterSpacing:"0.08em", display:"block", marginBottom:8 }}>
-              Kapora Oranı — <span style={{ color:C.text, fontWeight:600 }}>%{depositPct}</span>
-            </label>
-            <div style={{ display:"flex", gap:6 }}>
-              {DEP_OPTIONS.map(d=>(
-                <button key={d} onClick={()=>setDepositPct(d)} style={{
-                  padding:"7px 12px", borderRadius:7, cursor:"pointer",
-                  border: d===depositPct ? `1.5px solid ${C.amber}` : `1px solid ${C.border}`,
-                  background: d===depositPct ? C.amberBg : C.white,
-                  color: d===depositPct ? C.amber : C.textMid,
-                  fontSize:12.5, fontWeight: d===depositPct ? 600 : 400,
-                  fontFamily:"'DM Sans',sans-serif",
-                  transition:"all 0.12s",
-                }}>%{d}</button>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        {}
-        <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
-
-          {}
-          <div style={{ background:C.ivory, borderRadius:10, border:`1px solid ${C.borderLight}`, overflow:"hidden" }}>
-            <div style={{ padding:"12px 16px", borderBottom:`1px solid ${C.borderLight}`, background:C.navy }}>
-              <span style={{ fontSize:11, fontWeight:600, color:"rgba(248,245,238,0.6)", fontFamily:"'DM Sans',sans-serif", textTransform:"uppercase", letterSpacing:"0.08em" }}>Fiyat Özeti</span>
-            </div>
-            {[
-              { label:`Kişi Başı Fiyat`, val:fmtUnit(), sub:null },
-              { label:`Kişi Sayısı`, val:`× ${pax}`, sub:null },
-              { label:`Ara Toplam`, val:fmtC(baseTotal), bold:true },
-              ...(discount > 0 ? [{ label:`İndirim (%${discountPct})`, val:`-${fmtC(discount)}`, red:true }] : []),
-              { label:`Toplam`, val:fmtC(afterDisc), bold:true, gold:true, large:true },
-              { label:`Kapora (%${depositPct})`, val:fmtC(deposit), amber:true },
-              { label:`Kalan Ödeme`, val:fmtC(remaining), muted:true },
-            ].map((r,i,arr)=>(
-              <div key={i} style={{
-                display:"flex", justifyContent:"space-between", alignItems:"center",
-                padding: r.large ? "14px 16px" : "10px 16px",
-                borderBottom: i<arr.length-1 ? `1px solid ${C.borderLight}` : "none",
-                background: r.gold ? C.goldPale : r.large ? C.ivory : "transparent",
-              }}>
-                <span style={{
-                  fontSize: r.large ? 13 : 12,
-                  color:C.textMuted, fontFamily:"'DM Sans',sans-serif",
-                }}>{r.label}</span>
-                <span style={{
-                  fontSize: r.large ? 20 : 14,
-                  fontWeight: r.large || r.bold ? 700 : 500,
-                  color: r.gold ? C.gold : r.red ? C.red : r.amber ? C.amber : r.muted ? C.textMuted : C.text,
-                  fontFamily:"'Playfair Display',serif",
-                }}>{r.val}</span>
-              </div>
-            ))}
-          </div>
-
-          {}
-          <div style={{ background:C.ivory, borderRadius:10, border:`1px solid ${C.borderLight}`, overflow:"hidden" }}>
-            <div style={{ padding:"10px 16px", borderBottom:`1px solid ${C.borderLight}`, background:C.white }}>
-              <span style={{ fontSize:11, fontWeight:600, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", textTransform:"uppercase", letterSpacing:"0.08em" }}>Kişi Başına Fiyat Skalası</span>
-            </div>
-            {Object.entries(tour?.tiers||{}).map(([n,p],i,arr)=>{
-              const on = parseInt(n)===pax;
-              return (
-                <div key={n} onClick={()=>setPax(parseInt(n))} style={{
-                  display:"flex", justifyContent:"space-between", alignItems:"center",
-                  padding:"9px 16px", cursor:"pointer",
-                  borderBottom: i<arr.length-1 ? `1px solid ${C.borderLight}` : "none",
-                  background: on ? C.goldPale : "transparent",
-                  transition:"background 0.1s",
-                }}>
-                  <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-                    {on && <span style={{ width:6, height:6, borderRadius:"50%", background:C.gold, flexShrink:0 }}/>}
-                    <span style={{ fontSize:12.5, color: on ? C.gold : C.textMid, fontFamily:"'DM Sans',sans-serif", fontWeight: on ? 600 : 400 }}>{n} kişi</span>
-                  </div>
-                  <span style={{ fontSize:13, fontWeight: on ? 700 : 500, color: on ? C.gold : C.text, fontFamily:"'Playfair Display',serif" }}>
-                    {currency==="EUR"?"€":"₺"}{p}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-
-          {}
-          <button style={{
-            padding:"12px", borderRadius:8, cursor:"pointer",
-            background:C.navy, border:"none", color:C.white,
-            fontFamily:"'DM Sans',sans-serif", fontSize:13.5, fontWeight:600,
-            display:"flex", alignItems:"center", justifyContent:"center", gap:8,
-            transition:"background 0.12s",
-          }}
-            onMouseEnter={e=>e.currentTarget.style.background=C.navyHover}
-            onMouseLeave={e=>e.currentTarget.style.background=C.navy}
-          >
-            <QIc d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z M14 2v6h6" size={15} sw={2}/>
-            Bu Fiyatla Teklif Oluştur
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function CheckItem({ label, checked }) {
   const [on, setOn] = useState(checked !== false);
   return (
@@ -4411,25 +4156,24 @@ function QuoteDetailPage({ quoteId, onBack }) {
   // records, so it always returned undefined for a real Supabase quote.
   const { data:quoteCustomer } = useRepo("customer", "getById", q?.customerId || null);
 
-  // "Rezervasyona Dönüştür" previously called a handler that only exists in
-  // a different component (NewProposalPage) — clicking it threw a
-  // ReferenceError. Wired to the real quote/reservation repos instead.
+  // Real reservation conversion — the only place this happens. Links
+  // quote_id/customer_id/lead_id/tour_id and carries date/pax/pricing
+  // across; pickup location/time/language have no dedicated reservation
+  // columns to source from a quote's own row, but they were already saved
+  // into the quote's internal_notes at creation time and are carried
+  // through into the new reservation's notes so nothing typed is lost.
   async function handleConvertToReservation() {
     if (!q?.customerId) { showToast("Bu teklifin bağlı bir misafiri yok."); return; }
+    const combinedNotes = [q.notes, q.internalNotes].filter(Boolean).join("\n");
     const { data:newRes, error } = await mutQuoteRes("create", {
-      customerId: q.customerId, tourId: q.tourId||null, quoteId: q.id, tour: q.tour,
+      customerId: q.customerId, leadId: q.leadId||null, tourId: q.tourId||null, quoteId: q.id, tour: q.tour,
       checkIn: q.travelStart||null, checkOut: q.travelStart||null,
-      pax: q.pax, total: q.total, deposit: q.deposit, currency: q.currency, notes: q.notes||"",
+      pax: q.pax, total: q.total, deposit: q.deposit, currency: q.currency, notes: combinedNotes,
     });
     if (error) { showToast("Rezervasyona dönüştürülemedi: " + error); return; }
     await mutQuote("update", q.id, { status:"Onaylandı" });
     showToast("Rezervasyon oluşturuldu ✓");
     if (newRes?.id && NAV_REF.fn) NAV_REF.fn('/reservations/'+newRes.id);
-  }
-  async function handleMarkApproved() {
-    const { error } = await mutQuote("update", q.id, { status:"Onaylandı" });
-    if (error) showToast("Güncellenemedi: " + error);
-    else showToast("Teklif onaylandı olarak işaretlendi ✓");
   }
 
   const [convertBusy,  setConvertBusy]  = useState(false);
@@ -4445,21 +4189,20 @@ function QuoteDetailPage({ quoteId, onBack }) {
     </div>
   );
   const sm = QUOTE_STATUS[q.status] || {};
-  const tour = TOUR_CATALOG.find(t=>t.name===q.tour) || TOUR_CATALOG[0];
   const sym = q.currency === "EUR" ? "€" : "₺";
   const fmtQ = (n) => `${sym}${n.toLocaleString()}`;
+  const incItems = (q.items||[]).filter(i=>i.type==="Dahil");
+  const excItems = (q.items||[]).filter(i=>i.type==="Hariç");
 
   const ACTIONS = [
-    { label:"WhatsApp Teklifi Oluştur", icon:"M17.472 14.382c-.297-.149-1.758-.867-2.03-.967c-.273-.099-.471-.148-.67.15c-.197.297-.767.966-.94 1.164c-.173.199-.347.223-.644.075c-.297-.15-1.255-.463-2.39-1.475c-.883-.788-1.48-1.761-1.653-2.059c-.173-.297-.018-.458.13-.606c.134-.133.298-.347.446-.52c.149-.174.198-.298.298-.497c.099-.198.05-.371-.025-.52c-.075-.149-.669-1.612-.916-2.207c-.242-.579-.487-.5-.669-.51c-.173-.008-.371-.01-.57-.01c-.198 0-.52.074-.792.372c-.272.297-1.04 1.016-1.04 2.479c0 1.462 1.065 2.875 1.213 3.074c.149.198 2.096 3.2 5.077 4.487c.709.306 1.262.489 1.694.625c.712.227 1.36.195 1.871.118c.571-.085 1.758-.719 2.006-1.413c.248-.694.248-1.289.173-1.413c-.074-.124-.272-.198-.57-.347z", wa:true },
-    { label:"Email Teklifi Oluştur",    icon:"M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z M22 6l-10 7L2 6" },
-    { label:"PDF Önizleme",             icon:"M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z M14 2v6h6 M16 13H8 M16 17H8 M10 9H8" },
-    { label:"Rezervasyona Dönüştür",    icon:"M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11", primary:true },
-    { label:"Kopyala",                  icon:"M8 17.929H6c-1.105 0-2-.912-2-2.036V5.036C4 3.91 4.895 3 6 3h8c1.105 0 2 .911 2 2.036v1.866m-6 .17h8c1.105 0 2 .91 2 2.035v10.857C20 21.09 19.105 22 18 22h-8c-1.105 0-2-.911-2-2.036V9.107c0-1.124.895-2.036 2-2.036z" },
-    { label:"Düzenle",                  icon:"M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" },
-    { label:"Onaylandı Olarak İşaretle",icon:"M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11", primary:true },
+    { label:"PDF İndir",           icon:"M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z M14 2v6h6 M16 13H8 M16 17H8 M10 9H8", action:"pdf" },
+    { label:"E-posta ile Gönder",  icon:"M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z M22 6l-10 7L2 6", action:"email" },
+    { label:"WhatsApp ile Paylaş", icon:"M17.472 14.382c-.297-.149-1.758-.867-2.03-.967c-.273-.099-.471-.148-.67.15c-.197.297-.767.966-.94 1.164c-.173.199-.347.223-.644.075c-.297-.15-1.255-.463-2.39-1.475c-.883-.788-1.48-1.761-1.653-2.059c-.173-.297-.018-.458.13-.606c.134-.133.298-.347.446-.52c.149-.174.198-.298.298-.497c.099-.198.05-.371-.025-.52c-.075-.149-.669-1.612-.916-2.207c-.242-.579-.487-.5-.669-.51c-.173-.008-.371-.01-.57-.01c-.198 0-.52.074-.792.372c-.272.297-1.04 1.016-1.04 2.479c0 1.462 1.065 2.875 1.213 3.074c.149.198 2.096 3.2 5.077 4.487c.709.306 1.262.489 1.694.625c.712.227 1.36.195 1.871.118c.571-.085 1.758-.719 2.006-1.413c.248-.694.248-1.289.173-1.413c-.074-.124-.272-.198-.57-.347z", action:"whatsapp", wa:true, disabled: !quoteCustomer?.phone, disabledHint: "Telefon numarası yok" },
+    { label:"Teklifi Düzenle",     icon:"M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z", action:"edit" },
+    { label:"Rezervasyona Dönüştür", icon:"M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11", action:"convert", primary:true },
   ];
 
-  const proposalData = q ? buildProposalData(q, getCustomerById(q.customerId)) : null;
+  const proposalData = q ? buildProposalData(q, quoteCustomer) : null;
 
   return (
     <div style={{ display:"flex", flexDirection:"column", gap:20, position:"relative" }}>
@@ -4512,7 +4255,7 @@ function QuoteDetailPage({ quoteId, onBack }) {
           <div style={{ fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif" }}>
             Geçerlilik: <span style={{ color:C.text, fontWeight:500 }}>{q.validUntil}</span>
           </div>
-          <button style={{
+          <button onClick={()=>NAV_REF.fn && NAV_REF.fn(`/quotes/${q.id}/edit`)} style={{
             padding:"7px 14px", borderRadius:7,
             border:`1.5px solid ${C.gold}`, background:C.goldPale,
             cursor:"pointer", color:C.gold,
@@ -4569,14 +4312,18 @@ function QuoteDetailPage({ quoteId, onBack }) {
           <QCard>
             <QCardHead title="Dahil Hizmetler"/>
             <div style={{ padding:"8px 20px 12px" }}>
-              {tour.included.map((s,i)=><CheckItem key={i} label={s} checked={true}/>)}
+              {incItems.length===0
+                ? <div style={{fontSize:12.5, color:C.textFaint, fontStyle:"italic", fontFamily:"'DM Sans',sans-serif"}}>Belirtilmedi</div>
+                : incItems.map((it,i)=><CheckItem key={i} label={it.label} checked={true}/>)}
             </div>
           </QCard>
 
           <QCard>
             <QCardHead title="Dahil Olmayan Hizmetler"/>
             <div style={{ padding:"8px 20px 12px" }}>
-              {tour.excluded.map((s,i)=><CheckItem key={i} label={s} checked={false}/>)}
+              {excItems.length===0
+                ? <div style={{fontSize:12.5, color:C.textFaint, fontStyle:"italic", fontFamily:"'DM Sans',sans-serif"}}>Belirtilmedi</div>
+                : excItems.map((it,i)=><CheckItem key={i} label={it.label} checked={false}/>)}
             </div>
           </QCard>
         </div>
@@ -4677,9 +4424,6 @@ function QuoteDetailPage({ quoteId, onBack }) {
               })}
             </div>
           </QCard>
-
-          {}
-          <QuoteBuilder/>
         </div>
 
         {}
@@ -4697,29 +4441,34 @@ function QuoteDetailPage({ quoteId, onBack }) {
             <div style={{ padding:"12px" }}>
               {ACTIONS.map((a,i)=>{
                 return (
-                  <button key={i}
-                    onMouseEnter={e=>e.currentTarget.style.background=e.currentTarget.dataset.hover||C.ivory}
+                  <button key={i} disabled={a.disabled}
+                    onMouseEnter={e=>{ if(!a.disabled) e.currentTarget.style.background=e.currentTarget.dataset.hover||C.ivory; }}
                     onMouseLeave={e=>e.currentTarget.style.background=""}
                     onClick={()=>{
-                      if(a.label==="PDF Önizleme") setShowPreview(true);
-                      else if(a.label==="PDF İndir") { setShowPreview(true); }
-                      else if(a.label==="Email Teklifi Oluştur") setShowPreview(true);
-                      else if(a.label==="Rezervasyona Dönüştür") handleConvertToReservation();
-                      else if(a.label==="Onaylandı Olarak İşaretle") handleMarkApproved();
+                      if (a.disabled) return;
+                      if (a.action==="pdf" || a.action==="email") setShowPreview(true);
+                      else if (a.action==="whatsapp") {
+                        const phone = (quoteCustomer?.phone||"").replace(/[^0-9]/g,"");
+                        const text = encodeURIComponent(`Merhaba ${q.customer||""}, ${q.tour||"turunuz"} için hazırladığımız teklif: ${fmtQ(q.total)} — Teklif No: ${q.quoteNumber||q.id}`);
+                        window.open(`https://wa.me/${phone}?text=${text}`, "_blank");
+                      }
+                      else if (a.action==="edit") NAV_REF.fn && NAV_REF.fn(`/quotes/${q.id}/edit`);
+                      else if (a.action==="convert") handleConvertToReservation();
                     }}
                     style={{
                       display:"flex", alignItems:"center", gap:10,
                       width:"100%", padding:"9px 12px", borderRadius:8, marginBottom:i<ACTIONS.length-1?6:0,
                       border: a.primary ? "none" : a.wa ? `1px solid #128C7E44` : `1px solid ${C.border}`,
                       background: a.primary ? C.navy : a.wa ? "#F2FAF8" : C.white,
-                      cursor:"pointer",
+                      cursor: a.disabled ? "not-allowed" : "pointer",
+                      opacity: a.disabled ? 0.5 : 1,
                       color: a.primary ? C.white : a.wa ? "#128C7E" : C.text,
                       fontFamily:"'DM Sans',sans-serif", fontSize:12.5,
                       fontWeight: a.primary ? 600 : 400,
                       transition:"background 0.12s", textAlign:"left",
                     }}>
                     <QIc d={a.icon} size={14} sw={a.primary?2:1.6}/>
-                    {a.label}
+                    <span>{a.label}{a.disabled && a.disabledHint && <span style={{display:"block", fontSize:10.5, color:C.textFaint, fontWeight:400}}>{a.disabledHint}</span>}</span>
                   </button>
                 );
               })}
@@ -4753,8 +4502,6 @@ function QuoteDetailPage({ quoteId, onBack }) {
   );
 }
 
-const LOGO_URI = "/seffafdeselogo.png";
-
 const DEFAULT_INCLUDED = [
   "Licensed Professional Guide",
   "Hotel Pickup & Drop-off",
@@ -4769,11 +4516,7 @@ const DEFAULT_EXCLUDED = [
   "Tips (Optional)",
   "Any Additional Activities Not Mentioned",
 ];
-const TOUR_OPTIONS = DB.tours
-  .filter(t => t.status === "Aktif")
-  .map(t => ({ name: t.name, duration: t.duration, basePrice: t.basePrice })); // from DB
-const CURRENCY_OPTIONS = ["EUR","USD","TRY","GBP"];
-const PICKUP_OPTIONS   = ["Hotel Pickup","Airport Transfer","Custom Location","Cruise Port"];
+const CURRENCY_OPTIONS = ["EUR","USD","GBP","TRY"];
 
 function FLabel({ children }) {
   return (
@@ -4782,53 +4525,6 @@ function FLabel({ children }) {
       textTransform:"uppercase", letterSpacing:"0.09em",
       fontFamily:"DM Sans,sans-serif", marginBottom:5,
     }}>{children}</div>
-  );
-}
-function FInput({ value, onChange, placeholder, type="text" }) {
-  const [foc,setFoc] = useState(false);
-  return (
-    <input type={type} value={value} onChange={e=>onChange(e.target.value)}
-      placeholder={placeholder}
-      onFocus={()=>setFoc(true)} onBlur={()=>setFoc(false)}
-      style={{
-        width:"100%", padding:"9px 12px",
-        border:`1px solid ${foc?C.gold:C.border}`,
-        borderRadius:7, background:C.ivory,
-        fontSize:13, color:C.text,
-        fontFamily:"DM Sans,sans-serif", outline:"none",
-        boxShadow: foc?`0 0 0 3px ${C.gold}18`:"none",
-        transition:"border-color .15s, box-shadow .15s",
-        boxSizing:"border-box",
-      }}/>
-  );
-}
-function QFSelect({ value, onChange, options }) {
-  return (
-    <select value={value} onChange={e=>onChange(e.target.value)} style={{
-      width:"100%", padding:"9px 12px",
-      border:`1px solid ${C.border}`, borderRadius:7,
-      background:C.ivory, fontSize:13, color:C.text,
-      fontFamily:"DM Sans,sans-serif", outline:"none",
-      boxSizing:"border-box", cursor:"pointer",
-    }}>
-      {options.map(o=><option key={o}>{o}</option>)}
-    </select>
-  );
-}
-function FSectionHead({ n, title }) {
-  return (
-    <div style={{
-      display:"flex", alignItems:"center", gap:10, marginBottom:16,
-    }}>
-      <div style={{
-        width:24, height:24, borderRadius:"50%", flexShrink:0,
-        background:C.navy, display:"flex", alignItems:"center", justifyContent:"center",
-      }}>
-        <span style={{fontSize:11, fontWeight:700, color:C.goldLight, fontFamily:"DM Sans,sans-serif"}}>{n}</span>
-      </div>
-      <span style={{fontSize:13.5, fontWeight:600, color:C.text, fontFamily:"Playfair Display,serif"}}>{title}</span>
-      <div style={{flex:1, height:1, background:C.borderLight}}/>
-    </div>
   );
 }
 function FCheckList({ items, setItems, accent }) {
@@ -4886,700 +4582,661 @@ function FCheckList({ items, setItems, accent }) {
   );
 }
 
-function ProposalPreview({ form, included, excluded }) {
-  const sym = form.currency==="TRY"?"₺":form.currency==="GBP"?"£":form.currency==="USD"?"$":"€";
-  const total    = (form.pricePerPerson||0) * (form.guestCount||1);
-  const discount = Math.round(total * (form.discountPct||0) / 100);
-  const net      = total - discount;
-  const deposit  = Math.round(net * (form.depositPct||25) / 100);
-  const remaining= net - deposit;
-  const today    = new Date().toLocaleDateString("en-GB",{day:"numeric",month:"long",year:"numeric"});
+// ════════════════════════════════════════════════════════════════════════
+// QUOTE CREATION — shared business logic
+// One set of rules for desktop (QuoteWizard, below) and mobile
+// (MobileNewQuotePage) — same fields, same totals math, same save/update
+// calls. Neither platform has its own separate copy of this logic.
+// ════════════════════════════════════════════════════════════════════════
 
-  const incOn = included.filter(x=>x.on);
-  const excOn = excluded.filter(x=>x.on);
+const QUOTE_LANGUAGE_OPTIONS = ["Türkçe","İngilizce","Almanca","Fransızca","İspanyolca","Rusça","Arapça"];
+const QUOTE_PICKUP_OPTIONS   = ["Otel Karşılama","Havalimanı Transferi","Liman Karşılama","Özel Lokasyon","Karşılama Yok"];
+const QUOTE_STEPS = ["Misafir","Tur ve Tarih","Fiyatlandırma","Teklif Detayları","Önizleme ve Oluştur"];
 
+function emptyQuoteWizardState(prefill) {
+  const pf = prefill || {};
+  return {
+    customerId: null,
+    guestName: pf.guestName || "", email: pf.email || "", phone: pf.phone || "",
+    nationality: pf.nationality || "", language: "Türkçe",
+    fromLeadId: pf.fromLead || null,
+    tourId: "", tourName: pf.tourName || "",
+    travelDate: "", travelTime: "",
+    guestCount: pf.guestCount || 2,
+    pickup: "Otel Karşılama", pickupLocation: "",
+    currency: "EUR", pricingType: "per_person",
+    groupPrice: "", pricePerPerson: "",
+    discountPct: 0, depositPct: 25,
+    included: DEFAULT_INCLUDED.map(l=>({label:l, on:true})),
+    excluded: DEFAULT_EXCLUDED.map(l=>({label:l, on:true})),
+    notes: "", validUntil: "",
+  };
+}
+
+// Seeds the wizard from an existing quote — used by "Teklifi Düzenle".
+function quoteStateFromExisting(q) {
+  const inc = (q.items||[]).filter(i=>i.type==="Dahil");
+  const exc = (q.items||[]).filter(i=>i.type==="Hariç");
+  return {
+    customerId: q.customerId || null,
+    guestName: q.customer || "", email:"", phone:"", nationality:"", language:"Türkçe",
+    fromLeadId: q.leadId || null,
+    tourId: q.tourId || "", tourName: (q.tour && q.tour !== "—") ? q.tour : "",
+    travelDate: q.travelStart || "", travelTime: "",
+    guestCount: q.pax || 1,
+    pickup: "Otel Karşılama", pickupLocation: "",
+    currency: q.currency || "EUR", pricingType: "per_person",
+    groupPrice: "", pricePerPerson: q.unitPrice || "",
+    discountPct: q.discountPct || 0,
+    depositPct: q.total > 0 ? Math.round((q.deposit/q.total)*100) : 25,
+    included: inc.length ? inc.map(i=>({label:i.label, on:true})) : DEFAULT_INCLUDED.map(l=>({label:l, on:true})),
+    excluded: exc.length ? exc.map(i=>({label:i.label, on:true})) : DEFAULT_EXCLUDED.map(l=>({label:l, on:true})),
+    notes: q.notes || "", validUntil: q.validUntil || "",
+  };
+}
+
+function computeQuoteTotals(s) {
+  const pax  = Math.max(1, parseInt(s.guestCount) || 1);
+  const disc = parseFloat(s.discountPct) || 0;
+  const dep  = parseFloat(s.depositPct) || 0;
+  const subtotal = s.pricingType === "group"
+    ? (parseFloat(s.groupPrice) || 0)
+    : (parseFloat(s.pricePerPerson) || 0) * pax;
+  const discountAmount = Math.round(subtotal * disc / 100);
+  const total     = Math.max(0, subtotal - discountAmount);
+  const deposit   = Math.round(total * dep / 100);
+  const remaining = total - deposit;
+  const unitPrice = s.pricingType === "group" ? Math.round(subtotal / pax) : (parseFloat(s.pricePerPerson) || 0);
+  return { pax, subtotal, discountAmount, total, deposit, remaining, unitPrice };
+}
+
+function validateQuoteStep(step, s) {
+  const e = {};
+  if (step === 0 && !s.guestName.trim()) e.guestName = "Ad Soyad zorunludur";
+  if (step === 1) {
+    if (!s.tourName.trim()) e.tourName   = "Tur seçin veya adını girin";
+    if (!s.travelDate)      e.travelDate = "Başlangıç tarihi zorunludur";
+  }
+  if (step === 2 && computeQuoteTotals(s).total <= 0) e.pricing = "Toplam tutar sıfırdan büyük olmalıdır";
+  return e;
+}
+
+async function resolveQuoteCustomerId(s) {
+  if (s.customerId) return s.customerId;
+  const custRepo = getActiveRepo("customer");
+  const existing = await Promise.resolve(
+    custRepo.findByContact?.({ email: s.email||null, phone: s.phone||null })
+  ).catch(()=>null);
+  if (existing) return existing.id;
+  const newCust = await Promise.resolve(custRepo.create({
+    name: s.guestName, email: s.email||"", phone: s.phone||"",
+    country: s.nationality||"Diğer", language: s.language||"Türkçe", importType:"manual",
+  }));
+  return newCust?.id || null;
+}
+
+async function resolveQuoteLeadId(s) {
+  if (s.fromLeadId) return s.fromLeadId;
+  // quotes.lead_id is NOT NULL in the schema — a quote row cannot exist
+  // without a lead. The workflow doesn't force the user through a manual
+  // lead step, so when the quote wasn't opened from an existing lead, a
+  // minimal one is created transparently from the same guest/tour info
+  // already collected — reusing the leads table, no schema change.
+  const leadRepo = getActiveRepo("lead");
+  const newLead = await Promise.resolve(leadRepo.create({
+    name: s.guestName, phone: s.phone||"", email: s.email||"",
+    tour: s.tourName, destination: s.tourName,
+    travelStart: s.travelDate||null,
+    paxAdult: parseInt(s.guestCount)||1,
+    currency: s.currency||"EUR", importType:"manual",
+  })).catch(()=>null);
+  return newLead?.id || null;
+}
+
+function buildQuoteWizardNotes(s) {
+  // Pickup location, start time and operating language have no dedicated
+  // columns on `quotes` — kept out of the guest-facing `notes` field and
+  // folded into `internal_notes` instead, so nothing entered is silently
+  // dropped. See the schema-gap note in the final report.
+  const meta = [];
+  if (s.travelTime) meta.push(`Saat: ${s.travelTime}`);
+  if (s.language)   meta.push(`Dil: ${s.language}`);
+  if (s.pickup)      meta.push(`Karşılama: ${s.pickup}${s.pickupLocation ? " — "+s.pickupLocation : ""}`);
+  return meta.join(" · ");
+}
+
+function buildQuoteWizardItems(s) {
+  const totals = computeQuoteTotals(s);
+  return [
+    ...s.included.filter(i=>i.on).map((i,idx) => ({ type:"Dahil", label:i.label, quantity:1, unitPrice:0, total:0, sortOrder:idx })),
+    ...s.excluded.filter(i=>i.on).map((i,idx) => ({ type:"Hariç", label:i.label, quantity:1, unitPrice:0, total:0, sortOrder:idx+50 })),
+    ...(s.tourId ? [{ type:"Tur", label:s.tourName, tourId:s.tourId, quantity:totals.pax, unitPrice:totals.unitPrice, total:totals.total, sortOrder:200 }] : []),
+  ];
+}
+
+async function createQuoteFromWizard(s) {
+  const customerId = await resolveQuoteCustomerId(s);
+  const leadId      = await resolveQuoteLeadId(s);
+  const totals      = computeQuoteTotals(s);
+  const quoteRepo   = getActiveRepo("quote");
+  const newQuote = await Promise.resolve(quoteRepo.create({
+    customerId, leadId,
+    tourId: s.tourId||null, tourName:s.tourName, tour:s.tourName,
+    travelStart: s.travelDate||null,
+    status: "Taslak",
+    guestCount: totals.pax, pricePerPerson: totals.unitPrice, currency: s.currency,
+    discountPct: parseFloat(s.discountPct)||0, discountAmount: totals.discountAmount,
+    total: totals.total, deposit: totals.deposit,
+    validUntil: s.validUntil||null,
+    notes: s.notes||"",
+    internalNotes: buildQuoteWizardNotes(s),
+    items: buildQuoteWizardItems(s),
+  }));
+  await autoLog("quote", newQuote?.id||"?", "created", `Teklif oluşturuldu: ${s.tourName}`);
+  return newQuote;
+}
+
+async function updateQuoteFromWizard(id, s) {
+  const customerId = await resolveQuoteCustomerId(s);
+  const leadId      = await resolveQuoteLeadId(s);
+  const totals      = computeQuoteTotals(s);
+  const quoteRepo   = getActiveRepo("quote");
+  const updated = await Promise.resolve(quoteRepo.update(id, {
+    customerId, leadId,
+    tourName: s.tourName, travelStart: s.travelDate||null, currency: s.currency,
+    guestCount: totals.pax,
+    subtotal: totals.subtotal, discountAmount: totals.discountAmount,
+    total: totals.total, deposit: totals.deposit,
+    validUntil: s.validUntil||null,
+    notes: s.notes||"",
+    internalNotes: buildQuoteWizardNotes(s),
+    items: buildQuoteWizardItems(s),
+  }));
+  await autoLog("quote", id, "updated", `Teklif güncellendi: ${s.tourName}`);
+  return updated;
+}
+
+function qwNumInputStyle(error) {
+  return {
+    width:"100%", boxSizing:"border-box",
+    padding:"9px 12px", borderRadius:T.radiusSm,
+    border:`1.5px solid ${error ? C.red : C.border}`,
+    fontSize:13.5, color:C.text, fontFamily:"'DM Sans',sans-serif",
+    outline:"none", background:C.white,
+  };
+}
+function qwPill(active) {
+  return {
+    flex:1, padding:"9px 0", borderRadius:7, cursor:"pointer", textAlign:"center",
+    border: active ? `1.5px solid ${C.navy}` : `1px solid ${C.border}`,
+    background: active ? C.navy : C.white,
+    color: active ? C.white : C.textMid,
+    fontSize:12.5, fontWeight: active?600:400, fontFamily:"'DM Sans',sans-serif",
+  };
+}
+
+// ── Desktop wizard shell ───────────────────────────────────────────────
+
+function QuoteStepBar({ steps, current, onStepClick }) {
   return (
-    <div style={{
-      background:"#F8F5EE",
-      fontFamily:"DM Sans,sans-serif",
-      fontSize:13, color:"#1B2D4F",
-      maxWidth:640, margin:"0 auto",
-      boxShadow:"0 4px 40px rgba(27,45,79,0.14)",
-      borderRadius:4,
-      overflow:"hidden",
-    }}>
+    <div style={{display:"flex", alignItems:"center", width:"100%"}}>
+      {steps.map((label,i)=>{
+        const done = i < current, active = i === current;
+        return (
+          <div key={label} style={{display:"flex", alignItems:"center", flex: i<steps.length-1 ? 1 : "none"}}>
+            <button
+              onClick={()=> done && onStepClick && onStepClick(i)}
+              disabled={!done}
+              style={{ display:"flex", alignItems:"center", gap:8, background:"transparent", border:"none", cursor: done ? "pointer" : "default", padding:0 }}>
+              <div style={{
+                width:26, height:26, borderRadius:"50%", flexShrink:0,
+                display:"flex", alignItems:"center", justifyContent:"center",
+                background: done ? C.navy : C.white,
+                border: active ? `1.5px solid ${C.navy}` : done ? "none" : `1px solid ${C.border}`,
+                color: done ? C.white : active ? C.navy : C.textFaint,
+                fontSize:11.5, fontWeight:700, fontFamily:"'DM Sans',sans-serif",
+              }}>
+                {done ? <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round"><path d="M20 6L9 17l-5-5"/></svg> : i+1}
+              </div>
+              <span style={{ fontSize:12.5, fontWeight: active?600:400, color: active?C.text:done?C.textMid:C.textFaint, fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap" }}>{label}</span>
+            </button>
+            {i < steps.length-1 && <div style={{flex:1, height:1, background: done ? C.navy : C.borderLight, margin:"0 14px"}}/>}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
-      {}
-      <div style={{
-        background:"#1B2D4F", padding:"18px 36px",
-        display:"flex", alignItems:"center", justifyContent:"space-between",
-      }}>
-        <img src={LOGO_URI} alt="Dese Tour" style={{
-          height:44, width:"auto",
-          mixBlendMode:"screen", opacity:0.95,
-        }}/>
-        <div style={{textAlign:"right"}}>
-          <div style={{fontSize:10, letterSpacing:"0.14em", color:"rgba(248,245,238,0.5)", textTransform:"uppercase", marginBottom:3}}>DATE</div>
-          <div style={{fontSize:13.5, color:"#FAF7F0", fontWeight:500}}>{today}</div>
-        </div>
+function QWSummaryRow({ label, value, bold, tone }) {
+  const color = tone==="gold"?C.gold:tone==="red"?C.red:tone==="amber"?C.amber:C.text;
+  return (
+    <div style={{display:"flex", justifyContent:"space-between", alignItems:"baseline", gap:10}}>
+      <span style={{fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", flexShrink:0}}>{label}</span>
+      <span style={{fontSize: bold?15:12.5, fontWeight:bold?700:500, color, fontFamily: bold?"'Playfair Display',serif":"'DM Sans',sans-serif", textAlign:"right"}}>{value}</span>
+    </div>
+  );
+}
+
+function QuoteSummaryPanel({ s, totals, linkedCustomer }) {
+  const sym = s.currency==="TRY"?"₺":s.currency==="GBP"?"£":s.currency==="USD"?"$":"€";
+  const custName = linkedCustomer?.name || s.guestName || "—";
+  return (
+    <div style={{background:C.white, border:`1px solid ${C.border}`, borderRadius:12, overflow:"hidden"}}>
+      <div style={{background:`linear-gradient(135deg, ${C.navyDeep} 0%, ${C.navy} 100%)`, padding:"16px 18px"}}>
+        <div style={{fontSize:11, color:"rgba(248,245,238,0.55)", fontFamily:"'DM Sans',sans-serif", textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:6}}>Teklif Özeti</div>
+        <div style={{fontSize:20, fontWeight:700, color:C.goldLight, fontFamily:"'Playfair Display',serif"}}>{sym}{totals.total.toLocaleString("tr-TR")}</div>
+        <div style={{fontSize:12, color:"rgba(248,245,238,0.6)", fontFamily:"'DM Sans',sans-serif", marginTop:2}}>{s.currency} · {totals.pax} kişi</div>
       </div>
+      <div style={{padding:"14px 18px", display:"flex", flexDirection:"column", gap:10}}>
+        <QWSummaryRow label="Misafir" value={custName}/>
+        <QWSummaryRow label="Tur" value={s.tourName || "—"}/>
+        <QWSummaryRow label="Tarih" value={s.travelDate || "—"}/>
+        {s.travelTime && <QWSummaryRow label="Saat" value={s.travelTime}/>}
+        <QWSummaryRow label="Dil" value={s.language || "—"}/>
+        <QWSummaryRow label="Karşılama" value={s.pickup || "—"}/>
+        <div style={{height:1, background:C.borderLight, margin:"2px 0"}}/>
+        <QWSummaryRow label="Ara Toplam" value={`${sym}${totals.subtotal.toLocaleString("tr-TR")}`}/>
+        {totals.discountAmount>0 && <QWSummaryRow label="İndirim" value={`-${sym}${totals.discountAmount.toLocaleString("tr-TR")}`} tone="red"/>}
+        <QWSummaryRow label="Genel Toplam" value={`${sym}${totals.total.toLocaleString("tr-TR")}`} bold tone="gold"/>
+        <QWSummaryRow label="Kapora" value={`${sym}${totals.deposit.toLocaleString("tr-TR")}`} tone="amber"/>
+        <QWSummaryRow label="Kalan" value={`${sym}${totals.remaining.toLocaleString("tr-TR")}`}/>
+      </div>
+    </div>
+  );
+}
 
-      {}
-      <div style={{height:2, background:"linear-gradient(90deg, #C9A84C 0%, #E8D89A 50%, #C9A84C 100%)"}}/>
+function QuoteStepGuest({ s, setS, customerList, errs }) {
+  const [mode, setMode] = useState(s.customerId ? "linked" : "search");
+  const [query, setQuery] = useState("");
+  const results = useMemo(() => {
+    if (!query.trim()) return [];
+    const q = query.trim().toLowerCase();
+    return (customerList||[]).filter(c =>
+      (c.name||"").toLowerCase().includes(q) ||
+      (c.email||"").toLowerCase().includes(q) ||
+      (c.phone||"").includes(q)
+    ).slice(0,8);
+  }, [query, customerList]);
 
-      {}
-      <div style={{padding:"32px 36px 28px"}}>
+  function pick(c) {
+    setS(prev => ({ ...prev, customerId:c.id, guestName:c.name||"", email:c.email||"", phone:c.phone||"", nationality:c.country||"", language:c.language||"Türkçe" }));
+    setMode("linked");
+  }
+  function clearLink() {
+    setS(prev => ({ ...prev, customerId:null, guestName:"", email:"", phone:"", nationality:"" }));
+    setMode("search"); setQuery("");
+  }
 
-        {}
-        <div style={{
-          fontSize:10, letterSpacing:"0.18em", textTransform:"uppercase",
-          color:"#C9A84C", fontWeight:600, marginBottom:10,
-        }}>PROPOSAL</div>
-
-        {}
-        <div style={{display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:20}}>
-          <div>
-            <div style={{fontSize:10.5, color:"#8A8070", marginBottom:4}}>Prepared for ——</div>
-            <div style={{
-              fontSize:28, fontWeight:700, color:"#1B2D4F",
-              fontFamily:"Playfair Display,serif", lineHeight:1.1,
-              marginBottom:10,
-            }}>{form.guestName||"Guest Name"}</div>
-            <div style={{display:"flex", flexDirection:"column", gap:5}}>
-              {form.nationality && (
-                <div style={{display:"flex", alignItems:"center", gap:7, fontSize:12.5, color:"#4A5568"}}>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#C9A84C" strokeWidth="1.8" strokeLinecap="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z M12 10a1 1 0 100-2 1 1 0 000 2z"/></svg>
-                  {form.nationality}
-                </div>
-              )}
-              <div style={{display:"flex", alignItems:"center", gap:7, fontSize:12.5, color:"#4A5568"}}>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#C9A84C" strokeWidth="1.8" strokeLinecap="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2 M23 21v-2a4 4 0 00-3-3.87 M16 3.13a4 4 0 010 7.75"/></svg>
-                {form.guestCount||1} Guest{(form.guestCount||1)>1?"s":""}
-              </div>
-            </div>
-          </div>
-          <div style={{textAlign:"right"}}>
-            <div style={{fontSize:10.5, color:"#8A8070", marginBottom:4}}>Proposal No.</div>
-            <div style={{fontSize:18, fontWeight:700, color:"#1B2D4F", fontFamily:"Playfair Display,serif"}}>
-              {form.proposalNo||"Q-2026-001"}
-            </div>
-            <div style={{width:40, height:1.5, background:"#C9A84C", marginLeft:"auto", marginTop:6}}/>
-          </div>
-        </div>
-
-        {}
-        <div style={{height:1, background:"linear-gradient(90deg,#C9A84C,transparent)", marginBottom:24}}/>
-
-        {}
-        <div style={{textAlign:"center", marginBottom:24}}>
-          <h2 style={{
-            fontSize:24, fontWeight:700, color:"#1B2D4F",
-            fontFamily:"Playfair Display,serif", lineHeight:1.2,
-            margin:0,
-          }}>{form.tourName||"Tour Experience"}</h2>
-        </div>
-
-        {}
-        <div style={{
-          display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr",
-          gap:0, marginBottom:28,
-          border:`1px solid #E4DDD0`, borderRadius:8, overflow:"hidden",
-        }}>
-          {[
-            { icon:"M8 2v4M16 2v4M3 10h18M21 8a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2h14a2 2 0 002-2V8z", label:"Date",     val:form.tourDate||"—" },
-            { icon:"M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z",                                              label:"Duration", val:form.duration||"—" },
-            { icon:"M9 17a2 2 0 11-4 0 2 2 0 014 0zM19 17a2 2 0 11-4 0 2 2 0 014 0z M13 17H9m4 0h2m2-5H3M5 12V5h14v7", label:"Pickup",   val:form.pickup||"Hotel Pickup" },
-            { icon:"M8 12h.01M12 12h.01M16 12h.01M21 3H3a2 2 0 00-2 2v13a2 2 0 002 2h5l3 3 3-3h5a2 2 0 002-2V5a2 2 0 00-2-2z", label:"Special Request", val:form.specialRequests||(form.guestCount>4?"Group booking":"Standard") },
-          ].map((d,i)=>(
-            <div key={i} style={{
-              padding:"14px 14px",
-              borderRight: i<3?`1px solid #E4DDD0`:"none",
-              background:"#fff",
-            }}>
-              <div style={{display:"flex", alignItems:"center", gap:6, marginBottom:5}}>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#C9A84C" strokeWidth="1.7" strokeLinecap="round">
-                  <path d={d.icon}/>
-                </svg>
-                <span style={{fontSize:9.5, color:"#8A8070", textTransform:"uppercase", letterSpacing:"0.08em"}}>{d.label}</span>
-              </div>
-              <div style={{fontSize:12.5, fontWeight:500, color:"#1B2D4F", lineHeight:1.4}}>{d.val}</div>
-            </div>
-          ))}
-        </div>
-
-        {}
-        <div style={{display:"grid", gridTemplateColumns:"1fr 1fr 200px", gap:12, marginBottom:28}}>
-
-          {}
-          <div style={{gridColumn:"1/2"}}>
-            <div style={{fontSize:10, color:"#C9A84C", letterSpacing:"0.12em", textTransform:"uppercase", fontWeight:600, marginBottom:8}}>EXPERIENCE OVERVIEW</div>
-            <div style={{fontSize:12.5, color:"#4A5568", lineHeight:1.7}}>
-              Discover the best of Istanbul with your private guide. This customizable experience blends iconic landmarks, hidden gems and local culture for an unforgettable day.
-            </div>
-            <div style={{width:36, height:1.5, background:"#C9A84C", marginTop:12}}/>
-          </div>
-
-          {}
-          <div style={{
-            border:`1px solid #E4DDD0`, borderRadius:8, padding:"16px 18px",
-            background:"#fff",
-          }}>
-            <div style={{fontSize:10.5, fontWeight:600, color:"#1B2D4F", letterSpacing:"0.06em", marginBottom:12}}>PRICING SUMMARY</div>
-            <div style={{display:"flex", justifyContent:"space-between", marginBottom:8}}>
-              <span style={{fontSize:12.5, color:"#4A5568"}}>Price per Person</span>
-              <span style={{fontSize:12.5, fontWeight:500}}>{sym}{form.pricePerPerson||0}</span>
-            </div>
-            <div style={{display:"flex", justifyContent:"space-between", marginBottom:8}}>
-              <span style={{fontSize:12.5, color:"#4A5568"}}>Guests</span>
-              <span style={{fontSize:12.5, fontWeight:500}}>{form.guestCount||1}</span>
-            </div>
-            {discount>0 && (
-              <div style={{display:"flex", justifyContent:"space-between", marginBottom:8}}>
-                <span style={{fontSize:12.5, color:"#C0392B"}}>Discount ({form.discountPct}%)</span>
-                <span style={{fontSize:12.5, color:"#C0392B"}}>-{sym}{discount}</span>
-              </div>
-            )}
-            <div style={{height:1, background:"#E4DDD0", margin:"10px 0"}}/>
-            <div style={{display:"flex", justifyContent:"space-between", alignItems:"baseline"}}>
-              <span style={{fontSize:13, fontWeight:600}}>Total Price</span>
-              <span style={{fontSize:20, fontWeight:700, color:"#1B2D4F", fontFamily:"Playfair Display,serif"}}>{sym}{net}</span>
-            </div>
-          </div>
-
-          {}
-          <div style={{
-            background:"#1B2D4F", borderRadius:8, padding:"16px 14px",
-            display:"flex", flexDirection:"column", justifyContent:"center",
-          }}>
-            <div style={{fontSize:9.5, letterSpacing:"0.14em", color:"#C9A84C", textTransform:"uppercase", fontWeight:600, marginBottom:6}}>DEPOSIT REQUIRED</div>
-            <div style={{fontSize:30, fontWeight:700, color:"#FAF7F0", fontFamily:"Playfair Display,serif", lineHeight:1}}>{sym}{deposit}</div>
-            <div style={{height:1, background:"rgba(201,168,76,0.4)", margin:"10px 0"}}/>
-            <div style={{fontSize:9.5, letterSpacing:"0.14em", color:"#C9A84C", textTransform:"uppercase", fontWeight:600, marginBottom:6}}>REMAINING BALANCE</div>
-            <div style={{fontSize:24, fontWeight:700, color:"#FAF7F0", fontFamily:"Playfair Display,serif", lineHeight:1}}>{sym}{remaining}</div>
-          </div>
-        </div>
-
-        {}
-        <div style={{height:1, background:"linear-gradient(90deg,#C9A84C,transparent)", marginBottom:24}}/>
-
-        {}
-        <div style={{display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:20, marginBottom:24}}>
-          {}
-          <div>
-            <div style={{fontSize:10, color:"#C9A84C", letterSpacing:"0.12em", textTransform:"uppercase", fontWeight:600, marginBottom:10}}>INCLUDED SERVICES</div>
-            {incOn.map((s,i)=>(
-              <div key={i} style={{display:"flex", alignItems:"flex-start", gap:8, marginBottom:7}}>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#C9A84C" strokeWidth="2" strokeLinecap="round" style={{marginTop:1, flexShrink:0}}><path d="M22 11.08V12a10 10 0 11-5.93-9.14 M22 4L12 14.01l-3-3"/></svg>
-                <span style={{fontSize:12, color:"#1B2D4F", lineHeight:1.4}}>{s.label}</span>
-              </div>
-            ))}
-          </div>
-          {}
-          <div>
-            <div style={{fontSize:10, color:"#8A8070", letterSpacing:"0.12em", textTransform:"uppercase", fontWeight:600, marginBottom:10}}>NOT INCLUDED</div>
-            {excOn.map((s,i)=>(
-              <div key={i} style={{display:"flex", alignItems:"flex-start", gap:8, marginBottom:7}}>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#8A8070" strokeWidth="2" strokeLinecap="round" style={{marginTop:1, flexShrink:0}}><circle cx="12" cy="12" r="10"/><path d="M15 9l-6 6M9 9l6 6"/></svg>
-                <span style={{fontSize:12, color:"#4A5568", lineHeight:1.4}}>{s.label}</span>
-              </div>
-            ))}
-          </div>
-          {}
-          <div>
-            <div style={{fontSize:10, color:"#C9A84C", letterSpacing:"0.12em", textTransform:"uppercase", fontWeight:600, marginBottom:10}}>EXPERIENCE HIGHLIGHTS</div>
-            {["Top historic sites","Scenic Bosphorus views","Photo stops & hidden gems","Local cuisine experience","Flexible & personalized"].map((h,i)=>(
-              <div key={i} style={{display:"flex", alignItems:"center", gap:8, marginBottom:7}}>
-                <div style={{width:6, height:6, borderRadius:"50%", background:"#C9A84C", flexShrink:0}}/>
-                <span style={{fontSize:12, color:"#4A5568"}}>{h}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {}
-        <div style={{height:1, background:"linear-gradient(90deg,#C9A84C,transparent)", marginBottom:20}}/>
-
-        {}
-        {form.specialRequests && (
-          <div style={{
-            background:"#fff", borderRadius:8, padding:"12px 16px",
-            border:`1px solid #E4DDD0`, marginBottom:20,
-          }}>
-            <div style={{fontSize:9.5, color:"#C9A84C", textTransform:"uppercase", letterSpacing:"0.12em", fontWeight:600, marginBottom:6}}>SPECIAL REQUESTS</div>
-            <div style={{fontSize:12.5, color:"#4A5568", lineHeight:1.6}}>{form.specialRequests}</div>
+  if (mode === "linked" && s.customerId) {
+    return (
+      <div>
+        {s.fromLeadId && (
+          <div style={{marginBottom:16, padding:"10px 14px", background:C.blueBg, border:`1px solid ${C.blue}30`, borderRadius:8, display:"flex", alignItems:"center", gap:8}}>
+            <span style={{fontSize:12, color:C.blue, fontFamily:"'DM Sans',sans-serif"}}>Talepten oluşturuluyor:</span>
+            <IDLink id={s.fromLeadId} type="lead"/>
           </div>
         )}
-
-        {}
-        <div style={{display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:16, marginBottom:0}}>
+        <div style={{padding:"16px 18px", background:C.ivory, border:`1px solid ${C.borderLight}`, borderRadius:10, display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:14}}>
           <div>
-            <div style={{fontSize:9.5, color:"#C9A84C", textTransform:"uppercase", letterSpacing:"0.12em", fontWeight:600, marginBottom:8}}>TERMS & NOTES</div>
-            {[
-              "This proposal is valid for 7 days.",
-              `Prices quoted in ${form.currency||"EUR"}.`,
-              "Deposit required to confirm.",
-              "Itinerary can be customized.",
-            ].map((t,i)=>(
-              <div key={i} style={{display:"flex", gap:6, marginBottom:5}}>
-                <span style={{color:"#C9A84C", flexShrink:0}}>•</span>
-                <span style={{fontSize:11.5, color:"#4A5568", lineHeight:1.4}}>{t}</span>
-              </div>
-            ))}
+            <div style={{fontSize:15, fontWeight:600, color:C.text, fontFamily:"'Playfair Display',serif", marginBottom:6}}>{s.guestName || "—"}</div>
+            <div style={{display:"flex", flexDirection:"column", gap:3}}>
+              <span style={{fontSize:12.5, color:C.textMid, fontFamily:"'DM Sans',sans-serif"}}>{s.email || "E-posta yok"}</span>
+              <span style={{fontSize:12.5, color:C.textMid, fontFamily:"'DM Sans',sans-serif"}}>{s.phone || "Telefon yok"}</span>
+              <span style={{fontSize:12.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>{s.nationality || "Uyruk belirtilmedi"} · {s.language}</span>
+            </div>
           </div>
-          <div>
-            <div style={{fontSize:9.5, color:"#C9A84C", textTransform:"uppercase", letterSpacing:"0.12em", fontWeight:600, marginBottom:8}}>PREPARED BY</div>
-            <div style={{width:28, height:1.5, background:"#C9A84C", marginBottom:8}}/>
-            <div style={{fontSize:14, fontWeight:700, color:"#1B2D4F", fontFamily:"Playfair Display,serif"}}>{getAuthContext().displayName}</div>
-            <div style={{fontSize:12, color:"#8A8070", marginTop:2}}>{getAuthContext().role}</div>
-          </div>
-          <div>
-            <div style={{fontSize:9.5, color:"#C9A84C", textTransform:"uppercase", letterSpacing:"0.12em", fontWeight:600, marginBottom:8}}>THANK YOU!</div>
-            <div style={{width:28, height:1.5, background:"#C9A84C", marginBottom:8}}/>
-            <div style={{fontSize:12, color:"#4A5568", lineHeight:1.6}}>We look forward to welcoming you to Istanbul.</div>
-          </div>
+          <button onClick={clearLink} style={{padding:"6px 12px", borderRadius:7, border:`1px solid ${C.border}`, background:C.white, color:C.textMid, cursor:"pointer", fontFamily:"'DM Sans',sans-serif", fontSize:12}}>Değiştir</button>
         </div>
       </div>
+    );
+  }
 
-      {}
-      <div style={{
-        background:"#1B2D4F", padding:"14px 36px",
-        display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr",
-        gap:12,
-      }}>
+  return (
+    <div style={{display:"flex", flexDirection:"column", gap:16}}>
+      {s.fromLeadId && (
+        <div style={{padding:"10px 14px", background:C.blueBg, border:`1px solid ${C.blue}30`, borderRadius:8, display:"flex", alignItems:"center", gap:8}}>
+          <span style={{fontSize:12, color:C.blue, fontFamily:"'DM Sans',sans-serif"}}>Talepten oluşturuluyor:</span>
+          <IDLink id={s.fromLeadId} type="lead"/>
+        </div>
+      )}
+      <div style={{display:"flex", gap:8}}>
+        <button onClick={()=>setMode("search")} style={qwPill(mode==="search")}>Mevcut Müşteri Ara</button>
+        <button onClick={()=>setMode("new")} style={qwPill(mode==="new")}>Yeni Müşteri Oluştur</button>
+      </div>
+
+      {mode === "search" ? (
+        <div>
+          <FRow label="Müşteri Ara" hint="Ad, e-posta veya telefon ile arayın">
+            <FText value={query} onChange={setQuery} placeholder="Ara…"/>
+          </FRow>
+          {query.trim() && (
+            results.length === 0 ? (
+              <div style={{padding:"14px", textAlign:"center", fontSize:12.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>
+                Eşleşen müşteri bulunamadı — "Yeni Müşteri Oluştur"a geçin.
+              </div>
+            ) : (
+              <div style={{border:`1px solid ${C.borderLight}`, borderRadius:8, overflow:"hidden"}}>
+                {results.map(c=>(
+                  <div key={c.id} onClick={()=>pick(c)} style={{padding:"10px 14px", cursor:"pointer", borderBottom:`1px solid ${C.borderLight}`, display:"flex", justifyContent:"space-between"}}>
+                    <span style={{fontSize:13, color:C.text, fontFamily:"'DM Sans',sans-serif", fontWeight:500}}>{c.name}</span>
+                    <span style={{fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>{c.email || c.phone || ""}</span>
+                  </div>
+                ))}
+              </div>
+            )
+          )}
+        </div>
+      ) : (
+        <FGrid cols={2}>
+          <FRow label="Ad Soyad" required error={errs.guestName}><FText value={s.guestName} onChange={v=>setS(p=>({...p,guestName:v}))} placeholder="Ad Soyad"/></FRow>
+          <FRow label="E-posta"><FText value={s.email} onChange={v=>setS(p=>({...p,email:v}))} placeholder="email@example.com" type="email"/></FRow>
+          <FRow label="Telefon"><FText value={s.phone} onChange={v=>setS(p=>({...p,phone:v}))} placeholder="+90 555 000 0000" mono/></FRow>
+          <FRow label="Uyruk"><FText value={s.nationality} onChange={v=>setS(p=>({...p,nationality:v}))} placeholder="Türkiye"/></FRow>
+          <FRow label="Dil"><FSelect value={s.language} onChange={v=>setS(p=>({...p,language:v}))} options={QUOTE_LANGUAGE_OPTIONS}/></FRow>
+        </FGrid>
+      )}
+    </div>
+  );
+}
+
+function QuoteStepTour({ s, setS, tourList, toursLoading, toursError, errs }) {
+  function pickTour(id) {
+    const t = (tourList||[]).find(x=>x.id===id);
+    setS(prev => ({
+      ...prev, tourId:id, tourName: t?.name || prev.tourName,
+      pricingType: (t?.pricingType==="flat" || t?.pricingType==="group") ? "group" : prev.pricingType,
+      groupPrice: (t?.pricingType==="flat" || t?.pricingType==="group") ? String(t.flatPrice||"") : prev.groupPrice,
+      pricePerPerson: t?.pricingType==="per_person" ? String(t.flatPrice||"") : prev.pricePerPerson,
+      currency: t?.currency || prev.currency,
+    }));
+  }
+  return (
+    <div style={{display:"flex", flexDirection:"column", gap:16}}>
+      <FRow label="Tur">
+        {toursLoading ? (
+          <div style={{fontSize:12.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", padding:"9px 0"}}>Turlar yükleniyor…</div>
+        ) : toursError ? (
+          <div style={{fontSize:12.5, color:C.red, fontFamily:"'DM Sans',sans-serif", padding:"9px 0"}}>Turlar yüklenemedi: {toursError}</div>
+        ) : (tourList||[]).length === 0 ? (
+          <div style={{fontSize:12.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", padding:"12px 14px", background:C.ivory, border:`1px solid ${C.borderLight}`, borderRadius:8}}>
+            Henüz tanımlı tur bulunmuyor. Tur adını doğrudan aşağıya yazabilirsiniz.
+          </div>
+        ) : (
+          <FSelect value={s.tourId} onChange={pickTour} options={[["","-- Kataloğdan seçin --"], ...tourList.map(t=>[t.id,t.name])]}/>
+        )}
+      </FRow>
+      <FRow label="Tur / Deneyim Adı" required error={errs.tourName} hint={s.tourId ? undefined : "Kataloğda yoksa adını doğrudan girebilirsiniz"}>
+        <FText value={s.tourName} onChange={v=>setS(p=>({...p, tourId: v!==p.tourName ? "" : p.tourId, tourName:v}))} placeholder="Tur adı"/>
+      </FRow>
+      <FGrid cols={2}>
+        <FRow label="Başlangıç Tarihi" required error={errs.travelDate}><FText type="date" value={s.travelDate} onChange={v=>setS(p=>({...p,travelDate:v}))}/></FRow>
+        <FRow label="Başlangıç Saati"><FText type="time" value={s.travelTime} onChange={v=>setS(p=>({...p,travelTime:v}))}/></FRow>
+        <FRow label="Kişi Sayısı"><input type="number" min="1" value={s.guestCount} onChange={e=>setS(p=>({...p,guestCount:e.target.value}))} style={qwNumInputStyle()}/></FRow>
+        <FRow label="Dil"><FSelect value={s.language} onChange={v=>setS(p=>({...p,language:v}))} options={QUOTE_LANGUAGE_OPTIONS}/></FRow>
+        <FRow label="Karşılama / Pickup"><FSelect value={s.pickup} onChange={v=>setS(p=>({...p,pickup:v}))} options={QUOTE_PICKUP_OPTIONS}/></FRow>
+        {s.pickup !== "Karşılama Yok" && (
+          <FRow label="Pickup Lokasyonu"><FText value={s.pickupLocation} onChange={v=>setS(p=>({...p,pickupLocation:v}))} placeholder="Otel adı / adres"/></FRow>
+        )}
+      </FGrid>
+    </div>
+  );
+}
+
+function QuoteStepPricing({ s, setS, totals, errs }) {
+  const sym = s.currency==="TRY"?"₺":s.currency==="GBP"?"£":s.currency==="USD"?"$":"€";
+  return (
+    <div style={{display:"flex", flexDirection:"column", gap:16}}>
+      <FGrid cols={2}>
+        <FRow label="Para Birimi"><FSelect value={s.currency} onChange={v=>setS(p=>({...p,currency:v}))} options={CURRENCY_OPTIONS}/></FRow>
+        <FRow label="Fiyatlandırma Tipi">
+          <div style={{display:"flex", gap:8}}>
+            <button onClick={()=>setS(p=>({...p,pricingType:"per_person"}))} style={qwPill(s.pricingType==="per_person")}>Kişi Başı Fiyat</button>
+            <button onClick={()=>setS(p=>({...p,pricingType:"group"}))} style={qwPill(s.pricingType==="group")}>Toplam Grup Fiyatı</button>
+          </div>
+        </FRow>
+      </FGrid>
+      {s.pricingType === "group" ? (
+        <FRow label="Toplam Grup Fiyatı" error={errs.pricing}>
+          <input type="number" min="0" value={s.groupPrice} onChange={e=>setS(p=>({...p,groupPrice:e.target.value}))} style={qwNumInputStyle(errs.pricing)} placeholder="0"/>
+        </FRow>
+      ) : (
+        <FRow label="Kişi Başı Fiyat" error={errs.pricing}>
+          <input type="number" min="0" value={s.pricePerPerson} onChange={e=>setS(p=>({...p,pricePerPerson:e.target.value}))} style={qwNumInputStyle(errs.pricing)} placeholder="0"/>
+        </FRow>
+      )}
+      <FGrid cols={2}>
+        <FRow label="İndirim %"><input type="number" min="0" max="100" value={s.discountPct} onChange={e=>setS(p=>({...p,discountPct:e.target.value}))} style={qwNumInputStyle()}/></FRow>
+        <FRow label="Kapora %"><input type="number" min="0" max="100" value={s.depositPct} onChange={e=>setS(p=>({...p,depositPct:e.target.value}))} style={qwNumInputStyle()}/></FRow>
+      </FGrid>
+      <div style={{display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:10, padding:"14px 16px", background:C.ivory, borderRadius:10, border:`1px solid ${C.borderLight}`}}>
         {[
-          { icon:"M12 2a10 10 0 100 20A10 10 0 0012 2z M2 12h20", label:"www.desetour.com" },
-          { icon:"M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z M22 6l-10 7L2 6", label:"hello@desetour.com" },
-          { icon:"M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07A19.5 19.5 0 013.07 9.81a19.79 19.79 0 01-3.07-8.63A2 2 0 012 .18h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L6.09 7.91a16 16 0 006 6l1.09-1.09a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z", label:"+90 555 123 45 67" },
-          { icon:"M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z M12 10a1 1 0 100-2 1 1 0 000 2z", label:"Istanbul, Türkiye" },
-        ].map((f,i)=>(
-          <div key={i} style={{display:"flex", alignItems:"center", gap:7}}>
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="rgba(248,245,238,0.5)" strokeWidth="1.8" strokeLinecap="round">
-              <path d={f.icon}/>
-            </svg>
-            <span style={{fontSize:11, color:"rgba(248,245,238,0.55)", fontFamily:"DM Sans,sans-serif"}}>{f.label}</span>
+          {label:"Ara Toplam", val:totals.subtotal},
+          {label:"İndirim", val:totals.discountAmount},
+          {label:"Genel Toplam", val:totals.total, bold:true},
+          {label:"Kapora Tutarı", val:totals.deposit},
+          {label:"Kalan Tutar", val:totals.remaining},
+        ].map((r,i)=>(
+          <div key={i} style={{textAlign:"center"}}>
+            <div style={{fontSize:10, color:C.textFaint, textTransform:"uppercase", letterSpacing:"0.06em", fontFamily:"'DM Sans',sans-serif", marginBottom:4}}>{r.label}</div>
+            <div style={{fontSize:r.bold?16:14, fontWeight:r.bold?700:600, color:r.bold?C.gold:C.text, fontFamily:"'Playfair Display',serif"}}>{sym}{r.val.toLocaleString("tr-TR")}</div>
           </div>
         ))}
       </div>
+      <div style={{fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>Bu değerler otomatik hesaplanır ve salt okunurdur.</div>
     </div>
   );
 }
 
-function FormSections({
-  guestName, setGuestName, nationality, setNationality,
-  email, setEmail, phone, setPhone,
-  tourName, changeTour, tourDate, setTourDate,
-  duration, setDuration, guestCount, setGuestCount,
-  pickup, setPickup, pricePerPerson, setPricePerPerson,
-  currency, setCurrency, discountPct, setDiscountPct,
-  depositPct, setDepositPct, specialReqs, setSpecialReqs,
-  proposalNo, setProposalNo,
-  included, setIncluded, excluded, setExcluded,
-  sym, net, deposit, remaining,
-}) {
+function QuoteStepDetails({ s, setS }) {
   return (
-    <div style={{display:"flex", flexDirection:"column", gap:24}}>
-
-      {}
+    <div style={{display:"flex", flexDirection:"column", gap:20}}>
       <div>
-        <FSectionHead n="1" title="Misafir Bilgileri"/>
-        <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:12}}>
-          <div><FLabel>Ad Soyad</FLabel><FInput value={guestName}       onChange={setGuestName} placeholder="Sarah Johnson"/></div>
-          <div><FLabel>Uyruk</FLabel><FInput value={nationality}     onChange={setNationality} placeholder="Avustralya"/></div>
-          <div><FLabel>E-posta</FLabel><FInput value={email}           onChange={setEmail} placeholder="email@example.com" type="email"/></div>
-          <div><FLabel>Telefon</FLabel><FInput value={phone}           onChange={setPhone} placeholder="+90 555 000 0000"/></div>
-        </div>
+        <FLabel>Dahil Olanlar</FLabel>
+        <FCheckList items={s.included} setItems={fn=>setS(p=>({...p, included: fn(p.included)}))}/>
       </div>
-
-      {}
       <div>
-        <FSectionHead n="2" title="Deneyim Bilgileri"/>
-        <div style={{display:"flex", flexDirection:"column", gap:12}}>
-          <div>
-            <FLabel>Tur Adı</FLabel>
-            <FSelect value={tourName}        onChange={changeTour} options={TOUR_OPTIONS.map(t=>t.name)}/>
-          </div>
-          <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:12}}>
-            <div><FLabel>Tur Tarihi</FLabel><FInput value={tourDate}        onChange={setTourDate} placeholder="22 June 2026"/></div>
-            <div><FLabel>Süre</FLabel><FInput value={duration}        onChange={setDuration} placeholder="8 Hours"/></div>
-            <div>
-              <FLabel>Kişi Sayısı</FLabel>
-              <div style={{display:"flex", gap:6, flexWrap:"wrap", marginTop:2}}>
-                {[1,2,3,4,5,6,7,8].map(n=>(
-                  <button key={n} onClick={()=>setGuestCount(n)} style={{
-                    width:36, height:34, borderRadius:6, cursor:"pointer",
-                    border: n===guestCount?`1.5px solid ${C.gold}`:`1px solid ${C.border}`,
-                    background: n===guestCount?C.goldPale:C.white,
-                    color: n===guestCount?C.gold:C.textMid,
-                    fontSize:13, fontWeight: n===guestCount?700:400,
-                    fontFamily:"DM Sans,sans-serif", transition:"all .12s",
-                  }}>{n}</button>
-                ))}
-              </div>
-            </div>
-            <div>
-              <FLabel>Karşılama</FLabel>
-              <FSelect value={pickup}          onChange={setPickup} options={PICKUP_OPTIONS}/>
-            </div>
-          </div>
-        </div>
+        <FLabel>Dahil Olmayanlar</FLabel>
+        <FCheckList items={s.excluded} setItems={fn=>setS(p=>({...p, excluded: fn(p.excluded)}))} accent={C.red}/>
       </div>
-
-      {}
-      <div>
-        <FSectionHead n="3" title="Fiyatlandırma"/>
-        <div style={{display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:12, marginBottom:14}}>
-          <div>
-            <FLabel>Kişi Başı Fiyat</FLabel>
-            <div style={{position:"relative"}}>
-              <span style={{position:"absolute", left:10, top:"50%", transform:"translateY(-50%)", color:C.textFaint, fontSize:13, pointerEvents:"none"}}>{sym}</span>
-              <input type="number" value={pricePerPerson}
-                onChange={e=>setPricePerPerson(Number(e.target.value))}
-                style={{
-                  width:"100%", padding:"9px 12px 9px 24px",
-                  border:`1px solid ${C.border}`, borderRadius:7,
-                  background:C.ivory, fontSize:13, color:C.text,
-                  fontFamily:"DM Sans,sans-serif", outline:"none",
-                  boxSizing:"border-box",
-                }}/>
-            </div>
-          </div>
-          <div>
-            <FLabel>Para Birimi</FLabel>
-            <FSelect value={currency}        onChange={setCurrency} options={CURRENCY_OPTIONS}/>
-          </div>
-          <div>
-            <FLabel>İndirim</FLabel>
-            <div style={{display:"flex", gap:5}}>
-              {[0,5,10,15,20].map(d=>(
-                <button key={d} onClick={()=>setDiscountPct(d)} style={{
-                  flex:1, padding:"8px 0", borderRadius:6, cursor:"pointer",
-                  border: d===discountPct?`1.5px solid ${C.red}`:`1px solid ${C.border}`,
-                  background: d===discountPct?"#FDECEC":C.white,
-                  color: d===discountPct?C.red:C.textMid,
-                  fontSize:12, fontFamily:"DM Sans,sans-serif", transition:"all .12s",
-                }}>%{d}</button>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        {}
-        <div style={{
-          display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr",
-          gap:10, padding:"14px 16px",
-          background:"#1B2D4F", borderRadius:10,
-        }}>
-          {[
-            { label:"Toplam",  val:`${sym}${net}`,       gold:false },
-            { label:"Kapora",  val:`${sym}${deposit}`,   gold:true  },
-            { label:"Kalan",   val:`${sym}${remaining}`, gold:false },
-          ].map((r,i)=>(
-            <div key={i} style={{textAlign:"center"}}>
-              <div style={{fontSize:10, color:"rgba(248,245,238,0.45)", textTransform:"uppercase", letterSpacing:"0.1em", marginBottom:4, fontFamily:"DM Sans,sans-serif"}}>{r.label}</div>
-              <div style={{fontSize:18, fontWeight:700, color:r.gold?C.goldLight:"#FAF7F0", fontFamily:"Playfair Display,serif"}}>{r.val}</div>
-            </div>
-          ))}
-          <div>
-            <div style={{fontSize:10, color:"rgba(248,245,238,0.45)", textTransform:"uppercase", letterSpacing:"0.1em", marginBottom:6, fontFamily:"DM Sans,sans-serif"}}>Kapora %</div>
-            <div style={{display:"flex", gap:4}}>
-              {[20,25,30,50].map(d=>(
-                <button key={d} onClick={()=>setDepositPct(d)} style={{
-                  flex:1, padding:"4px 0", borderRadius:5, cursor:"pointer",
-                  border: d===depositPct?`1px solid ${C.goldLight}`:`1px solid rgba(255,255,255,0.15)`,
-                  background: d===depositPct?"rgba(201,168,76,0.2)":"transparent",
-                  color: d===depositPct?C.goldLight:"rgba(248,245,238,0.5)",
-                  fontSize:10.5, fontFamily:"DM Sans,sans-serif",
-                }}>%{d}</button>
-              ))}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {}
-      <div>
-        <FSectionHead n="4" title="Dahil Hizmetler"/>
-        <FCheckList items={included} setItems={setIncluded}/>
-      </div>
-
-      {}
-      <div>
-        <FSectionHead n="5" title="Dahil Olmayan Hizmetler"/>
-        <FCheckList items={excluded} setItems={setExcluded} accent={C.red}/>
-      </div>
-
-      {}
-      <div>
-        <FSectionHead n="6" title="Özel Talepler"/>
-        <textarea value={specialReqs}
-          onChange={e=>setSpecialReqs(e.target.value)}
-          placeholder="Müşterinin özel talepleri..."
-          rows={3}
-          style={{
-            width:"100%", padding:"10px 12px",
-            border:`1px solid ${C.border}`, borderRadius:7,
-            background:C.ivory, fontSize:13, color:C.text,
-            fontFamily:"DM Sans,sans-serif", outline:"none",
-            boxSizing:"border-box", resize:"vertical", lineHeight:1.6,
-          }}/>
-      </div>
-
-      {}
-      <div>
-        <FLabel>Teklif Numarası</FLabel>
-        <FInput value={proposalNo}      onChange={setProposalNo} placeholder="Q-2026-007"/>
-      </div>
+      <FRow label="Özel Talepler / Notlar">
+        <FTextArea value={s.notes} onChange={v=>setS(p=>({...p,notes:v}))} placeholder="Müşterinin özel talepleri…" rows={3}/>
+      </FRow>
+      <FGrid cols={2}>
+        <FRow label="Teklif Geçerlilik Tarihi"><FText type="date" value={s.validUntil} onChange={v=>setS(p=>({...p,validUntil:v}))}/></FRow>
+        <FRow label="Ödeme Koşulları" hint={`Şemada ayrı bir ödeme koşulları alanı yok — kapora oranı (Fiyatlandırma adımında %${s.depositPct}) bu teklifin ödeme koşuludur.`}>
+          <FText value={`Kapora %${s.depositPct} — kalan bakiye tur öncesi ödenir`} onChange={()=>{}} disabled/>
+        </FRow>
+      </FGrid>
     </div>
   );
 }
 
-function NewProposalPage({ onBack }) {
+function QuoteStepPreview({ s, totals, linkedCustomer, onSubmit, saving, isEdit }) {
+  const sym = s.currency==="TRY"?"₺":s.currency==="GBP"?"£":s.currency==="USD"?"$":"€";
+  const custName = linkedCustomer?.name || s.guestName || "—";
+  const incOn = s.included.filter(i=>i.on);
+  const excOn = s.excluded.filter(i=>i.on);
+  return (
+    <div style={{display:"flex", flexDirection:"column", gap:20}}>
+      <div style={{background:`linear-gradient(135deg, ${C.navyDeep} 0%, ${C.navy} 100%)`, borderRadius:12, padding:"24px 28px", color:C.white}}>
+        <div style={{fontSize:11, color:"rgba(248,245,238,0.55)", textTransform:"uppercase", letterSpacing:"0.09em", fontFamily:"'DM Sans',sans-serif", marginBottom:8}}>Teklif Önizleme</div>
+        <div style={{fontSize:22, fontWeight:700, fontFamily:"'Playfair Display',serif", marginBottom:4}}>{s.tourName || "—"}</div>
+        <div style={{fontSize:13, color:"rgba(248,245,238,0.7)", fontFamily:"'DM Sans',sans-serif"}}>{custName} · {totals.pax} kişi</div>
+      </div>
 
-  const _pf = SESSION.getPrefill() || {};
-  const [guestName,      setGuestName]      = useState(_pf.guestName     || "");
-  const [nationality,    setNationality]    = useState(_pf.nationality   || "");
-  const [email,          setEmail]          = useState(_pf.email         || "");
-  const [phone,          setPhone]          = useState(_pf.phone         || "");
-  const [tourName,       setTourName]       = useState(_pf.tourName      || "");
-  const [tourDate,       setTourDate]       = useState(_pf.tourDate      || "");
-  const [duration,       setDuration]       = useState(_pf.duration      || "");
-  const [guestCount,     setGuestCount]     = useState(_pf.guestCount    || 4);
-  const [pickup,         setPickup]         = useState(_pf.pickup        || "Hotel Pickup");
-  const [pricePerPerson, setPricePerPerson] = useState(_pf.pricePerPerson|| 90);
-  const [currency,       setCurrency]       = useState(_pf.currency      || "EUR");
-  const [discountPct,    setDiscountPct]    = useState(_pf.discountPct   || 0);
-  const [saveErrs,  setSaveErrs]  = useState({});
-  const [saveBusy,  setSaveBusy]  = useState(false);
-  const [depositPct,     setDepositPct]     = useState(_pf.depositPct    || 25);
-  const [specialReqs,    setSpecialReqs]    = useState(_pf.specialReqs   || "");
-  const [proposalNo,     setProposalNo]     = useState(_pf.proposalNo    || "");
-  const [fromLeadId,     setFromLeadId]     = useState(_pf.fromLead      || null);
+      <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:16}}>
+        <QCard>
+          <QCardHead title="Misafir & Tur"/>
+          <QInfoRow label="Misafir" value={custName} bold/>
+          <QInfoRow label="Tur" value={s.tourName || "—"}/>
+          <QInfoRow label="Tarih" value={s.travelDate || "—"}/>
+          <QInfoRow label="Saat" value={s.travelTime || "—"}/>
+          <QInfoRow label="Kişi Sayısı" value={`${totals.pax} kişi`}/>
+          <QInfoRow label="Dil" value={s.language || "—"}/>
+          <QInfoRow label="Karşılama" value={`${s.pickup}${s.pickupLocation?" — "+s.pickupLocation:""}`}/>
+        </QCard>
+        <QCard>
+          <QCardHead title="Fiyatlandırma"/>
+          <QInfoRow label="Ara Toplam" value={`${sym}${totals.subtotal.toLocaleString("tr-TR")}`}/>
+          <QInfoRow label="İndirim" value={`${sym}${totals.discountAmount.toLocaleString("tr-TR")}`}/>
+          <QInfoRow label="Genel Toplam" value={`${sym}${totals.total.toLocaleString("tr-TR")}`} bold highlight/>
+          <QInfoRow label="Kapora" value={`${sym}${totals.deposit.toLocaleString("tr-TR")}`}/>
+          <QInfoRow label="Kalan" value={`${sym}${totals.remaining.toLocaleString("tr-TR")}`}/>
+          <QInfoRow label="Geçerlilik" value={s.validUntil || "Belirtilmedi"}/>
+        </QCard>
+      </div>
 
-  const [included, setIncluded] = useState(
-    DEFAULT_INCLUDED.map(l=>({label:l, on:true}))
+      <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:16}}>
+        <QCard>
+          <QCardHead title="Dahil Olanlar"/>
+          <div style={{padding:"10px 20px 14px"}}>
+            {incOn.length===0 ? <div style={{fontSize:12.5, color:C.textFaint, fontStyle:"italic"}}>Seçilmedi</div> : incOn.map((i,idx)=><CheckItem key={idx} label={i.label} checked={true}/>)}
+          </div>
+        </QCard>
+        <QCard>
+          <QCardHead title="Dahil Olmayanlar"/>
+          <div style={{padding:"10px 20px 14px"}}>
+            {excOn.length===0 ? <div style={{fontSize:12.5, color:C.textFaint, fontStyle:"italic"}}>Seçilmedi</div> : excOn.map((i,idx)=><CheckItem key={idx} label={i.label} checked={false}/>)}
+          </div>
+        </QCard>
+      </div>
+
+      {s.notes && (
+        <QCard>
+          <QCardHead title="Notlar"/>
+          <div style={{padding:"10px 20px 14px", fontSize:13, color:C.textMid, fontFamily:"'DM Sans',sans-serif", lineHeight:1.6}}>{s.notes}</div>
+        </QCard>
+      )}
+
+      <button onClick={onSubmit} disabled={saving} style={{
+        alignSelf:"flex-start", padding:"12px 28px", borderRadius:8,
+        background:C.navy, border:"none", color:C.white,
+        fontFamily:"'DM Sans',sans-serif", fontSize:14, fontWeight:600,
+        cursor: saving ? "default" : "pointer", opacity: saving?0.6:1,
+      }}>
+        {saving ? "Kaydediliyor…" : (isEdit ? "Değişiklikleri Kaydet" : "Teklifi Oluştur")}
+      </button>
+    </div>
   );
-  const [excluded, setExcluded] = useState(
-    DEFAULT_EXCLUDED.map(l=>({label:l, on:true}))
-  );
+}
 
-  function changeTour(name) {
-    const t = TOUR_OPTIONS.find(x=>x.name===name);
-    setTourName(name);
-    if(t) { setDuration(t.duration); setPricePerPerson(t.basePrice); }
+function QuoteWizard({ onBack, editQuote }) {
+  const isEdit = !!editQuote;
+  const { data: tourList, loading: toursLoading, error: toursError } = useRepo("tour", "getAll");
+  const { data: customerList } = useRepo("customer", "getAll");
+
+  const [step, setStep] = useState(0);
+  const [s, setS] = useState(() => isEdit ? quoteStateFromExisting(editQuote) : emptyQuoteWizardState(SESSION.getPrefill()));
+  const [errs, setErrs] = useState({});
+  const [saving, setSaving] = useState(false);
+
+  const { data: originLead } = useRepo("lead", "getById", s.fromLeadId || null);
+  const { data: linkedCustomer } = useRepo("customer", "getById", s.customerId || null);
+
+  useEffect(() => {
+    if (originLead && originLead.customerId && !s.customerId) {
+      setS(prev => ({ ...prev, customerId: originLead.customerId }));
+    }
+  }, [originLead]);
+
+  const totals = computeQuoteTotals(s);
+
+  function goNext() {
+    const e = validateQuoteStep(step, s);
+    setErrs(e);
+    if (Object.keys(e).length) { showToast("Lütfen gerekli alanları doldurun."); return; }
+    setStep(st => Math.min(QUOTE_STEPS.length-1, st+1));
+  }
+  function goStepBack() {
+    if (step === 0) { onBack(); return; }
+    setStep(st => st-1);
   }
 
-  const sym      = currency==="TRY"?"₺":currency==="GBP"?"£":currency==="USD"?"$":"€";
-  const total    = (pricePerPerson||0) * (guestCount||1);
-  const discount = Math.round(total*(discountPct||0)/100);
-  const net      = total - discount;
-  const deposit  = Math.round(net*(depositPct||25)/100);
-  const remaining= net - deposit;
-
-  const form = { guestName, nationality, email, phone, tourName, tourDate, duration,
-    guestCount, pickup, pricePerPerson, currency, discountPct, depositPct,
-    specialRequests:specialReqs, proposalNo };
-
-  async function handleSaveQuote(status = "Taslak") {
-    const errs = validate({
-      guestName: { required:"Misafir adı zorunludur" },
-      tourName:  { required:"Tur adı zorunludur" },
-      guestCount:{ number:"Kişi sayısı sayısal olmalıdır", min:1, max:500 },
-      currency:  { required:"Para birimi zorunludur" },
-    }, { guestName, tourName, guestCount: String(guestCount), currency });
-
-    const total = Math.round((pricePerPerson||0)*guestCount*(1-discountPct/100));
-    if (total <= 0) errs.pricePerPerson = "Toplam tutar sıfırdan büyük olmalıdır";
-
-    setSaveErrs(errs);
-    if (Object.keys(errs).length) { showToast("Lütfen form hatalarını düzeltin."); return; }
-
-    setSaveBusy(true);
+  async function handleSubmit() {
+    setSaving(true);
     try {
-      const quoteRepo = getActiveRepo("quote");
-      const custRepo  = getActiveRepo("customer");
-
-      let custId = null;
-      const existing = await Promise.resolve(custRepo.findByContact?.({ email: email||null, phone: phone||null })).catch(()=>null);
-      if (existing) {
-        custId = existing.id;
-      } else if (guestName) {
-        const newCust = await Promise.resolve(custRepo.create({
-          name: guestName, email: email||"", phone: phone||"",
-          country: nationality||"Diğer", language:"İngilizce", importType:"manual",
-        })).catch(()=>null);
-        custId = newCust?.id || null;
-      }
-
-      const items = [
-        ...included.filter(i=>i.on).map((i,idx) => ({
-          type:"Dahil", label:i.label, quantity:1, unitPrice:0, total:0, sortOrder:idx,
-        })),
-        ...excluded.map((i,idx) => ({
-          type:"Hariç", label:i.label, quantity:1, unitPrice:0, total:0, sortOrder:idx+50,
-        })),
-        { type:"Fiyat", label:`${guestCount} kişi × ${pricePerPerson} ${currency}`,
-          quantity:guestCount, unitPrice:pricePerPerson, total, sortOrder:100 },
-      ];
-
-      const newQuote = await Promise.resolve(quoteRepo.create({
-        customerId: custId, leadId: SESSION.getPrefill()?.leadId || null,
-        tourName, tourId: DB.tours.find(t=>t.name===tourName)?.id || null,
-        travelStart: tourDate||null, status,
-        guestCount, pricePerPerson, currency,
-        discountPct, discountAmount: Math.round(pricePerPerson*guestCount*discountPct/100),
-        total, deposit: Math.round(total*0.25),
-        validUntil: null, notes: specialReqs||"",
-        items,
-      }));
-
-      await autoLog("quote", newQuote?.id || "?", "created", `Teklif oluşturuldu: ${tourName}`);
-      showToast("Teklif kaydedildi ✓");
-      SESSION.clear?.();
-      setTimeout(() => {
-        if (newQuote?.id && NAV_REF.fn) NAV_REF.fn("/quotes/" + newQuote.id);
-        else if (NAV_REF.fn) NAV_REF.fn("/quotes");
-      }, 500);
+      const result = isEdit ? await updateQuoteFromWizard(editQuote.id, s) : await createQuoteFromWizard(s);
+      showToast(isEdit ? "Teklif güncellendi ✓" : "Teklif oluşturuldu ✓");
+      const targetId = result?.id || editQuote?.id;
+      if (targetId && NAV_REF.fn) NAV_REF.fn("/quotes/"+targetId);
+      else onBack();
     } catch (err) {
-      showToast("Hata: " + err.message);
+      showToast("Hata: " + (err?.message || err));
     } finally {
-      setSaveBusy(false);
+      setSaving(false);
     }
   }
 
-  async function handleConvertToReservation() {
-    await handleSaveQuote("Onaylandı");
-  }
-
   return (
-    <div style={{display:"flex", flexDirection:"column", gap:0, height:"100%"}}>
-
+    <div style={{display:"flex", flexDirection:"column", gap:16, height:"100%"}}>
       {}
-      <div style={{
-        background:C.white, border:`1px solid ${C.border}`, borderRadius:12,
-        padding:"14px 22px", marginBottom:16, flexShrink:0,
-        display:"flex", alignItems:"center", justifyContent:"space-between", gap:16,
-      }}>
-        <div style={{display:"flex", alignItems:"center", gap:14}}>
+      <div style={{background:C.white, border:`1px solid ${C.border}`, borderRadius:12, padding:"16px 22px", flexShrink:0}}>
+        <div style={{display:"flex", alignItems:"center", gap:14, marginBottom:14}}>
           <button onClick={onBack} style={{
             display:"flex", alignItems:"center", gap:6,
             background:C.ivory, border:`1px solid ${C.border}`,
             borderRadius:7, padding:"6px 12px", cursor:"pointer",
-            color:C.textMid, fontFamily:"DM Sans,sans-serif", fontSize:12.5,
-          }}
-            onMouseEnter={e=>e.currentTarget.style.background=C.ivoryDark}
-            onMouseLeave={e=>e.currentTarget.style.background=C.ivory}
-          >
+            color:C.textMid, fontFamily:"'DM Sans',sans-serif", fontSize:12.5,
+          }}>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M15 18l-6-6 6-6"/></svg>
             Teklifler
           </button>
           <div style={{width:1, height:20, background:C.borderLight}}/>
-          <div>
-            <h1 style={{margin:0, fontSize:20, fontWeight:700, color:C.text, fontFamily:"Playfair Display,serif", lineHeight:1.2}}>
-              Yeni Teklif Oluştur
-            </h1>
-            <p style={{margin:0, fontSize:12.5, color:C.textMuted, fontFamily:"DM Sans,sans-serif"}}>
-              {fromLeadId
-                ? <span>Talep <IDLink id={fromLeadId} type="lead"/> için oluşturuluyor — bilgiler otomatik dolduruldu</span>
-                : "Formu doldurun — önizleme anlık güncellenir"}
-            </p>
-          </div>
+          <h1 style={{margin:0, fontSize:19, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif"}}>
+            {isEdit ? "Teklifi Düzenle" : "Yeni Teklif Oluştur"}
+          </h1>
         </div>
-        <div style={{display:"flex", alignItems:"center", gap:10, flexShrink:0}}>
-          {}
-          {[
-            { label:"PDF İndir",          icon:"M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4 M7 10l5 5 5-5 M12 15V3", style:{} },
-            { label:"WhatsApp'a Kopyala",icon:"M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z", style:{background:"#E7F5F3", color:"#128C7E", border:"1px solid #128C7E44"} },
-            { label:"Rezervasyona Dönüştür",icon:"M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11", primary:true, action:"convert" },
-          ].map((a,i)=>(
-            <button key={i} style={{
-              display:"flex", alignItems:"center", gap:6,
-              padding:"8px 14px", borderRadius:8, cursor:"pointer",
-              border: a.primary?"none":a.style?.border||`1px solid ${C.border}`,
-              background: a.primary?C.navy:a.style?.background||C.white,
-              color: a.primary?C.white:a.style?.color||C.text,
-              fontFamily:"DM Sans,sans-serif", fontSize:12.5,
-              fontWeight:a.primary?600:400,
-              transition:"background .12s",
-            }}
-              onMouseEnter={e=>{ if(a.primary) e.currentTarget.style.background=C.navyHover; }}
-              onMouseLeave={e=>{ if(a.primary) e.currentTarget.style.background=C.navy; }}
-              onClick={a.action==="convert" ? handleConvertToReservation : undefined}
-            >
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d={a.icon}/></svg>
-              {a.label}
-            </button>
-          ))}
-        </div>
+        <QuoteStepBar steps={QUOTE_STEPS} current={step} onStepClick={setStep}/>
       </div>
 
       {}
-      <div style={{
-        display:"flex", gap:20, alignItems:"flex-start",
-        height:"calc(100vh - 180px)",
-      }}>
+      <div style={{display:"grid", gridTemplateColumns: step===4 ? "1fr" : "1fr 320px", gap:20, flex:1, minHeight:0}}>
+        <div style={{background:C.white, border:`1px solid ${C.border}`, borderRadius:12, padding:"24px 26px", overflowY:"auto"}}>
+          {step===0 && <QuoteStepGuest s={s} setS={setS} customerList={customerList} errs={errs}/>}
+          {step===1 && <QuoteStepTour s={s} setS={setS} tourList={tourList} toursLoading={toursLoading} toursError={toursError} errs={errs}/>}
+          {step===2 && <QuoteStepPricing s={s} setS={setS} totals={totals} errs={errs}/>}
+          {step===3 && <QuoteStepDetails s={s} setS={setS}/>}
+          {step===4 && <QuoteStepPreview s={s} totals={totals} linkedCustomer={linkedCustomer} onSubmit={handleSubmit} saving={saving} isEdit={isEdit}/>}
 
-        {}
-        <div style={{
-          flexShrink:0, width:420,
-          background:C.white, border:`1px solid ${C.border}`,
-          borderRadius:12, padding:"22px 22px",
-          height:"100%", overflowY:"auto",
-          boxSizing:"border-box",
-        }}>
-          <div style={{marginBottom:14}}>
-            <div style={{fontSize:14, fontWeight:600, color:C.text, fontFamily:"Playfair Display,serif", marginBottom:3}}>Teklif Formu</div>
-            <div style={{fontSize:12, color:C.textFaint, fontFamily:"DM Sans,sans-serif"}}>Alanları doldurun — önizleme sağda anlık güncellenir.</div>
-          </div>
-          <FormSections
-            guestName={guestName}       setGuestName={setGuestName}
-            nationality={nationality}   setNationality={setNationality}
-            email={email}               setEmail={setEmail}
-            phone={phone}               setPhone={setPhone}
-            tourName={tourName}         changeTour={changeTour}
-            tourDate={tourDate}         setTourDate={setTourDate}
-            duration={duration}         setDuration={setDuration}
-            guestCount={guestCount}     setGuestCount={setGuestCount}
-            pickup={pickup}             setPickup={setPickup}
-            pricePerPerson={pricePerPerson} setPricePerPerson={setPricePerPerson}
-            currency={currency}         setCurrency={setCurrency}
-            discountPct={discountPct}   setDiscountPct={setDiscountPct}
-            depositPct={depositPct}     setDepositPct={setDepositPct}
-            specialReqs={specialReqs}   setSpecialReqs={setSpecialReqs}
-            proposalNo={proposalNo}     setProposalNo={setProposalNo}
-            included={included}         setIncluded={setIncluded}
-            excluded={excluded}         setExcluded={setExcluded}
-            sym={sym} net={net} deposit={deposit} remaining={remaining}
-          />
+          {step<4 && (
+            <div style={{display:"flex", justifyContent:"space-between", marginTop:28, paddingTop:20, borderTop:`1px solid ${C.borderLight}`}}>
+              <button onClick={goStepBack} style={{
+                padding:"10px 20px", borderRadius:8, cursor:"pointer",
+                border:`1px solid ${C.border}`, background:C.white, color:C.textMid,
+                fontFamily:"'DM Sans',sans-serif", fontSize:13,
+              }}>{step===0 ? "İptal" : "Geri"}</button>
+              <button onClick={goNext} style={{
+                padding:"10px 24px", borderRadius:8, cursor:"pointer",
+                border:"none", background:C.navy, color:C.white,
+                fontFamily:"'DM Sans',sans-serif", fontSize:13, fontWeight:600,
+              }}>Devam Et</button>
+            </div>
+          )}
         </div>
 
-        {}
-        <div style={{
-          flex:1, minWidth:0,
-          height:"100%", overflowY:"auto",
-          borderRadius:12, background:C.ivoryDark,
-          padding:20, boxSizing:"border-box",
-        }}>
-          {}
-          <div style={{
-            display:"flex", alignItems:"center", gap:8, justifyContent:"center",
-            marginBottom:14,
-          }}>
-            <span style={{
-              display:"inline-flex", alignItems:"center", gap:6,
-              fontSize:11.5, color:C.green,
-              fontFamily:"DM Sans,sans-serif", fontWeight:500,
-              background:C.greenBg, padding:"4px 12px", borderRadius:99,
-              border:`1px solid ${C.green}30`,
-            }}>
-              <span style={{width:6, height:6, borderRadius:"50%", background:C.green}}/>
-              Canlı Önizleme
-            </span>
+        {step<4 && (
+          <div style={{alignSelf:"start", position:"sticky", top:0}}>
+            <QuoteSummaryPanel s={s} totals={totals} linkedCustomer={linkedCustomer}/>
           </div>
-          <ProposalPreview form={form} included={included} excluded={excluded}/>
-        </div>
+        )}
       </div>
     </div>
   );
+}
+
+function NewProposalPage({ onBack, editQuoteId }) {
+  const isEdit = !!editQuoteId;
+  const _sp = safeParam(editQuoteId);
+  if (isEdit && _sp.invalid) return (
+    <div style={{padding:40,textAlign:"center"}}><NotFound404 onBack={onBack}/></div>
+  );
+  const { data: editQuote, loading: editLoading } = useRepo("quote", "getById", editQuoteId || null);
+  if (isEdit && editLoading) return <LoadingState label="Teklif yükleniyor…"/>;
+  if (isEdit && !editQuote)  return (
+    <div style={{padding:40,textAlign:"center"}}><NotFound404 onBack={onBack}/></div>
+  );
+  return <QuoteWizard key={editQuoteId||"new"} onBack={onBack} editQuote={isEdit ? editQuote : null}/>;
 }
 
 const RES_STATUS = {
@@ -14232,8 +13889,31 @@ function NewTourModal({ onClose }) {
 
 const _QS_DB  = { 'Taslak':'draft','Gönderildi':'sent','Onaylandı':'approved','İptal':'rejected','Süresi Doldu':'expired' };
 const _QS_APP = { 'draft':'Taslak','sent':'Gönderildi','approved':'Onaylandı','rejected':'İptal','expired':'Süresi Doldu' };
-const _QI_TYPE_DB  = { 'Dahil':'included','Hariç':'excluded','Fiyat':'pricing','Not':'note' };
-const _QI_TYPE_APP = { 'included':'Dahil','excluded':'Hariç','pricing':'Fiyat','note':'Not' };
+// quote_items.item_type is CHECK-constrained to a fixed real-world enum
+// ('accommodation','tour','transfer','flight','meal','guide','entrance_fee',
+// 'insurance','extra','discount','other') — it has no "included"/"excluded"
+// concept, so a Dahil/Hariç checklist line is stored as item_type='other'
+// with the distinction kept in the description text (see buildQuoteItemRows
+// / mapQuoteItemFromDB below). Storing the old 'included'/'excluded'/
+// 'pricing' values (as this file used to) violates the CHECK constraint —
+// every quote_items insert was silently failing in Supabase mode.
+const _QI_LABEL_PREFIX = { 'Dahil':'Dahil — ', 'Hariç':'Hariç — ' };
+
+// Shared by SupabaseQuoteRepo.create/update — builds quote_items rows that
+// satisfy the item_type CHECK constraint (see note above _QI_LABEL_PREFIX).
+function buildQuoteItemRows(quoteId, items, currency) {
+  return items.map((item, i) => ({
+    quote_id:    quoteId,
+    tour_id:     item.tourId || null,
+    item_type:   item.type === 'Tur' ? 'tour' : 'other',
+    description: (_QI_LABEL_PREFIX[item.type] || '') + (item.label || item.description || ''),
+    quantity:    parseInt(item.quantity || 1),
+    unit_price:  parseFloat(item.unitPrice || 0),
+    total_price: parseFloat(item.total || item.unitPrice || 0),
+    currency:    currency || 'EUR',
+    sort_order:  item.sortOrder ?? i,
+  }));
+}
 
 function mapQuoteFromDB(r, items) {
   if (!r) return null;
@@ -14242,12 +13922,16 @@ function mapQuoteFromDB(r, items) {
   const discount = parseFloat(r.discount_amount || 0);
   const pax      = parseInt(r.guest_count || 1);
   const unitPrice= pax > 0 ? Math.round((total + discount) / pax) : 0;
+  const mappedItems = (items || []).map(mapQuoteItemFromDB);
+  // quotes has no tour_id column of its own (only quote_items does) — fall
+  // back to the quote's own "Tur" line item, if one was saved.
+  const tourItem = mappedItems.find(i => i.type === 'Tur' && i.tourId);
   return {
     id:            r.id,
     quoteNumber:   r.quote_number || r.id,
     leadId:        r.lead_id       || null,
     customerId:    r.customer_id   || null,
-    tourId:        r.tour_id       || null,
+    tourId:        r.tour_id       || tourItem?.tourId || null,
     // Real Supabase rows never had this field, only mock data did — every
     // consumer (QuotesPage's search filter, QuoteDetailPage) calls
     // .toLowerCase() / renders it directly as a string, so a missing
@@ -14270,20 +13954,27 @@ function mapQuoteFromDB(r, items) {
     status:        _QS_APP[r.status] || r.status || 'Taslak',
     validUntil:    r.valid_until   || null,
     notes:         r.notes         || '',
+    internalNotes: r.internal_notes|| '',
     assigneeId:    r.assigned_to   || null,
     createdAt:     r.created_at    ? r.created_at.split('T')[0] : '',
-    items:         (items || []).map(mapQuoteItemFromDB),
+    items:         mappedItems,
     _fromDB:       true,
   };
 }
 
 function mapQuoteItemFromDB(r) {
   if (!r) return null;
+  let type  = r.item_type === 'tour' ? 'Tur' : 'Dahil';
+  let label = r.description || '';
+  if (r.item_type === 'other') {
+    if (label.startsWith('Dahil — '))      { type = 'Dahil'; label = label.slice(8); }
+    else if (label.startsWith('Hariç — ')) { type = 'Hariç'; label = label.slice(8); }
+  }
   return {
     id:         r.id,
     quoteId:    r.quote_id,
-    type:       _QI_TYPE_APP[r.item_type] || r.item_type || 'Dahil',
-    label:      r.description || '',
+    type,
+    label,
     quantity:   parseInt(r.quantity   || 1),
     unitPrice:  parseFloat(r.unit_price || 0),
     total:      parseFloat(r.total_price || 0),
@@ -14366,12 +14057,14 @@ const SupabaseQuoteRepo = {
 
     const pax     = parseInt(data.guestCount || data.pax || 1);
     const unit    = parseFloat(data.pricePerPerson || data.unitPrice || 0);
-    const disc    = parseFloat(data.discountAmount || 0);
+    const disc    = parseFloat(data.discountAmount ?? 0);
     const discPct = parseFloat(data.discountPct || 0);
-    const total   = data.total
+    const total   = data.total != null
       ? parseFloat(data.total)
       : Math.round(unit * pax * (1 - discPct / 100));
-    const deposit = data.deposit ? parseFloat(data.deposit) : Math.round(total * 0.25);
+    // data.deposit can legitimately be 0 (no deposit required) — `? :` on a
+    // falsy-but-valid 0 was silently discarding it and defaulting to 25%.
+    const deposit = data.deposit != null ? parseFloat(data.deposit) : Math.round(total * 0.25);
 
     const row = {
       quote_number:    qNum,
@@ -14383,7 +14076,7 @@ const SupabaseQuoteRepo = {
       currency:        data.currency    || 'EUR',
       guest_count:     pax,
       subtotal:        total + disc,
-      discount_amount: disc || Math.round((unit * pax * discPct) / 100),
+      discount_amount: disc,
       total_amount:    total,
       deposit_amount:  deposit,
       tax_rate:        0,
@@ -14391,6 +14084,7 @@ const SupabaseQuoteRepo = {
       travel_start_date: data.travelStart || data.tourDate || null,
       valid_until:     data.validUntil   || null,
       notes:           data.notes        || null,
+      internal_notes:  data.internalNotes|| null,
       assigned_to:     data.assigneeId   || null,
       created_by:      data.createdBy    || null,
     };
@@ -14399,18 +14093,13 @@ const SupabaseQuoteRepo = {
     if (error) throw new Error(error.message);
 
     if (data.items && data.items.length > 0) {
-      const itemRows = data.items.map((item, i) => ({
-        quote_id:    created.id,
-        tour_id:     item.tourId || null,
-        item_type:   _QI_TYPE_DB[item.type] || 'included',
-        description: item.label || item.description,
-        quantity:    parseInt(item.quantity || 1),
-        unit_price:  parseFloat(item.unitPrice || 0),
-        total_price: parseFloat(item.total || item.unitPrice || 0),
-        currency:    data.currency || 'EUR',
-        sort_order:  i,
-      }));
-      await sb.from('quote_items').insert(itemRows);
+      const { error: itemsErr } = await sb.from('quote_items')
+        .insert(buildQuoteItemRows(created.id, data.items, data.currency));
+      // The quote itself is already saved — don't fail the whole operation
+      // over line items, but don't swallow the error silently either (this
+      // insert used to fail every single time on an invalid item_type
+      // value with nothing ever surfacing it).
+      if (itemsErr) console.error('[SupabaseQuoteRepo.create] quote_items insert failed:', itemsErr.message);
     }
 
     await _sbLog('quote', created.id, 'created', `Teklif oluşturuldu: ${created.quote_number}`);
@@ -14422,17 +14111,39 @@ const SupabaseQuoteRepo = {
     if (!sb) return QuoteRepository.update(id, patch);
 
     const row = {};
-    if (patch.status     !== undefined) row.status       = _QS_DB[patch.status] || patch.status;
-    if (patch.notes      !== undefined) row.notes        = patch.notes;
-    if (patch.validUntil !== undefined) row.valid_until  = patch.validUntil;
-    if (patch.total      !== undefined) row.total_amount = patch.total;
-    if (patch.deposit    !== undefined) row.deposit_amount = patch.deposit;
-    if (patch.assigneeId !== undefined) row.assigned_to  = patch.assigneeId;
+    if (patch.status       !== undefined) row.status          = _QS_DB[patch.status] || patch.status;
+    if (patch.notes        !== undefined) row.notes           = patch.notes;
+    if (patch.internalNotes!== undefined) row.internal_notes  = patch.internalNotes;
+    if (patch.validUntil   !== undefined) row.valid_until     = patch.validUntil;
+    if (patch.subtotal     !== undefined) row.subtotal        = patch.subtotal;
+    if (patch.discountAmount !== undefined) row.discount_amount = patch.discountAmount;
+    if (patch.total        !== undefined) row.total_amount    = patch.total;
+    if (patch.deposit      !== undefined) row.deposit_amount  = patch.deposit;
+    if (patch.assigneeId   !== undefined) row.assigned_to     = patch.assigneeId;
+    if (patch.customerId   !== undefined) row.customer_id     = patch.customerId;
+    if (patch.leadId       !== undefined) row.lead_id         = patch.leadId;
+    if (patch.tourName     !== undefined) row.destination     = patch.tourName;
+    if (patch.currency     !== undefined) row.currency        = patch.currency;
+    if (patch.guestCount   !== undefined) row.guest_count     = patch.guestCount;
+    if (patch.travelStart  !== undefined) row.travel_start_date = patch.travelStart;
 
     const { data: updated, error } = await sb.from('quotes').update(row).eq('id', id).select().single();
     if (error) throw new Error(error.message);
     if (patch.status) await _sbLog('quote', id, 'status_changed', `Durum → ${patch.status}`);
-    return mapQuoteFromDB(updated, []);
+
+    if (patch.items !== undefined) {
+      // Full replace — the wizard always submits the complete item set, not
+      // an incremental diff.
+      await sb.from('quote_items').delete().eq('quote_id', id);
+      if (patch.items.length > 0) {
+        const { error: itemsErr } = await sb.from('quote_items')
+          .insert(buildQuoteItemRows(id, patch.items, patch.currency || updated.currency));
+        if (itemsErr) console.error('[SupabaseQuoteRepo.update] quote_items insert failed:', itemsErr.message);
+      }
+    }
+
+    const { data: items } = await sb.from('quote_items').select('*').eq('quote_id', id).order('sort_order');
+    return mapQuoteFromDB(updated, items || []);
   },
 
   async delete(id) {
@@ -15768,7 +15479,7 @@ function ResetPasswordPage() {
 }
 
 function App() {
-  const { base, param, navigate, path } = useHashRouter();
+  const { base, param, subParam, navigate, path } = useHashRouter();
   const { isMobile, isTablet } = useBreakpoint();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
@@ -15813,6 +15524,7 @@ function App() {
       if (base === "customers") return <MobileGuestsPage onSelectGuest={id=>navigate('/customers/'+id)}/>;
 
       if (base === "quotes" && param === "new") return <MobileNewQuotePage onBack={()=>navigate('/quotes')}/>;
+      if (base === "quotes" && param && subParam === "edit") return <MobileNewQuotePage editQuoteId={param} onBack={()=>navigate('/quotes/'+param)}/>;
       if (base === "quotes" && param) return <MobileQuoteDetailPage quoteId={param} onBack={()=>navigate('/quotes')}/>;
       if (base === "quotes") return <MobileQuotesPage onSelectQuote={id=>navigate('/quotes/'+id)} onNewQuote={()=>navigate('/quotes/new')}/>;
 
@@ -15829,6 +15541,8 @@ function App() {
 
     if (base === "quotes" && param === "new")
       return <NewProposalPage onBack={()=>navigate('/quotes')}/>;
+    if (base === "quotes" && param && subParam === "edit")
+      return <NewProposalPage editQuoteId={param} onBack={()=>navigate('/quotes/'+param)}/>;
     if (base === "quotes" && param)
       return <QuoteDetailPage quoteId={param} onBack={()=>navigate('/quotes')}/>;
     if (base === "quotes")
@@ -17670,38 +17384,18 @@ function MobileReservationDetailPage({ resId, onBack }) {
 }
 
 /* ══════════════════════════════════════════════════════════════════════
-   MOBILE QUOTE CREATION — a full-screen, five-step wizard (Guest → Tour
-   → Date & Guests → Pricing & Inclusions → Review), not the desktop
-   builder's two-column form+live-preview squeezed onto a phone. Uses the
-   same repos as every other create flow (customer find-or-create, then
-   quote create with items) — written fresh rather than reusing
-   NewProposalPage, whose own save/convert handlers reference state that
-   doesn't exist in its scope and would throw if invoked.
+   MOBILE QUOTE CREATION — the same 5-step structure as the desktop
+   QuoteWizard (Misafir → Tur ve Tarih → Fiyatlandırma → Teklif Detayları
+   → Önizleme ve Oluştur), laid out full-screen for a phone. Uses the
+   exact same shared state shape and save/update functions as desktop
+   (emptyQuoteWizardState, computeQuoteTotals, validateQuoteStep,
+   createQuoteFromWizard, updateQuoteFromWizard) — no separate business
+   rules per platform.
    ══════════════════════════════════════════════════════════════════════ */
-function MobileNewQuotePage({ onBack }) {
-  // Same SESSION prefill the desktop builder reads (set by QuickActionsCard /
-  // MobileLeadDetailPage's "Teklif Oluştur") — consumed once, like there.
-  const _pf = SESSION.getPrefill() || {};
-  const [step, setStep] = useState(0);
-  const [guestName, setGuestName]   = useState(_pf.guestName || "");
-  const [phone, setPhone]           = useState(_pf.phone || "");
-  const [email, setEmail]           = useState(_pf.email || "");
-  const [nationality, setNationality] = useState(_pf.nationality || "");
-  const [fromLeadId] = useState(_pf.fromLead || null);
-  const { data:tourList } = useRepo("tour", "getAll");
-  const [tourId, setTourId]     = useState("");
-  const [tourName, setTourName] = useState(_pf.tourName || "");
-  const [travelDate, setTravelDate] = useState(_pf.tourDate || "");
-  const [guestCount, setGuestCount] = useState(String(_pf.guestCount || 2));
-  const [currency, setCurrency]     = useState(_pf.currency || "EUR");
-  const [pricePerPerson, setPricePerPerson] = useState(_pf.pricePerPerson ? String(_pf.pricePerPerson) : "");
-  const [discountPct, setDiscountPct] = useState("0");
-  const [depositPct, setDepositPct]   = useState("25");
-  const [included, setIncluded] = useState(DEFAULT_INCLUDED.map(l=>({ label:l, on:true })));
-  const [excluded, setExcluded] = useState(DEFAULT_EXCLUDED.map(l=>({ label:l, on:true })));
-  const [notes, setNotes] = useState("");
-  const [errs, setErrs]   = useState({});
-  const [saving, setSaving] = useState(false);
+function MobileNewQuotePage({ onBack, editQuoteId }) {
+  const isEdit = !!editQuoteId;
+  const _sp = safeParam(editQuoteId);
+  const { data: editQuote, loading: editLoading } = useRepo("quote", "getById", editQuoteId || null);
 
   useEffect(() => {
     const prev = document.body.style.overflow;
@@ -17709,88 +17403,96 @@ function MobileNewQuotePage({ onBack }) {
     return () => { document.body.style.overflow = prev; };
   }, []);
 
-  const tours = tourList || [];
-  const pax   = parseInt(guestCount) || 1;
-  const unit  = parseFloat(pricePerPerson) || 0;
-  const total = Math.round(unit * pax * (1 - (parseFloat(discountPct)||0) / 100));
-  const deposit   = Math.round(total * (parseFloat(depositPct)||25) / 100);
-  const remaining = total - deposit;
-  const sym = currency==="TRY"?"₺":currency==="GBP"?"£":currency==="USD"?"$":"€";
-  const STEPS = ["Misafir","Tur","Tarih & Kişi","Fiyat","Özet"];
+  if (isEdit && _sp.invalid) return <div style={{padding:40,textAlign:"center"}}><NotFound404 onBack={onBack}/></div>;
+  if (isEdit && editLoading) return <LoadingState label="Teklif yükleniyor…"/>;
+  if (isEdit && !editQuote)  return <div style={{padding:40,textAlign:"center"}}><NotFound404 onBack={onBack}/></div>;
 
-  function pickTour(id) {
-    setTourId(id);
-    const t = tours.find(x=>x.id===id);
-    if (t) {
-      setTourName(t.name);
-      if (!pricePerPerson) setPricePerPerson(String(t.flatPrice||""));
-      if (t.currency) setCurrency(t.currency);
+  return <MobileQuoteWizard key={editQuoteId||"new"} onBack={onBack} editQuote={isEdit ? editQuote : null}/>;
+}
+
+function MobileQuoteWizard({ onBack, editQuote }) {
+  const isEdit = !!editQuote;
+  const { data: tourList, loading: toursLoading } = useRepo("tour", "getAll");
+  const { data: customerList } = useRepo("customer", "getAll");
+
+  const [step, setStep] = useState(0);
+  const [s, setS] = useState(() => isEdit ? quoteStateFromExisting(editQuote) : emptyQuoteWizardState(SESSION.getPrefill()));
+  const [errs, setErrs] = useState({});
+  const [saving, setSaving] = useState(false);
+  const [custMode, setCustMode] = useState(s.customerId ? "linked" : "search");
+  const [custQuery, setCustQuery] = useState("");
+
+  const { data: originLead } = useRepo("lead", "getById", s.fromLeadId || null);
+  const { data: linkedCustomer } = useRepo("customer", "getById", s.customerId || null);
+
+  useEffect(() => {
+    if (originLead && originLead.customerId && !s.customerId) {
+      setS(prev => ({ ...prev, customerId: originLead.customerId }));
+      setCustMode("linked");
     }
+  }, [originLead]);
+
+  const totals = computeQuoteTotals(s);
+  const sym = s.currency==="TRY"?"₺":s.currency==="GBP"?"£":s.currency==="USD"?"$":"€";
+  const STEPS = QUOTE_STEPS;
+
+  const custResults = useMemo(() => {
+    if (!custQuery.trim()) return [];
+    const q = custQuery.trim().toLowerCase();
+    return (customerList||[]).filter(c =>
+      (c.name||"").toLowerCase().includes(q) || (c.email||"").toLowerCase().includes(q) || (c.phone||"").includes(q)
+    ).slice(0,6);
+  }, [custQuery, customerList]);
+
+  function pickCustomer(c) {
+    setS(prev => ({ ...prev, customerId:c.id, guestName:c.name||"", email:c.email||"", phone:c.phone||"", nationality:c.country||"", language:c.language||"Türkçe" }));
+    setCustMode("linked");
+  }
+  function clearCustomerLink() {
+    setS(prev => ({ ...prev, customerId:null, guestName:"", email:"", phone:"", nationality:"" }));
+    setCustMode("search"); setCustQuery("");
   }
 
-  function validateStep(s) {
-    const e = {};
-    if (s===0 && !guestName.trim()) e.guestName = "Ad Soyad zorunludur";
-    if (s===1 && !tourName.trim())  e.tourName  = "Tur seçin veya adını girin";
-    if (s===2 && !travelDate)       e.travelDate = "Seyahat tarihi zorunludur";
-    if (s===3 && total<=0)          e.pricePerPerson = "Toplam tutar sıfırdan büyük olmalı";
-    return e;
+  function pickTour(id) {
+    const t = (tourList||[]).find(x=>x.id===id);
+    setS(prev => ({
+      ...prev, tourId:id, tourName: t?.name || prev.tourName,
+      pricingType: (t?.pricingType==="flat" || t?.pricingType==="group") ? "group" : prev.pricingType,
+      groupPrice: (t?.pricingType==="flat" || t?.pricingType==="group") ? String(t.flatPrice||"") : prev.groupPrice,
+      pricePerPerson: t?.pricingType==="per_person" ? String(t.flatPrice||"") : prev.pricePerPerson,
+      currency: t?.currency || prev.currency,
+    }));
+  }
+
+  function toggleItem(key, idx) {
+    setS(prev => ({ ...prev, [key]: prev[key].map((x,i)=> i===idx ? {...x,on:!x.on} : x) }));
   }
 
   function goBack() {
     if (step===0) { onBack(); return; }
-    setStep(s=>s-1);
+    setStep(st=>st-1);
   }
-  function goNext() {
-    const e = validateStep(step);
+  async function goNext() {
+    const e = validateQuoteStep(step, s);
     setErrs(e);
     if (Object.keys(e).length) return;
-    if (step < STEPS.length-1) setStep(s=>s+1);
-    else save();
+    if (step < STEPS.length-1) setStep(st=>st+1);
+    else await handleSubmit();
   }
 
-  async function save() {
+  async function handleSubmit() {
     setSaving(true);
     try {
-      const custRepo = getActiveRepo("customer");
-      let custId = null;
-      const existing = await Promise.resolve(custRepo.findByContact({ email: email||null, phone: phone||null })).catch(()=>null);
-      if (existing) {
-        custId = existing.id;
-      } else {
-        const newCust = await Promise.resolve(custRepo.create({
-          name: guestName, phone: phone||"", email: email||"",
-          country: nationality||"Diğer", language:"İngilizce", importType:"manual",
-        }));
-        custId = newCust?.id || null;
-      }
-
-      const items = [
-        ...included.filter(i=>i.on).map((i,idx)=>({ type:"Dahil", label:i.label, quantity:1, unitPrice:0, total:0, sortOrder:idx })),
-        ...excluded.filter(i=>i.on).map((i,idx)=>({ type:"Hariç", label:i.label, quantity:1, unitPrice:0, total:0, sortOrder:idx+50 })),
-      ];
-
-      const quoteRepo = getActiveRepo("quote");
-      const newQuote = await Promise.resolve(quoteRepo.create({
-        customerId: custId, leadId: fromLeadId, tourId: tourId||null, tourName, tour: tourName,
-        travelStart: travelDate||null, status:"Taslak",
-        guestCount: pax, pricePerPerson: unit, currency,
-        discountPct: parseFloat(discountPct)||0, total, deposit, notes, items,
-      }));
-
-      await autoLog("quote", newQuote?.id || "?", "created", `Teklif oluşturuldu: ${tourName}`);
-      showToast("Teklif oluşturuldu ✓");
-      if (newQuote?.id && NAV_REF.fn) NAV_REF.fn('/quotes/'+newQuote.id);
+      const result = isEdit ? await updateQuoteFromWizard(editQuote.id, s) : await createQuoteFromWizard(s);
+      showToast(isEdit ? "Teklif güncellendi ✓" : "Teklif oluşturuldu ✓");
+      const targetId = result?.id || editQuote?.id;
+      if (targetId && NAV_REF.fn) NAV_REF.fn('/quotes/'+targetId);
       else onBack();
     } catch(err) {
-      showToast("Teklif oluşturulamadı: " + (err?.message || err));
+      showToast("Hata: " + (err?.message || err));
     } finally {
       setSaving(false);
     }
-  }
-
-  function toggleItem(list, setList, idx) {
-    setList(arr => arr.map((x,i)=> i===idx ? { ...x, on: !x.on } : x));
   }
 
   return (
@@ -17804,11 +17506,11 @@ function MobileNewQuotePage({ onBack }) {
           <button onClick={goBack} style={{ border:"none", background:"transparent", cursor:"pointer", color:C.textMid, fontSize:14.5, fontFamily:"'DM Sans',sans-serif", padding:"8px 10px", minWidth:44 }}>
             {step===0 ? "İptal" : "Geri"}
           </button>
-          <div style={{ fontSize:15.5, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif" }}>Yeni Teklif</div>
+          <div style={{ fontSize:15.5, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif" }}>{isEdit ? "Teklifi Düzenle" : "Yeni Teklif"}</div>
           <div style={{ minWidth:44 }}/>
         </div>
         <div style={{ display:"flex", gap:4, padding:"0 16px 10px" }}>
-          {STEPS.map((s,i)=>(<div key={i} style={{ flex:1, height:3, borderRadius:99, background: i<=step ? C.gold : C.borderLight }}/>))}
+          {STEPS.map((st,i)=>(<div key={i} style={{ flex:1, height:3, borderRadius:99, background: i<=step ? C.gold : C.borderLight }}/>))}
         </div>
         <div style={{ padding:"0 16px 10px", fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif" }}>Adım {step+1}/{STEPS.length} · {STEPS[step]}</div>
       </div>
@@ -17816,86 +17518,182 @@ function MobileNewQuotePage({ onBack }) {
       {}
       <div style={{ flex:1, overflowY:"auto", padding:"18px 16px 24px" }}>
         {step===0 && (
-          <FGrid>
-            <FRow label="Ad Soyad" required error={errs.guestName}><FText value={guestName} onChange={setGuestName} placeholder="Sarah Johnson"/></FRow>
-            <FRow label="Telefon"><FText value={phone} onChange={setPhone} placeholder="+90 555 000 0000" mono/></FRow>
-            <FRow label="E-posta"><FText value={email} onChange={setEmail} placeholder="email@example.com" type="email"/></FRow>
-            <FRow label="Ülke"><FText value={nationality} onChange={setNationality} placeholder="Avustralya"/></FRow>
-          </FGrid>
+          custMode === "linked" && s.customerId ? (
+            <div>
+              {s.fromLeadId && (
+                <div style={{marginBottom:14, padding:"10px 14px", background:C.blueBg, border:`1px solid ${C.blue}30`, borderRadius:8}}>
+                  <span style={{fontSize:12, color:C.blue, fontFamily:"'DM Sans',sans-serif"}}>Talepten oluşturuluyor: </span>
+                  <IDLink id={s.fromLeadId} type="lead"/>
+                </div>
+              )}
+              <MobileEntityCard>
+                <div style={{ fontSize:16, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif", marginBottom:6 }}>{s.guestName || "—"}</div>
+                <MobileInfoLine label="E-posta" value={s.email || "—"}/>
+                <MobileInfoLine label="Telefon" value={s.phone || "—"}/>
+                <MobileInfoLine label="Uyruk / Dil" value={`${s.nationality || "—"} · ${s.language}`}/>
+              </MobileEntityCard>
+              <button onClick={clearCustomerLink} style={{ marginTop:10, width:"100%", padding:"9px 0", borderRadius:9, border:`1px solid ${C.border}`, background:C.white, color:C.textMid, fontFamily:"'DM Sans',sans-serif", fontSize:12.5 }}>Farklı Müşteri Seç</button>
+            </div>
+          ) : (
+            <div>
+              {s.fromLeadId && (
+                <div style={{marginBottom:14, padding:"10px 14px", background:C.blueBg, border:`1px solid ${C.blue}30`, borderRadius:8}}>
+                  <span style={{fontSize:12, color:C.blue, fontFamily:"'DM Sans',sans-serif"}}>Talepten oluşturuluyor: </span>
+                  <IDLink id={s.fromLeadId} type="lead"/>
+                </div>
+              )}
+              <div style={{display:"flex", gap:8, marginBottom:14}}>
+                <button onClick={()=>setCustMode("search")} style={qwPill(custMode!=="new")}>Mevcut Müşteri</button>
+                <button onClick={()=>setCustMode("new")} style={qwPill(custMode==="new")}>Yeni Müşteri</button>
+              </div>
+              {custMode === "new" ? (
+                <FGrid>
+                  <FRow label="Ad Soyad" required error={errs.guestName}><FText value={s.guestName} onChange={v=>setS(p=>({...p,guestName:v}))} placeholder="Ad Soyad"/></FRow>
+                  <FRow label="Telefon"><FText value={s.phone} onChange={v=>setS(p=>({...p,phone:v}))} placeholder="+90 555 000 0000" mono/></FRow>
+                  <FRow label="E-posta"><FText value={s.email} onChange={v=>setS(p=>({...p,email:v}))} placeholder="email@example.com" type="email"/></FRow>
+                  <FRow label="Uyruk"><FText value={s.nationality} onChange={v=>setS(p=>({...p,nationality:v}))} placeholder="Türkiye"/></FRow>
+                  <FRow label="Dil"><FSelect value={s.language} onChange={v=>setS(p=>({...p,language:v}))} options={QUOTE_LANGUAGE_OPTIONS}/></FRow>
+                </FGrid>
+              ) : (
+                <div>
+                  <FRow label="Müşteri Ara" hint="Ad, e-posta veya telefon"><FText value={custQuery} onChange={setCustQuery} placeholder="Ara…"/></FRow>
+                  {custQuery.trim() && (
+                    custResults.length===0 ? (
+                      <div style={{padding:12, textAlign:"center", fontSize:12.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>Eşleşen müşteri bulunamadı.</div>
+                    ) : (
+                      <div style={{border:`1px solid ${C.borderLight}`, borderRadius:8, overflow:"hidden"}}>
+                        {custResults.map(c=>(
+                          <div key={c.id} onClick={()=>pickCustomer(c)} style={{padding:"10px 12px", borderBottom:`1px solid ${C.borderLight}`}}>
+                            <div style={{fontSize:13, fontWeight:500, color:C.text, fontFamily:"'DM Sans',sans-serif"}}>{c.name}</div>
+                            <div style={{fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>{c.email || c.phone || ""}</div>
+                          </div>
+                        ))}
+                      </div>
+                    )
+                  )}
+                </div>
+              )}
+            </div>
+          )
         )}
+
         {step===1 && (
           <FGrid>
             <FRow label="Tur Kataloğundan Seç">
-              <select value={tourId} onChange={e=>pickTour(e.target.value)} style={{ width:"100%", padding:"9px 10px", borderRadius:7, border:`1.5px solid ${C.border}`, fontSize:13.5, color:C.text, background:C.white }}>
-                <option value="">-- Tur seçin --</option>
-                {tours.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}
-              </select>
+              {toursLoading ? (
+                <div style={{fontSize:12.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>Turlar yükleniyor…</div>
+              ) : (tourList||[]).length===0 ? (
+                <div style={{fontSize:12.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", padding:"10px 12px", background:C.white, border:`1px solid ${C.borderLight}`, borderRadius:8}}>Henüz tanımlı tur yok — adını doğrudan girin.</div>
+              ) : (
+                <select value={s.tourId} onChange={e=>pickTour(e.target.value)} style={{ width:"100%", padding:"9px 10px", borderRadius:7, border:`1.5px solid ${C.border}`, fontSize:13.5, color:C.text, background:C.white }}>
+                  <option value="">-- Tur seçin --</option>
+                  {tourList.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}
+                </select>
+              )}
             </FRow>
             <FRow label="Tur / Deneyim Adı" required error={errs.tourName}>
-              <FText value={tourName} onChange={setTourName} placeholder="Private Istanbul Experience"/>
+              <FText value={s.tourName} onChange={v=>setS(p=>({...p, tourId: v!==p.tourName ? "" : p.tourId, tourName:v}))} placeholder="Tur adı"/>
             </FRow>
+            <FRow label="Başlangıç Tarihi" required error={errs.travelDate}><FText type="date" value={s.travelDate} onChange={v=>setS(p=>({...p,travelDate:v}))}/></FRow>
+            <FRow label="Başlangıç Saati"><FText type="time" value={s.travelTime} onChange={v=>setS(p=>({...p,travelTime:v}))}/></FRow>
+            <FRow label="Kişi Sayısı"><FText type="number" value={s.guestCount} onChange={v=>setS(p=>({...p,guestCount:v}))} placeholder="2"/></FRow>
+            <FRow label="Dil"><FSelect value={s.language} onChange={v=>setS(p=>({...p,language:v}))} options={QUOTE_LANGUAGE_OPTIONS}/></FRow>
+            <FRow label="Karşılama / Pickup"><FSelect value={s.pickup} onChange={v=>setS(p=>({...p,pickup:v}))} options={QUOTE_PICKUP_OPTIONS}/></FRow>
+            {s.pickup !== "Karşılama Yok" && (
+              <FRow label="Pickup Lokasyonu"><FText value={s.pickupLocation} onChange={v=>setS(p=>({...p,pickupLocation:v}))} placeholder="Otel adı / adres"/></FRow>
+            )}
           </FGrid>
         )}
+
         {step===2 && (
-          <FGrid>
-            <FRow label="Seyahat Tarihi" required error={errs.travelDate}><FText type="date" value={travelDate} onChange={setTravelDate}/></FRow>
-            <FRow label="Kişi Sayısı"><FText type="number" value={guestCount} onChange={setGuestCount} placeholder="2"/></FRow>
-          </FGrid>
-        )}
-        {step===3 && (
           <>
             <FGrid>
-              <FRow label="Para Birimi"><FSelect value={currency} onChange={setCurrency} options={CURRENCY_OPTIONS}/></FRow>
-              <FRow label="Kişi Başı Fiyat" required error={errs.pricePerPerson}><FText type="number" value={pricePerPerson} onChange={setPricePerPerson} placeholder="90"/></FRow>
-              <FRow label="İndirim (%)"><FText type="number" value={discountPct} onChange={setDiscountPct} placeholder="0"/></FRow>
-              <FRow label="Kapora (%)"><FText type="number" value={depositPct} onChange={setDepositPct} placeholder="25"/></FRow>
+              <FRow label="Para Birimi"><FSelect value={s.currency} onChange={v=>setS(p=>({...p,currency:v}))} options={CURRENCY_OPTIONS}/></FRow>
+              <FRow label="Fiyatlandırma Tipi">
+                <div style={{display:"flex", gap:8}}>
+                  <button onClick={()=>setS(p=>({...p,pricingType:"per_person"}))} style={qwPill(s.pricingType==="per_person")}>Kişi Başı</button>
+                  <button onClick={()=>setS(p=>({...p,pricingType:"group"}))} style={qwPill(s.pricingType==="group")}>Grup Fiyatı</button>
+                </div>
+              </FRow>
+              {s.pricingType === "group" ? (
+                <FRow label="Toplam Grup Fiyatı" error={errs.pricing}><FText type="number" value={s.groupPrice} onChange={v=>setS(p=>({...p,groupPrice:v}))} placeholder="0"/></FRow>
+              ) : (
+                <FRow label="Kişi Başı Fiyat" error={errs.pricing}><FText type="number" value={s.pricePerPerson} onChange={v=>setS(p=>({...p,pricePerPerson:v}))} placeholder="0"/></FRow>
+              )}
+              <FRow label="İndirim (%)"><FText type="number" value={s.discountPct} onChange={v=>setS(p=>({...p,discountPct:v}))} placeholder="0"/></FRow>
+              <FRow label="Kapora (%)"><FText type="number" value={s.depositPct} onChange={v=>setS(p=>({...p,depositPct:v}))} placeholder="25"/></FRow>
             </FGrid>
-            <div style={{ marginTop:16, padding:"14px 16px", background:C.goldPale, borderRadius:12, display:"flex", justifyContent:"space-between", alignItems:"baseline" }}>
-              <span style={{ fontSize:12.5, color:"#8A6D1F", fontFamily:"'DM Sans',sans-serif" }}>Toplam Tutar</span>
-              <span style={{ fontSize:19, fontWeight:700, color:"#8A6D1F", fontFamily:"'Playfair Display',serif" }}>{sym}{total.toLocaleString("tr-TR")}</span>
-            </div>
-            <div style={{ marginTop:18 }}>
-              <MobileSection title="Dahil Hizmetler" tight>
-                {included.map((it,i)=>(
-                  <label key={i} style={{ display:"flex", alignItems:"center", gap:10, padding:"7px 2px", cursor:"pointer" }}>
-                    <input type="checkbox" checked={it.on} onChange={()=>toggleItem(included,setIncluded,i)}/>
-                    <span style={{ fontSize:13, color:C.text, fontFamily:"'DM Sans',sans-serif" }}>{it.label}</span>
-                  </label>
-                ))}
-              </MobileSection>
-            </div>
-            <div style={{ marginTop:14 }}>
-              <MobileSection title="Dahil Olmayan Hizmetler" tight>
-                {excluded.map((it,i)=>(
-                  <label key={i} style={{ display:"flex", alignItems:"center", gap:10, padding:"7px 2px", cursor:"pointer" }}>
-                    <input type="checkbox" checked={it.on} onChange={()=>toggleItem(excluded,setExcluded,i)}/>
-                    <span style={{ fontSize:13, color:C.text, fontFamily:"'DM Sans',sans-serif" }}>{it.label}</span>
-                  </label>
-                ))}
-              </MobileSection>
+            <div style={{ marginTop:6, padding:"14px 16px", background:C.goldPale, borderRadius:12, display:"flex", flexDirection:"column", gap:6 }}>
+              {[
+                {label:"Ara Toplam", val:totals.subtotal},
+                {label:"İndirim", val:totals.discountAmount},
+                {label:"Genel Toplam", val:totals.total, bold:true},
+                {label:"Kapora", val:totals.deposit},
+                {label:"Kalan", val:totals.remaining},
+              ].map((r,i)=>(
+                <div key={i} style={{display:"flex", justifyContent:"space-between"}}>
+                  <span style={{ fontSize:12, color:"#8A6D1F", fontFamily:"'DM Sans',sans-serif" }}>{r.label}</span>
+                  <span style={{ fontSize:r.bold?16:13, fontWeight:r.bold?700:600, color:"#8A6D1F", fontFamily:"'Playfair Display',serif" }}>{sym}{r.val.toLocaleString("tr-TR")}</span>
+                </div>
+              ))}
             </div>
           </>
         )}
+
+        {step===3 && (
+          <div style={{display:"flex", flexDirection:"column", gap:16}}>
+            <MobileSection title="Dahil Olanlar" tight>
+              {s.included.map((it,i)=>(
+                <label key={i} style={{ display:"flex", alignItems:"center", gap:10, padding:"7px 2px", cursor:"pointer" }}>
+                  <input type="checkbox" checked={it.on} onChange={()=>toggleItem("included",i)}/>
+                  <span style={{ fontSize:13, color:C.text, fontFamily:"'DM Sans',sans-serif" }}>{it.label}</span>
+                </label>
+              ))}
+            </MobileSection>
+            <MobileSection title="Dahil Olmayanlar" tight>
+              {s.excluded.map((it,i)=>(
+                <label key={i} style={{ display:"flex", alignItems:"center", gap:10, padding:"7px 2px", cursor:"pointer" }}>
+                  <input type="checkbox" checked={it.on} onChange={()=>toggleItem("excluded",i)}/>
+                  <span style={{ fontSize:13, color:C.text, fontFamily:"'DM Sans',sans-serif" }}>{it.label}</span>
+                </label>
+              ))}
+            </MobileSection>
+            <FRow label="Özel Talepler / Notlar"><FTextArea value={s.notes} onChange={v=>setS(p=>({...p,notes:v}))} placeholder="Özel talepler…"/></FRow>
+            <FRow label="Teklif Geçerlilik Tarihi"><FText type="date" value={s.validUntil} onChange={v=>setS(p=>({...p,validUntil:v}))}/></FRow>
+            <FRow label="Ödeme Koşulları" hint={`Şemada ayrı bir alan yok — kapora oranı (%${s.depositPct}) bu teklifin ödeme koşuludur.`}>
+              <FText value={`Kapora %${s.depositPct}`} onChange={()=>{}} disabled/>
+            </FRow>
+          </div>
+        )}
+
         {step===4 && (
           <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
             <MobileEntityCard>
-              <div style={{ fontSize:16, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif" }}>{guestName || "—"}</div>
+              <div style={{ fontSize:16, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif" }}>{linkedCustomer?.name || s.guestName || "—"}</div>
               <div style={{ fontSize:12.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", marginTop:3 }}>
-                {[phone, email].filter(Boolean).join(" · ") || "İletişim bilgisi girilmedi"}
+                {[s.phone, s.email].filter(Boolean).join(" · ") || "İletişim bilgisi girilmedi"}
               </div>
             </MobileEntityCard>
             <MobileEntityCard>
-              <MobileInfoLine label="Tur" value={tourName || "—"}/>
-              <MobileInfoLine label="Tarih" value={travelDate || "—"}/>
-              <MobileInfoLine label="Kişi Sayısı" value={`${pax} kişi`}/>
+              <MobileInfoLine label="Tur" value={s.tourName || "—"}/>
+              <MobileInfoLine label="Tarih" value={s.travelDate || "—"}/>
+              <MobileInfoLine label="Saat" value={s.travelTime || "—"}/>
+              <MobileInfoLine label="Kişi Sayısı" value={`${totals.pax} kişi`}/>
+              <MobileInfoLine label="Dil" value={s.language || "—"}/>
+              <MobileInfoLine label="Karşılama" value={`${s.pickup}${s.pickupLocation?" — "+s.pickupLocation:""}`}/>
             </MobileEntityCard>
             <MobileEntityCard>
-              <MobileInfoLine label="Kişi Başı" value={`${sym}${unit.toLocaleString("tr-TR")}`}/>
-              <MobileInfoLine label="Toplam" value={`${sym}${total.toLocaleString("tr-TR")}`} bold/>
-              <MobileInfoLine label="Kapora" value={`${sym}${deposit.toLocaleString("tr-TR")}`}/>
-              <MobileInfoLine label="Kalan" value={`${sym}${remaining.toLocaleString("tr-TR")}`}/>
+              <MobileInfoLine label="Ara Toplam" value={`${sym}${totals.subtotal.toLocaleString("tr-TR")}`}/>
+              <MobileInfoLine label="İndirim" value={`${sym}${totals.discountAmount.toLocaleString("tr-TR")}`}/>
+              <MobileInfoLine label="Genel Toplam" value={`${sym}${totals.total.toLocaleString("tr-TR")}`} bold/>
+              <MobileInfoLine label="Kapora" value={`${sym}${totals.deposit.toLocaleString("tr-TR")}`}/>
+              <MobileInfoLine label="Kalan" value={`${sym}${totals.remaining.toLocaleString("tr-TR")}`}/>
+              <MobileInfoLine label="Geçerlilik" value={s.validUntil || "Belirtilmedi"}/>
             </MobileEntityCard>
-            <FRow label="Notlar"><FTextArea value={notes} onChange={setNotes} placeholder="Özel talepler…"/></FRow>
+            <MobileEntityCard>
+              <div style={{fontSize:11, color:C.textFaint, textTransform:"uppercase", letterSpacing:"0.06em", fontFamily:"'DM Sans',sans-serif", marginBottom:6}}>Dahil Olanlar</div>
+              {s.included.filter(i=>i.on).length===0 ? <div style={{fontSize:12.5,color:C.textFaint,fontStyle:"italic"}}>Seçilmedi</div> : s.included.filter(i=>i.on).map((i,idx)=><div key={idx} style={{fontSize:12.5,color:C.textMid,fontFamily:"'DM Sans',sans-serif",padding:"3px 0"}}>• {i.label}</div>)}
+            </MobileEntityCard>
           </div>
         )}
       </div>
@@ -17906,7 +17704,7 @@ function MobileNewQuotePage({ onBack }) {
           width:"100%", padding:"13px 0", borderRadius:12, border:"none", cursor: saving?"default":"pointer",
           background:C.navy, color:C.white, fontSize:14.5, fontWeight:700, fontFamily:"'DM Sans',sans-serif",
           opacity: saving?0.7:1,
-        }}>{saving ? "Kaydediliyor…" : step===STEPS.length-1 ? "Teklifi Kaydet" : "Devam Et"}</button>
+        }}>{saving ? "Kaydediliyor…" : step===STEPS.length-1 ? (isEdit ? "Değişiklikleri Kaydet" : "Teklifi Oluştur") : "Devam Et"}</button>
       </div>
     </div>
   );
