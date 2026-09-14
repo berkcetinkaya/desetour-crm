@@ -73,6 +73,18 @@
       to   { opacity: 1; transform: translateY(0); }
     }
     .fade { animation: fadeInUp 0.18s ease; }
+
+    /* Dashboard hero photo — keeps Galata Tower toward the right of the
+       frame; the narrower the hero panel gets, the more aggressively
+       background-size:cover crops it, so smaller desktop widths need a
+       stronger rightward bias to keep the tower from being cut off. */
+    .hero-photo { background-position: 88% 42%; }
+    @media (min-width: 1440px) {
+      .hero-photo { background-position: 80% 40%; }
+    }
+    @media (min-width: 1920px) {
+      .hero-photo { background-position: 68% 38%; }
+    }
   </style>
 </head>
 <body>
@@ -151,7 +163,7 @@
 
 
   <!-- App (pre-transpiled JSX — no Babel needed in browser) -->
-  <script src="app.js?v=3411811108"></script>
+  <script src="app.js?v=0ecf54f1af"></script>
 
   <!-- Hide boot screen once React renders -->
   <script>

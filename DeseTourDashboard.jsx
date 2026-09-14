@@ -1999,10 +1999,10 @@ function Welcome() {
       </div>
 
       {}
-      <div style={{
+      <div className="hero-photo" style={{
         flex:"1 1 42%", position:"relative", minWidth:220,
-        backgroundImage:"url('/hero-istanbul.jpg')",
-        backgroundSize:"cover", backgroundPosition:"center",
+        backgroundImage:"url('/hero-crm.png')",
+        backgroundSize:"cover",
         backgroundColor:C.navyDeep,
       }}>
         <HeroSkyline/>
@@ -2019,7 +2019,7 @@ function Welcome() {
 
 // Original vector skyline silhouette — a graceful fallback (and subtle
 // texture even once the real photo is in place) so the hero never looks
-// broken if /hero-istanbul.jpg hasn't been added yet. Not a photo, not
+// broken if /hero-crm.png hasn't been added yet. Not a photo, not
 // hotlinked — inline SVG shapes only.
 function HeroSkyline() {
   return (
