@@ -180,17 +180,28 @@ const COUNTRY_FLAG_BY_NAME = Object.fromEntries(COUNTRY_LIST.map(c => [c.name, c
 function countryFlag(name) { return COUNTRY_FLAG_BY_NAME[name] || "🌍"; }
 
 // ── Canonical language dataset ──────────────────────────────────────────
-// One shared list (Turkish display labels) for every language selector in
-// the app (customers, reservations, guides, …).
-const LANGUAGE_OPTIONS = [
-  "Türkçe","İngilizce","İspanyolca","Portekizce","İtalyanca","Fransızca","Almanca",
-  "Rusça","Arapça","Farsça","İbranice","Yunanca","Felemenkçe","Lehçe","Çekçe",
-  "Slovakça","Macarca","Romence","Bulgarca","Sırpça","Hırvatça","Boşnakça",
-  "Arnavutça","Ukraynaca","Gürcüce","Ermenice","Azerbaycanca","Kazakça","Özbekçe",
-  "Çince","Japonca","Korece","Hintçe","Urduca","Bengalce","Endonezce","Malayca",
-  "Tayca","Vietnamca","Filipince","İsveççe","Norveççe","Danca","Fince","Estonca",
-  "Letonca","Litvanca",
+// One shared list — ISO 639-1 code + Turkish display label — for every
+// language selector in the app (customers, reservations, guides, …).
+// guides' spoken languages are persisted relationally (guide_languages:
+// language_code + language_name), so codes are part of the canonical
+// dataset itself rather than invented ad hoc at the point of use.
+const LANGUAGES = [
+  ["tr","Türkçe"],["en","İngilizce"],["es","İspanyolca"],["pt","Portekizce"],["it","İtalyanca"],
+  ["fr","Fransızca"],["de","Almanca"],["ru","Rusça"],["ar","Arapça"],["fa","Farsça"],
+  ["he","İbranice"],["el","Yunanca"],["nl","Felemenkçe"],["pl","Lehçe"],["cs","Çekçe"],
+  ["sk","Slovakça"],["hu","Macarca"],["ro","Romence"],["bg","Bulgarca"],["sr","Sırpça"],
+  ["hr","Hırvatça"],["bs","Boşnakça"],["sq","Arnavutça"],["uk","Ukraynaca"],["ka","Gürcüce"],
+  ["hy","Ermenice"],["az","Azerbaycanca"],["kk","Kazakça"],["uz","Özbekçe"],["zh","Çince"],
+  ["ja","Japonca"],["ko","Korece"],["hi","Hintçe"],["ur","Urduca"],["bn","Bengalce"],
+  ["id","Endonezce"],["ms","Malayca"],["th","Tayca"],["vi","Vietnamca"],["tl","Filipince"],
+  ["sv","İsveççe"],["no","Norveççe"],["da","Danca"],["fi","Fince"],["et","Estonca"],
+  ["lv","Letonca"],["lt","Litvanca"],
 ];
+// Plain Turkish-label list — kept for every existing single-select picker
+// (customer language, quote language, …) that only ever stored a label.
+const LANGUAGE_OPTIONS = LANGUAGES.map(([,name]) => name);
+const LANGUAGE_CODE_BY_NAME = Object.fromEntries(LANGUAGES.map(([code,name]) => [name, code]));
+const LANGUAGE_NAME_BY_CODE = Object.fromEntries(LANGUAGES.map(([code,name]) => [code, name]));
 
 const DB = {
 
@@ -454,10 +465,56 @@ const DB = {
     },
   ],
 
+  guides: [
+    {
+      id:"GD-001", name:"Ahmet Yıldız", phone:"+90 532 111 2233", email:"ahmet.yildiz@desetour.com",
+      nationality:"Türkiye", languages:[{code:"tr",name:"Türkçe"},{code:"en",name:"İngilizce"}],
+      licenseNumber:"IST-2019-0451", licenseNotes:"A Sınıfı Profesyonel Turist Rehberi",
+      region:"İstanbul", status:"Aktif", notes:"Boğaz ve tarihi yarımada turlarında deneyimli.",
+      staffUserId:null, createdAt:"2025-11-02",
+    },
+    {
+      id:"GD-002", name:"Fatma Şahin", phone:"+90 533 222 3344", email:"fatma.sahin@desetour.com",
+      nationality:"Türkiye", languages:[{code:"tr",name:"Türkçe"},{code:"en",name:"İngilizce"},{code:"de",name:"Almanca"}],
+      licenseNumber:"IST-2017-0289", licenseNotes:"A Sınıfı Profesyonel Turist Rehberi",
+      region:"İstanbul", status:"Aktif", notes:"Almanca konuşan gruplarda tercih ediliyor.",
+      staffUserId:null, createdAt:"2025-09-14",
+    },
+    {
+      id:"GD-003", name:"Osman Aydın", phone:"+90 542 333 4455", email:"osman.aydin@desetour.com",
+      nationality:"Türkiye", languages:[{code:"tr",name:"Türkçe"},{code:"en",name:"İngilizce"},{code:"fr",name:"Fransızca"}],
+      licenseNumber:"NEV-2020-0117", licenseNotes:"Kapadokya bölge rehberi",
+      region:"Kapadokya", status:"Aktif", notes:"Balon turu ve vadi yürüyüşlerinde uzman.",
+      staffUserId:null, createdAt:"2026-01-20",
+    },
+    {
+      id:"GD-004", name:"Zeynep Arslan", phone:"+90 555 444 5566", email:"zeynep@desetour.com",
+      nationality:"Türkiye", languages:[{code:"tr",name:"Türkçe"},{code:"ja",name:"Japonca"}],
+      licenseNumber:"IST-2021-0602", licenseNotes:"A Sınıfı Profesyonel Turist Rehberi",
+      region:"İstanbul", status:"Müsait Değil", notes:"Japonca konuşan misafir gruplarında görevlendiriliyor.",
+      staffUserId:"STAFF-004", createdAt:"2026-02-11",
+    },
+  ],
+
+  guidePayments: [
+    {
+      id:"GP-2026-001", payNumber:"GP-2026-001", guideId:"GD-001", resId:"R-2026-001", tourId:"TUR-001",
+      amount:1200, currency:"EUR", status:"Ödendi", paymentDate:"2026-06-20",
+      notes:"Tur sonrası nakit ödeme.", createdAt:"2026-06-20",
+      guideName:"Ahmet Yıldız", resRef:"R-2026-001", tourName:"Private Istanbul Experience",
+    },
+    {
+      id:"GP-2026-002", payNumber:"GP-2026-002", guideId:"GD-002", resId:"R-2026-002", tourId:"TUR-002",
+      amount:900, currency:"EUR", status:"Bekliyor", paymentDate:"",
+      notes:"Tur tamamlandıktan sonra ödenecek.", createdAt:"2026-06-18",
+      guideName:"Fatma Şahin", resRef:"R-2026-002", tourName:"Bosphorus & Asian Side Tour",
+    },
+  ],
+
   reservations: [
     {
-      id:"R-2026-001", leadId:"LEAD-001", quoteId:"Q-2026-001", customerId:"CUST-001", tourId:"TUR-001",
-      tour:"Private Istanbul Experience", date:"22 Haz 2026", time:"09:00", duration:"8 Saat",
+      id:"R-2026-001", leadId:"LEAD-001", quoteId:"Q-2026-001", customerId:"CUST-001", tourId:"TUR-001", guideId:"GD-001",
+      tour:"Private Istanbul Experience", date:"22 Haz 2026", checkIn:"2026-06-22", checkOut:"2026-06-22", time:"09:00", duration:"8 Saat",
       pax:4, guide:"Ahmet Yıldız", vehicle:"Mercedes Vito · 34 ABC 123", driver:"Mehmet Kaya",
       pickup:"The Marmara Pera, Lobby", pickupTime:"08:30",
       opStatus:"Rehber Atandı", payStatus:"Kapora Ödendi",
@@ -466,8 +523,8 @@ const DB = {
       assigneeId:"STAFF-001", createdAt:"2026-06-03",
     },
     {
-      id:"R-2026-002", leadId:"LEAD-003", quoteId:"Q-2026-002", customerId:"CUST-002", tourId:"TUR-002",
-      tour:"Bosphorus & Asian Side Tour", date:"20 Haz 2026", time:"10:30", duration:"6 Saat",
+      id:"R-2026-002", leadId:"LEAD-003", quoteId:"Q-2026-002", customerId:"CUST-002", tourId:"TUR-002", guideId:"GD-002",
+      tour:"Bosphorus & Asian Side Tour", date:"20 Haz 2026", checkIn:"2026-06-20", checkOut:"2026-06-20", time:"10:30", duration:"6 Saat",
       pax:6, guide:"Fatma Şahin", vehicle:"Ford Transit · 34 DEF 456", driver:"Ali Çelik",
       pickup:"Hilton Istanbul Bosphorus, Giriş", pickupTime:"10:00",
       opStatus:"Hazırlanıyor", payStatus:"Ödendi",
@@ -705,6 +762,7 @@ function IDLink({ id, type }) {
     reservation: '/reservations/',
     customer:    '/customers/',
     tour:        '/tours/',
+    guide:       '/guides/',
     payment:     '/payments',
   };
   const route = routes[type];
@@ -1239,6 +1297,133 @@ const TourRepository = {
     return true;
   },
 };
+
+// Mock counterparts of SupabaseGuideRepo/SupabaseGuidePaymentRepo (defined
+// further below, once getSB()/mapGuideFromDB exist), following the same
+// dual-mode pattern as every other entity in this file — in-memory when
+// AppConfig.useSupabase is off, the real guides/guide_languages/
+// guide_payments tables when it's on.
+function _withGuideLanguageNames(g) {
+  return { ...g, languageNames: (g.languages||[]).map(l=>l.name) };
+}
+const GuideRepository = {
+  getAll(filters = {}) {
+    let items = DB.guides;
+    if (filters.status) items = items.filter(g => g.status === filters.status);
+    if (filters.search) {
+      const q = filters.search.toLowerCase();
+      items = items.filter(g =>
+        g.name.toLowerCase().includes(q) ||
+        g.phone?.includes(q) ||
+        g.email?.toLowerCase().includes(q) ||
+        g.licenseNumber?.toLowerCase().includes(q)
+      );
+    }
+    return items.map(_withGuideLanguageNames);
+  },
+  getById(id) { const g = DB.guides.find(g => g.id === id); return g ? _withGuideLanguageNames(g) : null; },
+  create(data) {
+    const id = 'GD-' + String(DB.guides.length + 1).padStart(3, '0');
+    const record = { id, status:'Aktif', languages:[], createdAt:new Date().toISOString().split('T')[0], ...data };
+    DB.guides.push(record);
+    ActivityRepository.create({ entityType:'guide', entityId:id, action:'created', description:`Yeni rehber: ${record.name}` });
+    Store.notify();
+    return record;
+  },
+  update(id, patch) {
+    const idx = DB.guides.findIndex(g => g.id === id);
+    if (idx < 0) return null;
+    Object.assign(DB.guides[idx], patch);
+    ActivityRepository.create({ entityType:'guide', entityId:id, action:'updated', description:`Rehber güncellendi: ${Object.keys(patch).join(', ')}` });
+    Store.notify();
+    return DB.guides[idx];
+  },
+  delete(id) {
+    const idx = DB.guides.findIndex(g => g.id === id);
+    if (idx < 0) return false;
+    DB.guides[idx].status = 'Pasif';
+    Store.notify();
+    return true;
+  },
+};
+
+const GuidePaymentRepository = {
+  getAll(filters = {}) {
+    let items = DB.guidePayments;
+    if (filters.guideId) items = items.filter(p => p.guideId === filters.guideId);
+    if (filters.status)  items = items.filter(p => p.status === filters.status);
+    return items;
+  },
+  getById(id) { return DB.guidePayments.find(p => p.id === id) || null; },
+  getByGuideId(guideId) { return DB.guidePayments.filter(p => p.guideId === guideId); },
+  create(data) {
+    const id = 'GP-' + new Date().getFullYear() + '-' + String(DB.guidePayments.length + 1).padStart(3, '0');
+    const guide = DB.guides.find(g => g.id === data.guideId);
+    const res = DB.reservations.find(r => r.id === data.resId);
+    const tour = DB.tours.find(t => t.id === data.tourId);
+    const record = {
+      id, payNumber:id, status:'Bekliyor', currency:'EUR',
+      createdAt:new Date().toISOString().split('T')[0],
+      guideName:guide?.name||'', resRef:res?.id||'', tourName:tour?.name||res?.tour||'',
+      ...data,
+    };
+    DB.guidePayments.push(record);
+    ActivityRepository.create({ entityType:'guide_payment', entityId:id, action:'created', description:`Rehber ödemesi: ${data.currency==='TRY'?'₺':'€'}${(parseFloat(data.amount)||0).toLocaleString('tr-TR')}` });
+    Store.notify();
+    return record;
+  },
+  update(id, patch) {
+    const idx = DB.guidePayments.findIndex(p => p.id === id);
+    if (idx < 0) return null;
+    Object.assign(DB.guidePayments[idx], patch);
+    Store.notify();
+    return DB.guidePayments[idx];
+  },
+  delete(id) {
+    const idx = DB.guidePayments.findIndex(p => p.id === id);
+    if (idx < 0) return false;
+    DB.guidePayments[idx].status = 'İptal';
+    Store.notify();
+    return true;
+  },
+};
+
+// Simple date-range overlap check shared by both the mock and Supabase
+// guide-conflict lookups below — two reservations conflict if their
+// [checkIn,checkOut] date ranges intersect at all (single-day tours have
+// checkIn===checkOut, which still compares correctly).
+function _datesOverlap(aStart, aEnd, bStart, bEnd) {
+  if (!aStart || !bStart) return false;
+  const as = new Date(aStart), ae = new Date(aEnd || aStart);
+  const bs = new Date(bStart), be = new Date(bEnd || bStart);
+  if (isNaN(as) || isNaN(bs)) return false;
+  return as <= be && bs <= ae;
+}
+
+// Guide scheduling-conflict check — used by NewReservationModal / guide
+// reassignment to WARN (never silently block) when the selected guide is
+// already on another non-cancelled reservation overlapping the chosen
+// date(s). Works in both mock and Supabase mode.
+async function checkGuideConflicts(guideId, checkIn, checkOut, excludeResId) {
+  if (!guideId || !checkIn) return [];
+  const sb = getSB();
+  if (!sb) {
+    return DB.reservations
+      .filter(r => r.guideId === guideId && r.id !== excludeResId && r.opStatus !== 'İptal')
+      .filter(r => _datesOverlap(r.checkIn || r.date, r.checkOut || r.checkIn || r.date, checkIn, checkOut))
+      .map(r => ({ id:r.id, resNumber:r.id, tour:r.tour, checkIn:r.checkIn||r.date, checkOut:r.checkOut||r.checkIn||r.date }));
+  }
+  let q = sb.from('reservations')
+    .select('id,reservation_number,destination,check_in,check_out,status')
+    .eq('guide_id', guideId)
+    .neq('status', 'cancelled');
+  if (excludeResId) q = q.neq('id', excludeResId);
+  const { data, error } = await q;
+  if (error || !data) return [];
+  return data
+    .filter(r => _datesOverlap(r.check_in, r.check_out, checkIn, checkOut))
+    .map(r => ({ id:r.id, resNumber:r.reservation_number||r.id, tour:r.destination, checkIn:r.check_in, checkOut:r.check_out }));
+}
 
 const ActivityRepository = {
   getAll(filters = {}) {
@@ -2008,7 +2193,7 @@ function Welcome() {
     <div style={{
       position:"relative", overflow:"hidden",
       background:C.white, border:`1px solid ${C.border}`, borderRadius:T.radius,
-      boxShadow:T.shadowSoft, minHeight:330,
+      boxShadow:T.shadowSoft, minHeight:296,
     }}>
       {showNewRes && <NewReservationModal onClose={()=>setShowNewRes(false)} onSuccess={()=>setShowNewRes(false)}/>}
 
@@ -2119,12 +2304,10 @@ function KpiCard({ kpi }) {
 function KpiRow() {
   const { data:repoRes,   loading:kpiLoadR }  = useRepo("reservation", "getAll");
   const { data:repoPays,  loading:kpiLoadP }  = useRepo("payment",     "getAll");
+  const { data:repoGuides, loading:kpiLoadG } = useRepo("guide",       "getAll");
   const kpiLoading = kpiLoadR || kpiLoadP;
   const m = calculateDashboardMetrics(null, repoRes, repoPays, null, null);
-  // "Aktif Rehberler" is part of the target KPI row (see product simplification
-  // spec) but is intentionally omitted until the guides table exists —
-  // supabase_migration_guides.sql is pending approval. Adding a guide count
-  // here now would mean inventing a number with no real data behind it.
+  const activeGuideCount = (repoGuides||[]).filter(g=>g.status==="Aktif").length;
   const kpis = [
     {
       label:"Bugünkü Turlar",
@@ -2147,6 +2330,12 @@ function KpiRow() {
       icon:"M2 9a2 2 0 012-2h16a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V9zM2 13h20",
     },
     {
+      label:"Aktif Rehberler",
+      value: kpiLoadG ? '…' : String(activeGuideCount),
+      sub:"Görevlendirmeye hazır",
+      icon:"M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2 M23 21v-2a4 4 0 00-3-3.87 M16 3.13a4 4 0 010 7.75",
+    },
+    {
       label:"Bu Ay Beklenen Ciro",
       value:`€${m.monthRevEUR.toLocaleString("tr-TR",{maximumFractionDigits:0})}`,
       sub:"Bu ay",
@@ -2155,7 +2344,7 @@ function KpiRow() {
     },
   ];
   return (
-    <div className="rsp-stat-grid" style={{display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:14}}>
+    <div className="rsp-stat-grid" style={{display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:14}}>
       {kpis.map((k,i)=><KpiCard key={i} kpi={k}/>)}
     </div>
   );
@@ -2623,6 +2812,59 @@ function Dashboard() {
         <PendingPaymentsWidget/>
         <ActivityFeed/>
       </div>
+
+      {}
+      <GuideOpsPanel/>
+    </div>
+  );
+}
+
+// Guide operational section — active guide count, how many are on a tour
+// today, and upcoming reservations still without a guide. All three are
+// derived live from reservations/guides; "available guides" is deliberately
+// NOT shown here since actual availability (free on a given date) can only
+// be computed per-reservation via checkGuideConflicts, not as a single
+// dashboard number without inventing a definition for it.
+function GuideOpsPanel() {
+  const { data:repoGuides } = useRepo("guide", "getAll");
+  const { data:repoRes }    = useRepo("reservation", "getAll");
+  const guides = repoGuides || [];
+  const reservations = repoRes || [];
+  const todayISO = _TODAY_ISO;
+
+  const activeGuides  = guides.filter(g=>g.status==="Aktif").length;
+  const assignedToday = new Set(
+    reservations.filter(r=>r.guideId && r.checkIn===todayISO && r.opStatus!=="İptal").map(r=>r.guideId)
+  ).size;
+  const upcomingNoGuide = reservations
+    .filter(r => !r.guideId && !r.guide && (r.checkIn||"")>=todayISO && !["Tamamlandı","İptal"].includes(r.opStatus))
+    .sort((a,b)=>(a.checkIn||"").localeCompare(b.checkIn||""));
+
+  return (
+    <div style={{background:C.white, border:`1px solid ${C.border}`, borderRadius:12, padding:"18px 20px"}}>
+      <div style={{fontSize:14, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif", marginBottom:14}}>Rehber Operasyonu</div>
+      <div className="rsp-stat-grid" style={{display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:12, marginBottom:upcomingNoGuide.length?16:0}}>
+        {[
+          { label:"Aktif Rehber",                       val:activeGuides,          color:C.green, bg:C.greenBg },
+          { label:"Bugün Atanmış Rehber",                val:assignedToday,         color:C.blue,  bg:C.blueBg },
+          { label:"Rehber Atanmamış Yaklaşan Rezervasyon", val:upcomingNoGuide.length, color:upcomingNoGuide.length>0?C.red:C.green, bg:upcomingNoGuide.length>0?C.redBg:C.greenBg },
+        ].map((s,i)=>(
+          <div key={i} style={{textAlign:"center", padding:"12px 8px", background:s.bg, borderRadius:9}}>
+            <div style={{fontSize:22, fontWeight:700, color:s.color, fontFamily:"'Playfair Display',serif", lineHeight:1}}>{s.val}</div>
+            <div style={{fontSize:11, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", marginTop:5, lineHeight:1.3}}>{s.label}</div>
+          </div>
+        ))}
+      </div>
+      {upcomingNoGuide.length > 0 && (
+        <div>
+          {upcomingNoGuide.slice(0,5).map(r=>(
+            <div key={r.id} style={{display:"flex", alignItems:"center", justifyContent:"space-between", padding:"8px 0", borderBottom:`1px solid ${C.borderLight}`}}>
+              <span style={{fontSize:12.5, color:C.text, fontFamily:"'DM Sans',sans-serif"}}>{r.tour} · {r.date}</span>
+              <IDLink id={r.id} type="reservation"/>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -4723,13 +4965,13 @@ function FCheckList({ items, setItems, accent }) {
 }
 
 // ════════════════════════════════════════════════════════════════════════
-// QUOTE CREATION — shared business logic
-// One set of rules for desktop (QuoteWizard, below) and mobile
-// (MobileNewQuotePage) — same fields, same totals math, same save/update
-// calls. Neither platform has its own separate copy of this logic.
+// QUOTE CREATION — shared business logic used by desktop QuoteWizard below.
+// Quote creation/editing has no active entry point in the simplified nav
+// (Teklifler was retired) — QuoteDetailPage is kept only for historical
+// records reachable via IDLink. This logic remains for that + the quotes
+// table itself, which is not deleted.
 // ════════════════════════════════════════════════════════════════════════
 
-const QUOTE_LANGUAGE_OPTIONS = ["Türkçe","İngilizce","Almanca","Fransızca","İspanyolca","Rusça","Arapça"];
 const QUOTE_PICKUP_OPTIONS   = ["Otel Karşılama","Havalimanı Transferi","Liman Karşılama","Özel Lokasyon","Karşılama Yok"];
 const QUOTE_STEPS = ["Misafir","Tur ve Tarih","Fiyatlandırma","Teklif Detayları","Önizleme ve Oluştur"];
 
@@ -5073,7 +5315,7 @@ function QuoteStepGuest({ s, setS, customerList, errs }) {
           <FRow label="E-posta"><FText value={s.email} onChange={v=>setS(p=>({...p,email:v}))} placeholder="email@example.com" type="email"/></FRow>
           <FRow label="Telefon"><FText value={s.phone} onChange={v=>setS(p=>({...p,phone:v}))} placeholder="+90 555 000 0000" mono/></FRow>
           <FRow label="Uyruk"><FText value={s.nationality} onChange={v=>setS(p=>({...p,nationality:v}))} placeholder="Türkiye"/></FRow>
-          <FRow label="Dil"><FSelect value={s.language} onChange={v=>setS(p=>({...p,language:v}))} options={QUOTE_LANGUAGE_OPTIONS}/></FRow>
+          <FRow label="Dil"><FSelect value={s.language} onChange={v=>setS(p=>({...p,language:v}))} options={LANGUAGE_OPTIONS}/></FRow>
         </FGrid>
       )}
     </div>
@@ -5113,7 +5355,7 @@ function QuoteStepTour({ s, setS, tourList, toursLoading, toursError, errs }) {
         <FRow label="Başlangıç Tarihi" required error={errs.travelDate}><FText type="date" value={s.travelDate} onChange={v=>setS(p=>({...p,travelDate:v}))}/></FRow>
         <FRow label="Başlangıç Saati"><FText type="time" value={s.travelTime} onChange={v=>setS(p=>({...p,travelTime:v}))}/></FRow>
         <FRow label="Kişi Sayısı"><input type="number" min="1" value={s.guestCount} onChange={e=>setS(p=>({...p,guestCount:e.target.value}))} style={qwNumInputStyle()}/></FRow>
-        <FRow label="Dil"><FSelect value={s.language} onChange={v=>setS(p=>({...p,language:v}))} options={QUOTE_LANGUAGE_OPTIONS}/></FRow>
+        <FRow label="Dil"><FSelect value={s.language} onChange={v=>setS(p=>({...p,language:v}))} options={LANGUAGE_OPTIONS}/></FRow>
         <FRow label="Karşılama / Pickup"><FSelect value={s.pickup} onChange={v=>setS(p=>({...p,pickup:v}))} options={QUOTE_PICKUP_OPTIONS}/></FRow>
         {s.pickup !== "Karşılama Yok" && (
           <FRow label="Pickup Lokasyonu"><FText value={s.pickupLocation} onChange={v=>setS(p=>({...p,pickupLocation:v}))} placeholder="Otel adı / adres"/></FRow>
@@ -5448,6 +5690,47 @@ function GuideChip({ name }) {
   );
 }
 
+function AssignGuideModal({ r, onClose }) {
+  const { mutate, mutating } = useRepoMutation("reservation");
+  const { data:guideList } = useRepo("guide", "getAll");
+  const [guideId, setGuideId] = useState(r.guideId || "");
+  const [conflicts, setConflicts] = useState([]);
+  const guides = (guideList||[]).filter(g=>g.status!=="Pasif");
+
+  useEffect(() => {
+    let dead = false;
+    if (!guideId || !r.checkIn) { setConflicts([]); return; }
+    checkGuideConflicts(guideId, r.checkIn, r.checkOut||r.checkIn, r.id).then(list=>{ if(!dead) setConflicts(list); });
+    return () => { dead = true; };
+  }, [guideId]);
+
+  async function handleSubmit() {
+    const guide = guides.find(g=>g.id===guideId);
+    await mutate("update", r.id, { guideId: guideId||null, guide: guide?.name||null });
+    onClose();
+  }
+
+  return (
+    <Modal title="Rehber Ata" onClose={onClose} onSubmit={handleSubmit} submitLabel={mutating?"Kaydediliyor…":"Kaydet"}>
+      <FRow label="Rehber">
+        <FSelect value={guideId} onChange={setGuideId} options={[["","— Rehber atanmadı —"], ...guides.map(g=>[g.id, `${g.name}${(g.languageNames||[]).length?' · '+g.languageNames.join(', '):''}`])]}/>
+      </FRow>
+      {conflicts.length > 0 && (
+        <div style={{
+          display:"flex", gap:10, alignItems:"flex-start", padding:"10px 14px", marginTop:6,
+          background:C.amberBg, border:`1px solid ${C.amber}44`, borderRadius:8,
+        }}>
+          <URIc d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" size={16} sw={2} color={C.amber}/>
+          <div style={{fontSize:12.5, color:C.text, fontFamily:"'DM Sans',sans-serif", lineHeight:1.5}}>
+            <b>Takvim çakışması:</b> Bu rehber seçilen tarihte başka bir rezervasyona atanmış —
+            {' '}{conflicts.map(c=>`${c.tour||c.resNumber} (${c.checkIn})`).join(', ')}.
+            Yine de atayabilirsiniz, ancak lütfen kontrol edin.
+          </div>
+        </div>
+      )}
+    </Modal>
+  );
+}
 
 /* -- NewReservationModal -------------------------------------------- */
 function NewReservationModal({ onClose, onSuccess }) {
@@ -5455,8 +5738,10 @@ function NewReservationModal({ onClose, onSuccess }) {
   const { mutate: mutRes } = useRepoMutation("reservation");
   const { data: custList } = useRepo("customer", "getAll");
   const { data: tourList } = useRepo("tour",     "getAll");
+  const { data: guideList } = useRepo("guide",   "getAll");
   const [custId,   setCustId]   = useState("");
   const [tourId,   setTourId]   = useState("");
+  const [guideId,  setGuideId]  = useState("");
   const [checkIn,  setCheckIn]  = useState("");
   const [checkOut, setCheckOut] = useState("");
   const [time,     setTime]     = useState("");
@@ -5469,8 +5754,17 @@ function NewReservationModal({ onClose, onSuccess }) {
   const [notes,    setNotes]    = useState("");
   const [errs,     setErrs]     = useState({});
   const [busy,     setBusy]     = useState(false);
+  const [conflicts, setConflicts] = useState([]);
   const customers = custList || [];
   const tours     = tourList || [];
+  const guides    = (guideList || []).filter(g=>g.status!=="Pasif");
+
+  useEffect(() => {
+    let dead = false;
+    if (!guideId || !checkIn) { setConflicts([]); return; }
+    checkGuideConflicts(guideId, checkIn, checkOut||checkIn).then(list => { if(!dead) setConflicts(list); });
+    return () => { dead = true; };
+  }, [guideId, checkIn, checkOut]);
 
   async function handleSubmit() {
     const e = {};
@@ -5481,8 +5775,10 @@ function NewReservationModal({ onClose, onSuccess }) {
     if (Object.keys(e).length) return;
     setBusy(true);
     try {
+      const guide = guides.find(g=>g.id===guideId);
       const { data, error } = await mutRes("create", {
         customerId: custId, tourId: tourId||null,
+        guideId: guideId||null, guide: guide?.name||null,
         checkIn, checkOut, time: time||null,
         paxAdult: parseInt(pax)||1, paxChild: parseInt(paxChild)||0,
         pickup: pickup||null,
@@ -5543,6 +5839,24 @@ function NewReservationModal({ onClose, onSuccess }) {
         </FRow>
       </FGrid>
       <FGrid>
+        <FRow label="Rehber (opsiyonel)" hint={guides.length===0?"Kayıtlı aktif rehber yok.":undefined}>
+          <FSelect value={guideId} onChange={setGuideId} options={[["","— Rehber atanmadı —"], ...guides.map(g=>[g.id, `${g.name}${(g.languageNames||[]).length?' · '+g.languageNames.join(', '):''}`])]}/>
+        </FRow>
+      </FGrid>
+      {conflicts.length > 0 && (
+        <div style={{
+          display:"flex", gap:10, alignItems:"flex-start", padding:"10px 14px",
+          background:C.amberBg, border:`1px solid ${C.amber}44`, borderRadius:8, marginBottom:14,
+        }}>
+          <URIc d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" size={16} sw={2} color={C.amber}/>
+          <div style={{fontSize:12.5, color:C.text, fontFamily:"'DM Sans',sans-serif", lineHeight:1.5}}>
+            <b>Takvim çakışması:</b> Bu rehber seçilen tarihte başka bir rezervasyona atanmış —
+            {' '}{conflicts.map(c=>`${c.tour||c.resNumber} (${c.checkIn})`).join(', ')}.
+            Yine de devam edebilirsiniz, ancak lütfen kontrol edin.
+          </div>
+        </div>
+      )}
+      <FGrid>
         <FRow label="Toplam Fiyat">
           <FText type="number" value={total} onChange={setTotal} placeholder="0" mono/>
         </FRow>
@@ -5585,7 +5899,7 @@ function ReservationsPage({ onSelect }) {
   }, {});
 
   const upcoming   = _allRes.filter(r => !["Tamamlandı","İptal"].includes(r.opStatus)).length;
-  const noGuide    = _allRes.filter(r => !r.guide && r.opStatus !== "İptal").length;
+  const noGuide    = _allRes.filter(r => !r.guideId && !r.guide && r.opStatus !== "İptal").length;
   const pendingPay = _allRes.filter(r => r.payStatus === "Kapora Ödendi" || r.payStatus === "Ödeme Bekliyor").length;
   const completed  = _allRes.filter(r => r.opStatus === "Tamamlandı").length;
 
@@ -6094,6 +6408,9 @@ function ReservationDetailPage({ resId, onBack }) {
   // Real guest contact info — mapResFromDB has no phone/email/country of its
   // own (those live on the customer record), so this used to render blank.
   const { data:resCustomer } = useRepo("customer", "getById", _resRec?.customerId || null);
+  const { mutate:mutGuideAssign } = useRepoMutation("reservation");
+  const [showAssignGuide, setShowAssignGuide] = useState(false);
+  const [removingGuide, setRemovingGuide] = useState(false);
   if (resDetLoading) return <LoadingState label="Rezervasyon yükleniyor…"/>;
   if (resDetError)   return <ErrorState message={resDetError} onRetry={()=>{}}/>;
   if (!_resRec)      return <NotFoundCard entityType="Rezervasyon" entityId={resId} onBack={onBack}/>;
@@ -6103,6 +6420,8 @@ function ReservationDetailPage({ resId, onBack }) {
   const paidPct = safePctNum(r.total - r.remaining, r.total);
 
   return (
+    <>
+    {showAssignGuide && <AssignGuideModal r={r} onClose={()=>setShowAssignGuide(false)}/>}
     <div style={{ display:"flex", flexDirection:"column", gap:20 }}>
 
       {}
@@ -6263,12 +6582,32 @@ function ReservationDetailPage({ resId, onBack }) {
             <RInfoRow label="Pickup Lokasyonu" value={r.pickup}    icon="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z M12 10a1 1 0 100-2 1 1 0 000 2z"/>
             <RInfoRow label="Pickup Saati"     value={r.pickupTime} icon="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
             {}
-            <div style={{ padding:"10px 20px", borderBottom:`1px solid ${C.borderLight}`, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+            <div style={{ padding:"10px 20px", borderBottom:`1px solid ${C.borderLight}`, display:"flex", justifyContent:"space-between", alignItems:"center", gap:10, flexWrap:"wrap" }}>
               <span style={{ fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", display:"flex", alignItems:"center", gap:5 }}>
                 <RIc d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2 M23 21v-2a4 4 0 00-3-3.87 M16 3.13a4 4 0 010 7.75" size={12} sw={1.5}/>
                 Rehber
               </span>
-              <GuideChip name={r.guide}/>
+              <div style={{display:"flex", alignItems:"center", gap:8}}>
+                {r.guideId
+                  ? <a href={'#/guides/'+r.guideId} style={{textDecoration:"none"}}><GuideChip name={r.assignedGuideName || r.guide}/></a>
+                  : <GuideChip name={r.guide}/>}
+                <button onClick={()=>setShowAssignGuide(true)} style={{
+                  padding:"4px 10px", borderRadius:6, border:`1px solid ${C.border}`,
+                  background:C.white, cursor:"pointer", color:C.textMid,
+                  fontFamily:"'DM Sans',sans-serif", fontSize:11.5,
+                }}>{r.guideId ? "Değiştir" : "Ata"}</button>
+                {r.guideId && (
+                  <button disabled={removingGuide} onClick={async()=>{
+                    setRemovingGuide(true);
+                    await mutGuideAssign("update", r.id, { guideId:null, guide:null });
+                    setRemovingGuide(false);
+                  }} style={{
+                    padding:"4px 8px", borderRadius:6, border:`1px solid ${C.border}`,
+                    background:C.white, cursor: removingGuide ? "default" : "pointer", color:C.red,
+                    fontFamily:"'DM Sans',sans-serif", fontSize:11.5, opacity: removingGuide?0.6:1,
+                  }}>{removingGuide ? "…" : "Kaldır"}</button>
+                )}
+              </div>
             </div>
             <RInfoRow label="Araç"   value={r.vehicle} icon="M9 17a2 2 0 11-4 0 2 2 0 014 0zM19 17a2 2 0 11-4 0 2 2 0 014 0z M13 17H9m4 0h2m2-5H3M5 12V5h14v7"/>
             <RInfoRow label="Şoför"  value={r.driver}/>
@@ -6318,7 +6657,7 @@ function ReservationDetailPage({ resId, onBack }) {
           </RCard>
 
           {}
-          {!r.guide && r.opStatus !== "İptal" && (
+          {!r.guide && !r.guideId && r.opStatus !== "İptal" && (
             <div style={{
               background:C.redBg, border:`1px solid ${C.red}22`,
               borderRadius:12, padding:"14px 16px",
@@ -6342,6 +6681,7 @@ function ReservationDetailPage({ resId, onBack }) {
         </div>
       </div>
     </div>
+    </>
   );
 }
 
@@ -9889,40 +10229,691 @@ function ToursPage({ onSelect }) {
   );
 }
 
-// Rehberlerimiz (guide management) — the operational guide directory is a
-// new module. It needs a dedicated `guides` table (a tour guide is
-// operational/business data — license number, languages, region — that
-// doesn't belong on staff_users, which is an auth profile keyed to
-// auth.users). That table does not exist in the live database yet; the
-// additive migration is prepared at supabase_migration_guides.sql and is
-// pending manual approval/execution before this module can hold or show
-// any real data. This intentionally does NOT fall back to mock data or
-// local storage once the query fails — it shows the real reason instead.
-function GuidesPage() {
+// Rehberlerimiz (guide management) — real Supabase-backed module. Backed by
+// public.guides / public.guide_languages / public.guide_payments (migration
+// applied) via SupabaseGuideRepo / SupabaseGuidePaymentRepo above. No mock
+// arrays, no localStorage — every list, KPI and detail value here is
+// derived from useRepo("guide"/"reservation"/"guidePayment", "getAll").
+
+const GUIDE_STATUS_CFG = {
+  "Aktif":         { color:"#2E7D52", bg:"#EBF5EF", dot:"#2E7D52" },
+  "Müsait Değil":  { color:"#B8860B", bg:"#FBF3DE", dot:"#B8860B" },
+  "Pasif":         { color:"#6B7280", bg:"#F3F4F6", dot:"#9CA3AF" },
+};
+function GuideStatusBadge({ status }) {
+  const m = GUIDE_STATUS_CFG[status] || {};
   return (
-    <div style={{display:"flex", flexDirection:"column", gap:20}}>
-      <div className="page-header" style={{display:"flex", alignItems:"center", justifyContent:"space-between", gap:16}}>
-        <div>
-          <h1 style={{margin:0, fontSize:22, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif"}}>Rehberlerimiz</h1>
-          <div style={{fontSize:13, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", marginTop:4}}>
-            Operasyonel rehber ağınız — turlara atanan rehberler, dilleri ve ödemeleri.
+    <span style={{
+      display:"inline-flex", alignItems:"center", gap:5,
+      padding:"4px 10px", borderRadius:99, fontSize:11.5, fontWeight:500,
+      color:m.color, background:m.bg, fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap",
+    }}>
+      <span style={{width:6, height:6, borderRadius:"50%", background:m.dot||m.color}}/>
+      {status}
+    </span>
+  );
+}
+
+// Multi-select language picker — writes/reads {code,name} pairs so callers
+// can persist directly into guide_languages (language_code + language_name)
+// without a second lookup. Options come from the canonical LANGUAGES dataset.
+function FMultiSelect({ value, onChange, options, placeholder, error }) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState("");
+  const ref = useRef(null);
+  useEffect(() => {
+    function onDoc(e){ if(ref.current && !ref.current.contains(e.target)) setOpen(false); }
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, []);
+  const selected = value || [];
+  const selectedCodes = new Set(selected.map(v=>v.code));
+  function toggle(code, name) {
+    if (selectedCodes.has(code)) onChange(selected.filter(v=>v.code!==code));
+    else onChange([...selected, { code, name }]);
+  }
+  const filteredOptions = options.filter(([,name]) => name.toLowerCase().includes(q.toLowerCase()));
+  return (
+    <div ref={ref} style={{position:"relative"}}>
+      <div onClick={()=>setOpen(o=>!o)} style={{
+        minHeight:40, width:"100%", boxSizing:"border-box", padding:"6px 10px",
+        borderRadius:T.radiusSm, border:`1.5px solid ${error?C.red:C.border}`, background:C.white,
+        cursor:"pointer", display:"flex", flexWrap:"wrap", gap:6, alignItems:"center",
+      }}>
+        {selected.length===0 && <span style={{fontSize:13.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", padding:"4px 2px"}}>{placeholder||"Seçiniz…"}</span>}
+        {selected.map(v=>(
+          <span key={v.code} style={{
+            display:"inline-flex", alignItems:"center", gap:5,
+            padding:"4px 9px", borderRadius:99, background:C.ivoryDark,
+            color:C.navy, fontSize:12, fontFamily:"'DM Sans',sans-serif", fontWeight:500,
+          }}>
+            {v.name}
+            <span onClick={(e)=>{ e.stopPropagation(); toggle(v.code,v.name); }}
+              style={{cursor:"pointer", opacity:.55, fontSize:14, lineHeight:1}}>×</span>
+          </span>
+        ))}
+      </div>
+      {open && (
+        <div style={{
+          position:"absolute", top:"calc(100% + 4px)", left:0, right:0, zIndex:30,
+          background:C.white, border:`1px solid ${C.border}`, borderRadius:T.radiusSm,
+          boxShadow:"0 10px 28px rgba(13,27,62,0.18)", maxHeight:260, display:"flex", flexDirection:"column",
+        }}>
+          <input autoFocus value={q} onChange={e=>setQ(e.target.value)} placeholder="Dil ara…"
+            style={{
+              margin:6, padding:"7px 10px", border:`1px solid ${C.borderLight}`, borderRadius:6,
+              fontSize:12.5, fontFamily:"'DM Sans',sans-serif", outline:"none", background:C.ivory,
+            }}/>
+          <div style={{overflowY:"auto", padding:"0 6px 6px"}}>
+            {filteredOptions.map(([code,name])=>(
+              <label key={code} style={{
+                display:"flex", alignItems:"center", gap:8, padding:"7px 8px", borderRadius:6,
+                cursor:"pointer", fontSize:13, fontFamily:"'DM Sans',sans-serif", color:C.text,
+              }}
+                onMouseEnter={e=>e.currentTarget.style.background=C.ivory}
+                onMouseLeave={e=>e.currentTarget.style.background="transparent"}
+              >
+                <input type="checkbox" checked={selectedCodes.has(code)} onChange={()=>toggle(code,name)} style={{accentColor:C.navy}}/>
+                {name}
+              </label>
+            ))}
+            {filteredOptions.length===0 && (
+              <div style={{padding:"10px 8px", fontSize:12.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>Sonuç yok.</div>
+            )}
           </div>
         </div>
-      </div>
-      <div style={{
-        background:C.white, border:`1px solid ${C.border}`, borderRadius:T.radius,
-        padding:"48px 32px", textAlign:"center", display:"flex", flexDirection:"column",
-        alignItems:"center", gap:12,
+      )}
+    </div>
+  );
+}
+
+function AddGuideModal({ onClose, guide }) {
+  const isEdit = !!guide;
+  const { mutate, mutating } = useRepoMutation("guide");
+  const [name, setName]             = useState(guide?.name || "");
+  const [phone, setPhone]           = useState(guide?.phone || "");
+  const [email, setEmail]           = useState(guide?.email || "");
+  const [nationality, setNationality] = useState(guide?.nationality || "Türkiye");
+  const [languages, setLanguages]   = useState(guide?.languages || []);
+  const [licenseNumber, setLicenseNumber] = useState(guide?.licenseNumber || "");
+  const [licenseNotes, setLicenseNotes]   = useState(guide?.licenseNotes || "");
+  const [region, setRegion]         = useState(guide?.region || "");
+  const [status, setStatus]         = useState(guide?.status || "Aktif");
+  const [notes, setNotes]           = useState(guide?.notes || "");
+  const [errors, setErrors]         = useState({});
+
+  async function handleSubmit() {
+    const errs = validate({
+      name:  { required:"Ad soyad zorunludur." },
+      phone: { phone:true },
+      email: { email:true },
+    }, { name, phone, email });
+    if (Object.keys(errs).length) { setErrors(errs); return; }
+    const payload = {
+      name, phone, email, nationality, languages,
+      licenseNumber, licenseNotes, region, status, notes,
+    };
+    const { error } = isEdit ? await mutate("update", guide.id, payload) : await mutate("create", payload);
+    if (error) { setErrors({ name: error }); return; }
+    onClose();
+  }
+
+  return (
+    <Modal title={isEdit ? "Rehberi Düzenle" : "Yeni Rehber Ekle"} onClose={onClose}
+      onSubmit={handleSubmit} submitLabel={mutating ? "Kaydediliyor…" : "Kaydet"} wide>
+      <FGrid cols={2}>
+        <FRow label="Ad Soyad" required error={errors.name}>
+          <FText value={name} onChange={setName} placeholder="Ahmet Yıldız" error={errors.name}/>
+        </FRow>
+        <FRow label="Telefon" error={errors.phone}>
+          <FText value={phone} onChange={setPhone} placeholder="+90 5xx xxx xx xx" error={errors.phone}/>
+        </FRow>
+        <FRow label="E-posta" error={errors.email}>
+          <FText value={email} onChange={setEmail} type="email" placeholder="rehber@desetour.com" error={errors.email}/>
+        </FRow>
+        <FRow label="Uyruk">
+          <FSelect value={nationality} onChange={setNationality} options={COUNTRY_OPTIONS.map(c=>[c.name,`${c.flag} ${c.name}`])}/>
+        </FRow>
+      </FGrid>
+      <FRow label="Diller" hint="Konuştuğu diller — guide_languages tablosuna ilişkisel olarak kaydedilir." full>
+        <FMultiSelect value={languages} onChange={setLanguages} options={LANGUAGES} placeholder="Dil seçiniz…"/>
+      </FRow>
+      <FGrid cols={2}>
+        <FRow label="Lisans Numarası">
+          <FText value={licenseNumber} onChange={setLicenseNumber} placeholder="IST-2024-0001"/>
+        </FRow>
+        <FRow label="Bölge">
+          <FText value={region} onChange={setRegion} placeholder="İstanbul"/>
+        </FRow>
+        <FRow label="Lisans Bilgisi">
+          <FText value={licenseNotes} onChange={setLicenseNotes} placeholder="A Sınıfı Profesyonel Turist Rehberi"/>
+        </FRow>
+        <FRow label="Durum">
+          <FSelect value={status} onChange={setStatus} options={["Aktif","Müsait Değil","Pasif"]}/>
+        </FRow>
+      </FGrid>
+      <FRow label="Notlar" full>
+        <FTextArea value={notes} onChange={setNotes} rows={3} placeholder="Uzmanlık alanı, tercih edilen tur tipleri, diğer notlar…"/>
+      </FRow>
+    </Modal>
+  );
+}
+
+function GuidesPage({ onSelect }) {
+  const { isMobile } = useBreakpoint();
+  const { data:repoGuides, loading, error, reload }   = useRepo("guide", "getAll");
+  const { data:repoRes }                              = useRepo("reservation", "getAll");
+  const { data:repoGP }                                = useRepo("guidePayment", "getAll");
+  const [showAdd, setShowAdd]     = useState(false);
+  const [search, setSearch]       = useState("");
+  const [statusFilter, setStatusFilter] = useState("Tümü");
+  const [langFilter, setLangFilter]     = useState("Tümü");
+
+  const guides = repoGuides || [];
+  const reservations = repoRes || [];
+  const guidePayments = repoGP || [];
+  const todayISO = _TODAY_ISO;
+
+  const statsByGuide = useMemo(() => {
+    const map = {};
+    guides.forEach(g => { map[g.id] = { totalTours:0, upcoming:null, totalPaidEur:0, todayTour:false }; });
+    reservations.forEach(r => {
+      if (!r.guideId || !map[r.guideId] || r.opStatus === "İptal") return;
+      const s = map[r.guideId];
+      s.totalTours++;
+      const ci = r.checkIn || "";
+      if (ci === todayISO) s.todayTour = true;
+      if (ci && ci >= todayISO && (!s.upcoming || ci < s.upcoming.checkIn)) {
+        s.upcoming = { checkIn:ci, tour:r.tour, resId:r.id };
+      }
+    });
+    guidePayments.forEach(p => {
+      if (!p.guideId || !map[p.guideId] || p.status === "İptal" || p.currency !== "EUR") return;
+      map[p.guideId].totalPaidEur += (p.amount||0);
+    });
+    return map;
+  }, [guides, reservations, guidePayments]);
+
+  const filtered = guides.filter(g => {
+    const stOk = statusFilter === "Tümü" || g.status === statusFilter;
+    const langOk = langFilter === "Tümü" || (g.languageNames||[]).includes(langFilter);
+    const srchOk = !search ||
+      g.name.toLowerCase().includes(search.toLowerCase()) ||
+      (g.phone||"").includes(search) ||
+      (g.email||"").toLowerCase().includes(search.toLowerCase()) ||
+      (g.licenseNumber||"").toLowerCase().includes(search.toLowerCase());
+    return stOk && langOk && srchOk;
+  });
+
+  const totalGuides  = guides.length;
+  const activeGuides = guides.filter(g=>g.status==="Aktif").length;
+  const onDutyToday  = guides.filter(g=>statsByGuide[g.id]?.todayTour).length;
+  const thisMonthPrefix = `${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,"0")}`;
+  const monthPaidEur = guidePayments
+    .filter(p => p.status !== "İptal" && p.currency === "EUR" && (p.paymentDate||"").startsWith(thisMonthPrefix))
+    .reduce((s,p)=>s+(p.amount||0), 0);
+
+  const availableLanguages = Array.from(new Set(guides.flatMap(g=>g.languageNames||[]))).sort((a,b)=>a.localeCompare(b,'tr'));
+
+  return (
+    <>
+    {showAdd && <AddGuideModal onClose={()=>{ setShowAdd(false); reload&&reload(); }}/>}
+    <div style={{display:"flex", flexDirection:"column", gap:20}}>
+
+      <div className="page-header" style={{
+        background:C.white, border:`1px solid ${C.border}`, borderRadius:12,
+        padding:"20px 24px", display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:20,
       }}>
-        <div style={{fontSize:32}}>🛠️</div>
-        <div style={{fontSize:15, fontWeight:600, color:C.text, fontFamily:"'Playfair Display',serif"}}>
-          Rehber yönetimi bir veritabanı güncellemesi bekliyor
+        <div>
+          <h1 style={{margin:0, fontSize:24, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif", marginBottom:5}}>Rehberlerimiz</h1>
+          <p style={{margin:0, fontSize:13.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif"}}>
+            Operasyonel rehber ağınız — turlara atanan rehberler, dilleri ve ödemeleri.
+          </p>
         </div>
-        <div style={{fontSize:13, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", maxWidth:480, lineHeight:1.6}}>
-          Bu modül için gereken <code style={{background:C.ivory, padding:"1px 6px", borderRadius:4, fontFamily:"'DM Mono',monospace", fontSize:12}}>guides</code> tablosu
-          henüz oluşturulmadı. Gerekli migrasyon <code style={{background:C.ivory, padding:"1px 6px", borderRadius:4, fontFamily:"'DM Mono',monospace", fontSize:12}}>supabase_migration_guides.sql</code> dosyasında
-          hazır — Supabase'de çalıştırıldıktan sonra bu sayfa gerçek rehber listenizi gösterecek.
+        <div className="page-header-actions" style={{display:"flex", alignItems:"center", gap:10, flexShrink:0}}>
+          <div style={{position:"relative"}}>
+            <span style={{position:"absolute", left:10, top:"50%", transform:"translateY(-50%)", color:C.textFaint, pointerEvents:"none"}}>
+              <URIc d="M21 21l-4.35-4.35 M17 11A6 6 0 105 11a6 6 0 0012 0z" size={14} sw={1.8}/>
+            </span>
+            <input type="text" value={search} onChange={e=>setSearch(e.target.value)}
+              placeholder="Ad, telefon, e-posta veya lisans no ara…"
+              style={{
+                paddingLeft:32, paddingRight:12, paddingTop:8, paddingBottom:8,
+                border:`1px solid ${C.border}`, borderRadius:8, background:C.ivory,
+                fontSize:13, color:C.text, fontFamily:"'DM Sans',sans-serif", outline:"none",
+                width:"min(260px,45vw)", transition:"border-color .15s, box-shadow .15s",
+              }}
+              onFocus={e=>{ e.target.style.borderColor=C.gold; e.target.style.boxShadow=`0 0 0 3px ${C.gold}20`; }}
+              onBlur={e=>{ e.target.style.borderColor=C.border; e.target.style.boxShadow="none"; }}
+            />
+          </div>
+          <button style={{
+            display:"flex", alignItems:"center", gap:7, padding:"9px 16px", borderRadius:8,
+            border:"none", background:C.navy, cursor:"pointer", color:C.white,
+            fontFamily:"'DM Sans',sans-serif", fontSize:13, fontWeight:500,
+          }}
+            onMouseEnter={e=>e.currentTarget.style.background=C.navyHover}
+            onMouseLeave={e=>e.currentTarget.style.background=C.navy}
+            onClick={()=>setShowAdd(true)}
+          >
+            <URIc d="M12 5v14M5 12h14" size={14} sw={2.5} color="#fff"/>
+            Yeni Rehber Ekle
+          </button>
         </div>
+      </div>
+
+      <div className="rsp-stat-grid" style={{display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:14}}>
+        {[
+          { label:"Toplam Rehber",        val:totalGuides,  icon:"M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2 M23 21v-2a4 4 0 00-3-3.87 M16 3.13a4 4 0 010 7.75", color:C.text,  bg:C.ivoryDark },
+          { label:"Aktif Rehber",         val:activeGuides, icon:"M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11", color:C.green, bg:C.greenBg },
+          { label:"Bugün Görevli",        val:onDutyToday,  icon:"M8 2v4M16 2v4M3 10h18M21 8a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2h14a2 2 0 002-2V8z", color:C.amber, bg:C.amberBg },
+          { label:"Bu Ay Rehber Ödemeleri", val:`€${monthPaidEur.toLocaleString("tr-TR")}`, icon:"M12 2v20M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6", color:C.gold, bg:C.goldPale },
+        ].map((k,i)=>(
+          <div key={i} style={{
+            background:C.white, border:`1px solid ${C.border}`, borderRadius:12,
+            padding:"18px 20px", display:"flex", alignItems:"center", gap:14,
+          }}>
+            <div style={{width:40, height:40, borderRadius:10, flexShrink:0, background:k.bg, display:"flex", alignItems:"center", justifyContent:"center"}}>
+              <URIc d={k.icon} size={18} sw={1.6} color={k.color}/>
+            </div>
+            <div>
+              <div style={{fontSize:24, fontWeight:700, color:k.color, fontFamily:"'Playfair Display',serif", lineHeight:1, marginBottom:3}}>{k.val}</div>
+              <div style={{fontSize:12, color:C.textMuted, fontFamily:"'DM Sans',sans-serif"}}>{k.label}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{background:C.white, border:`1px solid ${C.border}`, borderRadius:12, overflow:"hidden"}}>
+        <div style={{display:"flex", alignItems:"center", gap:10, borderBottom:`1px solid ${C.borderLight}`, padding:"12px 20px", flexWrap:"wrap"}}>
+          <SSelect value={statusFilter} onChange={setStatusFilter} options={["Tümü","Aktif","Müsait Değil","Pasif"]}/>
+          <SSelect value={langFilter} onChange={setLangFilter} options={["Tümü", ...availableLanguages]}/>
+          <div style={{marginLeft:"auto", fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>{filtered.length} rehber</div>
+        </div>
+
+        {loading ? (
+          <LoadingState label="Rehberler yükleniyor…"/>
+        ) : error ? (
+          <div style={{padding:"40px 24px", textAlign:"center", color:C.red, fontFamily:"'DM Sans',sans-serif", fontSize:13}}>Rehberler yüklenemedi: {error}</div>
+        ) : filtered.length===0 ? (
+          <div style={{padding:"60px 40px", textAlign:"center"}}>
+            <div style={{fontSize:36, opacity:.2, marginBottom:12}}>🧭</div>
+            <div style={{fontSize:15, fontWeight:600, color:C.text, fontFamily:"'Playfair Display',serif", marginBottom:6}}>Rehber bulunamadı.</div>
+          </div>
+        ) : (
+          <>
+          <table className="rsp-table" style={{width:"100%", borderCollapse:"collapse"}}>
+            <thead>
+              <tr style={{borderBottom:`1px solid ${C.border}`, background:C.ivory}}>
+                {["Rehber","Diller","Telefon","Yaklaşan Tur","Toplam Tur","Toplam Ödeme","Durum",""].map((h,i)=>(
+                  <th key={i} style={{
+                    padding: i===0?"11px 16px 11px 22px":"11px 12px",
+                    textAlign:"left", fontSize:10.5, fontWeight:600, color:C.textFaint,
+                    fontFamily:"'DM Sans',sans-serif", textTransform:"uppercase", letterSpacing:"0.07em", whiteSpace:"nowrap",
+                  }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((g,i)=>{
+                const isLast = i===filtered.length-1;
+                const s = statsByGuide[g.id] || { totalTours:0, upcoming:null, totalPaidEur:0 };
+                return (
+                  <tr key={g.id} className="dt-row" onClick={()=>onSelect?onSelect(g.id):(NAV_REF.fn&&NAV_REF.fn('/guides/'+g.id))}
+                    style={{background:C.white, cursor:"pointer", opacity:g.status==="Pasif"?0.6:1}}>
+                    <td style={{padding:"14px 16px 14px 22px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle"}}>
+                      <div style={{fontSize:13.5, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif"}}>{g.name}</div>
+                      <div style={{fontSize:11.5, color:C.textFaint, fontFamily:"'DM Mono',monospace", marginTop:2}}>{g.licenseNumber || g.id}</div>
+                    </td>
+                    <td style={{padding:"14px 12px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle"}}>
+                      <div style={{display:"flex", flexWrap:"wrap", gap:4, maxWidth:180}}>
+                        {(g.languageNames||[]).length===0
+                          ? <span style={{fontSize:12, color:C.textFaint}}>—</span>
+                          : g.languageNames.map(l=><Pill key={l} label={l} color={C.navy} bg={C.ivoryDark} small/>)}
+                      </div>
+                    </td>
+                    <td style={{padding:"14px 12px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle"}}>
+                      <span style={{fontSize:13, color:C.textMid, fontFamily:"'DM Sans',sans-serif"}}>{g.phone || "—"}</span>
+                    </td>
+                    <td style={{padding:"14px 12px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle"}}>
+                      {s.upcoming ? (
+                        <span style={{fontSize:12.5, color:C.textMid, fontFamily:"'DM Sans',sans-serif"}}>
+                          {new Date(s.upcoming.checkIn).toLocaleDateString('tr-TR',{day:'2-digit',month:'short'})} · {s.upcoming.tour}
+                        </span>
+                      ) : <span style={{fontSize:12.5, color:C.textFaint}}>—</span>}
+                    </td>
+                    <td style={{padding:"14px 12px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle"}}>
+                      <span style={{fontSize:13, color:C.textMid, fontFamily:"'DM Sans',sans-serif"}}>{s.totalTours}</span>
+                    </td>
+                    <td style={{padding:"14px 12px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle"}}>
+                      <span style={{fontSize:13.5, fontWeight:600, color:C.gold, fontFamily:"'Playfair Display',serif"}}>€{s.totalPaidEur.toLocaleString("tr-TR")}</span>
+                    </td>
+                    <td style={{padding:"14px 12px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle"}}>
+                      <GuideStatusBadge status={g.status}/>
+                    </td>
+                    <td style={{padding:"14px 16px 14px 8px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle"}}>
+                      <URIc d="M9 18l6-6-6-6" size={14} sw={1.8} color={C.textFaint}/>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          <div className="rsp-cards"><MobileCardList items={filtered} renderCard={(g) => {
+            const s = statsByGuide[g.id] || { totalTours:0, totalPaidEur:0 };
+            const scm = GUIDE_STATUS_CFG[g.status]||{color:C.textMuted,bg:C.ivoryDark};
+            return (
+              <MobileCard key={g.id} onClick={()=>onSelect?onSelect(g.id):(NAV_REF.fn&&NAV_REF.fn('/guides/'+g.id))}>
+                <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
+                  <div style={{fontSize:14,fontWeight:600,color:C.text,fontFamily:"'DM Sans',sans-serif"}}>{g.name}</div>
+                  <span style={{fontSize:11,padding:"2px 7px",borderRadius:99,color:scm.color,background:scm.bg,fontFamily:"'DM Sans',sans-serif",fontWeight:500,flexShrink:0}}>{g.status}</span>
+                </div>
+                <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+                  <span style={{fontSize:12,color:C.textMuted,fontFamily:"'DM Sans',sans-serif"}}>{(g.languageNames||[]).join(', ')||'—'}</span>
+                  <span style={{fontSize:12,color:C.textMuted,fontFamily:"'DM Sans',sans-serif"}}>{s.totalTours} tur · €{s.totalPaidEur.toLocaleString('tr-TR')}</span>
+                </div>
+              </MobileCard>
+            );
+          }}/></div>
+          </>
+        )}
+      </div>
+    </div>
+    </>
+  );
+}
+
+function AddGuidePaymentModal({ guideId, onClose }) {
+  const { mutate, mutating } = useRepoMutation("guidePayment");
+  const { data:repoRes }  = useRepo("reservation", "getAll");
+  const { data:repoTours } = useRepo("tour", "getAll");
+  const guideRes = (repoRes||[]).filter(r=>r.guideId===guideId);
+  const [resId, setResId]     = useState("");
+  const [tourId, setTourId]   = useState("");
+  const [amount, setAmount]   = useState("");
+  const [currency, setCurrency] = useState("EUR");
+  const [status, setStatus]   = useState("Bekliyor");
+  const [paymentDate, setPaymentDate] = useState(new Date().toISOString().split('T')[0]);
+  const [notes, setNotes]     = useState("");
+  const [errors, setErrors]   = useState({});
+
+  async function handleSubmit() {
+    const errs = validate({ amount:{ required:"Tutar zorunludur.", number:true } }, { amount });
+    if (Object.keys(errs).length) { setErrors(errs); return; }
+    const { error } = await mutate("create", {
+      guideId, resId: resId||null, tourId: tourId||null,
+      amount: parseFloat(amount), currency, status, paymentDate: paymentDate||null, notes,
+    });
+    if (error) { setErrors({ amount: error }); return; }
+    onClose();
+  }
+
+  return (
+    <Modal title="Rehber Ödemesi Ekle" onClose={onClose} onSubmit={handleSubmit}
+      submitLabel={mutating ? "Kaydediliyor…" : "Kaydet"}>
+      <FGrid cols={2}>
+        <FRow label="İlgili Rezervasyon" hint="Varsa">
+          <FSelect value={resId} onChange={setResId} options={[["","— Seçiniz —"], ...guideRes.map(r=>[r.id, `${r.resNumber||r.id} · ${r.tour}`])]}/>
+        </FRow>
+        <FRow label="İlgili Tur" hint="Varsa">
+          <FSelect value={tourId} onChange={setTourId} options={[["","— Seçiniz —"], ...(repoTours||[]).map(t=>[t.id,t.name])]}/>
+        </FRow>
+        <FRow label="Tutar" required error={errors.amount}>
+          <FText value={amount} onChange={setAmount} type="number" placeholder="0" error={errors.amount}/>
+        </FRow>
+        <FRow label="Para Birimi">
+          <FSelect value={currency} onChange={setCurrency} options={CURRENCY_OPTIONS}/>
+        </FRow>
+        <FRow label="Durum">
+          <FSelect value={status} onChange={setStatus} options={["Bekliyor","Ödendi","İptal"]}/>
+        </FRow>
+        <FRow label="Ödeme Tarihi">
+          <FText value={paymentDate} onChange={setPaymentDate} type="date"/>
+        </FRow>
+      </FGrid>
+      <FRow label="Notlar" full>
+        <FTextArea value={notes} onChange={setNotes} rows={2} placeholder="Ödeme ile ilgili not…"/>
+      </FRow>
+    </Modal>
+  );
+}
+
+function GuideDetailPage({ guideId, onBack }) {
+  const { isMobile } = useBreakpoint();
+  const _sp = safeParam(guideId);
+  if (_sp.invalid) return (
+    <div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',padding:60,gap:16}}>
+      <div style={{fontSize:36}}>🔍</div>
+      <div style={{fontSize:16,fontWeight:600,color:'#1B2D4F',fontFamily:"'Playfair Display',serif"}}>Kayıt bulunamadı</div>
+      <div style={{fontSize:13,color:'#6B7280'}}>
+        {_sp.reason==='demo' ? 'Bu demo kayıt Supabase modunda görüntülenemez.' : 'Geçersiz kayıt kimliği.'}
+      </div>
+      <button onClick={onBack} style={{padding:'9px 20px',borderRadius:8,border:'none',background:'#1B2D4F',color:'#fff',cursor:'pointer',fontSize:13}}>Geri Dön</button>
+    </div>
+  );
+
+  const { data:guide, loading, error, reload } = useRepo("guide", "getById", guideId);
+  const { data:repoRes }  = useRepo("reservation", "getAll");
+  const { data:repoGP, reload:reloadGP } = useRepo("guidePayment", "getByGuideId", guideId);
+  const [showEdit, setShowEdit]               = useState(false);
+  const [showAddPayment, setShowAddPayment]   = useState(false);
+
+  if (loading) return <LoadingState label="Rehber profili yükleniyor…"/>;
+  if (error)   return <ErrorState message={error} onRetry={()=>{}}/>;
+  if (!guide)  return <div style={{padding:40,textAlign:"center",color:C.textFaint,fontFamily:"'DM Sans',sans-serif"}}>Rehber bulunamadı.</div>;
+
+  const allRes = repoRes || [];
+  const guideRes = allRes.filter(r => r.guideId === guideId);
+  const activeRes = guideRes.filter(r => r.opStatus !== "İptal");
+  const todayISO = _TODAY_ISO;
+  const upcoming = activeRes.filter(r => (r.checkIn||"") >= todayISO).sort((a,b)=>(a.checkIn||"").localeCompare(b.checkIn||""));
+  const past     = activeRes.filter(r => (r.checkIn||"") < todayISO).sort((a,b)=>(b.checkIn||"").localeCompare(a.checkIn||""));
+  const thisMonthPrefix = `${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,"0")}`;
+  const thisMonthTours  = activeRes.filter(r => (r.checkIn||"").startsWith(thisMonthPrefix)).length;
+  const totalGuests     = activeRes.reduce((s,r)=>s+(r.pax||0)+(r.paxChild||0),0);
+
+  const payments        = repoGP || [];
+  const totalPaidEur    = payments.filter(p=>p.status==="Ödendi"  && p.currency==="EUR").reduce((s,p)=>s+(p.amount||0),0);
+  const pendingPaidEur  = payments.filter(p=>p.status==="Bekliyor"&& p.currency==="EUR").reduce((s,p)=>s+(p.amount||0),0);
+
+  const customerMap = new Map();
+  activeRes.forEach(r => {
+    if (!r.customerId) return;
+    if (!customerMap.has(r.customerId)) customerMap.set(r.customerId, { id:r.customerId, name:r.name, tours:0, lastDate:r.checkIn });
+    const c = customerMap.get(r.customerId);
+    c.tours++;
+    if ((r.checkIn||"") > (c.lastDate||"")) c.lastDate = r.checkIn;
+  });
+  const customers = Array.from(customerMap.values()).sort((a,b)=>(b.lastDate||"").localeCompare(a.lastDate||""));
+
+  const KPIS = [
+    { label:"Toplam Tur",              val:activeRes.length, icon:"M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z M9 22V12h6v10", color:C.text,  bg:C.ivoryDark },
+    { label:"Toplam Misafir",          val:totalGuests,       icon:"M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2 M23 21v-2a4 4 0 00-3-3.87 M16 3.13a4 4 0 010 7.75", color:C.blue,  bg:C.blueBg },
+    { label:"Bu Ay Tur",               val:thisMonthTours,    icon:"M8 2v4M16 2v4M3 10h18M21 8a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2h14a2 2 0 002-2V8z", color:C.amber, bg:C.amberBg },
+    { label:"Toplam Ödenen",           val:`€${totalPaidEur.toLocaleString("tr-TR")}`, icon:"M22 11.08V12a10 10 0 11-5.93-9.14 M22 4L12 14.01l-3-3", color:C.green, bg:C.greenBg },
+    { label:"Bekleyen Rehber Ödemesi", val:`€${pendingPaidEur.toLocaleString("tr-TR")}`, icon:"M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z", color:C.red, bg:C.redBg },
+  ];
+
+  return (
+    <>
+    {showEdit && <AddGuideModal guide={guide} onClose={()=>{ setShowEdit(false); reload&&reload(); }}/>}
+    {showAddPayment && <AddGuidePaymentModal guideId={guide.id} onClose={()=>{ setShowAddPayment(false); reloadGP&&reloadGP(); }}/>}
+    <div style={{display:"flex", flexDirection:"column", gap:20}}>
+
+      <div style={{
+        background:C.white, border:`1px solid ${C.border}`, borderRadius:12,
+        padding: isMobile ? "14px 16px" : "15px 22px",
+        display:"flex", flexDirection: isMobile ? "column" : "row",
+        alignItems: isMobile ? "stretch" : "center",
+        justifyContent:"space-between", gap: isMobile ? 12 : 16,
+      }}>
+        <div style={{display:"flex", alignItems:"center", gap:14, minWidth:0}}>
+          <button onClick={onBack} style={{
+            display:"flex", alignItems:"center", gap:6, flexShrink:0,
+            background:C.ivory, border:`1px solid ${C.border}`,
+            borderRadius:7, padding:"6px 12px", cursor:"pointer",
+            color:C.textMid, fontFamily:"'DM Sans',sans-serif", fontSize:12.5,
+          }}
+            onMouseEnter={e=>e.currentTarget.style.background=C.ivoryDark}
+            onMouseLeave={e=>e.currentTarget.style.background=C.ivory}
+          >
+            <URIc d="M15 18l-6-6 6-6" size={13} sw={2}/>
+            {!isMobile && "Rehberlerimiz"}
+          </button>
+          {!isMobile && <div style={{width:1, height:20, background:C.borderLight, flexShrink:0}}/>}
+          {!isMobile && (
+            <span style={{fontSize:12, color:C.textFaint, fontFamily:"'DM Mono',monospace", background:C.ivory, border:`1px solid ${C.borderLight}`, padding:"3px 8px", borderRadius:5, flexShrink:0}}>{guide.id}</span>
+          )}
+          <div style={{minWidth:0}}>
+            <div style={{fontSize:17, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif", lineHeight:1.2}}>{guide.name}</div>
+            <div style={{fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:2}}>
+              {guide.region || "Bölge belirtilmemiş"} · {(guide.languageNames||[]).join(', ') || "Dil belirtilmemiş"}
+            </div>
+          </div>
+        </div>
+        <div style={{display:"flex", alignItems:"center", gap:10, flexShrink:0}}>
+          <GuideStatusBadge status={guide.status}/>
+          <button onClick={()=>setShowEdit(true)} style={{
+            padding:"8px 16px", borderRadius:8, border:`1px solid ${C.border}`,
+            background:C.white, cursor:"pointer", color:C.text,
+            fontFamily:"'DM Sans',sans-serif", fontSize:12.5, fontWeight:500,
+          }}>Düzenle</button>
+        </div>
+      </div>
+
+      <div className="rsp-stat-grid" style={{display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:14}}>
+        {KPIS.map((k,i)=>(
+          <div key={i} style={{
+            background:C.white, border:`1px solid ${C.border}`, borderRadius:12,
+            padding:"14px 16px", display:"flex", alignItems:"center", gap:12,
+          }}>
+            <div style={{width:36, height:36, borderRadius:9, flexShrink:0, background:k.bg, display:"flex", alignItems:"center", justifyContent:"center"}}>
+              <URIc d={k.icon} size={16} sw={1.6} color={k.color}/>
+            </div>
+            <div>
+              <div style={{fontSize:18, fontWeight:700, color:k.color, fontFamily:"'Playfair Display',serif", lineHeight:1}}>{k.val}</div>
+              <div style={{fontSize:11, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:3}}>{k.label}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="rsp-split" style={{display:"grid", gridTemplateColumns:"1fr 280px", gap:20, alignItems:"start"}}>
+
+        <div style={{display:"flex", flexDirection:"column", gap:18}}>
+
+          <DetailCard title={`Yaklaşan Turlar (${upcoming.length})`}>
+            {upcoming.length===0 ? <EmptyRow text="Yaklaşan tur yok."/> : upcoming.map(r=>(
+              <ResRow key={r.id} r={r}/>
+            ))}
+          </DetailCard>
+
+          <DetailCard title={`Tur Geçmişi (${past.length})`}>
+            {past.length===0 ? <EmptyRow text="Geçmiş tur yok."/> : past.map(r=>(
+              <ResRow key={r.id} r={r}/>
+            ))}
+          </DetailCard>
+
+          <DetailCard title={`Misafir Geçmişi (${customers.length})`}>
+            {customers.length===0 ? <EmptyRow text="Bu rehber henüz bir misafire atanmadı."/> : customers.map(c=>(
+              <div key={c.id} style={{display:"flex", alignItems:"center", justifyContent:"space-between", padding:"10px 0", borderBottom:`1px solid ${C.borderLight}`}}>
+                <div>
+                  <div style={{fontSize:13, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif"}}>{c.name || "—"}</div>
+                  <div style={{fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:1}}>{c.tours} tur</div>
+                </div>
+                <IDLink id={c.id} type="customer"/>
+              </div>
+            ))}
+          </DetailCard>
+
+          <DetailCard title={`Ödeme Geçmişi (${payments.length})`} action={
+            <button onClick={()=>setShowAddPayment(true)} style={{
+              padding:"6px 12px", borderRadius:7, border:"none", background:C.navy,
+              color:C.white, fontSize:12, fontWeight:500, fontFamily:"'DM Sans',sans-serif", cursor:"pointer",
+            }}>+ Ödeme Ekle</button>
+          }>
+            {payments.length===0 ? <EmptyRow text="Ödeme kaydı yok."/> : payments.map(p=>(
+              <div key={p.id} style={{display:"flex", alignItems:"center", justifyContent:"space-between", padding:"10px 0", borderBottom:`1px solid ${C.borderLight}`}}>
+                <div>
+                  <div style={{fontSize:13, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif"}}>
+                    {p.currency==="TRY"?"₺":"€"}{p.amount.toLocaleString("tr-TR")}
+                    {p.resRef && <span style={{fontSize:11.5, color:C.textFaint, fontWeight:400, marginLeft:8}}>{p.resRef}</span>}
+                  </div>
+                  <div style={{fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:1}}>
+                    {p.paymentDate ? new Date(p.paymentDate).toLocaleDateString('tr-TR',{day:'2-digit',month:'short',year:'numeric'}) : "Tarih belirtilmemiş"}
+                    {p.notes && ` · ${p.notes}`}
+                  </div>
+                </div>
+                <Pill label={p.status} color={p.status==="Ödendi"?C.green:p.status==="İptal"?C.red:C.amber}
+                  bg={p.status==="Ödendi"?C.greenBg:p.status==="İptal"?C.redBg:C.amberBg}/>
+              </div>
+            ))}
+          </DetailCard>
+
+        </div>
+
+        <div style={{display:"flex", flexDirection:"column", gap:18}}>
+          <DetailCard title="Profil Bilgileri">
+            <InfoRow label="Telefon" value={guide.phone}/>
+            <InfoRow label="E-posta" value={guide.email}/>
+            <InfoRow label="Uyruk"   value={guide.nationality}/>
+            <InfoRow label="Lisans No" value={guide.licenseNumber}/>
+            <InfoRow label="Lisans Bilgisi" value={guide.licenseNotes}/>
+            <InfoRow label="Bölge"   value={guide.region}/>
+            {guide.notes && (
+              <div style={{marginTop:10, padding:"10px 12px", background:C.ivory, borderRadius:8, fontSize:12.5, color:C.textMid, fontFamily:"'DM Sans',sans-serif", lineHeight:1.5}}>
+                {guide.notes}
+              </div>
+            )}
+          </DetailCard>
+
+          <DetailCard title="Diller">
+            {(guide.languageNames||[]).length===0 ? <EmptyRow text="Dil belirtilmemiş."/> : (
+              <div style={{display:"flex", flexWrap:"wrap", gap:6}}>
+                {guide.languageNames.map(l=><Pill key={l} label={l} color={C.navy} bg={C.ivoryDark}/>)}
+              </div>
+            )}
+          </DetailCard>
+        </div>
+
+      </div>
+    </div>
+    </>
+  );
+}
+
+function DetailCard({ title, action, children }) {
+  return (
+    <div style={{background:C.white, border:`1px solid ${C.border}`, borderRadius:12, padding:"16px 18px"}}>
+      <div style={{display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:10}}>
+        <div style={{fontSize:13.5, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif"}}>{title}</div>
+        {action}
+      </div>
+      {children}
+    </div>
+  );
+}
+function EmptyRow({ text }) {
+  return <div style={{padding:"14px 0", fontSize:12.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", textAlign:"center"}}>{text}</div>;
+}
+function InfoRow({ label, value }) {
+  return (
+    <div style={{display:"flex", justifyContent:"space-between", padding:"7px 0", borderBottom:`1px solid ${C.borderLight}`}}>
+      <span style={{fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>{label}</span>
+      <span style={{fontSize:12.5, color:C.text, fontFamily:"'DM Sans',sans-serif", fontWeight:500, textAlign:"right"}}>{value || "—"}</span>
+    </div>
+  );
+}
+function ResRow({ r }) {
+  return (
+    <div style={{display:"flex", alignItems:"center", justifyContent:"space-between", padding:"10px 0", borderBottom:`1px solid ${C.borderLight}`, gap:10}}>
+      <div style={{minWidth:0}}>
+        <div style={{fontSize:13, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{r.tour || "—"}</div>
+        <div style={{fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:1}}>{r.date} · {r.name || "—"} · {r.pax} kişi</div>
+      </div>
+      <div style={{display:"flex", alignItems:"center", gap:8, flexShrink:0}}>
+        <StatusBadge status={r.opStatus}/>
+        <IDLink id={r.id} type="reservation"/>
       </div>
     </div>
   );
@@ -10563,10 +11554,12 @@ function SettingsPage() {
   );
 }
 
-function calculateReportMetrics(period, reservations, payments, customers, sources) {
+function calculateReportMetrics(period, reservations, payments, customers, sources, guides, guidePayments) {
   const _res     = reservations ?? [];
   const _pays    = payments     ?? [];
   const _custs   = customers    ?? [];
+  const _guides  = guides         ?? [];
+  const _gPays   = guidePayments  ?? [];
   // Source lookup must use the live sources list — DB.sources is mock-only
   // data with mock ids, so it never matched a real Supabase source_id.
   const _sources = sources && sources.length ? sources : DB.sources;
@@ -10663,8 +11656,30 @@ function calculateReportMetrics(period, reservations, payments, customers, sourc
     upcoming:   _res.filter(r=>!["Tamamlandı","İptal"].includes(r.opStatus)).length,
     completed:  _res.filter(r=>r.opStatus==="Tamamlandı").length,
     cancelled:  _res.filter(r=>r.opStatus==="İptal").length,
-    noGuide:    _res.filter(r=>!r.guide&&!["Tamamlandı","İptal"].includes(r.opStatus)).length,
+    noGuide:    _res.filter(r=>!r.guideId&&!r.guide&&!["Tamamlandı","İptal"].includes(r.opStatus)).length,
     noPickup:   _res.filter(r=>!r.pickup&&!["Tamamlandı","İptal"].includes(r.opStatus)).length,
+  };
+
+  // Guide performance — tours/guests per guide within the selected period,
+  // derived purely from reservations.guide_id + guides; never a stored
+  // counter. Payment totals are EUR-only (same convention as the rest of
+  // this report) with a currency-mix note left to the caller.
+  const guideMap = {};
+  fRes.forEach(r => {
+    if (!r.guideId) return;
+    if (!guideMap[r.guideId]) {
+      const g = _guides.find(x=>x.id===r.guideId);
+      guideMap[r.guideId] = { id:r.guideId, name:g?.name||r.assignedGuideName||r.guide||"—", tours:0, guests:0 };
+    }
+    guideMap[r.guideId].tours++;
+    guideMap[r.guideId].guests += parseInt(r.pax||0) + parseInt(r.paxChild||0);
+  });
+  const guidesData = Object.values(guideMap).sort((a,b)=>b.tours-a.tours).slice(0,8);
+
+  const fGPays = filterByDateRange(_gPays, "paymentDate", period);
+  const guidePaymentsData = {
+    paidEur:    fGPays.filter(p=>p.currency==="EUR"&&p.status==="Ödendi").reduce((s,p)=>s+(p.amount||0),0),
+    pendingEur: fGPays.filter(p=>p.currency==="EUR"&&p.status==="Bekliyor").reduce((s,p)=>s+(p.amount||0),0),
   };
 
   return {
@@ -10674,6 +11689,8 @@ function calculateReportMetrics(period, reservations, payments, customers, sourc
     countries: countriesData,
     payments: paymentsData,
     ops: opsData,
+    guides: guidesData,
+    guidePayments: guidePaymentsData,
   };
 }
 
@@ -10686,6 +11703,7 @@ const EMPTY_REPORT_METRICS = {
   sources: [], tours: [], countries: [],
   payments: { expected:0, collected:0, pending:0, partial:0, refunded:0, highValue:[] },
   ops: { upcoming:0, completed:0, cancelled:0, noGuide:0, noPickup:0 },
+  guides: [], guidePayments: { paidEur:0, pendingEur:0 },
 };
 
 function calculateDashboardMetrics(leads, reservations, payments, tasks, reminders) {
@@ -10794,21 +11812,24 @@ function ReportsPage() {
   const { data:rRes,   loading:rResLoading,  error:rResError,   reload:reloadRes }   = useRepo("reservation", "getAll");
   const { data:rPays,  loading:rPaysLoading, error:rPaysError,  reload:reloadPays }  = useRepo("payment",     "getAll");
   const { data:rCusts }                                                               = useRepo("customer",    "getAll");
+  const { data:rGuides }                                                              = useRepo("guide",       "getAll");
+  const { data:rGuidePays }                                                           = useRepo("guidePayment","getAll");
   const { sources } = useSources();
   const isLoading = rResLoading || rPaysLoading;
 
   const metrics = useMemo(() => {
     try {
-      return calculateReportMetrics(period, rRes, rPays, rCusts, sources) || EMPTY_REPORT_METRICS;
+      return calculateReportMetrics(period, rRes, rPays, rCusts, sources, rGuides, rGuidePays) || EMPTY_REPORT_METRICS;
     } catch (e) {
       console.error("[ReportsPage] calculateReportMetrics failed, showing zero-value report:", e);
       return EMPTY_REPORT_METRICS;
     }
-  }, [period, rRes, rPays, rCusts, sources]);
+  }, [period, rRes, rPays, rCusts, sources, rGuides, rGuidePays]);
   const kpi       = metrics.kpi || EMPTY_REPORT_METRICS.kpi;
   const completionRate = kpi.reservations > 0 ? Math.round(kpi.completed/kpi.reservations*100) : 0;
   const maxSourceRes = Math.max(1, ...metrics.sources.map(s=>s.reservations));
   const maxRev    = Math.max(1, ...metrics.tours.map(t=>t.revenue));
+  const maxGuideTours = Math.max(1, ...metrics.guides.map(g=>g.tours));
 
   return (
     <div style={{display:"flex", flexDirection:"column", gap:20}}>
@@ -10950,6 +11971,47 @@ function ReportsPage() {
                     </tr>
                   );
                 })}
+              </tbody>
+            </table>
+            )}
+          </RpSection>
+
+          {}
+          <RpSection title="Rehber Performansı" icon="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2 M23 21v-2a4 4 0 00-3-3.87 M16 3.13a4 4 0 010 7.75" action={`€${metrics.guidePayments.paidEur.toLocaleString("tr-TR")} ödendi · €${metrics.guidePayments.pendingEur.toLocaleString("tr-TR")} bekliyor`}>
+            {metrics.guides.length === 0 ? (
+              <EmptyState icon="🧭" title="Bu dönem için veri yok" subtitle="Seçilen tarih aralığında rehbere atanmış rezervasyon bulunmuyor."/>
+            ) : (
+            <table className="rsp-table" style={{width:"100%", borderCollapse:"collapse"}}>
+              <thead>
+                <tr style={{borderBottom:`1px solid ${C.border}`}}>
+                  {["Rehber","Tur","Misafir","Dağılım"].map((h,i)=>(
+                    <th key={i} style={{
+                      padding:"8px 10px", textAlign: i===0?"left":"center",
+                      fontSize:10.5, fontWeight:600, color:C.textFaint,
+                      fontFamily:"'DM Sans',sans-serif",
+                      textTransform:"uppercase", letterSpacing:"0.07em",
+                    }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {metrics.guides.map((g,i)=>(
+                  <tr key={g.id} className="dt-row" style={{background:C.white, transition:"background .1s", cursor:"pointer"}}
+                    onClick={()=>{ if(NAV_REF.fn) NAV_REF.fn('/guides/'+g.id); }}>
+                    <td style={{padding:"12px 10px", borderBottom:`1px solid ${C.borderLight}`, verticalAlign:"middle"}}>
+                      <span style={{fontSize:13.5, fontWeight:500, color:C.text, fontFamily:"'DM Sans',sans-serif"}}>{g.name}</span>
+                    </td>
+                    <td style={{padding:"12px 10px", borderBottom:`1px solid ${C.borderLight}`, textAlign:"center", verticalAlign:"middle"}}>
+                      <span style={{fontSize:13.5, fontWeight:600, color:C.text, fontFamily:"'Playfair Display',serif"}}>{g.tours}</span>
+                    </td>
+                    <td style={{padding:"12px 10px", borderBottom:`1px solid ${C.borderLight}`, textAlign:"center", verticalAlign:"middle"}}>
+                      <span style={{fontSize:13, color:C.textMid, fontFamily:"'DM Sans',sans-serif"}}>{g.guests}</span>
+                    </td>
+                    <td style={{padding:"12px 10px", borderBottom:`1px solid ${C.borderLight}`, verticalAlign:"middle", minWidth:80}}>
+                      <MiniBar value={g.tours} max={maxGuideTours} color={C.navy} height={5}/>
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
             )}
@@ -12783,7 +13845,7 @@ function mapResFromDB(r) {
     date:r.check_in?new Date(r.check_in).toLocaleDateString('tr-TR',{day:'2-digit',month:'short',year:'numeric'}):'—',
     checkIn:r.check_in||null, checkOut:r.check_out||null, time:r.check_in_time||'09:00',
     pax:r.pax_adult||1, paxChild:r.pax_child||0,
-    guide:r.guide_name||'', vehicle:r.vehicle_info||'', driver:r.driver_name||'',
+    guide:r.guide_name||'', guideId:r.guide_id||null, assignedGuideName:r.guide?.full_name||'', vehicle:r.vehicle_info||'', driver:r.driver_name||'',
     pickup:r.pickup_location||'', pickupTime:r.pickup_time||'—',
     opStatus:_r2App(r.status), payStatus:_p2App(r.payment_status),
     total:parseFloat(r.total_amount)||0, deposit:parseFloat(r.deposit_amount)||0,
@@ -12847,6 +13909,53 @@ function mapActivityFromDB(r) {
     createdAt:r.created_at, _fromDB:true };
 }
 
+// ── Guides / guide_languages / guide_payments mapping ──────────────────────
+const _GS_DB  = {'Aktif':'active','Müsait Değil':'unavailable','Pasif':'inactive'};
+const _GS_APP = {'active':'Aktif','unavailable':'Müsait Değil','inactive':'Pasif'};
+const _GPS_DB  = {'Bekliyor':'pending','Ödendi':'paid','İptal':'cancelled'};
+const _GPS_APP = {'pending':'Bekliyor','paid':'Ödendi','cancelled':'İptal'};
+
+function mapGuideFromDB(g) {
+  if(!g) return null;
+  const languages = (g.guide_languages||[]).map(l => ({ code:l.language_code, name:l.language_name }));
+  return {
+    id:g.id, name:g.full_name||'', phone:g.phone||'', email:g.email||'',
+    nationality:g.nationality||'', licenseNumber:g.license_number||'',
+    licenseNotes:g.license_notes||'', region:g.region||'',
+    status:_GS_APP[g.status]||g.status||'Aktif', notes:g.notes||'',
+    staffUserId:g.staff_user_id||null, createdBy:g.created_by||null,
+    languages, languageNames:languages.map(l=>l.name),
+    createdAt:g.created_at?g.created_at.split('T')[0]:'', _fromDB:true,
+  };
+}
+function mapGuideToDB(d) {
+  const row = {};
+  if(d.name!==undefined)           row.full_name = d.name;
+  if(d.phone!==undefined)          row.phone = d.phone||null;
+  if(d.email!==undefined)          row.email = d.email||null;
+  if(d.nationality!==undefined)    row.nationality = d.nationality||null;
+  if(d.licenseNumber!==undefined)  row.license_number = d.licenseNumber||null;
+  if(d.licenseNotes!==undefined)   row.license_notes = d.licenseNotes||null;
+  if(d.region!==undefined)         row.region = d.region||null;
+  if(d.status!==undefined)         row.status = _GS_DB[d.status]||d.status||'active';
+  if(d.notes!==undefined)          row.notes = d.notes||null;
+  if(d.staffUserId!==undefined)    row.staff_user_id = d.staffUserId||null;
+  return row;
+}
+function mapGuidePaymentFromDB(r) {
+  if(!r) return null;
+  return {
+    id:r.id, payNumber:r.payment_number||r.id, guideId:r.guide_id||null,
+    resId:r.reservation_id||null, tourId:r.tour_id||null,
+    amount:parseFloat(r.amount)||0, currency:r.currency||'EUR',
+    status:_GPS_APP[r.status]||r.status||'Bekliyor',
+    paymentDate:r.payment_date||'', notes:r.notes||'', createdBy:r.created_by||null,
+    createdAt:r.created_at?r.created_at.split('T')[0]:'',
+    guideName:r.guide?.full_name||'', resRef:r.reservation?.reservation_number||'',
+    tourName:r.tour?.name||'', _fromDB:true,
+  };
+}
+
 async function _updateResPayStatus(sb, resId) {
   try {
     const {data:pays}=await sb.from('payments').select('amount,status').eq('reservation_id',resId);
@@ -12885,11 +13994,11 @@ const SupabaseLeadRepo = {
 };
 
 const SupabaseReservationRepo = {
-  async getAll(f={}){const sb=getSB();if(!sb)return ReservationRepository.getAll(f);let q=sb.from('reservations').select('*,customer:customers(id,full_name,email,phone,nationality),tour:tours(id,name,category)').order('check_in',{ascending:true});if(f.status)q=q.eq('status',_r2DB(f.status));if(f.payStatus)q=q.eq('payment_status',_p2DB(f.payStatus));if(f.customerId)q=q.eq('customer_id',f.customerId);if(f.search)q=q.or(`reservation_number.ilike.%${f.search}%,destination.ilike.%${f.search}%`);const{data,error}=await q;if(error)throw new Error(error.message);return(data||[]).map(mapResFromDB);},
-  async getById(id){const sb=getSB();if(!sb)return ReservationRepository.getById(id);const{data,error}=await sb.from('reservations').select('*,customer:customers(*),tour:tours(*)').eq('id',id).maybeSingle();if(error)throw new Error(error.message);return mapResFromDB(data);},
+  async getAll(f={}){const sb=getSB();if(!sb)return ReservationRepository.getAll(f);let q=sb.from('reservations').select('*,customer:customers(id,full_name,email,phone,nationality),tour:tours(id,name,category),guide:guides(id,full_name,status,phone)').order('check_in',{ascending:true});if(f.status)q=q.eq('status',_r2DB(f.status));if(f.payStatus)q=q.eq('payment_status',_p2DB(f.payStatus));if(f.customerId)q=q.eq('customer_id',f.customerId);if(f.search)q=q.or(`reservation_number.ilike.%${f.search}%,destination.ilike.%${f.search}%`);const{data,error}=await q;if(error)throw new Error(error.message);return(data||[]).map(mapResFromDB);},
+  async getById(id){const sb=getSB();if(!sb)return ReservationRepository.getById(id);const{data,error}=await sb.from('reservations').select('*,customer:customers(*),tour:tours(*),guide:guides(id,full_name,status,phone,email)').eq('id',id).maybeSingle();if(error)throw new Error(error.message);return mapResFromDB(data);},
   async getByCustomerId(cid){const sb=getSB();if(!sb)return ReservationRepository.getByCustomerId(cid);const{data,error}=await sb.from('reservations').select('*').eq('customer_id',cid).order('check_in',{ascending:false});if(error)throw new Error(error.message);return(data||[]).map(mapResFromDB);},
-  async create(d){const sb=getSB();if(!sb)return ReservationRepository.create(d);let rn=`R-${new Date().getFullYear()}-${String(Date.now()).slice(-4)}`;try{const{data:ref}=await sb.rpc('next_ref_number',{prefix:'R',table_name:'reservations',number_col:'reservation_number'});if(ref)rn=ref;}catch(_){}const row={reservation_number:rn,lead_id:d.leadId||null,quote_id:d.quoteId||null,customer_id:d.customerId,tour_id:d.tourId||null,status:'pending_confirmation',payment_status:'pending',destination:d.tour||d.destination||'',check_in:d.checkIn||d.date||null,check_out:d.checkOut||d.date||null,check_in_time:d.time||null,pax_adult:parseInt(d.pax||d.paxAdult)||1,pax_child:parseInt(d.paxChild)||0,guide_name:d.guide||null,vehicle_info:d.vehicle||null,driver_name:d.driver||null,pickup_location:d.pickup||null,pickup_time:d.pickupTime||null,total_amount:parseFloat(d.total)||0,currency:d.currency||'EUR',deposit_amount:parseFloat(d.deposit)||0,notes:d.opNotes||d.notes||null,assigned_to:d.assigneeId||null};const{data:c,error}=await sb.from('reservations').insert(row).select().single();if(error)throw new Error(error.message);await _sbLog('reservation',c.id,'created',`Rezervasyon: ${c.reservation_number}`);return mapResFromDB(c);},
-  async update(id,p){const sb=getSB();if(!sb)return ReservationRepository.update(id,p);const fm={opStatus:'status',payStatus:'payment_status',guide:'guide_name',vehicle:'vehicle_info',driver:'driver_name',pickup:'pickup_location',opNotes:'notes',total:'total_amount'};const row={};for(const[k,v]of Object.entries(p)){const col=fm[k]||k;if(col==='status')row[col]=_r2DB(v);else if(col==='payment_status')row[col]=_p2DB(v);else row[col]=v;}if(p.opStatus==='Tamamlandı')row.completed_at=new Date().toISOString();if(p.opStatus==='İptal')row.cancelled_at=new Date().toISOString();const{data:u,error}=await sb.from('reservations').update(row).eq('id',id).select().single();if(error)throw new Error(error.message);await _sbLog('reservation',id,'updated',`Güncellendi: ${Object.keys(p).join(', ')}`);return mapResFromDB(u);},
+  async create(d){const sb=getSB();if(!sb)return ReservationRepository.create(d);let rn=`R-${new Date().getFullYear()}-${String(Date.now()).slice(-4)}`;try{const{data:ref}=await sb.rpc('next_ref_number',{prefix:'R',table_name:'reservations',number_col:'reservation_number'});if(ref)rn=ref;}catch(_){}const row={reservation_number:rn,lead_id:d.leadId||null,quote_id:d.quoteId||null,customer_id:d.customerId,tour_id:d.tourId||null,status:'pending_confirmation',payment_status:'pending',destination:d.tour||d.destination||'',check_in:d.checkIn||d.date||null,check_out:d.checkOut||d.date||null,check_in_time:d.time||null,pax_adult:parseInt(d.pax||d.paxAdult)||1,pax_child:parseInt(d.paxChild)||0,guide_name:d.guide||null,guide_id:d.guideId||null,vehicle_info:d.vehicle||null,driver_name:d.driver||null,pickup_location:d.pickup||null,pickup_time:d.pickupTime||null,total_amount:parseFloat(d.total)||0,currency:d.currency||'EUR',deposit_amount:parseFloat(d.deposit)||0,notes:d.opNotes||d.notes||null,assigned_to:d.assigneeId||null};const{data:c,error}=await sb.from('reservations').insert(row).select().single();if(error)throw new Error(error.message);await _sbLog('reservation',c.id,'created',`Rezervasyon: ${c.reservation_number}`);return mapResFromDB(c);},
+  async update(id,p){const sb=getSB();if(!sb)return ReservationRepository.update(id,p);const fm={opStatus:'status',payStatus:'payment_status',guide:'guide_name',guideId:'guide_id',vehicle:'vehicle_info',driver:'driver_name',pickup:'pickup_location',opNotes:'notes',total:'total_amount'};const row={};for(const[k,v]of Object.entries(p)){const col=fm[k]||k;if(col==='status')row[col]=_r2DB(v);else if(col==='payment_status')row[col]=_p2DB(v);else row[col]=v;}if(p.opStatus==='Tamamlandı')row.completed_at=new Date().toISOString();if(p.opStatus==='İptal')row.cancelled_at=new Date().toISOString();const{data:u,error}=await sb.from('reservations').update(row).eq('id',id).select().single();if(error)throw new Error(error.message);await _sbLog('reservation',id,'updated',`Güncellendi: ${Object.keys(p).join(', ')}`);return mapResFromDB(u);},
   async delete(id){const sb=getSB();if(!sb)return ReservationRepository.delete(id);const{error}=await sb.from('reservations').update({status:'cancelled',cancelled_at:new Date().toISOString()}).eq('id',id);if(error)throw new Error(error.message);return true;},
 };
 
@@ -12901,6 +14010,94 @@ const SupabasePaymentRepo = {
   async create(d){const sb=getSB();if(!sb)return PaymentRepository.create(d);let pn=`PAY-${String(Date.now()).slice(-6)}`;try{const{data:ref}=await sb.rpc('next_ref_number',{prefix:'PAY',table_name:'payments',number_col:'payment_number'});if(ref)pn=ref;}catch(_){}const amt=parseFloat(d.amount)||0;const sm={'Tam Ödeme':'paid','İade':'refunded','Kapora':'paid','Kalan Ödeme':'paid'};const tm={'Tam Ödeme':'full','İade':'refund','Kapora':'deposit','Kalan Ödeme':'balance'};const row={payment_number:pn,reservation_id:d.resId||d.reservationId||null,customer_id:d.customerId||null,payment_type:tm[d.paymentType]||d.paymentType?.toLowerCase()||'deposit',status:sm[d.paymentType]||'paid',amount:amt,currency:d.currency||'EUR',method:_mToDB(d.method),paid_at:new Date().toISOString(),notes:d.notes||null};const{data:c,error}=await sb.from('payments').insert(row).select().single();if(error)throw new Error(error.message);if(row.reservation_id)await _updateResPayStatus(sb,row.reservation_id);await _sbLog('payment',c.id,'payment_received',`Ödeme: ${d.currency==='TRY'?'₺':'€'}${amt.toLocaleString('tr-TR')}`);return mapPayFromDB(c);},
   async update(id,p){const sb=getSB();if(!sb)return PaymentRepository.update(id,p);const{data:u,error}=await sb.from('payments').update(p).eq('id',id).select().single();if(error)throw new Error(error.message);return mapPayFromDB(u);},
   async delete(id){const sb=getSB();if(!sb)return PaymentRepository.delete(id);const{error}=await sb.from('payments').update({status:'cancelled'}).eq('id',id);if(error)throw new Error(error.message);return true;},
+};
+
+// Replace-all sync of a guide's guide_languages rows. Delete-then-insert
+// (rather than a diff) is safe here because guide_languages rows carry no
+// identity of their own beyond (guide_id, language_code) — the caller
+// always sends the guide's complete current language set from the Add/Edit
+// Guide form, never a partial patch.
+async function _syncGuideLanguages(sb, guideId, languages) {
+  const { error: delErr } = await sb.from('guide_languages').delete().eq('guide_id', guideId);
+  if (delErr) throw new Error(delErr.message);
+  const list = (languages||[]).filter(l => l && l.code);
+  if (!list.length) return;
+  const rows = list.map(l => ({ guide_id:guideId, language_code:l.code, language_name:l.name || LANGUAGE_NAME_BY_CODE[l.code] || l.code }));
+  const { error: insErr } = await sb.from('guide_languages').insert(rows);
+  if (insErr) throw new Error(insErr.message);
+}
+
+const SupabaseGuideRepo = {
+  async getAll(f={}){
+    const sb=getSB(); if(!sb) return GuideRepository.getAll(f);
+    let q=sb.from('guides').select('*,guide_languages(id,language_code,language_name)').order('full_name',{ascending:true});
+    if(f.status) q=q.eq('status',_GS_DB[f.status]||f.status);
+    if(f.search) q=q.or(`full_name.ilike.%${f.search}%,phone.ilike.%${f.search}%,email.ilike.%${f.search}%,license_number.ilike.%${f.search}%`);
+    const{data,error}=await q; if(error) throw new Error(error.message);
+    return (data||[]).map(mapGuideFromDB);
+  },
+  async getById(id){
+    const sb=getSB(); if(!sb) return GuideRepository.getById(id);
+    const{data,error}=await sb.from('guides').select('*,guide_languages(id,language_code,language_name)').eq('id',id).maybeSingle();
+    if(error) throw new Error(error.message);
+    return mapGuideFromDB(data);
+  },
+  async create(d){
+    const sb=getSB(); if(!sb) return GuideRepository.create(d);
+    const row=mapGuideToDB(d); if(!row.full_name) row.full_name=d.name||'Bilinmiyor'; if(!row.status) row.status='active';
+    const{data:g,error}=await sb.from('guides').insert(row).select().single();
+    if(error) throw new Error(error.message);
+    if(d.languages!==undefined) await _syncGuideLanguages(sb, g.id, d.languages);
+    await _sbLog('guide', g.id, 'created', `Yeni rehber: ${g.full_name}`);
+    return SupabaseGuideRepo.getById(g.id);
+  },
+  async update(id,p){
+    const sb=getSB(); if(!sb) return GuideRepository.update(id,p);
+    const row=mapGuideToDB(p);
+    if(Object.keys(row).length){
+      const{error}=await sb.from('guides').update(row).eq('id',id);
+      if(error) throw new Error(error.message);
+    }
+    if(p.languages!==undefined) await _syncGuideLanguages(sb, id, p.languages);
+    await _sbLog('guide', id, 'updated', `Rehber güncellendi: ${Object.keys(p).join(', ')}`);
+    return SupabaseGuideRepo.getById(id);
+  },
+  async delete(id){const sb=getSB();if(!sb)return GuideRepository.delete(id);const{error}=await sb.from('guides').update({status:'inactive'}).eq('id',id);if(error)throw new Error(error.message);return true;},
+};
+
+const SupabaseGuidePaymentRepo = {
+  async getAll(f={}){
+    const sb=getSB(); if(!sb) return GuidePaymentRepository.getAll(f);
+    let q=sb.from('guide_payments').select('*,guide:guides(id,full_name),reservation:reservations(id,reservation_number),tour:tours(id,name)').order('created_at',{ascending:false});
+    if(f.guideId) q=q.eq('guide_id',f.guideId);
+    if(f.status)  q=q.eq('status',_GPS_DB[f.status]||f.status);
+    const{data,error}=await q; if(error) throw new Error(error.message);
+    return (data||[]).map(mapGuidePaymentFromDB);
+  },
+  async getById(id){const sb=getSB();if(!sb)return GuidePaymentRepository.getById(id);const{data,error}=await sb.from('guide_payments').select('*,guide:guides(*),reservation:reservations(*),tour:tours(*)').eq('id',id).maybeSingle();if(error)throw new Error(error.message);return mapGuidePaymentFromDB(data);},
+  async getByGuideId(gid){return SupabaseGuidePaymentRepo.getAll({guideId:gid});},
+  async create(d){
+    const sb=getSB(); if(!sb) return GuidePaymentRepository.create(d);
+    let pn=`GP-${new Date().getFullYear()}-${String(Date.now()).slice(-4)}`;
+    try{const{data:ref}=await sb.rpc('next_ref_number',{prefix:'GP',table_name:'guide_payments',number_col:'payment_number'});if(ref)pn=ref;}catch(_){}
+    const row={payment_number:pn,guide_id:d.guideId,reservation_id:d.resId||null,tour_id:d.tourId||null,amount:parseFloat(d.amount)||0,currency:d.currency||'EUR',status:_GPS_DB[d.status]||d.status||'pending',payment_date:d.paymentDate||null,notes:d.notes||null,created_by:d.createdBy||null};
+    const{data:c,error}=await sb.from('guide_payments').insert(row).select().single();
+    if(error) throw new Error(error.message);
+    await _sbLog('guide_payment', c.id, 'created', `Rehber ödemesi: ${d.currency==='TRY'?'₺':'€'}${(parseFloat(d.amount)||0).toLocaleString('tr-TR')}`);
+    return mapGuidePaymentFromDB(c);
+  },
+  async update(id,p){
+    const sb=getSB(); if(!sb) return GuidePaymentRepository.update(id,p);
+    const row={};
+    if(p.status!==undefined) row.status=_GPS_DB[p.status]||p.status;
+    if(p.amount!==undefined) row.amount=parseFloat(p.amount)||0;
+    if(p.paymentDate!==undefined) row.payment_date=p.paymentDate||null;
+    if(p.notes!==undefined) row.notes=p.notes;
+    const{data:u,error}=await sb.from('guide_payments').update(row).eq('id',id).select().single();
+    if(error) throw new Error(error.message);
+    return mapGuidePaymentFromDB(u);
+  },
+  async delete(id){const sb=getSB();if(!sb)return GuidePaymentRepository.delete(id);const{error}=await sb.from('guide_payments').update({status:'cancelled'}).eq('id',id);if(error)throw new Error(error.message);return true;},
 };
 
 const SupabaseTaskRepo = {
@@ -12945,6 +14142,8 @@ function getActiveRepo(entity) {
   if(entity==='activity')   return useReal ? SupabaseActivityRepo    : ActivityRepository;
   if(entity==='quote')      return useReal ? SupabaseQuoteRepo      : QuoteRepository;
   if(entity==='tour')       return useReal ? SupabaseTourRepo        : TourRepository;
+  if(entity==='guide')      return useReal ? SupabaseGuideRepo       : GuideRepository;
+  if(entity==='guidePayment')return useReal ? SupabaseGuidePaymentRepo : GuidePaymentRepository;
   if(entity==='staff')      return useReal ? SupabaseStaffRepo       : { getAll: async () => DB.staff };
   return null;
 }
@@ -13233,10 +14432,16 @@ function useAuth() {
     'operations': 'Operasyon',
     'guide':      'Rehber',
   };
-  const rawRole = staff?.role || 'admin';
-  const role    = ROLE_MAP[rawRole] || rawRole;
+  // No fallback to 'admin' here: a session with no linked staff_users row
+  // must never silently become a full-access Yönetici. role stays null,
+  // which canAccess() already treats as zero access everywhere — AuthGuard
+  // below shows an explicit "profile not linked" screen instead of letting
+  // the app render with an invented role.
+  const rawRole = staff?.role || null;
+  const role    = rawRole ? (ROLE_MAP[rawRole] || rawRole) : null;
+  const staffLinked = !!staff;
 
-  return { session, staff, authLoading, authError, login, logout, displayName, initials, role, isLoggedIn:!!session };
+  return { session, staff, authLoading, authError, login, logout, displayName, initials, role, staffLinked, isLoggedIn:!!session };
 }
 
 const AuthContext = createContext(null);
@@ -13585,6 +14790,48 @@ function AuthGuard({ children }) {
       onLogin={()=>{ if (typeof NAV_REF.fn === 'function') NAV_REF.fn('/dashboard'); }}
       connectionError={auth.authError}
     />;
+  }
+
+  // Authenticated, but no staff_users row resolved for this account — never
+  // let the app render as if this were a real, role-permissioned user.
+  // Report the problem explicitly instead of inventing a name or a role.
+  if (!auth.staffLinked) {
+    return (
+      <div style={{
+        minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center",
+        background:`linear-gradient(135deg, ${C.navyDeep} 0%, ${C.navy} 100%)`, padding:20,
+      }}>
+        <div style={{
+          maxWidth:440, width:"100%", background:C.white, borderRadius:14,
+          padding:"32px 30px", textAlign:"center", boxShadow:"0 20px 60px rgba(0,0,0,0.3)",
+        }}>
+          <div style={{
+            width:52, height:52, borderRadius:"50%", background:C.redBg, margin:"0 auto 16px",
+            display:"flex", alignItems:"center", justifyContent:"center",
+          }}>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={C.red} strokeWidth="2" strokeLinecap="round">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+              <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+            </svg>
+          </div>
+          <div style={{fontSize:17, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif", marginBottom:8}}>
+            Personel Profili Bağlı Değil
+          </div>
+          <div style={{fontSize:13.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", lineHeight:1.6, marginBottom:8}}>
+            <b>{auth.session?.user?.email}</b> hesabı ile giriş yaptınız, ancak bu hesaba bağlı bir <code style={{background:C.ivory, padding:"1px 5px", borderRadius:4, fontFamily:"'DM Mono',monospace", fontSize:12}}>staff_users</code> kaydı bulunamadı.
+          </div>
+          <div style={{fontSize:12.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", lineHeight:1.6, marginBottom:20}}>
+            Bir yönetici, <code style={{background:C.ivory, padding:"1px 5px", borderRadius:4, fontFamily:"'DM Mono',monospace", fontSize:11.5}}>staff_users.id</code> alanı bu hesabın kimliğiyle eşleşen bir kayıt oluşturana kadar rol veya erişim yetkisi tanımlanamaz.
+          </div>
+          <button onClick={auth.logout} style={{
+            padding:"10px 22px", borderRadius:9, border:"none",
+            background:`linear-gradient(135deg,${C.navyDeep},${C.navy})`,
+            color:C.white, fontSize:13.5, fontWeight:500,
+            fontFamily:"'DM Sans',sans-serif", cursor:"pointer",
+          }}>Çıkış Yap</button>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -15719,6 +16966,7 @@ function GlobalSearch() {
   const { data:repoCust,   error:errCust }   = useRepo("customer",    "getAll");
   const { data:repoRes,    error:errRes }    = useRepo("reservation", "getAll");
   const { data:repoTours,  error:errTours }  = useRepo("tour",        "getAll");
+  const { data:repoGuides, error:errGuides } = useRepo("guide",       "getAll");
 
   useEffect(() => {
     function onKeyDown(e) {
@@ -15741,7 +16989,7 @@ function GlobalSearch() {
 
   const q = query.trim().toLowerCase();
   const active = q.length >= 2;
-  const allFailed = !!(errCust && errRes && errTours);
+  const allFailed = !!(errCust && errRes && errTours && errGuides);
 
   const results = useMemo(() => {
     if (!active) return null;
@@ -15758,11 +17006,15 @@ function GlobalSearch() {
       .filter(t => hit(t.name, t.category))
       .slice(0, 5)
       .map(t => ({ route:`/tours/${t.id}`, title:t.name||t.id, sub:t.category||"" }));
-    return { customers, reservations, tours };
-  }, [active, q, repoCust, repoRes, repoTours]);
+    const guides = (repoGuides||[])
+      .filter(g => hit(g.name, g.phone, g.email, g.licenseNumber))
+      .slice(0, 5)
+      .map(g => ({ route:`/guides/${g.id}`, title:g.name||g.id, sub:[g.phone,g.licenseNumber].filter(Boolean).join(" · ") }));
+    return { customers, reservations, tours, guides };
+  }, [active, q, repoCust, repoRes, repoTours, repoGuides]);
 
   const totalCount = results
-    ? results.customers.length + results.reservations.length + results.tours.length
+    ? results.customers.length + results.reservations.length + results.tours.length + results.guides.length
     : 0;
 
   function goTo(route) {
@@ -15782,7 +17034,7 @@ function GlobalSearch() {
         onChange={e=>{ setQuery(e.target.value); setOpen(true); }}
         onFocus={()=>setOpen(true)}
         onKeyDown={e=>{ if (e.key === "Escape") { setOpen(false); inputRef.current?.blur(); } }}
-        placeholder="Misafir, rezervasyon, tur ara…"
+        placeholder="Misafir, rezervasyon, tur, rehber ara…"
         style={{
           width:"100%", boxSizing:"border-box", padding:"9px 54px 9px 34px",
           border:`1px solid ${C.border}`, borderRadius:T.radiusSm, background:C.ivory,
@@ -15818,6 +17070,7 @@ function GlobalSearch() {
               <SearchResultGroup label="Misafirler"     items={results.customers}    onSelect={goTo}/>
               <SearchResultGroup label="Rezervasyonlar" items={results.reservations} onSelect={goTo}/>
               <SearchResultGroup label="Turlar"         items={results.tours}        onSelect={goTo}/>
+              <SearchResultGroup label="Rehberler"      items={results.guides}       onSelect={goTo}/>
             </>
           )}
         </div>
@@ -15910,7 +17163,8 @@ function App() {
 
       if (base === "quotes" && param) return <MobileQuoteDetailPage quoteId={param} onBack={()=>navigate('/dashboard')}/>;
 
-      if (base === "guides") return <GuidesPage/>;
+      if (base === "guides" && param) return <GuideDetailPage guideId={param} onBack={()=>navigate('/guides')}/>;
+      if (base === "guides") return <GuidesPage onSelect={id=>navigate('/guides/'+id)}/>;
 
       if (base === "payments") return <MobilePaymentsPage/>;
       if (base === "reminders") return <MobileTasksQueuePage/>;
@@ -15943,7 +17197,9 @@ function App() {
     if (base === "tours")
       return <ToursPage onSelect={id=>navigate('/tours/'+id)}/>;
 
-    if (base === "guides")    return <GuidesPage/>;
+    if (base === "guides" && param)
+      return <GuideDetailPage guideId={param} onBack={()=>navigate('/guides')}/>;
+    if (base === "guides")    return <GuidesPage onSelect={id=>navigate('/guides/'+id)}/>;
 
     if (base === "calendar")  return <CalendarPage/>;
     if (base === "payments")  return <PaymentsPage/>;
@@ -16584,105 +17840,6 @@ function MobileHomePage({ navigate }) {
   );
 }
 
-/* ══════════════════════════════════════════════════════════════════════
-   MOBILE REQUESTS — a lightweight sales inbox, not the desktop leads
-   table. One card per request; the two most common next actions (call,
-   quote) are one tap away, everything else opens the (already mobile-
-   adapted) LeadDetailPage.
-   ══════════════════════════════════════════════════════════════════════ */
-function MobileRequestsPage({ onSelectLead }) {
-  const [filter, setFilter] = useState("Açık");
-  const { data:repoLeads, loading } = useRepo("lead", "getAll");
-  const { sources } = useSources();
-  const [showNew, setShowNew] = useState(false);
-
-  const all = repoLeads ?? [];
-  const FILTERS = ["Açık","Yeni","Teklif Gönderildi","Tümü"];
-  const filtered = all.filter(l => {
-    if (filter === "Tümü") return true;
-    if (filter === "Açık") return !["Onaylandı","İptal"].includes(l.status);
-    return l.status === filter;
-  });
-
-  const STATUS_TONE = {
-    "Yeni":"info", "Görüşüldü":"neutral", "Teklif Hazırlanıyor":"neutral",
-    "Teklif Gönderildi":"warn", "Teklif Onaylandı":"good", "Onaylandı":"good",
-    "İptal":"bad", "Beklemede":"neutral",
-  };
-
-  return (
-    <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
-      {}
-      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:10 }}>
-        <div style={{ fontSize:20, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif" }}>Talepler</div>
-        <button onClick={()=>setShowNew(true)} style={{
-          display:"flex", alignItems:"center", gap:6, padding:"9px 14px", borderRadius:10,
-          border:"none", background:C.navy, color:C.white, cursor:"pointer",
-          fontSize:13, fontWeight:600, fontFamily:"'DM Sans',sans-serif",
-        }}>
-          <GIc d="M12 5v14M5 12h14" size={14} sw={2.5} color="#fff"/>
-          Yeni
-        </button>
-      </div>
-
-      {}
-      <div className="rsp-scroll-x" style={{ display:"flex", gap:8 }}>
-        {FILTERS.map(f=>(
-          <button key={f} onClick={()=>setFilter(f)} style={{
-            flexShrink:0, padding:"7px 14px", borderRadius:99, cursor:"pointer",
-            border: filter===f ? "none" : `1px solid ${C.border}`,
-            background: filter===f ? C.navy : C.white,
-            color: filter===f ? C.white : C.textMid,
-            fontSize:12.5, fontWeight:500, fontFamily:"'DM Sans',sans-serif",
-          }}>{f}</button>
-        ))}
-      </div>
-
-      {}
-      {loading ? <LoadingState label="Talepler yükleniyor…"/> : filtered.length === 0 ? (
-        <MobileEntityCard style={{ textAlign:"center", padding:"36px 16px" }}>
-          <div style={{ fontSize:13, color:C.textFaint, fontFamily:"'DM Sans',sans-serif" }}>Bu filtre için talep yok.</div>
-        </MobileEntityCard>
-      ) : (
-        <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
-          {filtered.map(l=>{
-            const srcLabel = (sources||[]).find(s=>s.id===l.sourceId)?.name || l.sourceId || "—";
-            return (
-              <MobileEntityCard key={l.id} onClick={()=>onSelectLead(l.id)}>
-                <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:8, marginBottom:6 }}>
-                  <div style={{ fontSize:14.5, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif" }}>{l.name}</div>
-                  <MobileStatusChip label={l.status} tone={STATUS_TONE[l.status]||"neutral"}/>
-                </div>
-                <div style={{ fontSize:12.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif" }}>{l.tour || "Deneyim belirtilmedi"}</div>
-                <div style={{ display:"flex", alignItems:"center", gap:8, marginTop:6, flexWrap:"wrap" }}>
-                  {l.dateRange && <span style={{ fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif" }}>📅 {l.dateRange}</span>}
-                  <span style={{ fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif" }}>{srcLabel}</span>
-                  <span style={{ fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif" }}>· {l.ago}</span>
-                </div>
-                {l.phone && (
-                  <div style={{ display:"flex", gap:8, marginTop:10 }}>
-                    <a href={`tel:${l.phone}`} onClick={e=>e.stopPropagation()} style={{
-                      flex:1, textAlign:"center", padding:"8px 0", borderRadius:8,
-                      border:`1px solid ${C.border}`, color:C.navy, fontSize:12.5, fontWeight:500,
-                      fontFamily:"'DM Sans',sans-serif", textDecoration:"none",
-                    }}>Ara</a>
-                    <button onClick={e=>{e.stopPropagation(); NAV_REF.fn && NAV_REF.fn('/quotes/new');}} style={{
-                      flex:1, textAlign:"center", padding:"8px 0", borderRadius:8, cursor:"pointer",
-                      border:"none", background:C.goldPale, color:"#8A6D1F", fontSize:12.5, fontWeight:600,
-                      fontFamily:"'DM Sans',sans-serif",
-                    }}>Teklif Oluştur</button>
-                  </div>
-                )}
-              </MobileEntityCard>
-            );
-          })}
-        </div>
-      )}
-
-      {showNew && <NewLeadModal onClose={()=>setShowNew(false)} onSuccess={()=>setShowNew(false)}/>}
-    </div>
-  );
-}
 
 /* ══════════════════════════════════════════════════════════════════════
    MOBILE RESERVATIONS — operational cards. Status is legible at a
@@ -16841,73 +17998,6 @@ function MobileGuestsPage({ onSelectGuest }) {
   );
 }
 
-/* ══════════════════════════════════════════════════════════════════════
-   MOBILE QUOTES — a status-driven document list.
-   ══════════════════════════════════════════════════════════════════════ */
-function MobileQuotesPage({ onSelectQuote, onNewQuote }) {
-  const [filter, setFilter] = useState("Tümü");
-  const { data:repoQuotes, loading } = useRepo("quote", "getAll");
-
-  const all = repoQuotes ?? [];
-  const FILTERS = ["Tümü","Taslak","Gönderildi","Görüntülendi","Onaylandı"];
-  const filtered = filter==="Tümü" ? all : all.filter(q=>q.status===filter);
-
-  const STATUS_TONE = { "Taslak":"neutral", "Gönderildi":"info", "Görüntülendi":"warn", "Onaylandı":"good", "Reddedildi":"bad" };
-
-  return (
-    <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
-      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:10 }}>
-        <div style={{ fontSize:20, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif" }}>Teklifler</div>
-        <button onClick={onNewQuote} style={{
-          display:"flex", alignItems:"center", gap:6, padding:"9px 14px", borderRadius:10,
-          border:"none", background:C.navy, color:C.white, cursor:"pointer",
-          fontSize:13, fontWeight:600, fontFamily:"'DM Sans',sans-serif",
-        }}>
-          <GIc d="M12 5v14M5 12h14" size={14} sw={2.5} color="#fff"/>
-          Yeni
-        </button>
-      </div>
-
-      <div className="rsp-scroll-x" style={{ display:"flex", gap:8 }}>
-        {FILTERS.map(f=>(
-          <button key={f} onClick={()=>setFilter(f)} style={{
-            flexShrink:0, padding:"7px 14px", borderRadius:99, cursor:"pointer",
-            border: filter===f ? "none" : `1px solid ${C.border}`,
-            background: filter===f ? C.navy : C.white,
-            color: filter===f ? C.white : C.textMid,
-            fontSize:12.5, fontWeight:500, fontFamily:"'DM Sans',sans-serif",
-          }}>{f}</button>
-        ))}
-      </div>
-
-      {loading ? <LoadingState label="Teklifler yükleniyor…"/> : filtered.length === 0 ? (
-        <MobileEntityCard style={{ textAlign:"center", padding:"36px 16px" }}>
-          <div style={{ fontSize:13, color:C.textFaint, fontFamily:"'DM Sans',sans-serif" }}>Bu filtre için teklif yok.</div>
-        </MobileEntityCard>
-      ) : (
-        <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
-          {filtered.map(q=>(
-            <MobileEntityCard key={q.id} onClick={()=>onSelectQuote(q.id)}>
-              <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:8, marginBottom:6 }}>
-                <div style={{ fontSize:14.5, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif" }}>{q.flag} {q.customer || "—"}</div>
-                <MobileStatusChip label={q.status} tone={STATUS_TONE[q.status]||"neutral"}/>
-              </div>
-              <div style={{ fontSize:12.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif" }}>{q.tour}</div>
-              <div style={{ display:"flex", alignItems:"baseline", justifyContent:"space-between", marginTop:8 }}>
-                <span style={{ fontSize:17, fontWeight:700, color:C.gold, fontFamily:"'Playfair Display',serif" }}>
-                  {q.currency==="TRY"?"₺":"€"}{q.total.toLocaleString("tr-TR")}
-                </span>
-                <span style={{ fontSize:11, color:C.textFaint, fontFamily:"'DM Sans',sans-serif" }}>
-                  {q.createdAt && `Gönderim: ${q.createdAt}`}{q.validUntil && ` · Geçerlilik: ${q.validUntil}`}
-                </span>
-              </div>
-            </MobileEntityCard>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
 
 /* ══════════════════════════════════════════════════════════════════════
    MOBILE PAYMENTS — unpaid/overdue first. Pending and Collected are
@@ -17761,332 +18851,6 @@ function MobileReservationDetailPage({ resId, onBack }) {
   );
 }
 
-/* ══════════════════════════════════════════════════════════════════════
-   MOBILE QUOTE CREATION — the same 5-step structure as the desktop
-   QuoteWizard (Misafir → Tur ve Tarih → Fiyatlandırma → Teklif Detayları
-   → Önizleme ve Oluştur), laid out full-screen for a phone. Uses the
-   exact same shared state shape and save/update functions as desktop
-   (emptyQuoteWizardState, computeQuoteTotals, validateQuoteStep,
-   createQuoteFromWizard, updateQuoteFromWizard) — no separate business
-   rules per platform.
-   ══════════════════════════════════════════════════════════════════════ */
-function MobileNewQuotePage({ onBack, editQuoteId }) {
-  const isEdit = !!editQuoteId;
-  const _sp = safeParam(editQuoteId);
-  const { data: editQuote, loading: editLoading } = useRepo("quote", "getById", editQuoteId || null);
-
-  useEffect(() => {
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => { document.body.style.overflow = prev; };
-  }, []);
-
-  if (isEdit && _sp.invalid) return <div style={{padding:40,textAlign:"center"}}><NotFound404 onBack={onBack}/></div>;
-  if (isEdit && editLoading) return <LoadingState label="Teklif yükleniyor…"/>;
-  if (isEdit && !editQuote)  return <div style={{padding:40,textAlign:"center"}}><NotFound404 onBack={onBack}/></div>;
-
-  return <MobileQuoteWizard key={editQuoteId||"new"} onBack={onBack} editQuote={isEdit ? editQuote : null}/>;
-}
-
-function MobileQuoteWizard({ onBack, editQuote }) {
-  const isEdit = !!editQuote;
-  const { data: tourList, loading: toursLoading } = useRepo("tour", "getAll");
-  const { data: customerList } = useRepo("customer", "getAll");
-
-  const [step, setStep] = useState(0);
-  const [s, setS] = useState(() => isEdit ? quoteStateFromExisting(editQuote) : emptyQuoteWizardState(SESSION.getPrefill()));
-  const [errs, setErrs] = useState({});
-  const [saving, setSaving] = useState(false);
-  const [custMode, setCustMode] = useState(s.customerId ? "linked" : "search");
-  const [custQuery, setCustQuery] = useState("");
-
-  const { data: originLead } = useRepo("lead", "getById", s.fromLeadId || null);
-  const { data: linkedCustomer } = useRepo("customer", "getById", s.customerId || null);
-
-  useEffect(() => {
-    if (originLead && originLead.customerId && !s.customerId) {
-      setS(prev => ({ ...prev, customerId: originLead.customerId }));
-      setCustMode("linked");
-    }
-  }, [originLead]);
-
-  const totals = computeQuoteTotals(s);
-  const sym = s.currency==="TRY"?"₺":s.currency==="GBP"?"£":s.currency==="USD"?"$":"€";
-  const STEPS = QUOTE_STEPS;
-
-  const custResults = useMemo(() => {
-    if (!custQuery.trim()) return [];
-    const q = custQuery.trim().toLowerCase();
-    return (customerList||[]).filter(c =>
-      (c.name||"").toLowerCase().includes(q) || (c.email||"").toLowerCase().includes(q) || (c.phone||"").includes(q)
-    ).slice(0,6);
-  }, [custQuery, customerList]);
-
-  function pickCustomer(c) {
-    setS(prev => ({ ...prev, customerId:c.id, guestName:c.name||"", email:c.email||"", phone:c.phone||"", nationality:c.country||"", language:c.language||"Türkçe" }));
-    setCustMode("linked");
-  }
-  function clearCustomerLink() {
-    setS(prev => ({ ...prev, customerId:null, guestName:"", email:"", phone:"", nationality:"" }));
-    setCustMode("search"); setCustQuery("");
-  }
-
-  function pickTour(id) {
-    const t = (tourList||[]).find(x=>x.id===id);
-    setS(prev => ({
-      ...prev, tourId:id, tourName: t?.name || prev.tourName,
-      pricingType: (t?.pricingType==="flat" || t?.pricingType==="group") ? "group" : prev.pricingType,
-      groupPrice: (t?.pricingType==="flat" || t?.pricingType==="group") ? String(t.flatPrice||"") : prev.groupPrice,
-      pricePerPerson: t?.pricingType==="per_person" ? String(t.flatPrice||"") : prev.pricePerPerson,
-      currency: t?.currency || prev.currency,
-    }));
-  }
-
-  function toggleItem(key, idx) {
-    setS(prev => ({ ...prev, [key]: prev[key].map((x,i)=> i===idx ? {...x,on:!x.on} : x) }));
-  }
-
-  function goBack() {
-    if (step===0) { onBack(); return; }
-    setStep(st=>st-1);
-  }
-  async function goNext() {
-    const e = validateQuoteStep(step, s);
-    setErrs(e);
-    if (Object.keys(e).length) return;
-    if (step < STEPS.length-1) setStep(st=>st+1);
-    else await handleSubmit();
-  }
-
-  async function handleSubmit() {
-    setSaving(true);
-    try {
-      const result = isEdit ? await updateQuoteFromWizard(editQuote.id, s) : await createQuoteFromWizard(s);
-      showToast(isEdit ? "Teklif güncellendi ✓" : "Teklif oluşturuldu ✓");
-      const targetId = result?.id || editQuote?.id;
-      if (targetId && NAV_REF.fn) NAV_REF.fn('/quotes/'+targetId);
-      else onBack();
-    } catch(err) {
-      showToast("Hata: " + (err?.message || err));
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return (
-    <div style={{ position:"fixed", inset:0, zIndex:1000, background:C.ivory, display:"flex", flexDirection:"column" }}>
-      {}
-      <div style={{
-        flexShrink:0, background:C.white, borderBottom:`1px solid ${C.border}`,
-        paddingTop:"env(safe-area-inset-top, 0px)",
-      }}>
-        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"calc(10px + env(safe-area-inset-top, 0px)) 8px 8px" }}>
-          <button onClick={goBack} style={{ border:"none", background:"transparent", cursor:"pointer", color:C.textMid, fontSize:14.5, fontFamily:"'DM Sans',sans-serif", padding:"8px 10px", minWidth:44 }}>
-            {step===0 ? "İptal" : "Geri"}
-          </button>
-          <div style={{ fontSize:15.5, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif" }}>{isEdit ? "Teklifi Düzenle" : "Yeni Teklif"}</div>
-          <div style={{ minWidth:44 }}/>
-        </div>
-        <div style={{ display:"flex", gap:4, padding:"0 16px 10px" }}>
-          {STEPS.map((st,i)=>(<div key={i} style={{ flex:1, height:3, borderRadius:99, background: i<=step ? C.gold : C.borderLight }}/>))}
-        </div>
-        <div style={{ padding:"0 16px 10px", fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif" }}>Adım {step+1}/{STEPS.length} · {STEPS[step]}</div>
-      </div>
-
-      {}
-      <div style={{ flex:1, overflowY:"auto", padding:"18px 16px 24px" }}>
-        {step===0 && (
-          custMode === "linked" && s.customerId ? (
-            <div>
-              {s.fromLeadId && (
-                <div style={{marginBottom:14, padding:"10px 14px", background:C.blueBg, border:`1px solid ${C.blue}30`, borderRadius:8}}>
-                  <span style={{fontSize:12, color:C.blue, fontFamily:"'DM Sans',sans-serif"}}>Talepten oluşturuluyor: </span>
-                  <IDLink id={s.fromLeadId} type="lead"/>
-                </div>
-              )}
-              <MobileEntityCard>
-                <div style={{ fontSize:16, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif", marginBottom:6 }}>{s.guestName || "—"}</div>
-                <MobileInfoLine label="E-posta" value={s.email || "—"}/>
-                <MobileInfoLine label="Telefon" value={s.phone || "—"}/>
-                <MobileInfoLine label="Uyruk / Dil" value={`${s.nationality || "—"} · ${s.language}`}/>
-              </MobileEntityCard>
-              <button onClick={clearCustomerLink} style={{ marginTop:10, width:"100%", padding:"9px 0", borderRadius:9, border:`1px solid ${C.border}`, background:C.white, color:C.textMid, fontFamily:"'DM Sans',sans-serif", fontSize:12.5 }}>Farklı Müşteri Seç</button>
-            </div>
-          ) : (
-            <div>
-              {s.fromLeadId && (
-                <div style={{marginBottom:14, padding:"10px 14px", background:C.blueBg, border:`1px solid ${C.blue}30`, borderRadius:8}}>
-                  <span style={{fontSize:12, color:C.blue, fontFamily:"'DM Sans',sans-serif"}}>Talepten oluşturuluyor: </span>
-                  <IDLink id={s.fromLeadId} type="lead"/>
-                </div>
-              )}
-              <div style={{display:"flex", gap:8, marginBottom:14}}>
-                <button onClick={()=>setCustMode("search")} style={qwPill(custMode!=="new")}>Mevcut Müşteri</button>
-                <button onClick={()=>setCustMode("new")} style={qwPill(custMode==="new")}>Yeni Müşteri</button>
-              </div>
-              {custMode === "new" ? (
-                <FGrid>
-                  <FRow label="Ad Soyad" required error={errs.guestName}><FText value={s.guestName} onChange={v=>setS(p=>({...p,guestName:v}))} placeholder="Ad Soyad"/></FRow>
-                  <FRow label="Telefon"><FText value={s.phone} onChange={v=>setS(p=>({...p,phone:v}))} placeholder="+90 555 000 0000" mono/></FRow>
-                  <FRow label="E-posta"><FText value={s.email} onChange={v=>setS(p=>({...p,email:v}))} placeholder="email@example.com" type="email"/></FRow>
-                  <FRow label="Uyruk"><FText value={s.nationality} onChange={v=>setS(p=>({...p,nationality:v}))} placeholder="Türkiye"/></FRow>
-                  <FRow label="Dil"><FSelect value={s.language} onChange={v=>setS(p=>({...p,language:v}))} options={QUOTE_LANGUAGE_OPTIONS}/></FRow>
-                </FGrid>
-              ) : (
-                <div>
-                  <FRow label="Müşteri Ara" hint="Ad, e-posta veya telefon"><FText value={custQuery} onChange={setCustQuery} placeholder="Ara…"/></FRow>
-                  {custQuery.trim() && (
-                    custResults.length===0 ? (
-                      <div style={{padding:12, textAlign:"center", fontSize:12.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>Eşleşen müşteri bulunamadı.</div>
-                    ) : (
-                      <div style={{border:`1px solid ${C.borderLight}`, borderRadius:8, overflow:"hidden"}}>
-                        {custResults.map(c=>(
-                          <div key={c.id} onClick={()=>pickCustomer(c)} style={{padding:"10px 12px", borderBottom:`1px solid ${C.borderLight}`}}>
-                            <div style={{fontSize:13, fontWeight:500, color:C.text, fontFamily:"'DM Sans',sans-serif"}}>{c.name}</div>
-                            <div style={{fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>{c.email || c.phone || ""}</div>
-                          </div>
-                        ))}
-                      </div>
-                    )
-                  )}
-                </div>
-              )}
-            </div>
-          )
-        )}
-
-        {step===1 && (
-          <FGrid>
-            <FRow label="Tur Kataloğundan Seç">
-              {toursLoading ? (
-                <div style={{fontSize:12.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>Turlar yükleniyor…</div>
-              ) : (tourList||[]).length===0 ? (
-                <div style={{fontSize:12.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", padding:"10px 12px", background:C.white, border:`1px solid ${C.borderLight}`, borderRadius:8}}>Henüz tanımlı tur yok — adını doğrudan girin.</div>
-              ) : (
-                <select value={s.tourId} onChange={e=>pickTour(e.target.value)} style={{ width:"100%", padding:"9px 10px", borderRadius:7, border:`1.5px solid ${C.border}`, fontSize:13.5, color:C.text, background:C.white }}>
-                  <option value="">-- Tur seçin --</option>
-                  {tourList.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}
-                </select>
-              )}
-            </FRow>
-            <FRow label="Tur / Deneyim Adı" required error={errs.tourName}>
-              <FText value={s.tourName} onChange={v=>setS(p=>({...p, tourId: v!==p.tourName ? "" : p.tourId, tourName:v}))} placeholder="Tur adı"/>
-            </FRow>
-            <FRow label="Başlangıç Tarihi" required error={errs.travelDate}><FText type="date" value={s.travelDate} onChange={v=>setS(p=>({...p,travelDate:v}))}/></FRow>
-            <FRow label="Başlangıç Saati"><FText type="time" value={s.travelTime} onChange={v=>setS(p=>({...p,travelTime:v}))}/></FRow>
-            <FRow label="Kişi Sayısı"><FText type="number" value={s.guestCount} onChange={v=>setS(p=>({...p,guestCount:v}))} placeholder="2"/></FRow>
-            <FRow label="Dil"><FSelect value={s.language} onChange={v=>setS(p=>({...p,language:v}))} options={QUOTE_LANGUAGE_OPTIONS}/></FRow>
-            <FRow label="Karşılama / Pickup"><FSelect value={s.pickup} onChange={v=>setS(p=>({...p,pickup:v}))} options={QUOTE_PICKUP_OPTIONS}/></FRow>
-            {s.pickup !== "Karşılama Yok" && (
-              <FRow label="Pickup Lokasyonu"><FText value={s.pickupLocation} onChange={v=>setS(p=>({...p,pickupLocation:v}))} placeholder="Otel adı / adres"/></FRow>
-            )}
-          </FGrid>
-        )}
-
-        {step===2 && (
-          <>
-            <FGrid>
-              <FRow label="Para Birimi"><FSelect value={s.currency} onChange={v=>setS(p=>({...p,currency:v}))} options={CURRENCY_OPTIONS}/></FRow>
-              <FRow label="Fiyatlandırma Tipi">
-                <div style={{display:"flex", gap:8}}>
-                  <button onClick={()=>setS(p=>({...p,pricingType:"per_person"}))} style={qwPill(s.pricingType==="per_person")}>Kişi Başı</button>
-                  <button onClick={()=>setS(p=>({...p,pricingType:"group"}))} style={qwPill(s.pricingType==="group")}>Grup Fiyatı</button>
-                </div>
-              </FRow>
-              {s.pricingType === "group" ? (
-                <FRow label="Toplam Grup Fiyatı" error={errs.pricing}><FText type="number" value={s.groupPrice} onChange={v=>setS(p=>({...p,groupPrice:v}))} placeholder="0"/></FRow>
-              ) : (
-                <FRow label="Kişi Başı Fiyat" error={errs.pricing}><FText type="number" value={s.pricePerPerson} onChange={v=>setS(p=>({...p,pricePerPerson:v}))} placeholder="0"/></FRow>
-              )}
-              <FRow label="İndirim (%)"><FText type="number" value={s.discountPct} onChange={v=>setS(p=>({...p,discountPct:v}))} placeholder="0"/></FRow>
-              <FRow label="Kapora (%)"><FText type="number" value={s.depositPct} onChange={v=>setS(p=>({...p,depositPct:v}))} placeholder="25"/></FRow>
-            </FGrid>
-            <div style={{ marginTop:6, padding:"14px 16px", background:C.goldPale, borderRadius:12, display:"flex", flexDirection:"column", gap:6 }}>
-              {[
-                {label:"Ara Toplam", val:totals.subtotal},
-                {label:"İndirim", val:totals.discountAmount},
-                {label:"Genel Toplam", val:totals.total, bold:true},
-                {label:"Kapora", val:totals.deposit},
-                {label:"Kalan", val:totals.remaining},
-              ].map((r,i)=>(
-                <div key={i} style={{display:"flex", justifyContent:"space-between"}}>
-                  <span style={{ fontSize:12, color:"#8A6D1F", fontFamily:"'DM Sans',sans-serif" }}>{r.label}</span>
-                  <span style={{ fontSize:r.bold?16:13, fontWeight:r.bold?700:600, color:"#8A6D1F", fontFamily:"'Playfair Display',serif" }}>{sym}{r.val.toLocaleString("tr-TR")}</span>
-                </div>
-              ))}
-            </div>
-          </>
-        )}
-
-        {step===3 && (
-          <div style={{display:"flex", flexDirection:"column", gap:16}}>
-            <MobileSection title="Dahil Olanlar" tight>
-              {s.included.map((it,i)=>(
-                <label key={i} style={{ display:"flex", alignItems:"center", gap:10, padding:"7px 2px", cursor:"pointer" }}>
-                  <input type="checkbox" checked={it.on} onChange={()=>toggleItem("included",i)}/>
-                  <span style={{ fontSize:13, color:C.text, fontFamily:"'DM Sans',sans-serif" }}>{it.label}</span>
-                </label>
-              ))}
-            </MobileSection>
-            <MobileSection title="Dahil Olmayanlar" tight>
-              {s.excluded.map((it,i)=>(
-                <label key={i} style={{ display:"flex", alignItems:"center", gap:10, padding:"7px 2px", cursor:"pointer" }}>
-                  <input type="checkbox" checked={it.on} onChange={()=>toggleItem("excluded",i)}/>
-                  <span style={{ fontSize:13, color:C.text, fontFamily:"'DM Sans',sans-serif" }}>{it.label}</span>
-                </label>
-              ))}
-            </MobileSection>
-            <FRow label="Özel Talepler / Notlar"><FTextArea value={s.notes} onChange={v=>setS(p=>({...p,notes:v}))} placeholder="Özel talepler…"/></FRow>
-            <FRow label="Teklif Geçerlilik Tarihi"><FText type="date" value={s.validUntil} onChange={v=>setS(p=>({...p,validUntil:v}))}/></FRow>
-            <FRow label="Ödeme Koşulları" hint={`Şemada ayrı bir alan yok — kapora oranı (%${s.depositPct}) bu teklifin ödeme koşuludur.`}>
-              <FText value={`Kapora %${s.depositPct}`} onChange={()=>{}} disabled/>
-            </FRow>
-          </div>
-        )}
-
-        {step===4 && (
-          <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
-            <MobileEntityCard>
-              <div style={{ fontSize:16, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif" }}>{linkedCustomer?.name || s.guestName || "—"}</div>
-              <div style={{ fontSize:12.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", marginTop:3 }}>
-                {[s.phone, s.email].filter(Boolean).join(" · ") || "İletişim bilgisi girilmedi"}
-              </div>
-            </MobileEntityCard>
-            <MobileEntityCard>
-              <MobileInfoLine label="Tur" value={s.tourName || "—"}/>
-              <MobileInfoLine label="Tarih" value={s.travelDate || "—"}/>
-              <MobileInfoLine label="Saat" value={s.travelTime || "—"}/>
-              <MobileInfoLine label="Kişi Sayısı" value={`${totals.pax} kişi`}/>
-              <MobileInfoLine label="Dil" value={s.language || "—"}/>
-              <MobileInfoLine label="Karşılama" value={`${s.pickup}${s.pickupLocation?" — "+s.pickupLocation:""}`}/>
-            </MobileEntityCard>
-            <MobileEntityCard>
-              <MobileInfoLine label="Ara Toplam" value={`${sym}${totals.subtotal.toLocaleString("tr-TR")}`}/>
-              <MobileInfoLine label="İndirim" value={`${sym}${totals.discountAmount.toLocaleString("tr-TR")}`}/>
-              <MobileInfoLine label="Genel Toplam" value={`${sym}${totals.total.toLocaleString("tr-TR")}`} bold/>
-              <MobileInfoLine label="Kapora" value={`${sym}${totals.deposit.toLocaleString("tr-TR")}`}/>
-              <MobileInfoLine label="Kalan" value={`${sym}${totals.remaining.toLocaleString("tr-TR")}`}/>
-              <MobileInfoLine label="Geçerlilik" value={s.validUntil || "Belirtilmedi"}/>
-            </MobileEntityCard>
-            <MobileEntityCard>
-              <div style={{fontSize:11, color:C.textFaint, textTransform:"uppercase", letterSpacing:"0.06em", fontFamily:"'DM Sans',sans-serif", marginBottom:6}}>Dahil Olanlar</div>
-              {s.included.filter(i=>i.on).length===0 ? <div style={{fontSize:12.5,color:C.textFaint,fontStyle:"italic"}}>Seçilmedi</div> : s.included.filter(i=>i.on).map((i,idx)=><div key={idx} style={{fontSize:12.5,color:C.textMid,fontFamily:"'DM Sans',sans-serif",padding:"3px 0"}}>• {i.label}</div>)}
-            </MobileEntityCard>
-          </div>
-        )}
-      </div>
-
-      {}
-      <div style={{ flexShrink:0, background:C.white, borderTop:`1px solid ${C.border}`, padding:`12px 16px calc(12px + env(safe-area-inset-bottom, 0px))` }}>
-        <button onClick={goNext} disabled={saving} style={{
-          width:"100%", padding:"13px 0", borderRadius:12, border:"none", cursor: saving?"default":"pointer",
-          background:C.navy, color:C.white, fontSize:14.5, fontWeight:700, fontFamily:"'DM Sans',sans-serif",
-          opacity: saving?0.7:1,
-        }}>{saving ? "Kaydediliyor…" : step===STEPS.length-1 ? (isEdit ? "Değişiklikleri Kaydet" : "Teklifi Oluştur") : "Devam Et"}</button>
-      </div>
-    </div>
-  );
-}
 
 /* ══════════════════════════════════════════════════════════════════════
    MOBILE MESSAGES — a real messaging inbox/thread, not the desktop
