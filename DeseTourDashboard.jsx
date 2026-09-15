@@ -10,7 +10,7 @@ function fmtNum(v, decimals) {
 function fmtMoney(v, currency) {
   const n = parseFloat(v);
   if (isNaN(n)) return "—";
-  const sym = currency === "TRY" ? "₺" : currency === "USD" ? "$" : "€";
+  const sym = currency === "TRY" ? "₺" : currency === "USD" ? "$" : currency === "GBP" ? "£" : "€";
   return sym + n.toLocaleString("tr-TR", { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 }
 function safeNum(v) { const n = parseFloat(v); return isNaN(n) ? 0 : n; }
@@ -117,6 +117,80 @@ const T = {
   buttonH:     40,   // primary/secondary buttons
   rowH:        48,   // table row target height
 };
+
+// Regional-indicator flag emoji from a 2-letter ISO 3166-1 code — avoids
+// hand-typing 190+ flag glyphs alongside the country list below.
+function isoToFlagEmoji(iso2) {
+  return (iso2||"").toUpperCase().replace(/./g, c => String.fromCodePoint(127397 + c.charCodeAt(0)));
+}
+
+// ── Canonical country dataset ───────────────────────────────────────────
+// One shared ISO 3166-1 country list (Turkish display names) used by every
+// nationality/country selector in the app (customers, reservations,
+// guides, …) instead of each form keeping its own short hardcoded array.
+const COUNTRIES = [
+  ["TR","Türkiye"],["US","Amerika Birleşik Devletleri"],["GB","Birleşik Krallık"],
+  ["DE","Almanya"],["FR","Fransa"],["IT","İtalya"],["ES","İspanya"],["PT","Portekiz"],
+  ["NL","Hollanda"],["BE","Belçika"],["LU","Lüksemburg"],["CH","İsviçre"],["AT","Avusturya"],
+  ["IE","İrlanda"],["DK","Danimarka"],["SE","İsveç"],["NO","Norveç"],["FI","Finlandiya"],
+  ["IS","İzlanda"],["PL","Polonya"],["CZ","Çekya"],["SK","Slovakya"],["HU","Macaristan"],
+  ["RO","Romanya"],["BG","Bulgaristan"],["GR","Yunanistan"],["CY","Kıbrıs"],["MT","Malta"],
+  ["HR","Hırvatistan"],["SI","Slovenya"],["RS","Sırbistan"],["BA","Bosna Hersek"],
+  ["ME","Karadağ"],["MK","Kuzey Makedonya"],["AL","Arnavutluk"],["XK","Kosova"],
+  ["MD","Moldova"],["UA","Ukrayna"],["BY","Belarus"],["RU","Rusya"],["EE","Estonya"],
+  ["LV","Letonya"],["LT","Litvanya"],["GE","Gürcistan"],["AM","Ermenistan"],
+  ["AZ","Azerbaycan"],["KZ","Kazakistan"],["UZ","Özbekistan"],["TM","Türkmenistan"],
+  ["TJ","Tacikistan"],["KG","Kırgızistan"],["MN","Moğolistan"],
+  ["CA","Kanada"],["MX","Meksika"],["BR","Brezilya"],["AR","Arjantin"],["CL","Şili"],
+  ["CO","Kolombiya"],["PE","Peru"],["VE","Venezuela"],["EC","Ekvador"],["BO","Bolivya"],
+  ["PY","Paraguay"],["UY","Uruguay"],["CR","Kosta Rika"],["PA","Panama"],["CU","Küba"],
+  ["DO","Dominik Cumhuriyeti"],["GT","Guatemala"],["HN","Honduras"],["SV","El Salvador"],
+  ["NI","Nikaragua"],["JM","Jamaika"],["TT","Trinidad ve Tobago"],["BS","Bahamalar"],
+  ["CN","Çin"],["JP","Japonya"],["KR","Güney Kore"],["KP","Kuzey Kore"],["IN","Hindistan"],
+  ["PK","Pakistan"],["BD","Bangladeş"],["LK","Sri Lanka"],["NP","Nepal"],["BT","Butan"],
+  ["MM","Myanmar"],["TH","Tayland"],["VN","Vietnam"],["KH","Kamboçya"],["LA","Laos"],
+  ["MY","Malezya"],["SG","Singapur"],["ID","Endonezya"],["PH","Filipinler"],["BN","Brunei"],
+  ["TL","Doğu Timor"],["TW","Tayvan"],["HK","Hong Kong"],["MO","Makao"],
+  ["SA","Suudi Arabistan"],["AE","Birleşik Arap Emirlikleri"],["QA","Katar"],
+  ["KW","Kuveyt"],["BH","Bahreyn"],["OM","Umman"],["YE","Yemen"],["IQ","Irak"],
+  ["IR","İran"],["IL","İsrail"],["PS","Filistin"],["JO","Ürdün"],["LB","Lübnan"],
+  ["SY","Suriye"],
+  ["EG","Mısır"],["LY","Libya"],["TN","Tunus"],["DZ","Cezayir"],["MA","Fas"],
+  ["SD","Sudan"],["SS","Güney Sudan"],["ET","Etiyopya"],["ER","Eritre"],["DJ","Cibuti"],
+  ["SO","Somali"],["KE","Kenya"],["TZ","Tanzanya"],["UG","Uganda"],["RW","Ruanda"],
+  ["BI","Burundi"],["ZA","Güney Afrika Cumhuriyeti"],["NA","Namibya"],["BW","Botsvana"],
+  ["ZW","Zimbabve"],["ZM","Zambiya"],["MZ","Mozambik"],["MW","Malavi"],["AO","Angola"],
+  ["CD","Kongo Demokratik Cumhuriyeti"],["CG","Kongo Cumhuriyeti"],["CM","Kamerun"],
+  ["NG","Nijerya"],["GH","Gana"],["CI","Fildişi Sahili"],["SN","Senegal"],["ML","Mali"],
+  ["NE","Nijer"],["TD","Çad"],["BF","Burkina Faso"],["BJ","Benin"],["TG","Togo"],
+  ["SL","Sierra Leone"],["LR","Liberya"],["GN","Gine"],["GW","Gine-Bissau"],
+  ["GM","Gambiya"],["MR","Moritanya"],["GA","Gabon"],["GQ","Ekvator Ginesi"],
+  ["CF","Orta Afrika Cumhuriyeti"],["MG","Madagaskar"],["MU","Mauritius"],
+  ["SC","Seyşeller"],["KM","Komorlar"],["CV","Cape Verde"],["SZ","Esvatini"],["LS","Lesotho"],
+  ["AU","Avustralya"],["NZ","Yeni Zelanda"],["FJ","Fiji"],["PG","Papua Yeni Gine"],
+  ["WS","Samoa"],["TO","Tonga"],["VU","Vanuatu"],["SB","Solomon Adaları"],
+];
+const COUNTRY_LIST = COUNTRIES.map(([code, name]) => ({ code, name, flag: isoToFlagEmoji(code) }));
+// Turkish nationality/country picker order: home market first, then A→Z.
+const COUNTRY_OPTIONS = [
+  COUNTRY_LIST.find(c => c.code === "TR"),
+  ...COUNTRY_LIST.filter(c => c.code !== "TR").sort((a,b) => a.name.localeCompare(b.name,'tr')),
+];
+const COUNTRY_FLAG_BY_NAME = Object.fromEntries(COUNTRY_LIST.map(c => [c.name, c.flag]));
+function countryFlag(name) { return COUNTRY_FLAG_BY_NAME[name] || "🌍"; }
+
+// ── Canonical language dataset ──────────────────────────────────────────
+// One shared list (Turkish display labels) for every language selector in
+// the app (customers, reservations, guides, …).
+const LANGUAGE_OPTIONS = [
+  "Türkçe","İngilizce","İspanyolca","Portekizce","İtalyanca","Fransızca","Almanca",
+  "Rusça","Arapça","Farsça","İbranice","Yunanca","Felemenkçe","Lehçe","Çekçe",
+  "Slovakça","Macarca","Romence","Bulgarca","Sırpça","Hırvatça","Boşnakça",
+  "Arnavutça","Ukraynaca","Gürcüce","Ermenice","Azerbaycanca","Kazakça","Özbekçe",
+  "Çince","Japonca","Korece","Hintçe","Urduca","Bengalce","Endonezce","Malayca",
+  "Tayca","Vietnamca","Filipince","İsveççe","Norveççe","Danca","Fince","Estonca",
+  "Letonca","Litvanca",
+];
 
 const DB = {
 
@@ -680,7 +754,7 @@ function filterByDateRange(items, dateField, period) {
   });
 }
 
-function computeUrgent(leads, reservations, payments, tasks, reminders) {
+function computeUrgent(reservations, payments, reminders) {
   // Supabase mode: `null` means "not loaded yet" — must resolve to an empty
   // list, never to the DB mock arrays. Falling back to DB.* here previously
   // made "Acil İşler" flash fabricated urgent items on every dashboard load,
@@ -700,11 +774,6 @@ function computeUrgent(leads, reservations, payments, tasks, reminders) {
       sub:`${r.tour||"Tur"} · ${r.date||"—"} · ${r.pax||1} kişi`,
       tag:"Rehber",tagColor:C.blue,tagBg:C.blueBg,ago:r.date||"—",
       icon:"M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2 M23 21v-2a4 4 0 00-3-3.87 M16 3.13a4 4 0 010 7.75"});
-  });
-  (tasks ?? (useMock ? DB.tasks : [])).filter(t=>t.status!=="Tamamlandı"&&["Yüksek","Acil"].includes(t.priority)).slice(0,2).forEach(t=>{
-    items.push({id:id++,level:"medium",title:t.title,sub:`Öncelik: ${t.priority} · ${t.dueDate||"—"}`,
-      tag:"Görev",tagColor:C.amber,tagBg:"#FEF3E2",ago:t.dueDate||"—",
-      icon:"M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"});
   });
   (reminders ?? (useMock ? DB.reminders : [])).filter(r=>!r.status?.includes("Tamamlandı")&&r.dueDateRaw&&r.dueDateRaw<now).slice(0,2).forEach(r=>{
     items.push({id:id++,level:"medium",title:r.title,sub:`Gecikmiş · ${r.type||"Hatırlatma"}`,
@@ -1467,15 +1536,13 @@ const MetricsService = {
 // a mock/demo count when real data is unavailable.
 const NAV_TOP = [
   { id:"dashboard",    label:"Ana Sayfa",      badge:null, icon:"M3 9.5L12 3l9 6.5V20a1 1 0 01-1 1H4a1 1 0 01-1-1V9.5z M9 21V12h6v9" },
-  { id:"leads",        label:"Talepler",        badge:null, icon:"M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" },
   { id:"customers",    label:"Misafirler",      badge:null, icon:"M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2 M23 21v-2a4 4 0 00-3-3.87 M16 3.13a4 4 0 010 7.75" },
-  { id:"quotes",       label:"Teklifler",       badge:null, icon:"M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z M14 2v6h6 M16 13H8 M16 17H8 M10 9H8" },
   { id:"reservations", label:"Rezervasyonlar",  badge:null, icon:"M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" },
   { id:"calendar",     label:"Takvim",          badge:null, icon:"M8 2v4M16 2v4M3 10h18M21 8a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2h14a2 2 0 002-2V8z" },
   { id:"tours",        label:"Turlar",          badge:null, icon:"M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z M9 22V12h6v10" },
+  { id:"guides",       label:"Rehberlerimiz",   badge:null, icon:"M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2 M23 21v-2a4 4 0 00-3-3.87 M16 3.13a4 4 0 010 7.75 M12 11a4 4 0 100-8 4 4 0 000 8z" },
 ];
 const NAV_BOT = [
-  { id:"tasks",      label:"Görevler",       badge:null, icon:"M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" },
   { id:"payments",   label:"Ödemeler",      badge:null, icon:"M2 9a2 2 0 012-2h16a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V9zM2 13h20" },
   { id:"messages",   label:"Mesajlar",      badge:null, icon:"M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" },
   { id:"reminders",  label:"Hatırlatmalar", badge:null, icon:"M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0" },
@@ -1924,36 +1991,38 @@ function Welcome() {
   const firstName = auth.displayName.split(" ")[0] || "Hoş geldiniz";
   const hour = new Date().getHours();
   const greeting = hour < 12 ? "Günaydın" : hour < 18 ? "İyi günler" : "İyi akşamlar";
-  const [showNewLead, setShowNewLead] = useState(false);
+  const [showNewRes, setShowNewRes] = useState(false);
 
   // Real urgent-item count for the context line below — this used to be a
   // hardcoded "3 acil işlem" regardless of actual data.
-  const { data:repoLeads, loading:l1 } = useRepo("lead",        "getAll");
-  const { data:repoRes,   loading:l2 } = useRepo("reservation", "getAll");
-  const { data:repoPays,  loading:l3 } = useRepo("payment",     "getAll");
-  const { data:repoTasks, loading:l4 } = useRepo("task",        "getAll");
-  const { data:repoRems,  loading:l5 } = useRepo("reminder",    "getAll");
-  const urgentLoading = l1||l2||l3||l4||l5;
+  const { data:repoRes,   loading:l1 } = useRepo("reservation", "getAll");
+  const { data:repoPays,  loading:l2 } = useRepo("payment",     "getAll");
+  const { data:repoRems,  loading:l3 } = useRepo("reminder",    "getAll");
+  const urgentLoading = l1||l2||l3;
   const urgentCount = useMemo(
-    () => computeUrgent(repoLeads, repoRes, repoPays, repoTasks, repoRems).length,
-    [repoLeads, repoRes, repoPays, repoTasks, repoRems]
+    () => computeUrgent(repoRes, repoPays, repoRems).length,
+    [repoRes, repoPays, repoRems]
   );
 
   return (
     <div style={{
       position:"relative", overflow:"hidden",
       background:C.white, border:`1px solid ${C.border}`, borderRadius:T.radius,
-      boxShadow:T.shadowSoft, minHeight:230,
+      boxShadow:T.shadowSoft, minHeight:330,
     }}>
-      {showNewLead && <NewLeadModal onClose={()=>setShowNewLead(false)} onSuccess={()=>setShowNewLead(false)}/>}
+      {showNewRes && <NewReservationModal onClose={()=>setShowNewRes(false)} onSuccess={()=>setShowNewRes(false)}/>}
 
-      {/* Photo layer — spans the full hero; hero-fade above it hides the
-          left portion so the photo reads as emerging from the ivory
-          background rather than sitting behind a hard-edged panel. */}
-      <div className="hero-photo" style={{
-        position:"absolute", inset:0,
-        backgroundImage:"url('/hero-crm.png')",
-        backgroundSize:"cover",
+      {/* Photo layer — a real <img> confined to the hero's right portion
+          (not full-bleed) so object-fit:cover crops far less aggressively:
+          a narrower box whose aspect ratio sits close to the source
+          photo's own means most of its height shows, keeping the
+          panorama wide and the Galata Tower at its natural size instead
+          of an enlarged sliver. hero-fade above it hides the left edge so
+          the photo still reads as emerging from the ivory background. */}
+      <img src="/hero-crm.png" alt="" className="hero-photo" style={{
+        position:"absolute", top:0, right:0, bottom:0,
+        height:"100%", width:"72%",
+        objectFit:"cover",
         backgroundColor:C.navyDeep,
       }}/>
       <div className="hero-fade" style={{ position:"absolute", inset:0 }}/>
@@ -1999,12 +2068,12 @@ function Welcome() {
             fontFamily:"'DM Sans',sans-serif", fontSize:13, fontWeight:600,
             transition:"background 0.12s",
           }}
-            onClick={()=>setShowNewLead(true)}
+            onClick={()=>setShowNewRes(true)}
             onMouseEnter={e=>e.currentTarget.style.background=C.navyHover}
             onMouseLeave={e=>e.currentTarget.style.background=C.navy}
           >
             <Ic d="M12 5v14M5 12h14" size={15} sw={2}/>
-            Yeni Talep Ekle
+            Yeni Rezervasyon Ekle
           </button>
         </div>
       </div>
@@ -2048,12 +2117,14 @@ function KpiCard({ kpi }) {
 }
 
 function KpiRow() {
-  const { data:repoLeads, loading:kpiLoadL }  = useRepo("lead",        "getAll");
   const { data:repoRes,   loading:kpiLoadR }  = useRepo("reservation", "getAll");
   const { data:repoPays,  loading:kpiLoadP }  = useRepo("payment",     "getAll");
-  const { data:repoTasks, loading:kpiLoadT }  = useRepo("task",        "getAll");
-  const kpiLoading = kpiLoadL || kpiLoadR || kpiLoadP || kpiLoadT;
-  const m = calculateDashboardMetrics(repoLeads, repoRes, repoPays, repoTasks, null);
+  const kpiLoading = kpiLoadR || kpiLoadP;
+  const m = calculateDashboardMetrics(null, repoRes, repoPays, null, null);
+  // "Aktif Rehberler" is part of the target KPI row (see product simplification
+  // spec) but is intentionally omitted until the guides table exists —
+  // supabase_migration_guides.sql is pending approval. Adding a guide count
+  // here now would mean inventing a number with no real data behind it.
   const kpis = [
     {
       label:"Bugünkü Turlar",
@@ -2063,23 +2134,17 @@ function KpiRow() {
       accent:false,
     },
     {
-      label:"Yeni Talepler",
-      value:String(m.openLeadsCount),
-      sub:"Aktif talepler",
-      icon:"M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01",
+      label:"Yaklaşan Rezervasyonlar",
+      value:String(m.upcomingCount),
+      sub:m.upcomingCount>0?"Aktif rezervasyonlar":"Bekleyen yok",
+      icon:"M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z",
+      accent:false,
     },
     {
       label:"Bekleyen Ödemeler",
       value:`€${m.pendingEUR.toLocaleString("tr-TR",{maximumFractionDigits:0})}`,
       sub:`${m.pendingPaysCount} rezervasyon`,
       icon:"M2 9a2 2 0 012-2h16a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V9zM2 13h20",
-    },
-    {
-      label:"Yaklaşan Rezervasyonlar",
-      value:String(m.upcomingCount),
-      sub:m.upcomingCount>0?"Aktif rezervasyonlar":"Bekleyen yok",
-      icon:"M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z",
-      accent:false,
     },
     {
       label:"Bu Ay Beklenen Ciro",
@@ -2090,7 +2155,7 @@ function KpiRow() {
     },
   ];
   return (
-    <div className="rsp-stat-grid" style={{display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:14}}>
+    <div className="rsp-stat-grid" style={{display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:14}}>
       {kpis.map((k,i)=><KpiCard key={i} kpi={k}/>)}
     </div>
   );
@@ -2098,14 +2163,12 @@ function KpiRow() {
 
 function UrgentPanel() {
   const [dismissed, setDismissed] = useState([]);
-  const { data:repoLeads }     = useRepo("lead",        "getAll");
   const { data:repoRes }       = useRepo("reservation", "getAll");
   const { data:repoPays }      = useRepo("payment",     "getAll");
-  const { data:repoTasks }     = useRepo("task",        "getAll");
   const { data:repoRems }      = useRepo("reminder",    "getAll");
   const urgentItems = useMemo(
-    () => computeUrgent(repoLeads, repoRes, repoPays, repoTasks, repoRems),
-    [repoLeads, repoRes, repoPays, repoTasks, repoRems]
+    () => computeUrgent(repoRes, repoPays, repoRems),
+    [repoRes, repoPays, repoRems]
   );
   const visible = urgentItems.filter(u=>!dismissed.includes(u.id));
 
@@ -5396,7 +5459,13 @@ function NewReservationModal({ onClose, onSuccess }) {
   const [tourId,   setTourId]   = useState("");
   const [checkIn,  setCheckIn]  = useState("");
   const [checkOut, setCheckOut] = useState("");
+  const [time,     setTime]     = useState("");
   const [pax,      setPax]      = useState("2");
+  const [paxChild, setPaxChild] = useState("0");
+  const [pickup,   setPickup]   = useState("");
+  const [total,    setTotal]    = useState("");
+  const [deposit,  setDeposit]  = useState("");
+  const [currency, setCurrency] = useState("EUR");
   const [notes,    setNotes]    = useState("");
   const [errs,     setErrs]     = useState({});
   const [busy,     setBusy]     = useState(false);
@@ -5414,7 +5483,11 @@ function NewReservationModal({ onClose, onSuccess }) {
     try {
       const { data, error } = await mutRes("create", {
         customerId: custId, tourId: tourId||null,
-        checkIn, checkOut, paxAdult: parseInt(pax)||1, notes,
+        checkIn, checkOut, time: time||null,
+        paxAdult: parseInt(pax)||1, paxChild: parseInt(paxChild)||0,
+        pickup: pickup||null,
+        total: total?parseFloat(total):0, deposit: deposit?parseFloat(deposit):0,
+        currency, notes,
       });
       if (error) throw new Error(error);
       showToast("Rezervasyon olusturuldu.");
@@ -5454,8 +5527,30 @@ function NewReservationModal({ onClose, onSuccess }) {
         <FRow label="Cikis Tarihi" required error={errs.checkOut}>
           <FText type="date" value={checkOut} onChange={setCheckOut} error={errs.checkOut}/>
         </FRow>
-        <FRow label="Kisi Sayisi">
+        <FRow label="Bulusma Saati">
+          <FText type="time" value={time} onChange={setTime}/>
+        </FRow>
+      </FGrid>
+      <FGrid>
+        <FRow label="Yetiskin Sayisi">
           <FText type="number" value={pax} onChange={setPax} placeholder="2"/>
+        </FRow>
+        <FRow label="Cocuk Sayisi">
+          <FText type="number" value={paxChild} onChange={setPaxChild} placeholder="0"/>
+        </FRow>
+        <FRow label="Alis Yeri (Pickup)">
+          <FText value={pickup} onChange={setPickup} placeholder="Otel adi / lobi"/>
+        </FRow>
+      </FGrid>
+      <FGrid>
+        <FRow label="Toplam Fiyat">
+          <FText type="number" value={total} onChange={setTotal} placeholder="0" mono/>
+        </FRow>
+        <FRow label="Kapora">
+          <FText type="number" value={deposit} onChange={setDeposit} placeholder="0" mono/>
+        </FRow>
+        <FRow label="Para Birimi">
+          <FSelect value={currency} onChange={setCurrency} options={CURRENCY_OPTIONS}/>
         </FRow>
       </FGrid>
       <FRow label="Notlar" full>
@@ -7735,11 +7830,6 @@ function PBadge({ label, small }) {
   );
 }
 
-function fmtMoney(amount, currency) {
-  const sym = currency === "TRY" ? "₺" : currency === "USD" ? "$" : currency === "GBP" ? "£" : "€";
-  return `${sym}${amount.toLocaleString("tr-TR")}`;
-}
-
 function PctBar({ pct, color }) {
   return (
     <div style={{width:"100%", height:4, background:"#F0EBE1", borderRadius:99, overflow:"hidden", marginTop:4}}>
@@ -9799,6 +9889,45 @@ function ToursPage({ onSelect }) {
   );
 }
 
+// Rehberlerimiz (guide management) — the operational guide directory is a
+// new module. It needs a dedicated `guides` table (a tour guide is
+// operational/business data — license number, languages, region — that
+// doesn't belong on staff_users, which is an auth profile keyed to
+// auth.users). That table does not exist in the live database yet; the
+// additive migration is prepared at supabase_migration_guides.sql and is
+// pending manual approval/execution before this module can hold or show
+// any real data. This intentionally does NOT fall back to mock data or
+// local storage once the query fails — it shows the real reason instead.
+function GuidesPage() {
+  return (
+    <div style={{display:"flex", flexDirection:"column", gap:20}}>
+      <div className="page-header" style={{display:"flex", alignItems:"center", justifyContent:"space-between", gap:16}}>
+        <div>
+          <h1 style={{margin:0, fontSize:22, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif"}}>Rehberlerimiz</h1>
+          <div style={{fontSize:13, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", marginTop:4}}>
+            Operasyonel rehber ağınız — turlara atanan rehberler, dilleri ve ödemeleri.
+          </div>
+        </div>
+      </div>
+      <div style={{
+        background:C.white, border:`1px solid ${C.border}`, borderRadius:T.radius,
+        padding:"48px 32px", textAlign:"center", display:"flex", flexDirection:"column",
+        alignItems:"center", gap:12,
+      }}>
+        <div style={{fontSize:32}}>🛠️</div>
+        <div style={{fontSize:15, fontWeight:600, color:C.text, fontFamily:"'Playfair Display',serif"}}>
+          Rehber yönetimi bir veritabanı güncellemesi bekliyor
+        </div>
+        <div style={{fontSize:13, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", maxWidth:480, lineHeight:1.6}}>
+          Bu modül için gereken <code style={{background:C.ivory, padding:"1px 6px", borderRadius:4, fontFamily:"'DM Mono',monospace", fontSize:12}}>guides</code> tablosu
+          henüz oluşturulmadı. Gerekli migrasyon <code style={{background:C.ivory, padding:"1px 6px", borderRadius:4, fontFamily:"'DM Mono',monospace", fontSize:12}}>supabase_migration_guides.sql</code> dosyasında
+          hazır — Supabase'de çalıştırıldıktan sonra bu sayfa gerçek rehber listenizi gösterecek.
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function SIc({ d, size=15, sw=1.6, color }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
@@ -10434,34 +10563,22 @@ function SettingsPage() {
   );
 }
 
-const _COUNTRY_FLAG = {
-  "Avustralya":"🇦🇺","İngiltere":"🇬🇧","ABD":"🇺🇸","Almanya":"🇩🇪","Japonya":"🇯🇵",
-  "İtalya":"🇮🇹","Fransa":"🇫🇷","Türkiye":"🇹🇷","Hollanda":"🇳🇱","İspanya":"🇪🇸",
-  "Kanada":"🇨🇦","Brezilya":"🇧🇷","Diğer":"🌍",
-};
-
-function calculateReportMetrics(period, leads, quotes, reservations, payments, customers, sources) {
-  const _leads   = leads        ?? [];
-  const _quotes  = quotes       ?? [];
+function calculateReportMetrics(period, reservations, payments, customers, sources) {
   const _res     = reservations ?? [];
   const _pays    = payments     ?? [];
   const _custs   = customers    ?? [];
   // Source lookup must use the live sources list — DB.sources is mock-only
-  // data with mock ids, so it never matched a real Supabase source_id and
-  // every real lead/quote/reservation fell into "Diğer" regardless of its
-  // actual source.
+  // data with mock ids, so it never matched a real Supabase source_id.
   const _sources = sources && sources.length ? sources : DB.sources;
   const srcName  = (id) => { const s=_sources.find(x=>x.id===id); return s?.name || s?.label || "Diğer"; };
 
-  const fLeads = filterByDateRange(_leads,   "createdAt",  period);
-  const fQuotes= filterByDateRange(_quotes,  "createdAt",  period);
   const fRes   = filterByDateRange(_res,     "checkIn",    period);
   const fPays  = filterByDateRange(_pays,    "createdAt",  period);
 
   const kpi = {
-    leads:        fLeads.length,
-    quotes:       fQuotes.length,
     reservations: fRes.length,
+    confirmed:    fRes.filter(r=>["Onaylandı","Tur Günü","Tamamlandı"].includes(r.opStatus)).length,
+    inProgress:   fRes.filter(r=>r.opStatus==="Tur Günü").length,
     completed:    fRes.filter(r=>r.opStatus==="Tamamlandı").length,
     expectedEur:  fPays.filter(p=>p.currency==="EUR")
                    .reduce((s,p)=>{ const r=getReservationById(p.resId||""); return s+(r?r.total:p.amount); },0),
@@ -10469,28 +10586,20 @@ function calculateReportMetrics(period, leads, quotes, reservations, payments, c
                    .reduce((s,p)=>s+parseFloat(p.amount||0), 0),
   };
 
+  // Source performance now reflects where CUSTOMERS came from (customers
+  // .source_id) and how many reservations/how much revenue followed —
+  // the lead→quote funnel this used to track no longer exists as an
+  // active workflow.
   const sourceMap = {};
-  fLeads.forEach(l => {
-    const src = l.sourceId ? srcName(l.sourceId) : (l.importType === "manual" ? "Manuel" : "Diğer");
-    if (!sourceMap[src]) sourceMap[src] = { source:src, leads:0, quotes:0, reservations:0, revenue:0 };
-    sourceMap[src].leads++;
-  });
-  fQuotes.forEach(q => {
-    const lead = _leads.find(l=>l.id===q.leadId);
-    const src  = lead?.sourceId ? srcName(lead.sourceId) : "Diğer";
-    if (!sourceMap[src]) sourceMap[src] = { source:src, leads:0, quotes:0, reservations:0, revenue:0 };
-    sourceMap[src].quotes++;
-  });
   fRes.forEach(r => {
-    const lead = _leads.find(l=>l.id===r.leadId);
-    const src  = lead?.sourceId ? srcName(lead.sourceId) : "Diğer";
-    if (!sourceMap[src]) sourceMap[src] = { source:src, leads:0, quotes:0, reservations:0, revenue:0 };
+    const cust = _custs.find(c=>c.id===r.customerId);
+    const src  = cust?.sourceId ? srcName(cust.sourceId) : "Diğer";
+    if (!sourceMap[src]) sourceMap[src] = { source:src, reservations:0, revenue:0 };
     sourceMap[src].reservations++;
     sourceMap[src].revenue += parseFloat(r.total||0);
   });
   const sourcesData = Object.values(sourceMap)
-    .map(s => ({ ...s, conversion: s.leads>0 ? Math.round(s.reservations/s.leads*100) : 0 }))
-    .sort((a,b)=>b.leads-a.leads);
+    .sort((a,b)=>b.reservations-a.reservations);
 
   const tourMap = {};
   fRes.forEach(r => {
@@ -10505,24 +10614,20 @@ function calculateReportMetrics(period, leads, quotes, reservations, payments, c
     .sort((a,b)=>b.revenue-a.revenue)
     .slice(0,6);
 
+  // Country analysis is now reservation-based (who's actually booking),
+  // not lead-based (who merely enquired).
   const countryMap = {};
-  fLeads.forEach(l => {
-    const cust = _custs.find(c=>c.id===l.customerId);
-    const country = cust?.country || cust?.nationality || "Diğer";
-    if (!countryMap[country]) countryMap[country] = { country, flag:_COUNTRY_FLAG[country]||"🌍", leads:0, reservations:0, totalQuote:0, count:0 };
-    countryMap[country].leads++;
-  });
   fRes.forEach(r => {
     const cust = _custs.find(c=>c.id===r.customerId);
     const country = cust?.country || cust?.nationality || "Diğer";
-    if (!countryMap[country]) countryMap[country] = { country, flag:_COUNTRY_FLAG[country]||"🌍", leads:0, reservations:0, totalQuote:0, count:0 };
+    if (!countryMap[country]) countryMap[country] = { country, flag:countryFlag(country), reservations:0, totalRevenue:0, count:0 };
     countryMap[country].reservations++;
-    countryMap[country].totalQuote += parseFloat(r.total||0);
+    countryMap[country].totalRevenue += parseFloat(r.total||0);
     countryMap[country].count++;
   });
   const countriesData = Object.values(countryMap)
-    .map(c => ({ ...c, avgQuote: c.count>0 ? Math.round(c.totalQuote/c.count) : 0 }))
-    .sort((a,b)=>b.leads-a.leads)
+    .map(c => ({ ...c, avgRevenue: c.count>0 ? Math.round(c.totalRevenue/c.count) : 0 }))
+    .sort((a,b)=>b.reservations-a.reservations)
     .slice(0,8);
 
   const totalExpected = fPays.filter(p=>p.currency==="EUR")
@@ -10577,7 +10682,7 @@ function calculateReportMetrics(period, leads, quotes, reservations, payments, c
 // Guarantees ReportsPage always has every field it reads, never fabricates
 // non-zero values, and never crashes.
 const EMPTY_REPORT_METRICS = {
-  kpi: { leads:0, quotes:0, reservations:0, completed:0, expectedEur:0, collectedEur:0 },
+  kpi: { reservations:0, confirmed:0, inProgress:0, completed:0, expectedEur:0, collectedEur:0 },
   sources: [], tours: [], countries: [],
   payments: { expected:0, collected:0, pending:0, partial:0, refunded:0, highValue:[] },
   ops: { upcoming:0, completed:0, cancelled:0, noGuide:0, noPickup:0 },
@@ -10587,10 +10692,8 @@ function calculateDashboardMetrics(leads, reservations, payments, tasks, reminde
   // When Supabase is active, use empty arrays (not DB mock) if data not loaded yet
   // This prevents KPIs briefly showing mock values then disappearing
   const empty = [];
-  const _leads = leads         ?? empty;
   const _res   = reservations  ?? empty;
   const _pays  = payments      ?? empty;
-  const _tasks = tasks         ?? empty;
   const _rems  = reminders     ?? empty;
 
   const today  = _TODAY_STR;
@@ -10598,31 +10701,26 @@ function calculateDashboardMetrics(leads, reservations, payments, tasks, reminde
 
   const todayTours    = _res.filter(r => r.date===today || r.checkIn===todayISO);
   const upcomingRes   = _res.filter(r => !["Tamamlandı","İptal"].includes(r.opStatus));
-  const openLeads     = _leads.filter(l => !["Onaylandı","İptal"].includes(l.status));
   const pendingPays   = _pays.filter(p => ["Bekliyor","Kısmi Ödendi"].includes(p.status));
   const pendingEUR    = pendingPays.filter(p=>p.currency==="EUR")
     .reduce((s,p)=>s+parseFloat(p.amount||0), 0);
-  const highPrioTasks = _tasks.filter(t=>t.status!=="Tamamlandı"&&["Yüksek","Acil"].includes(t.priority));
 
-  const monthStart = `${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,"0")}-01`;
   const monthPays  = filterByDateRange(_pays, "createdAt", "Bu Ay");
   const monthRevEUR = monthPays.filter(p=>p.currency==="EUR")
     .reduce((s,p)=>{ const r=getReservationById(p.resId||""); return s+(r?r.total:parseFloat(p.amount||0)); },0);
 
-  const urgentItems = computeUrgent(_leads, _res, _pays, _tasks, _rems);
+  const urgentItems = computeUrgent(_res, _pays, _rems);
   const recentActivities = DB.activityLogs.slice(-6).reverse();
 
   return {
     todayTours,
     todayTourCount: todayTours.length,
     todayTourPax:   todayTours.reduce((s,r)=>s+parseInt(r.pax||1),0),
-    openLeadsCount: openLeads.length,
     pendingPaysCount: pendingPays.length,
     pendingEUR,
     upcomingRes:    upcomingRes.slice(0,5),
     upcomingCount:  upcomingRes.length,
     monthRevEUR,
-    highPrioTasks:  highPrioTasks.length,
     urgentItems,
     recentActivities,
   };
@@ -10693,25 +10791,23 @@ function ReportsPage() {
   const [period, setPeriod] = useState("Bu Ay");
   const PERIODS = ["Bugün","Bu Hafta","Bu Ay","Son 3 Ay"];
 
-  const { data:rLeads, loading:rLeadsLoading, error:rLeadsError, reload:reloadLeads } = useRepo("lead",        "getAll");
-  const { data:rQuotes }                                                              = useRepo("quote",       "getAll");
   const { data:rRes,   loading:rResLoading,  error:rResError,   reload:reloadRes }   = useRepo("reservation", "getAll");
   const { data:rPays,  loading:rPaysLoading, error:rPaysError,  reload:reloadPays }  = useRepo("payment",     "getAll");
   const { data:rCusts }                                                               = useRepo("customer",    "getAll");
   const { sources } = useSources();
-  const isLoading = rLeadsLoading || rResLoading || rPaysLoading;
+  const isLoading = rResLoading || rPaysLoading;
 
   const metrics = useMemo(() => {
     try {
-      return calculateReportMetrics(period, rLeads, rQuotes, rRes, rPays, rCusts, sources) || EMPTY_REPORT_METRICS;
+      return calculateReportMetrics(period, rRes, rPays, rCusts, sources) || EMPTY_REPORT_METRICS;
     } catch (e) {
       console.error("[ReportsPage] calculateReportMetrics failed, showing zero-value report:", e);
       return EMPTY_REPORT_METRICS;
     }
-  }, [period, rLeads, rQuotes, rRes, rPays, rCusts, sources]);
+  }, [period, rRes, rPays, rCusts, sources]);
   const kpi       = metrics.kpi || EMPTY_REPORT_METRICS.kpi;
-  const convRate  = kpi.leads > 0 ? Math.round(kpi.reservations/kpi.leads*100) : 0;
-  const maxLeads  = Math.max(1, ...metrics.sources.map(s=>s.leads));
+  const completionRate = kpi.reservations > 0 ? Math.round(kpi.completed/kpi.reservations*100) : 0;
+  const maxSourceRes = Math.max(1, ...metrics.sources.map(s=>s.reservations));
   const maxRev    = Math.max(1, ...metrics.tours.map(t=>t.revenue));
 
   return (
@@ -10719,10 +10815,10 @@ function ReportsPage() {
 
       {}
       {isLoading  ? <LoadingState label="Rapor verileri yükleniyor…"/> : null}
-      {(rLeadsError || rResError || rPaysError) && (
+      {(rResError || rPaysError) && (
         <ErrorState
           message="Rapor verileri yüklenirken bir hata oluştu."
-          onRetry={()=>{ reloadLeads?.(); reloadRes?.(); reloadPays?.(); }}
+          onRetry={()=>{ reloadRes?.(); reloadPays?.(); }}
         />
       )}
 
@@ -10757,10 +10853,9 @@ function ReportsPage() {
 
       {}
       <div className="rsp-stat-grid-1" style={{display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))", gap:12}}>
-        <RpKpiCard label="Toplam Talep"           value={kpi.leads}                             icon="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"                                                  color={C.blue}  bg={C.blueBg}   sub={`${period} döneminde`}/>
-        <RpKpiCard label="Gönderilen Teklif"      value={kpi.quotes}                            icon="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z M14 2v6h6"                                    color={C.amber} bg={C.amberBg}  sub={`${safePct(kpi.quotes, kpi.leads)} talep → teklif`}/>
-        <RpKpiCard label="Kesinleşen Rezervasyon" value={kpi.reservations}                      icon="M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"                              color={C.green} bg={C.greenBg}  sub={`${kpi.completed} tur tamamlandı`}/>
-        <RpKpiCard label="Dönüşüm Oranı"          value={`%${convRate}`}                        icon="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"                                                                      color={C.navy}  bg={C.ivoryDark} sub="Talep → Rezervasyon"/>
+        <RpKpiCard label="Rezervasyon"             value={kpi.reservations}                      icon="M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"                              color={C.blue}  bg={C.blueBg}   sub={`${period} döneminde`}/>
+        <RpKpiCard label="Onaylanan"               value={kpi.confirmed}                         icon="M20 6L9 17l-5-5"                                                                                     color={C.amber} bg={C.amberBg}  sub={`${safePct(kpi.confirmed, kpi.reservations)} onaylandı`}/>
+        <RpKpiCard label="Tamamlanan Tur"          value={kpi.completed}                         icon="M22 11.08V12a10 10 0 11-5.93-9.14 M22 4L12 14.01l-3-3"                                              color={C.green} bg={C.greenBg}  sub={`${completionRate}% tamamlanma oranı`}/>
         <RpKpiCard label="Beklenen Gelir"          value={`€${kpi.expectedEur.toLocaleString("tr-TR")}`} icon="M12 2v20M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"                                    color={C.gold}  bg={C.goldPale}  sub="EUR bazlı tüm rezervasyonlar" highlight/>
         <RpKpiCard label="Tahsil Edilen Gelir"    value={`€${kpi.collectedEur.toLocaleString("tr-TR")}`} icon="M22 11.08V12a10 10 0 11-5.93-9.14 M22 4L12 14.01l-3-3"                                    color={C.green} bg={C.greenBg}  sub={`${safePct(kpi.collectedEur, kpi.expectedEur)} tahsil edildi`} highlight/>
       </div>
@@ -10772,13 +10867,13 @@ function ReportsPage() {
         <div style={{display:"flex", flexDirection:"column", gap:20}}>
 
           {}
-          <RpSection title="Satış Hunisi" icon="M3 4h13M3 8h9m-9 4h9m5-4v12m0 0l-4-4m4 4l4-4" action={period}>
+          <RpSection title="Operasyon Akışı" icon="M3 4h13M3 8h9m-9 4h9m5-4v12m0 0l-4-4m4 4l4-4" action={period}>
             <div className="rsp-stat-grid" style={{display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:12}}>
               {[
-                { label:"Talep",           val:kpi.leads,        icon:"M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01",                            color:C.blue,  pct:100 },
-                { label:"Teklif",          val:kpi.quotes,       icon:"M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z M14 2v6h6",              color:C.amber, pct:safePctNum(kpi.quotes, kpi.leads) },
-                { label:"Rezervasyon",     val:kpi.reservations, icon:"M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11",         color:"#0E7490",  pct:safePctNum(kpi.reservations, kpi.leads) },
-                { label:"Tamamlanan Tur",  val:kpi.completed,    icon:"M22 11.08V12a10 10 0 11-5.93-9.14 M22 4L12 14.01l-3-3",                         color:C.green, pct:safePctNum(kpi.completed, kpi.leads) },
+                { label:"Rezervasyon",     val:kpi.reservations, icon:"M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11",         color:C.blue,  pct:100 },
+                { label:"Onaylanan",       val:kpi.confirmed,    icon:"M20 6L9 17l-5-5",                                                              color:C.amber, pct:safePctNum(kpi.confirmed, kpi.reservations) },
+                { label:"Tur Günü",        val:kpi.inProgress,   icon:"M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z M9 22V12h6v10",                    color:"#0E7490",  pct:safePctNum(kpi.inProgress, kpi.reservations) },
+                { label:"Tamamlanan Tur",  val:kpi.completed,    icon:"M22 11.08V12a10 10 0 11-5.93-9.14 M22 4L12 14.01l-3-3",                         color:C.green, pct:safePctNum(kpi.completed, kpi.reservations) },
               ].map((step,i)=>(
                 <div key={i} style={{display:"flex", flexDirection:"column", alignItems:"center", gap:10, position:"relative"}}>
                   {}
@@ -10820,12 +10915,12 @@ function ReportsPage() {
           {}
           <RpSection title="Kaynak Performansı" icon="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z">
             {metrics.sources.length === 0 ? (
-              <EmptyState icon="📊" title="Bu dönem için veri yok" subtitle="Seçilen tarih aralığında kaynak bazlı talep bulunmuyor."/>
+              <EmptyState icon="📊" title="Bu dönem için veri yok" subtitle="Seçilen tarih aralığında kaynak bazlı rezervasyon bulunmuyor."/>
             ) : (
             <table className="rsp-table" style={{width:"100%", borderCollapse:"collapse"}}>
               <thead>
                 <tr style={{borderBottom:`1px solid ${C.border}`}}>
-                  {["Kaynak","Talep","Teklif","Rezervasyon","Dönüşüm","Beklenen Gelir","Dağılım"].map((h,i)=>(
+                  {["Kaynak","Rezervasyon","Beklenen Gelir","Dağılım"].map((h,i)=>(
                     <th key={i} style={{
                       padding:"8px 10px", textAlign: i===0?"left":"center",
                       fontSize:10.5, fontWeight:600, color:C.textFaint,
@@ -10843,23 +10938,14 @@ function ReportsPage() {
                       <td style={{padding:"12px 10px", borderBottom:`1px solid ${C.borderLight}`, verticalAlign:"middle"}}>
                         <span style={{fontSize:13.5, fontWeight:500, color:C.text, fontFamily:"'DM Sans',sans-serif"}}>{s.source}</span>
                       </td>
-                      {[s.leads, s.quotes, s.reservations].map((v,j)=>(
-                        <td key={j} style={{padding:"12px 10px", borderBottom:`1px solid ${C.borderLight}`, textAlign:"center", verticalAlign:"middle"}}>
-                          <span style={{fontSize:13.5, fontWeight:600, color:C.text, fontFamily:"'Playfair Display',serif"}}>{v}</span>
-                        </td>
-                      ))}
                       <td style={{padding:"12px 10px", borderBottom:`1px solid ${C.borderLight}`, textAlign:"center", verticalAlign:"middle"}}>
-                        <span style={{
-                          fontSize:12.5, fontWeight:600,
-                          color: s.conversion>=30?C.green:s.conversion>=20?C.amber:C.red,
-                          fontFamily:"'DM Sans',sans-serif",
-                        }}>%{s.conversion}</span>
+                        <span style={{fontSize:13.5, fontWeight:600, color:C.text, fontFamily:"'Playfair Display',serif"}}>{s.reservations}</span>
                       </td>
                       <td style={{padding:"12px 10px", borderBottom:`1px solid ${C.borderLight}`, textAlign:"center", verticalAlign:"middle"}}>
                         <span style={{fontSize:13, fontWeight:600, color:C.gold, fontFamily:"'Playfair Display',serif"}}>€{s.revenue.toLocaleString("tr-TR")}</span>
                       </td>
                       <td style={{padding:"12px 10px", borderBottom:`1px solid ${C.borderLight}`, verticalAlign:"middle", minWidth:80}}>
-                        <MiniBar value={s.leads} max={maxLeads} color={C.navy} height={5}/>
+                        <MiniBar value={s.reservations} max={maxSourceRes} color={C.navy} height={5}/>
                       </td>
                     </tr>
                   );
@@ -10922,12 +11008,12 @@ function ReportsPage() {
           {}
           <RpSection title="Ülke Analizi" icon="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z">
             {metrics.countries.length === 0 ? (
-              <EmptyState icon="🌍" title="Bu dönem için veri yok" subtitle="Seçilen tarih aralığında ülke bazlı talep bulunmuyor."/>
+              <EmptyState icon="🌍" title="Bu dönem için veri yok" subtitle="Seçilen tarih aralığında ülke bazlı rezervasyon bulunmuyor."/>
             ) : (
             <table style={{width:"100%", borderCollapse:"collapse"}}>
               <thead>
                 <tr style={{borderBottom:`1px solid ${C.border}`}}>
-                  {["Ülke","Talep","Rezervasyon","Ort. Teklif","Pay"].map((h,i)=>(
+                  {["Ülke","Rezervasyon","Ort. Tutar","Pay"].map((h,i)=>(
                     <th key={i} style={{
                       padding:"8px 12px", textAlign:i===0?"left":"center",
                       fontSize:10.5, fontWeight:600, color:C.textFaint,
@@ -10939,7 +11025,7 @@ function ReportsPage() {
               </thead>
               <tbody>
                 {metrics.countries.map((c,i)=>{
-                  const maxLeadsC = Math.max(...metrics.countries.map(x=>x.leads));
+                  const maxResC = Math.max(...metrics.countries.map(x=>x.reservations));
                   const isTop = i===0;
                   return (
                     <tr key={i} className="dt-row"
@@ -10952,16 +11038,13 @@ function ReportsPage() {
                         </div>
                       </td>
                       <td style={{padding:"11px 12px", borderBottom:`1px solid ${C.borderLight}`, textAlign:"center", verticalAlign:"middle"}}>
-                        <span style={{fontSize:14, fontWeight:600, color:C.text, fontFamily:"'Playfair Display',serif"}}>{c.leads}</span>
-                      </td>
-                      <td style={{padding:"11px 12px", borderBottom:`1px solid ${C.borderLight}`, textAlign:"center", verticalAlign:"middle"}}>
                         <span style={{fontSize:14, fontWeight:600, color:C.green, fontFamily:"'Playfair Display',serif"}}>{c.reservations}</span>
                       </td>
                       <td style={{padding:"11px 12px", borderBottom:`1px solid ${C.borderLight}`, textAlign:"center", verticalAlign:"middle"}}>
-                        <span style={{fontSize:13.5, fontWeight:600, color:C.gold, fontFamily:"'Playfair Display',serif"}}>€{c.avgQuote}</span>
+                        <span style={{fontSize:13.5, fontWeight:600, color:C.gold, fontFamily:"'Playfair Display',serif"}}>€{c.avgRevenue}</span>
                       </td>
                       <td style={{padding:"11px 12px", borderBottom:`1px solid ${C.borderLight}`, verticalAlign:"middle", minWidth:80}}>
-                        <MiniBar value={c.leads} max={maxLeadsC} color={C.navy} height={5}/>
+                        <MiniBar value={c.reservations} max={maxResC} color={C.navy} height={5}/>
                       </td>
                     </tr>
                   );
@@ -11100,7 +11183,7 @@ function ReportsPage() {
               {(() => {
                 const topSource  = metrics.sources.length  ? metrics.sources[0]  : null;
                 const topTour    = metrics.tours.length    ? metrics.tours[0]    : null;
-                const topCountry = metrics.countries.length ? [...metrics.countries].sort((a,b)=>b.avgQuote-a.avgQuote)[0] : null;
+                const topCountry = metrics.countries.length ? [...metrics.countries].sort((a,b)=>b.avgRevenue-a.avgRevenue)[0] : null;
                 const pendingCount = metrics.payments.highValue.length;
                 const noGuide = metrics.ops.noGuide;
                 return [
@@ -11109,7 +11192,7 @@ function ReportsPage() {
                   color:C.green, bg:C.greenBg,
                   label:"En Güçlü Kaynak",
                   value: topSource ? topSource.source : "Veri yok",
-                  sub: topSource ? `${topSource.leads} talep · %${topSource.conversion} dönüşüm` : "Bu dönem için veri yok",
+                  sub: topSource ? `${topSource.reservations} rezervasyon · €${topSource.revenue.toLocaleString("tr-TR")}` : "Bu dönem için veri yok",
                 },
                 {
                   icon:"M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z M9 22V12h6v10",
@@ -11122,8 +11205,8 @@ function ReportsPage() {
                   icon:"M12 2v20M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6",
                   color:C.blue, bg:C.blueBg,
                   label:"En Yüksek Ortalama",
-                  value: topCountry ? `${topCountry.country} — €${topCountry.avgQuote}` : "Veri yok",
-                  sub:"Kişi başı ortalama teklif",
+                  value: topCountry ? `${topCountry.country} — €${topCountry.avgRevenue}` : "Veri yok",
+                  sub:"Kişi başı ortalama rezervasyon tutarı",
                 },
                 {
                   icon:"M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z",
@@ -12381,7 +12464,7 @@ function NewGuestModal({ onClose }) {
   const { isMobile } = useBreakpoint();
   const { getSourceId, sourceOptions } = useSources();
   const [name,setName]=useState(""); const [phone,setPhone]=useState(""); const [email,setEmail]=useState("");
-  const [country,setCountry]=useState("Avustralya"); const [lang,setLang]=useState("İngilizce");
+  const [country,setCountry]=useState("Türkiye"); const [lang,setLang]=useState("Türkçe");
   const [source,setSource]=useState("Website");
   const [notes,setNotes]=useState(""); const [errs,setErrs]=useState({});
   const { mutate:mutCustG, mutating:guestMut } = useRepoMutation("customer");
@@ -12393,7 +12476,7 @@ function NewGuestModal({ onClose }) {
     const { error } = await mutCustG("create", {
       name, phone:phone||"", email:email||"",
       initials:name.split(" ").map(w=>w[0]).join("").slice(0,2).toUpperCase(),
-      flag:"🌍", country, language:lang, sourceId:resolvedSourceId, notes,
+      flag:countryFlag(country), country, language:lang, sourceId:resolvedSourceId, notes,
     });
     if (error) {
       console.error('[NewGuestModal] customer create failed:', error);
@@ -12409,8 +12492,8 @@ function NewGuestModal({ onClose }) {
         <FRow label="Ad Soyad" required error={errs.name}><FText value={name} onChange={setName} placeholder="Sarah Johnson"/></FRow>
         <FRow label="Telefon"><FText value={phone} onChange={setPhone} placeholder="+90 555 000 0000" mono/></FRow>
         <FRow label="E-posta" error={errs.email}><FText value={email} onChange={setEmail} placeholder="email@example.com" type="email"/></FRow>
-        <FRow label="Ülke"><FSelect value={country} onChange={setCountry} options={["Avustralya","ABD","İngiltere","Almanya","Japonya","İtalya","Fransa","Türkiye","Diğer"]}/></FRow>
-        <FRow label="Dil"><FSelect value={lang} onChange={setLang} options={["İngilizce","Türkçe","Almanca","Fransızca","İtalyanca","Japonca","Diğer"]}/></FRow>
+        <FRow label="Ülke"><FSelect value={country} onChange={setCountry} options={COUNTRY_OPTIONS.map(c=>[c.name,`${c.flag} ${c.name}`])}/></FRow>
+        <FRow label="Dil"><FSelect value={lang} onChange={setLang} options={LANGUAGE_OPTIONS}/></FRow>
         <FRow label="Kaynak"><FSelect value={source} onChange={setSource} options={sourceOptions}/></FRow>
       </FGrid>
       <FRow label="Notlar"><FTextArea value={notes} onChange={setNotes} placeholder="Misafir hakkında notlar…"/></FRow>
@@ -12953,11 +13036,17 @@ function DataSourceBadge() {
   );
 }
 
+// "leads"/"quotes" stay in the Satış/Operasyon lists even though neither
+// role has a nav entry pointing at them anymore — that only retired the
+// list/create/edit entry points (Talepler/Teklifler simplification); the
+// detail views must stay reachable so a role that could see them before
+// isn't suddenly blocked from a historical IDLink on a Reservation,
+// Customer, or Messages page.
 const ROLE_PERMISSIONS = {
   "Yönetici": null, // null = all pages
-  "Satış":    ["dashboard","leads","customers","quotes","tasks","reminders","messages","reports","more"],
-  "Operasyon":["dashboard","reservations","calendar","tours","tasks","reminders","payments","reports","more"],
-  "Rehber":   ["dashboard","calendar","reservations","tasks","more"],
+  "Satış":    ["dashboard","customers","reservations","guides","leads","quotes","reminders","messages","reports","more"],
+  "Operasyon":["dashboard","reservations","calendar","tours","guides","leads","quotes","reminders","payments","reports","more"],
+  "Rehber":   ["dashboard","calendar","reservations","more"],
 };
 
 function canAccess(role, page) {
@@ -13122,20 +13211,21 @@ function useAuth() {
   }
 
   // staff_users lookup can legitimately come back empty even with a valid
-  // session (missing/mismatched profile row) — that must never surface as
-  // a bare "—". Fall back to the real authenticated account's own email
-  // (already sitting on the session, no extra fetch) rather than any
-  // invented name, and only use a generic non-personal label if even that
-  // is unavailable.
-  const emailDerivedName = (() => {
-    const local = (session?.user?.email || "").split("@")[0];
-    if (!local) return null;
-    const parts = local.split(/[._\-]+/).filter(Boolean);
-    if (!parts.length) return null;
-    return parts.map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
-  })();
-  const displayName = staff?.full_name || staff?.name || emailDerivedName || "Kullanıcı";
-  const initials    = displayName.split(" ").map(w=>w[0]||"").join("").slice(0,2).toUpperCase() || "?";
+  // session — staff_users.id must equal the Supabase Auth user's own id
+  // (it's a FK to auth.users), so this means either no staff_users row
+  // exists for this account, or one exists with a different id. Either way
+  // that's a data-linkage problem, not something to paper over by inventing
+  // a "name" out of the email local-part (e.g. hello@desetour.com → "Hello"
+  // is not this person's name). Show the real authenticated email verbatim
+  // instead — truthful about what we actually know — and flag it in the
+  // console so it's easy to spot during setup/QA.
+  if (!staff && session?.user?.email && !authLoading) {
+    console.warn('[Auth] No staff_users row resolved for', session.user.email, '— check that a staff_users row exists with id =', session.user.id);
+  }
+  const displayName = staff?.full_name || staff?.name || session?.user?.email || "Kullanıcı";
+  const initials    = staff?.full_name || staff?.name
+    ? displayName.split(" ").map(w=>w[0]||"").join("").slice(0,2).toUpperCase() || "?"
+    : "?";
   // Map Supabase DB role values → Turkish display roles used in ROLE_PERMISSIONS
   const ROLE_MAP = {
     'admin':      'Yönetici',
@@ -15627,9 +15717,8 @@ function GlobalSearch() {
   const containerRef        = useRef(null);
 
   const { data:repoCust,   error:errCust }   = useRepo("customer",    "getAll");
-  const { data:repoLeads,  error:errLeads }  = useRepo("lead",        "getAll");
-  const { data:repoQuotes, error:errQuotes } = useRepo("quote",       "getAll");
   const { data:repoRes,    error:errRes }    = useRepo("reservation", "getAll");
+  const { data:repoTours,  error:errTours }  = useRepo("tour",        "getAll");
 
   useEffect(() => {
     function onKeyDown(e) {
@@ -15652,7 +15741,7 @@ function GlobalSearch() {
 
   const q = query.trim().toLowerCase();
   const active = q.length >= 2;
-  const allFailed = !!(errCust && errLeads && errQuotes && errRes);
+  const allFailed = !!(errCust && errRes && errTours);
 
   const results = useMemo(() => {
     if (!active) return null;
@@ -15661,23 +15750,19 @@ function GlobalSearch() {
       .filter(c => hit(c.name, c.email, c.phone))
       .slice(0, 5)
       .map(c => ({ route:`/customers/${c.id}`, title:c.name||c.id, sub:[c.email,c.phone].filter(Boolean).join(" · ") }));
-    const leads = (repoLeads||[])
-      .filter(l => hit(l.name, l.leadNumber, l.tour, l.email, l.phone))
-      .slice(0, 5)
-      .map(l => ({ route:`/leads/${l.id}`, title:l.name||l.leadNumber||l.id, sub:[l.tour,l.leadNumber].filter(Boolean).join(" · ") }));
-    const quotes = (repoQuotes||[])
-      .filter(qt => hit(qt.quoteNumber, qt.id, qt.customer, qt.tour))
-      .slice(0, 5)
-      .map(qt => ({ route:`/quotes/${qt.id}`, title:qt.quoteNumber||qt.id, sub:[qt.customer,qt.tour].filter(Boolean).join(" · ") }));
     const reservations = (repoRes||[])
       .filter(r => hit(r.resNumber, r.id, r.name, r.tour))
       .slice(0, 5)
       .map(r => ({ route:`/reservations/${r.id}`, title:r.resNumber||r.id, sub:[r.name,r.tour].filter(Boolean).join(" · ") }));
-    return { customers, leads, quotes, reservations };
-  }, [active, q, repoCust, repoLeads, repoQuotes, repoRes]);
+    const tours = (repoTours||[])
+      .filter(t => hit(t.name, t.category))
+      .slice(0, 5)
+      .map(t => ({ route:`/tours/${t.id}`, title:t.name||t.id, sub:t.category||"" }));
+    return { customers, reservations, tours };
+  }, [active, q, repoCust, repoRes, repoTours]);
 
   const totalCount = results
-    ? results.customers.length + results.leads.length + results.quotes.length + results.reservations.length
+    ? results.customers.length + results.reservations.length + results.tours.length
     : 0;
 
   function goTo(route) {
@@ -15697,7 +15782,7 @@ function GlobalSearch() {
         onChange={e=>{ setQuery(e.target.value); setOpen(true); }}
         onFocus={()=>setOpen(true)}
         onKeyDown={e=>{ if (e.key === "Escape") { setOpen(false); inputRef.current?.blur(); } }}
-        placeholder="Müşteri, talep, rezervasyon ara…"
+        placeholder="Misafir, rezervasyon, tur ara…"
         style={{
           width:"100%", boxSizing:"border-box", padding:"9px 54px 9px 34px",
           border:`1px solid ${C.border}`, borderRadius:T.radiusSm, background:C.ivory,
@@ -15731,9 +15816,8 @@ function GlobalSearch() {
           ) : (
             <>
               <SearchResultGroup label="Misafirler"     items={results.customers}    onSelect={goTo}/>
-              <SearchResultGroup label="Talepler"       items={results.leads}        onSelect={goTo}/>
-              <SearchResultGroup label="Teklifler"      items={results.quotes}       onSelect={goTo}/>
               <SearchResultGroup label="Rezervasyonlar" items={results.reservations} onSelect={goTo}/>
+              <SearchResultGroup label="Turlar"         items={results.tours}        onSelect={goTo}/>
             </>
           )}
         </div>
@@ -15812,8 +15896,11 @@ function App() {
       if (base === "calendar") return <MobileCalendarPage navigate={navigate}/>;
       if (base === "messages") return <MobileMessagesPage/>;
 
-      if (base === "leads" && param) return <MobileLeadDetailPage leadId={param} onBack={()=>navigate('/leads')}/>;
-      if (base === "leads") return <MobileRequestsPage onSelectLead={id=>navigate('/leads/'+id)}/>;
+      // leads/quotes list+create/edit are retired from active navigation
+      // (Talepler/Teklifler simplification) — the detail views stay reachable
+      // by direct link only, since surviving pages (Reservation/Customer/
+      // Messages detail) still show historical IDLinks into them.
+      if (base === "leads" && param) return <MobileLeadDetailPage leadId={param} onBack={()=>navigate('/dashboard')}/>;
 
       if (base === "reservations" && param) return <MobileReservationDetailPage resId={param} onBack={()=>navigate('/reservations')}/>;
       if (base === "reservations") return <MobileReservationsPage onSelect={id=>navigate('/reservations/'+id)}/>;
@@ -15821,33 +15908,25 @@ function App() {
       if (base === "customers" && param) return <MobileGuestDetailPage guestId={param} onBack={()=>navigate('/customers')}/>;
       if (base === "customers") return <MobileGuestsPage onSelectGuest={id=>navigate('/customers/'+id)}/>;
 
-      if (base === "quotes" && param === "new") return <MobileNewQuotePage onBack={()=>navigate('/quotes')}/>;
-      if (base === "quotes" && param && subParam === "edit") return <MobileNewQuotePage editQuoteId={param} onBack={()=>navigate('/quotes/'+param)}/>;
-      if (base === "quotes" && param) return <MobileQuoteDetailPage quoteId={param} onBack={()=>navigate('/quotes')}/>;
-      if (base === "quotes") return <MobileQuotesPage onSelectQuote={id=>navigate('/quotes/'+id)} onNewQuote={()=>navigate('/quotes/new')}/>;
+      if (base === "quotes" && param) return <MobileQuoteDetailPage quoteId={param} onBack={()=>navigate('/dashboard')}/>;
+
+      if (base === "guides") return <GuidesPage/>;
 
       if (base === "payments") return <MobilePaymentsPage/>;
-      if (base === "tasks" || base === "reminders") return <MobileTasksQueuePage/>;
+      if (base === "reminders") return <MobileTasksQueuePage/>;
     }
 
     if (base === "dashboard") return <Dashboard/>;
 
+    // Retired from active navigation — no more list/create/edit entry
+    // points — but detail views stay reachable by direct link for
+    // historical records still referenced from Reservation/Customer/
+    // Messages pages (leads/quotes tables are not deleted).
     if (base === "leads" && param)
-      return <LeadDetailPage onBack={()=>navigate('/leads')} leadId={param}/>;
-    if (base === "leads")
-      return <LeadsPage onSelectLead={id=>navigate('/leads/'+id)}/>;
+      return <LeadDetailPage onBack={()=>navigate('/dashboard')} leadId={param}/>;
 
-    if (base === "quotes" && param === "new")
-      return <NewProposalPage onBack={()=>navigate('/quotes')}/>;
-    if (base === "quotes" && param && subParam === "edit")
-      return <NewProposalPage editQuoteId={param} onBack={()=>navigate('/quotes/'+param)}/>;
     if (base === "quotes" && param)
-      return <QuoteDetailPage quoteId={param} onBack={()=>navigate('/quotes')}/>;
-    if (base === "quotes")
-      return <QuotesPage
-        onSelectQuote={id=>navigate('/quotes/'+id)}
-        onNewQuote={()=>navigate('/quotes/new')}
-      />;
+      return <QuoteDetailPage quoteId={param} onBack={()=>navigate('/dashboard')}/>;
 
     if (base === "reservations" && param)
       return <ReservationDetailPage resId={param} onBack={()=>navigate('/reservations')}/>;
@@ -15864,8 +15943,9 @@ function App() {
     if (base === "tours")
       return <ToursPage onSelect={id=>navigate('/tours/'+id)}/>;
 
+    if (base === "guides")    return <GuidesPage/>;
+
     if (base === "calendar")  return <CalendarPage/>;
-    if (base === "tasks")     return <TasksPage/>;
     if (base === "payments")  return <PaymentsPage/>;
     if (base === "reminders") return <RemindersPage/>;
     if (base === "reports")   return <ReportsPage/>;
@@ -16209,17 +16289,17 @@ function FormShell({ isMobile, title, onClose, onSubmit, submitLabel, submitting
    Deliberately five destinations: three high-frequency daily-operations
    routes, Calendar, and More (everything else, incl. logout). */
 const MOBILE_PAGE_TITLES = {
-  dashboard:"Bugün", leads:"Talepler", customers:"Misafirler", quotes:"Teklifler",
-  reservations:"Rezervasyonlar", calendar:"Takvim", tours:"Turlar", tasks:"Yapılacaklar",
+  dashboard:"Bugün", leads:"Talep", customers:"Misafirler", quotes:"Teklif",
+  reservations:"Rezervasyonlar", calendar:"Takvim", tours:"Turlar", guides:"Rehberlerimiz",
   payments:"Ödemeler", reminders:"Hatırlatmalar", reports:"Raporlar", settings:"Ayarlar",
   messages:"Mesajlar", more:"Diğer",
 };
 const BOTTOM_NAV_ITEMS = [
-  { id:"dashboard",    label:"Bugün",   icon:"M3 9.5L12 3l9 6.5V20a1 1 0 01-1 1H4a1 1 0 01-1-1V9.5z M9 21V12h6v9" },
-  { id:"leads",        label:"Talepler",icon:"M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" },
-  { id:"reservations", label:"Rezerv.", icon:"M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" },
-  { id:"calendar",     label:"Takvim",  icon:"M8 2v4M16 2v4M3 10h18M21 8a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2h14a2 2 0 002-2V8z" },
-  { id:"more",         label:"Diğer",   icon:"M12 15a3 3 0 100-6 3 3 0 000 6z M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" },
+  { id:"dashboard",    label:"Bugün",     icon:"M3 9.5L12 3l9 6.5V20a1 1 0 01-1 1H4a1 1 0 01-1-1V9.5z M9 21V12h6v9" },
+  { id:"reservations", label:"Rezerv.",   icon:"M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" },
+  { id:"guides",       label:"Rehberler", icon:"M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2 M23 21v-2a4 4 0 00-3-3.87 M16 3.13a4 4 0 010 7.75 M12 11a4 4 0 100-8 4 4 0 000 8z" },
+  { id:"calendar",     label:"Takvim",    icon:"M8 2v4M16 2v4M3 10h18M21 8a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2h14a2 2 0 002-2V8z" },
+  { id:"more",         label:"Diğer",     icon:"M12 15a3 3 0 100-6 3 3 0 000 6z M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" },
 ];
 function BottomNav({ active, navigate }) {
   return (
@@ -16258,10 +16338,9 @@ function MobileMorePage({ navigate }) {
   const auth = getAuthContext();
   const ALL_ITEMS = [
     { id:"customers",  label:"Misafirler",     icon:"M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2 M23 21v-2a4 4 0 00-3-3.87 M16 3.13a4 4 0 010 7.75" },
-    { id:"quotes",     label:"Teklifler",      icon:"M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z M14 2v6h6" },
     { id:"tours",      label:"Turlar",         icon:"M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z M9 22V12h6v10" },
+    { id:"guides",     label:"Rehberlerimiz",  icon:"M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2 M23 21v-2a4 4 0 00-3-3.87 M16 3.13a4 4 0 010 7.75 M12 11a4 4 0 100-8 4 4 0 000 8z" },
     { id:"payments",   label:"Ödemeler",       icon:"M2 9a2 2 0 012-2h16a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V9zM2 13h20" },
-    { id:"tasks",      label:"Yapılacaklar",   icon:"M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" },
     { id:"reminders",  label:"Hatırlatmalar",  icon:"M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0" },
     { id:"messages",   label:"Mesajlar",       icon:"M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" },
     { id:"reports",    label:"Raporlar",       icon:"M18 20V10M12 20V4M6 20v-6" },
@@ -16330,18 +16409,16 @@ function MobileMorePage({ navigate }) {
    ══════════════════════════════════════════════════════════════════════ */
 function MobileHomePage({ navigate }) {
   const auth = getAuthContext();
-  const [quickAction, setQuickAction] = useState(null); // null|'guest'|'lead'|'reservation'|'payment'
+  const [quickAction, setQuickAction] = useState(null); // null|'guest'|'reservation'|'payment'
 
-  const { data:repoLeads }  = useRepo("lead",        "getAll");
   const { data:repoRes }    = useRepo("reservation", "getAll");
   const { data:repoPays }   = useRepo("payment",     "getAll");
-  const { data:repoTasks }  = useRepo("task",        "getAll");
   const { data:repoRems }   = useRepo("reminder",    "getAll");
   const { data:repoAct }    = useRepo("activity",    "getAll", { limit:5 });
 
   const urgentItems = useMemo(
-    () => computeUrgent(repoLeads, repoRes, repoPays, repoTasks, repoRems),
-    [repoLeads, repoRes, repoPays, repoTasks, repoRems]
+    () => computeUrgent(repoRes, repoPays, repoRems),
+    [repoRes, repoPays, repoRems]
   );
 
   const allRes = repoRes ?? [];
@@ -16358,7 +16435,6 @@ function MobileHomePage({ navigate }) {
   const firstName = (auth.displayName||"").split(" ")[0] || "";
 
   const QUICK_ACTIONS = [
-    { key:"lead",        label:"Yeni Talep",        icon:"M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" },
     { key:"guest",       label:"Yeni Misafir",      icon:"M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2 M23 21v-2a4 4 0 00-3-3.87 M16 3.13a4 4 0 010 7.75" },
     { key:"reservation", label:"Yeni Rezervasyon",  icon:"M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" },
     { key:"payment",     label:"Ödeme Ekle",        icon:"M2 9a2 2 0 012-2h16a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V9zM2 13h20" },
@@ -16502,7 +16578,6 @@ function MobileHomePage({ navigate }) {
       )}
 
       {quickAction === "guest" && <NewGuestModal onClose={()=>setQuickAction(null)}/>}
-      {quickAction === "lead" && <NewLeadModal onClose={()=>setQuickAction(null)} onSuccess={()=>setQuickAction(null)}/>}
       {quickAction === "reservation" && <NewReservationModal onClose={()=>setQuickAction(null)} onSuccess={()=>setQuickAction(null)}/>}
       {quickAction === "payment" && <NewPaymentModal onClose={()=>setQuickAction(null)}/>}
     </div>

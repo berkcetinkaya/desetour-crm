@@ -74,51 +74,53 @@
     }
     .fade { animation: fadeInUp 0.18s ease; }
 
-    /* Dashboard hero photo — now spans the full hero width (hero-fade
-       below fades its left edge into the card background), so cover
-       scales it to match the hero's width rather than its height, and
-       cropping happens on the vertical axis. background-position-y keeps
-       the Galata Tower's full silhouette in frame instead of clipping
-       its spire or the rooftops. */
-    .hero-photo { background-position: 50% 32%; }
+    /* Dashboard hero photo — now a real <img> (object-fit) confined to the
+       hero's right ~72% instead of a full-bleed background, so cover crops
+       much closer to the source photo's own aspect ratio: most of its
+       height shows, keeping the Bosphorus/skyline panorama wide and the
+       Galata Tower at its natural size rather than blown up to fill a
+       short, ultra-wide sliver. object-position keeps the tower comfortably
+       in frame without clipping its spire or the rooftops below it. */
+    .hero-photo { object-position: center 40%; }
     @media (min-width: 1440px) {
-      .hero-photo { background-position: 50% 30%; }
+      .hero-photo { object-position: center 38%; }
     }
     @media (min-width: 1920px) {
-      .hero-photo { background-position: 50% 28%; }
+      .hero-photo { object-position: center 36%; }
     }
 
     /* Left-to-right fade so the photo emerges from the hero's white
-       background instead of sitting behind a hard-edged panel. The text
-       column is ~460px + 36px padding, so the solid-white zone widens at
-       narrower breakpoints to keep it fully readable, and the photo
-       reaches full visibility earlier at wider ones. */
+       background instead of a hard seam. The photo <img> itself starts at
+       28% from the left (100% - 72% width), so the solid-white zone here
+       extends a little past that before fading in, and is fully
+       transparent well before the photo's right edge so the tower/
+       architecture read crisp with no white cast over them. */
     .hero-fade {
       background: linear-gradient(to right,
-        #FFFFFF 0%, #FFFFFF 46%,
-        rgba(255,255,255,0.75) 58%,
-        rgba(255,255,255,0.32) 68%,
-        rgba(255,255,255,0.06) 78%,
-        rgba(255,255,255,0) 84%);
+        #FFFFFF 0%, #FFFFFF 34%,
+        rgba(255,255,255,0.7) 45%,
+        rgba(255,255,255,0.3) 56%,
+        rgba(255,255,255,0.05) 63%,
+        rgba(255,255,255,0) 68%);
     }
     @media (min-width: 1440px) {
       .hero-fade {
         background: linear-gradient(to right,
-          #FFFFFF 0%, #FFFFFF 40%,
-          rgba(255,255,255,0.7) 52%,
-          rgba(255,255,255,0.28) 64%,
-          rgba(255,255,255,0.05) 74%,
-          rgba(255,255,255,0) 80%);
+          #FFFFFF 0%, #FFFFFF 30%,
+          rgba(255,255,255,0.65) 41%,
+          rgba(255,255,255,0.28) 51%,
+          rgba(255,255,255,0.04) 58%,
+          rgba(255,255,255,0) 63%);
       }
     }
     @media (min-width: 1920px) {
       .hero-fade {
         background: linear-gradient(to right,
-          #FFFFFF 0%, #FFFFFF 30%,
-          rgba(255,255,255,0.65) 42%,
-          rgba(255,255,255,0.25) 54%,
-          rgba(255,255,255,0.04) 64%,
-          rgba(255,255,255,0) 70%);
+          #FFFFFF 0%, #FFFFFF 26%,
+          rgba(255,255,255,0.6) 37%,
+          rgba(255,255,255,0.25) 47%,
+          rgba(255,255,255,0.04) 53%,
+          rgba(255,255,255,0) 58%);
       }
     }
   </style>
@@ -199,7 +201,7 @@
 
 
   <!-- App (pre-transpiled JSX — no Babel needed in browser) -->
-  <script src="app.js?v=e9c9055028"></script>
+  <script src="app.js?v=bcdc0a0df2"></script>
 
   <!-- Hide boot screen once React renders -->
   <script>
