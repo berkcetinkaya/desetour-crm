@@ -465,55 +465,20 @@ const DB = {
     },
   ],
 
-  guides: [
-    {
-      id:"GD-001", name:"Ahmet Yıldız", phone:"+90 532 111 2233", email:"ahmet.yildiz@desetour.com",
-      nationality:"Türkiye", languages:[{code:"tr",name:"Türkçe"},{code:"en",name:"İngilizce"}],
-      licenseNumber:"IST-2019-0451", licenseNotes:"A Sınıfı Profesyonel Turist Rehberi",
-      region:"İstanbul", status:"Aktif", notes:"Boğaz ve tarihi yarımada turlarında deneyimli.",
-      staffUserId:null, createdAt:"2025-11-02",
-    },
-    {
-      id:"GD-002", name:"Fatma Şahin", phone:"+90 533 222 3344", email:"fatma.sahin@desetour.com",
-      nationality:"Türkiye", languages:[{code:"tr",name:"Türkçe"},{code:"en",name:"İngilizce"},{code:"de",name:"Almanca"}],
-      licenseNumber:"IST-2017-0289", licenseNotes:"A Sınıfı Profesyonel Turist Rehberi",
-      region:"İstanbul", status:"Aktif", notes:"Almanca konuşan gruplarda tercih ediliyor.",
-      staffUserId:null, createdAt:"2025-09-14",
-    },
-    {
-      id:"GD-003", name:"Osman Aydın", phone:"+90 542 333 4455", email:"osman.aydin@desetour.com",
-      nationality:"Türkiye", languages:[{code:"tr",name:"Türkçe"},{code:"en",name:"İngilizce"},{code:"fr",name:"Fransızca"}],
-      licenseNumber:"NEV-2020-0117", licenseNotes:"Kapadokya bölge rehberi",
-      region:"Kapadokya", status:"Aktif", notes:"Balon turu ve vadi yürüyüşlerinde uzman.",
-      staffUserId:null, createdAt:"2026-01-20",
-    },
-    {
-      id:"GD-004", name:"Zeynep Arslan", phone:"+90 555 444 5566", email:"zeynep@desetour.com",
-      nationality:"Türkiye", languages:[{code:"tr",name:"Türkçe"},{code:"ja",name:"Japonca"}],
-      licenseNumber:"IST-2021-0602", licenseNotes:"A Sınıfı Profesyonel Turist Rehberi",
-      region:"İstanbul", status:"Müsait Değil", notes:"Japonca konuşan misafir gruplarında görevlendiriliyor.",
-      staffUserId:"STAFF-004", createdAt:"2026-02-11",
-    },
-  ],
-
-  guidePayments: [
-    {
-      id:"GP-2026-001", payNumber:"GP-2026-001", guideId:"GD-001", resId:"R-2026-001", tourId:"TUR-001",
-      amount:1200, currency:"EUR", status:"Ödendi", paymentDate:"2026-06-20",
-      notes:"Tur sonrası nakit ödeme.", createdAt:"2026-06-20",
-      guideName:"Ahmet Yıldız", resRef:"R-2026-001", tourName:"Private Istanbul Experience",
-    },
-    {
-      id:"GP-2026-002", payNumber:"GP-2026-002", guideId:"GD-002", resId:"R-2026-002", tourId:"TUR-002",
-      amount:900, currency:"EUR", status:"Bekliyor", paymentDate:"",
-      notes:"Tur tamamlandıktan sonra ödenecek.", createdAt:"2026-06-18",
-      guideName:"Fatma Şahin", resRef:"R-2026-002", tourName:"Bosphorus & Asian Side Tour",
-    },
-  ],
+  // Deliberately empty. Guide management is backed by real Supabase tables
+  // (guides / guide_languages / guide_payments) now that the migration is
+  // applied — production guide functionality must never fall back to
+  // seeded/fabricated records. These arrays exist only so the mock-mode
+  // GuideRepository/GuidePaymentRepository (used solely when Supabase is
+  // NOT configured, e.g. local offline dev) have somewhere to read/write;
+  // they start empty and only ever contain records a user creates through
+  // the app's own Add Guide / Add Guide Payment forms during that session.
+  guides: [],
+  guidePayments: [],
 
   reservations: [
     {
-      id:"R-2026-001", leadId:"LEAD-001", quoteId:"Q-2026-001", customerId:"CUST-001", tourId:"TUR-001", guideId:"GD-001",
+      id:"R-2026-001", leadId:"LEAD-001", quoteId:"Q-2026-001", customerId:"CUST-001", tourId:"TUR-001", guideId:null,
       tour:"Private Istanbul Experience", date:"22 Haz 2026", checkIn:"2026-06-22", checkOut:"2026-06-22", time:"09:00", duration:"8 Saat",
       pax:4, guide:"Ahmet Yıldız", vehicle:"Mercedes Vito · 34 ABC 123", driver:"Mehmet Kaya",
       pickup:"The Marmara Pera, Lobby", pickupTime:"08:30",
@@ -523,7 +488,7 @@ const DB = {
       assigneeId:"STAFF-001", createdAt:"2026-06-03",
     },
     {
-      id:"R-2026-002", leadId:"LEAD-003", quoteId:"Q-2026-002", customerId:"CUST-002", tourId:"TUR-002", guideId:"GD-002",
+      id:"R-2026-002", leadId:"LEAD-003", quoteId:"Q-2026-002", customerId:"CUST-002", tourId:"TUR-002", guideId:null,
       tour:"Bosphorus & Asian Side Tour", date:"20 Haz 2026", checkIn:"2026-06-20", checkOut:"2026-06-20", time:"10:30", duration:"6 Saat",
       pax:6, guide:"Fatma Şahin", vehicle:"Ford Transit · 34 DEF 456", driver:"Ali Çelik",
       pickup:"Hilton Istanbul Bosphorus, Giriş", pickupTime:"10:00",
@@ -843,11 +808,10 @@ function computeUrgent(reservations, payments, reminders) {
 
 // Shared in-flight/resolved fetch cache for useRepo, keyed by
 // "entity:method:arg". Without this, every component that calls
-// useRepo("lead","getAll") (Sidebar, Dashboard, LeadsPage, ...) issued its
-// own independent Supabase request for the exact same rows — visiting
-// /leads alone fired the leads table query twice (once from Sidebar's
-// badge count, once from LeadsPage itself), and the Dashboard fired it
-// three times over (Sidebar + Welcome + KpiRow). Cleared on every
+// useRepo("reservation","getAll") (Sidebar, Dashboard, ReservationsPage, ...)
+// issued its own independent Supabase request for the exact same rows, and
+// the Dashboard fired it three times over (Sidebar + Welcome + KpiRow).
+// Cleared on every
 // Store.notify() so a mutation still forces a fresh read everywhere, same
 // as before — this only removes *redundant simultaneous* requests for
 // identical data, it never serves stale data past a mutation.
@@ -1388,8 +1352,12 @@ const GuidePaymentRepository = {
   },
 };
 
-// Simple date-range overlap check shared by both the mock and Supabase
-// guide-conflict lookups below — two reservations conflict if their
+// Date-RANGE overlap check only — reservations.check_in/check_out are DATE
+// columns (no end-time column exists; check_in_time is a single TIME value
+// for the meeting time on check_in day only, with no matching check_out_time
+// to compute a real time-slot against). This deliberately cannot and does
+// not claim exact time-of-day overlap detection — it is a same-day/date-
+// range conflict check only. Two reservations "conflict" here if their
 // [checkIn,checkOut] date ranges intersect at all (single-day tours have
 // checkIn===checkOut, which still compares correctly).
 function _datesOverlap(aStart, aEnd, bStart, bEnd) {
@@ -1400,10 +1368,13 @@ function _datesOverlap(aStart, aEnd, bStart, bEnd) {
   return as <= be && bs <= ae;
 }
 
-// Guide scheduling-conflict check — used by NewReservationModal / guide
-// reassignment to WARN (never silently block) when the selected guide is
-// already on another non-cancelled reservation overlapping the chosen
-// date(s). Works in both mock and Supabase mode.
+// Guide SAME-DAY / date-range assignment-conflict check — used by
+// NewReservationModal / AssignGuideModal to WARN (never silently block)
+// when the selected guide is already on another non-cancelled reservation
+// whose check_in..check_out date range overlaps the chosen date(s). This is
+// date-level only, not an exact check_in_time-vs-check_in_time comparison —
+// see the schema note above. Works in both mock and Supabase mode; always
+// excludes cancelled reservations (opStatus "İptal" / status 'cancelled').
 async function checkGuideConflicts(guideId, checkIn, checkOut, excludeResId) {
   if (!guideId || !checkIn) return [];
   const sb = getSB();
@@ -2879,44 +2850,6 @@ const STATUS_META = {
   "İptal":                { color:"#C0392B", bg:"#FDECEC" },
 };
 
-const SOURCE_META = {
-  "Booking":      { color:"#003580", bg:"#E5EDF8", icon:"M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 14H9V8h2v8zm4 0h-2V8h2v8z" },
-  "WhatsApp":     { color:"#128C7E", bg:"#E7F5F3", icon:"M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z" },
-  "Website":      { color:"#2E7D52", bg:"#EBF5EF", icon:"M12 2a10 10 0 100 20A10 10 0 0012 2zm0 2c1.08 0 2.1.2 3.04.55L13 6.5h-2l-2.04-1.95A8 8 0 0112 4zm-6.5 3.5L7 9v2l-2.95.5A8.02 8.02 0 015.5 7.5zM4.07 13H7l1 3-1.5 1.5A8.01 8.01 0 014.07 13zm4.43 6.5L10 18h4l1.5 1.5A8 8 0 018.5 19.5zM17 15l1-3h2.93a8.01 8.01 0 01-1.43 4.5L17 15zm2.45-5L17 9V7.5a8.02 8.02 0 012.45 2.5z" },
-  "Telefon":      { color:"#4A5568", bg:"#F0EEF5", icon:"M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07A19.5 19.5 0 013.07 9.81a19.79 19.79 0 01-3.07-8.63A2 2 0 012 .18h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L6.09 7.91a16 16 0 006 6l1.09-1.09a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z" },
-  "Instagram":    { color:"#C13584", bg:"#FAEAF5", icon:"M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zM12 0C8.741 0 8.333.014 7.053.072 2.695.272.273 2.69.073 7.052.014 8.333 0 8.741 0 12c0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98C8.333 23.986 8.741 24 12 24c3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98C15.668.014 15.259 0 12 0zm0 5.838a6.162 6.162 0 100 12.324 6.162 6.162 0 000-12.324zM12 16a4 4 0 110-8 4 4 0 010 8zm6.406-11.845a1.44 1.44 0 100 2.881 1.44 1.44 0 000-2.881z" },
-  "Manuel":       { color:"#8A8070", bg:"#F3F1ED", icon:"M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" },
-  "Tripadvisor":  { color:"#34E0A1", bg:"#E6FBF5", icon:"M12 2a10 10 0 100 20A10 10 0 0012 2z" },
-  "Civitatis":    { color:"#D2492A", bg:"#FBEAE4", icon:"M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5A2.5 2.5 0 1112 6.5a2.5 2.5 0 010 5z" },
-};
-
-const MOCK_LEADS = DB.leads; // → centralized DB
-
-const STATUS_TABS = [
-  "Tümü","Yeni","Görüşüldü","Teklif Hazırlanıyor",
-  "Teklif Gönderildi","Ödeme Bekleniyor","Onaylandı","İptal",
-];
-
-const SOURCE_FILTERS = ["Tümü","Booking","Civitatis","WhatsApp","Website","Telefon","Instagram","Manuel","Tripadvisor"];
-
-function SourceBadge({ source }) {
-  const m = SOURCE_META[source] || SOURCE_META["Manuel"];
-  return (
-    <span style={{
-      display:"inline-flex", alignItems:"center", gap:5,
-      padding:"3px 8px", borderRadius:6,
-      background:m.bg, color:m.color,
-      fontSize:11.5, fontWeight:500,
-      fontFamily:"'DM Sans',sans-serif",
-      whiteSpace:"nowrap", border:`1px solid ${m.color}18`,
-    }}>
-      <svg width="11" height="11" viewBox="0 0 24 24" fill={m.color}>
-        <path d={m.icon}/>
-      </svg>
-      {source}
-    </span>
-  );
-}
 
 function StatusBadge({ status }) {
   const m = STATUS_META[status] || { color:C.textMuted, bg:C.ivoryDark };
@@ -2939,477 +2872,6 @@ function StatusBadge({ status }) {
   );
 }
 
-function AssigneeChip({ name, initials }) {
-  if (!initials) {
-    return (
-      <span style={{
-        fontSize:12, color:C.textFaint,
-        fontFamily:"'DM Sans',sans-serif",
-        fontStyle:"italic",
-      }}>Atanmadı</span>
-    );
-  }
-  return (
-    <div style={{display:"flex", alignItems:"center", gap:7}}>
-      <div style={{
-        width:26, height:26, borderRadius:"50%", flexShrink:0,
-        background:"rgba(27,45,79,0.09)",
-        border:`1.5px solid rgba(27,45,79,0.14)`,
-        display:"flex", alignItems:"center", justifyContent:"center",
-      }}>
-        <span style={{fontSize:10, fontWeight:600, color:C.navy, fontFamily:"'DM Sans',sans-serif"}}>{initials}</span>
-      </div>
-      <span style={{fontSize:12.5, color:C.textMid, fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap"}}>{name}</span>
-    </div>
-  );
-}
-
-function LeadRow({ lead, isLast, onSelect }) {
-  const isNew = lead.status === "Yeni";
-  const isUrgent = lead.status === "Ödeme Bekleniyor";
-
-  return (
-    <tr className="dt-row"
-      onClick={() => onSelect && onSelect(lead.id)}
-      style={{
-        background:C.white,
-        cursor:"pointer",
-        transition:"background 0.1s",
-      }}
-    >
-      {}
-      <td style={{
-        padding:"15px 16px 15px 20px",
-        borderBottom: isLast ? "none" : `1px solid ${C.borderLight}`,
-        verticalAlign:"middle",
-      }}>
-        <div style={{display:"flex", alignItems:"center", gap:10}}>
-          {}
-          <div style={{
-            width:3, height:36, borderRadius:99, flexShrink:0,
-            background: isNew ? C.blue : isUrgent ? C.red : "transparent",
-          }}/>
-          <div>
-            <div style={{display:"flex", alignItems:"center", gap:6, marginBottom:2}}>
-              <span style={{fontSize:13.5, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif"}}>{lead.name}</span>
-              {isNew && (
-                <span style={{
-                  fontSize:9.5, fontWeight:600, color:C.blue,
-                  background:C.blueBg, borderRadius:4, padding:"1px 5px",
-                  fontFamily:"'DM Sans',sans-serif", letterSpacing:"0.04em",
-                  textTransform:"uppercase",
-                }}>YENİ</span>
-              )}
-            </div>
-            <div style={{fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>
-              {lead.id} · {lead.flag} {lead.country}
-            </div>
-          </div>
-        </div>
-      </td>
-
-      {}
-      <td style={{
-        padding:"15px 12px",
-        borderBottom: isLast ? "none" : `1px solid ${C.borderLight}`,
-        verticalAlign:"middle",
-      }}>
-        <SourceBadge source={lead.source}/>
-      </td>
-
-      {}
-      <td style={{
-        padding:"15px 12px",
-        borderBottom: isLast ? "none" : `1px solid ${C.borderLight}`,
-        verticalAlign:"middle", maxWidth:200,
-      }}>
-        <div style={{fontSize:13, color:C.text, fontFamily:"'DM Sans',sans-serif", fontWeight:500, lineHeight:1.4}}>{lead.tour}</div>
-        <div style={{fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:2}}>{lead.dateRange}</div>
-      </td>
-
-      {}
-      <td style={{
-        padding:"15px 12px",
-        borderBottom: isLast ? "none" : `1px solid ${C.borderLight}`,
-        verticalAlign:"middle",
-      }}>
-        <div style={{display:"flex", alignItems:"center", gap:5, color:C.textMid}}>
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2 M23 21v-2a4 4 0 00-3-3.87 M16 3.13a4 4 0 010 7.75"/>
-          </svg>
-          <span style={{fontSize:13, fontFamily:"'DM Sans',sans-serif", fontWeight:500}}>{lead.pax}</span>
-        </div>
-      </td>
-
-      {}
-      <td style={{
-        padding:"15px 12px",
-        borderBottom: isLast ? "none" : `1px solid ${C.borderLight}`,
-        verticalAlign:"middle",
-      }}>
-        <StatusBadge status={lead.status}/>
-      </td>
-
-      {}
-      <td style={{
-        padding:"15px 12px",
-        borderBottom: isLast ? "none" : `1px solid ${C.borderLight}`,
-        verticalAlign:"middle",
-      }}>
-        <span style={{
-          fontSize:13.5, fontWeight:600,
-          color: lead.amount === "—" ? C.textFaint : C.text,
-          fontFamily:"'Playfair Display',serif",
-        }}>{lead.amount}</span>
-      </td>
-
-      {}
-      <td style={{
-        padding:"15px 12px",
-        borderBottom: isLast ? "none" : `1px solid ${C.borderLight}`,
-        verticalAlign:"middle",
-      }}>
-        <AssigneeChip name={lead.assignee} initials={lead.assigneeInitials}/>
-      </td>
-
-      {}
-      <td style={{
-        padding:"15px 16px 15px 12px",
-        borderBottom: isLast ? "none" : `1px solid ${C.borderLight}`,
-        verticalAlign:"middle",
-      }}>
-        <div style={{display:"flex", alignItems:"center", justifyContent:"space-between", gap:12}}>
-          <span style={{fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap"}}>{lead.ago}</span>
-          <button style={{
-            width:28, height:28, borderRadius:7,
-            border:`1px solid ${C.border}`, background:"transparent",
-            display:"flex", alignItems:"center", justifyContent:"center",
-            cursor:"pointer", color:C.textMuted, flexShrink:0,
-            transition:"background 0.1s, border-color 0.1s",
-          }}
-            onMouseEnter={e=>{ e.currentTarget.style.background=C.navyDeep; e.currentTarget.style.color=C.white; e.currentTarget.style.borderColor=C.navyDeep; }}
-            onMouseLeave={e=>{ e.currentTarget.style.background="transparent"; e.currentTarget.style.color=C.textMuted; e.currentTarget.style.borderColor=C.border; }}
-          >
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M9 18l6-6-6-6"/>
-            </svg>
-          </button>
-        </div>
-      </td>
-    </tr>
-  );
-}
-
-function EmptyLeads() {
-  return (
-    <div style={{
-      padding:"72px 40px", textAlign:"center",
-      display:"flex", flexDirection:"column", alignItems:"center", gap:16,
-    }}>
-      <div style={{
-        width:52, height:52, borderRadius:14,
-        background:C.ivory, border:`1px solid ${C.border}`,
-        display:"flex", alignItems:"center", justifyContent:"center",
-        color:C.textFaint, marginBottom:4,
-      }}>
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>
-        </svg>
-      </div>
-      <div>
-        <div style={{fontSize:16, fontWeight:600, color:C.text, fontFamily:"'Playfair Display',serif", marginBottom:6}}>
-          Henüz talep bulunmuyor.
-        </div>
-        <div style={{fontSize:13.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif"}}>
-          Bu filtre için kayıt yok. Yeni bir talep ekleyebilirsiniz.
-        </div>
-      </div>
-      <button style={{
-        display:"flex", alignItems:"center", gap:8,
-        padding:"9px 18px", borderRadius:8, marginTop:4,
-        border:`1.5px solid ${C.gold}`, background:C.goldPale,
-        cursor:"pointer", color:C.gold,
-        fontFamily:"'DM Sans',sans-serif", fontSize:13, fontWeight:500,
-      }}>
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-          <path d="M12 5v14M5 12h14"/>
-        </svg>
-        Yeni Talep Ekle
-      </button>
-    </div>
-  );
-}
-
-function LeadsPage({ onSelectLead }) {
-  const [showNewLead, setShowNewLead] = useState(false);
-  const [activeTab, setActiveTab] = useState("Tümü");
-  const [activeSource, setActiveSource] = useState("Tümü");
-  const [search, setSearch] = useState("");
-  const { data:repoLeads, loading:leadsLoading, error:leadsError, reload:reloadLeads }
-    = useRepo("lead", "getAll");
-
-  const [sortField, setSortField] = useState("ago");
-
-  const _allLeads = repoLeads ?? [];
-  const filtered = _allLeads.filter(lead => {
-    const tabMatch  = activeTab === "Tümü" || lead.status === activeTab;
-    const srcMatch  = activeSource === "Tümü" || lead.source === activeSource;
-    const srchMatch = search === "" ||
-      lead.name.toLowerCase().includes(search.toLowerCase()) ||
-      lead.tour.toLowerCase().includes(search.toLowerCase()) ||
-      lead.id.toLowerCase().includes(search.toLowerCase());
-    return tabMatch && srcMatch && srchMatch;
-  });
-
-  const counts = STATUS_TABS.reduce((acc, tab) => {
-    acc[tab] = tab === "Tümü"
-      ? _allLeads.length
-      : _allLeads.filter(l => l.status === tab).length;
-    return acc;
-  }, {});
-
-  return (
-    <div style={{display:"flex", flexDirection:"column", gap:20}}>
-
-      {}
-      <div className="page-header" style={{
-        background:C.white, border:`1px solid ${C.border}`,
-        borderRadius:12, padding:"20px 24px",
-        display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:20,
-      }}>
-        <div>
-          <h1 style={{
-            margin:0, fontSize:24, fontWeight:700, color:C.text,
-            fontFamily:"'Playfair Display',serif", lineHeight:1.2, marginBottom:5,
-          }}>Talepler</h1>
-          <p style={{
-            margin:0, fontSize:13.5, color:C.textMuted,
-            fontFamily:"'DM Sans',sans-serif",
-          }}>
-            Tüm müşteri taleplerini tek ekrandan takip edin.
-          </p>
-        </div>
-
-        <div className="page-header-actions" style={{display:"flex", alignItems:"center", gap:10, flexShrink:0}}>
-          {}
-          <div style={{position:"relative"}}>
-            <span style={{
-              position:"absolute", left:10, top:"50%", transform:"translateY(-50%)",
-              color:C.textFaint, pointerEvents:"none",
-            }}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>
-              </svg>
-            </span>
-            <input
-              type="text" value={search}
-              onChange={e=>setSearch(e.target.value)}
-              placeholder="İsim, tur veya talep ara…"
-              style={{
-                paddingLeft:32, paddingRight:12, paddingTop:8, paddingBottom:8,
-                border:`1px solid ${C.border}`, borderRadius:8,
-                background:C.ivory, fontSize:13, color:C.text,
-                fontFamily:"'DM Sans',sans-serif", outline:"none",
-                width:230, transition:"border-color 0.15s, box-shadow 0.15s",
-              }}
-              onFocus={e=>{ e.target.style.borderColor=C.gold; e.target.style.boxShadow=`0 0 0 3px ${C.gold}20`; }}
-              onBlur={e=>{ e.target.style.borderColor=C.border; e.target.style.boxShadow="none"; }}
-            />
-          </div>
-
-          {}
-          <button style={{
-            display:"flex", alignItems:"center", gap:7,
-            padding:"9px 16px", borderRadius:8,
-            border:"none", background:C.navy,
-            cursor:"pointer", color:C.white,
-            fontFamily:"'DM Sans',sans-serif", fontSize:13, fontWeight:500,
-            transition:"background 0.12s",
-          }}
-            onMouseEnter={e=>e.currentTarget.style.background=C.navyHover}
-            onMouseLeave={e=>e.currentTarget.style.background=C.navy}
-            onClick={()=>setShowNewLead(true)}
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-              <path d="M12 5v14M5 12h14"/>
-            </svg>
-            Yeni Talep Ekle
-          </button>
-        </div>
-      </div>
-      {showNewLead ? (<NewLeadModal onClose={()=>setShowNewLead(false)} onSuccess={()=>{setShowNewLead(false); reloadLeads&&reloadLeads();}}/>) : null}
-
-      {}
-      <div style={{
-        background:C.white, border:`1px solid ${C.border}`,
-        borderRadius:12, padding:"0 20px",
-        display:"flex", flexDirection:"column",
-      }}>
-
-        {}
-        <div style={{
-          display:"flex", alignItems:"center", gap:0,
-          borderBottom:`1px solid ${C.borderLight}`,
-          overflowX:"auto",
-        }}>
-          {STATUS_TABS.map(tab => {
-            const on = activeTab === tab;
-            const cnt = counts[tab];
-            return (
-              <button key={tab} onClick={()=>setActiveTab(tab)}
-                style={{
-                  padding:"14px 16px",
-                  border:"none", borderBottom: on ? `2px solid ${C.gold}` : "2px solid transparent",
-                  background:"transparent",
-                  color: on ? C.gold : C.textMuted,
-                  fontFamily:"'DM Sans',sans-serif", fontSize:13,
-                  fontWeight: on ? 600 : 400,
-                  cursor:"pointer", whiteSpace:"nowrap",
-                  display:"flex", alignItems:"center", gap:6,
-                  transition:"color 0.12s",
-                  marginBottom:-1,
-                }}>
-                {tab}
-                {cnt > 0 && (
-                  <span style={{
-                    minWidth:18, height:18, borderRadius:99, padding:"0 5px",
-                    display:"inline-flex", alignItems:"center", justifyContent:"center",
-                    fontSize:10.5, fontWeight:600, lineHeight:1,
-                    background: on ? `${C.gold}22` : C.ivoryDark,
-                    color: on ? C.gold : C.textFaint,
-                  }}>{cnt}</span>
-                )}
-              </button>
-            );
-          })}
-        </div>
-
-        {}
-        <div style={{
-          display:"flex", alignItems:"center", gap:8,
-          padding:"12px 0",
-          overflowX:"auto",
-        }}>
-          <span style={{fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginRight:4, flexShrink:0}}>Kaynak:</span>
-          {SOURCE_FILTERS.map(src => {
-            const on = activeSource === src;
-            return (
-              <button key={src} onClick={()=>setActiveSource(src)}
-                style={{
-                  padding:"4px 12px", borderRadius:99, cursor:"pointer",
-                  border: on ? `1.5px solid ${C.navy}` : `1px solid ${C.border}`,
-                  background: on ? C.navy : "transparent",
-                  color: on ? C.white : C.textMid,
-                  fontFamily:"'DM Sans',sans-serif", fontSize:12, fontWeight: on ? 500 : 400,
-                  whiteSpace:"nowrap", transition:"all 0.12s",
-                }}>
-                {src}
-              </button>
-            );
-          })}
-
-          {}
-          <div style={{marginLeft:"auto", flexShrink:0}}>
-            <span style={{fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>
-              {filtered.length} talep gösteriliyor
-            </span>
-          </div>
-        </div>
-      </div>
-
-      {}
-      <div style={{
-        background:C.white, border:`1px solid ${C.border}`,
-        borderRadius:12, overflow:"hidden",
-      }}>
-        {leadsLoading ? (
-          <LoadingState label="Talepler yükleniyor…"/>
-        ) : leadsError ? (
-          <ErrorState message={leadsError} onRetry={reloadLeads}/>
-        ) : filtered.length === 0 ? <EmptyLeads/> : (
-          <>
-          <table className="rsp-table" style={{width:"100%", borderCollapse:"collapse"}}>
-            <thead>
-              <tr style={{borderBottom:`1px solid ${C.border}`}}>
-                {[
-                  { label:"Misafir",     w:"auto" },
-                  { label:"Kaynak",      w:120    },
-                  { label:"Tur / Tarih", w:"auto" },
-                  { label:"Kişi",        w:60     },
-                  { label:"Durum",       w:170    },
-                  { label:"Tutar",       w:110    },
-                  { label:"Sorumlu",     w:160    },
-                  { label:"Son İşlem",   w:130    },
-                ].map(h => (
-                  <th key={h.label} style={{
-                    padding: h.label === "Misafir" ? "12px 16px 12px 20px" : "12px 12px",
-                    textAlign:"left", width:h.w !== "auto" ? h.w : undefined,
-                    fontSize:10.5, fontWeight:600, color:C.textFaint,
-                    fontFamily:"'DM Sans',sans-serif",
-                    textTransform:"uppercase", letterSpacing:"0.07em",
-                    background:C.ivory,
-                  }}>{h.label}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((lead, i) => (
-                <LeadRow key={lead.id} lead={lead} isLast={i === filtered.length - 1} onSelect={onSelectLead}/>
-              ))}
-            </tbody>
-          </table>
-            <div className="rsp-cards"><MobileCardList items={filtered} renderCard={(lead) => {
-              const sm = STATUS_META[lead.status]||{color:C.textMuted,bg:C.ivoryDark};
-              const srcObj = DB.sources.find(s=>s.id===lead.sourceId);
-              const cust = getCustomerById(lead.customerId);
-              return (
-                <MobileCard onClick={()=>onSelectLead&&onSelectLead(lead.id)}>
-                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:7}}>
-                    <div>
-                      <div style={{fontSize:14,fontWeight:600,color:C.text,fontFamily:"'DM Sans',sans-serif"}}>{lead.tour||"—"}</div>
-                      <div style={{fontSize:12,color:C.textFaint,fontFamily:"'DM Sans',sans-serif"}}>{cust?.name||"—"}</div>
-                    </div>
-                    <span style={{fontSize:11,padding:"3px 9px",borderRadius:99,fontWeight:500,color:sm.color,background:sm.bg,fontFamily:"'DM Sans',sans-serif",flexShrink:0}}>{lead.status}</span>
-                  </div>
-                  <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
-                    <span style={{fontSize:12,color:C.textMuted,fontFamily:"'DM Sans',sans-serif"}}>{lead.paxAdult} kişi · {lead.dateRange||"Tarih yok"}</span>
-                    <span style={{fontSize:12,color:C.textFaint,fontFamily:"'DM Sans',sans-serif"}}>{srcObj?.label||"—"} · {lead.ago}</span>
-                  </div>
-                </MobileCard>
-              );
-            }}/></div>
-          </>
-        )}
-
-        {}
-        {filtered.length > 0 && (
-          <div style={{
-            padding:"12px 20px",
-            borderTop:`1px solid ${C.borderLight}`,
-            display:"flex", alignItems:"center", justifyContent:"space-between",
-            background:C.ivory,
-          }}>
-            <span style={{fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>
-              {filtered.length} / {_allLeads.length} talep gösteriliyor
-            </span>
-            <div style={{display:"flex", alignItems:"center", gap:6}}>
-              {[1].map(p=>(
-                <button key={p} style={{
-                  width:28, height:28, borderRadius:6,
-                  border:`1px solid ${C.gold}`,
-                  background:C.goldPale, color:C.gold,
-                  fontSize:12, fontWeight:600, cursor:"pointer",
-                  fontFamily:"'DM Sans',sans-serif",
-                }}>1</button>
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
-
-    </div>
-  );
-}
 
 const LEAD_ACTIVITY_LABEL = {
   created: "Talep oluşturuldu", updated: "Güncellendi", status_changed: "Durum güncellendi",
@@ -4173,281 +3635,6 @@ function QStatusBadge({ status }) {
   );
 }
 
-function QuoteRow({ q, isLast, onSelect }) {
-  const sm = QUOTE_STATUS[q.status] || {};
-  const expired = q.status === "Süresi Doldu" || q.status === "Reddedildi";
-
-  return (
-    <tr className="dt-row"
-      onClick={()=>onSelect&&onSelect(q.id)}
-      style={{
-        background:C.white,
-        cursor:"pointer", transition:"background 0.1s",
-        opacity: expired ? 0.7 : 1,
-      }}
-    >
-      {}
-      <td style={{ padding:"14px 16px 14px 22px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle" }}>
-        <span style={{
-          fontSize:12.5, fontWeight:600, color:C.navy,
-          fontFamily:"'DM Mono',monospace",
-          background:C.ivory, border:`1px solid ${C.borderLight}`,
-          padding:"3px 8px", borderRadius:5,
-        }}>{q.id}</span>
-      </td>
-      {}
-      <td style={{ padding:"14px 12px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle" }}>
-        <div style={{ fontSize:13.5, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif" }}>{q.flag} {q.customer}</div>
-        <div style={{ fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:2 }}>{q.country}</div>
-      </td>
-      {}
-      <td style={{ padding:"14px 12px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle", maxWidth:200 }}>
-        <div style={{ fontSize:13, color:C.text, fontFamily:"'DM Sans',sans-serif", fontWeight:500 }}>{q.tour}</div>
-        <div style={{ fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:2 }}>{q.dateRange}</div>
-      </td>
-      {}
-      <td style={{ padding:"14px 12px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle" }}>
-        <div style={{ display:"flex", alignItems:"center", gap:5, color:C.textMid }}>
-          <QIc d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2 M23 21v-2a4 4 0 00-3-3.87 M16 3.13a4 4 0 010 7.75" size={13} sw={1.5}/>
-          <span style={{ fontSize:13, fontFamily:"'DM Sans',sans-serif", fontWeight:500 }}>{q.pax}</span>
-        </div>
-      </td>
-      {}
-      <td style={{ padding:"14px 12px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle" }}>
-        <div style={{ fontSize:15, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif" }}>
-          {q.currency === "EUR" ? "€" : "₺"}{fmtNum(q.total)}
-        </div>
-        <div style={{ fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:2 }}>{q.currency}</div>
-      </td>
-      {}
-      <td style={{ padding:"14px 12px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle" }}>
-        <QStatusBadge status={q.status}/>
-      </td>
-      {}
-      <td style={{ padding:"14px 12px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle" }}>
-        <div style={{ fontSize:12.5, color: expired ? C.red : C.textMuted, fontFamily:"'DM Sans',sans-serif" }}>{q.validUntil}</div>
-      </td>
-      {}
-      <td style={{ padding:"14px 12px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle" }}>
-        <div style={{ fontSize:12.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif" }}>{q.createdAt}</div>
-      </td>
-      {}
-      <td style={{ padding:"14px 16px 14px 8px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle" }}>
-        <div style={{ color:C.textFaint }}>
-          <QIc d="M9 18l6-6-6-6" size={14} sw={1.8}/>
-        </div>
-      </td>
-    </tr>
-  );
-}
-
-function QuotesPage({ onSelectQuote, onNewQuote }) {
-  const [activeTab, setActiveTab] = useState("Tümü");
-  const [search, setSearch] = useState("");
-  const { data:repoQuotes, loading:quotesLoading, error:quotesError, reload:reloadQuotes }
-    = useRepo("quote", "getAll");
-
-  const TABS = ["Tümü",...Object.keys(QUOTE_STATUS)];
-  const allQuotes = repoQuotes ?? [];
-
-  const filtered = allQuotes.filter(q => {
-    const tabMatch  = activeTab === "Tümü" || q.status === activeTab;
-    const srchMatch = search === "" ||
-      q.customer.toLowerCase().includes(search.toLowerCase()) ||
-      q.tour.toLowerCase().includes(search.toLowerCase()) ||
-      q.id.toLowerCase().includes(search.toLowerCase());
-    return tabMatch && srchMatch;
-  });
-
-  const counts = TABS.reduce((acc,t) => {
-    acc[t] = t === "Tümü" ? allQuotes.length : allQuotes.filter(q=>q.status===t).length;
-    return acc;
-  }, {});
-
-  const totalSent     = allQuotes.filter(q=>q.status==="Gönderildi").length;
-  const totalApproved = allQuotes.filter(q=>q.status==="Onaylandı").length;
-  const totalValue    = allQuotes.filter(q=>q.status==="Onaylandı").reduce((s,q)=>s+q.total,0);
-  const convRate      = allQuotes.length > 0 ? Math.round((totalApproved/allQuotes.length)*100) : 0;
-
-  return (
-    <div style={{ display:"flex", flexDirection:"column", gap:20 }}>
-
-      {}
-      <div className="page-header" style={{
-        background:C.white, border:`1px solid ${C.border}`, borderRadius:12,
-        padding:"20px 24px",
-        display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:20,
-      }}>
-        <div>
-          <h1 style={{ margin:0, fontSize:24, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif", marginBottom:5 }}>Teklifler</h1>
-          <p style={{ margin:0, fontSize:13.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif" }}>
-            Tüm teklifleri yönetin ve satış sürecini takip edin.
-          </p>
-        </div>
-        <div className="page-header-actions" style={{ display:"flex", alignItems:"center", gap:10, flexShrink:0 }}>
-          {}
-          <div style={{ position:"relative" }}>
-            <span style={{ position:"absolute", left:10, top:"50%", transform:"translateY(-50%)", color:C.textFaint, pointerEvents:"none" }}>
-              <QIc d="M21 21l-4.35-4.35 M17 11A6 6 0 105 11a6 6 0 0012 0z" size={14} sw={1.8}/>
-            </span>
-            <input type="text" value={search} onChange={e=>setSearch(e.target.value)}
-              placeholder="Teklif, misafir veya tur ara…"
-              style={{
-                paddingLeft:32, paddingRight:12, paddingTop:8, paddingBottom:8,
-                border:`1px solid ${C.border}`, borderRadius:8,
-                background:C.ivory, fontSize:13, color:C.text,
-                fontFamily:"'DM Sans',sans-serif", outline:"none", width:240,
-                transition:"border-color 0.15s, box-shadow 0.15s",
-              }}
-              onFocus={e=>{ e.target.style.borderColor=C.gold; e.target.style.boxShadow=`0 0 0 3px ${C.gold}20`; }}
-              onBlur={e=>{ e.target.style.borderColor=C.border; e.target.style.boxShadow="none"; }}
-            />
-          </div>
-          <button style={{
-            display:"flex", alignItems:"center", gap:7,
-            padding:"9px 16px", borderRadius:8,
-            border:"none", background:C.navy, cursor:"pointer", color:C.white,
-            fontFamily:"'DM Sans',sans-serif", fontSize:13, fontWeight:500,
-            transition:"background 0.12s",
-          }}
-            onMouseEnter={e=>e.currentTarget.style.background=C.navyHover}
-            onMouseLeave={e=>e.currentTarget.style.background=C.navy}
-            onClick={onNewQuote}
-          >
-            <QIc d="M12 5v14M5 12h14" size={14} sw={2.5}/>
-            Yeni Teklif Oluştur
-          </button>
-        </div>
-      </div>
-
-      {}
-      <div className="rsp-stat-grid" style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:14 }}>
-        {[
-          { label:"Toplam Teklif",    val:allQuotes.length, sub:"Tüm zamanlar", icon:"M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z M14 2v6h6" },
-          { label:"Gönderildi",       val:totalSent,          sub:"Yanıt bekleniyor", icon:"M22 2L11 13 M22 2L15 22l-4-9-9-4 22-7z", alert:false },
-          { label:"Onaylandı",        val:totalApproved,      sub:`€${totalValue} toplam değer`, icon:"M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11", green:true },
-          { label:"Dönüşüm Oranı",    val:`%${convRate}`,     sub:"Onaylanan / Toplam", icon:"M18 20V10M12 20V4M6 20v-6", gold:true },
-        ].map((k,i) => (
-          <div key={i} style={{
-            background:C.white, border:`1px solid ${C.border}`, borderRadius:12,
-            padding:"18px 20px", display:"flex", alignItems:"flex-start", gap:14,
-          }}>
-            <div style={{
-              width:40, height:40, borderRadius:10, flexShrink:0,
-              background: k.green ? C.greenBg : k.gold ? C.goldPale : C.ivory,
-              border:`1px solid ${C.borderLight}`,
-              display:"flex", alignItems:"center", justifyContent:"center",
-              color: k.green ? C.green : k.gold ? C.gold : C.textMuted,
-            }}>
-              <QIc d={k.icon} size={17} sw={1.6}/>
-            </div>
-            <div style={{ flex:1 }}>
-              <div style={{ fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginBottom:4 }}>{k.label}</div>
-              <div style={{ fontSize:24, fontWeight:700, color: k.green ? C.green : k.gold ? C.gold : C.text, fontFamily:"'Playfair Display',serif", lineHeight:1 }}>{k.val}</div>
-              <div style={{ fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:4 }}>{k.sub}</div>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {}
-      <div style={{ background:C.white, border:`1px solid ${C.border}`, borderRadius:12, overflow:"hidden" }}>
-        {}
-        <div style={{ display:"flex", alignItems:"center", borderBottom:`1px solid ${C.borderLight}`, padding:"0 20px", overflowX:"auto" }}>
-          {TABS.map(tab => {
-            const on = activeTab === tab;
-            return (
-              <button key={tab} onClick={()=>setActiveTab(tab)} style={{
-                padding:"14px 14px",
-                border:"none", borderBottom: on ? `2px solid ${C.gold}` : "2px solid transparent",
-                background:"transparent",
-                color: on ? C.gold : C.textMuted,
-                fontFamily:"'DM Sans',sans-serif", fontSize:13,
-                fontWeight: on ? 600 : 400,
-                cursor:"pointer", whiteSpace:"nowrap",
-                display:"flex", alignItems:"center", gap:6,
-                marginBottom:-1, transition:"color 0.12s",
-              }}>
-                {tab}
-                {counts[tab] > 0 && (
-                  <span style={{
-                    minWidth:18, height:18, borderRadius:99, padding:"0 5px",
-                    display:"inline-flex", alignItems:"center", justifyContent:"center",
-                    fontSize:10.5, fontWeight:600, lineHeight:1,
-                    background: on ? `${C.gold}22` : C.ivoryDark,
-                    color: on ? C.gold : C.textFaint,
-                  }}>{counts[tab]}</span>
-                )}
-              </button>
-            );
-          })}
-          <div style={{ marginLeft:"auto", padding:"0 4px", flexShrink:0 }}>
-            <span style={{ fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif" }}>{filtered.length} teklif</span>
-          </div>
-        </div>
-
-        {}
-        {quotesLoading ? (
-          <LoadingState label="Teklifler yükleniyor…"/>
-        ) : quotesError ? (
-          <ErrorState message={quotesError} onRetry={reloadQuotes}/>
-        ) : filtered.length === 0 ? (
-          <div style={{ padding:"60px 40px", textAlign:"center" }}>
-            <div style={{ fontSize:32, opacity:0.2, marginBottom:12 }}>📄</div>
-            <div style={{ fontSize:15, fontWeight:600, color:C.text, fontFamily:"'Playfair Display',serif", marginBottom:6 }}>Teklif bulunamadı.</div>
-            <div style={{ fontSize:13, color:C.textMuted, fontFamily:"'DM Sans',sans-serif" }}>Bu filtre için kayıt yok.</div>
-          </div>
-        ) : (
-          <>
-            <table className="rsp-table" style={{ width:"100%", borderCollapse:"collapse" }}>
-              <thead>
-                <tr style={{ borderBottom:`1px solid ${C.border}` }}>
-                  {["Teklif No","Misafir","Tur / Tarih","Kişi","Tutar","Durum","Geçerlilik","Oluşturulma",""].map(h=>(
-                    <th key={h} style={{
-                      padding: h==="Teklif No" ? "12px 16px 12px 22px" : "12px 12px",
-                      textAlign:"left",
-                      fontSize:10.5, fontWeight:600, color:C.textFaint,
-                      fontFamily:"'DM Sans',sans-serif",
-                      textTransform:"uppercase", letterSpacing:"0.07em",
-                      background:C.ivory,
-                    }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map((q,i)=>(
-                  <QuoteRow key={q.id} q={q} isLast={i===filtered.length-1} onSelect={onSelectQuote}/>
-                ))}
-              </tbody>
-            </table>
-            <div className="rsp-cards"><MobileCardList items={filtered} renderCard={(item,i)=>(
-                <MobileCard key={item.id} onClick={()=>onSelectQuote&&onSelectQuote(item.id)}>
-                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                    <div>
-                      <div style={{fontWeight:600,fontSize:14,color:C.text}}>{item.quoteNumber}</div>
-                      <div style={{fontSize:12,color:C.textMuted,marginTop:2}}>{item.tour||"—"} · {item.currency} {fmtNum(item.total)}</div>
-                    </div>
-                    <span style={{fontSize:11,padding:"3px 8px",borderRadius:99,background:C.ivoryDark,color:C.textMid}}>{item.status}</span>
-                  </div>
-                </MobileCard>
-              )}/></div>
-            {}
-            <div style={{
-              padding:"11px 20px",
-              borderTop:`1px solid ${C.borderLight}`,
-              background:C.ivory,
-              display:"flex", alignItems:"center", justifyContent:"space-between",
-            }}>
-              <span style={{ fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif" }}>
-                {filtered.length} / {allQuotes.length} teklif gösteriliyor
-              </span>
-            </div>
-          </>
-        )}
-      </div>
-    </div>
-  );
-}
 
 function CheckItem({ label, checked }) {
   const [on, setOn] = useState(checked !== false);
@@ -5722,9 +4909,9 @@ function AssignGuideModal({ r, onClose }) {
         }}>
           <URIc d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" size={16} sw={2} color={C.amber}/>
           <div style={{fontSize:12.5, color:C.text, fontFamily:"'DM Sans',sans-serif", lineHeight:1.5}}>
-            <b>Takvim çakışması:</b> Bu rehber seçilen tarihte başka bir rezervasyona atanmış —
+            <b>Aynı gün ataması:</b> Bu rehber seçilen tarih aralığında başka bir rezervasyona da atanmış —
             {' '}{conflicts.map(c=>`${c.tour||c.resNumber} (${c.checkIn})`).join(', ')}.
-            Yine de atayabilirsiniz, ancak lütfen kontrol edin.
+            Bu, yalnızca tarih bazlı bir kontroldür; saat çakışması hesaplanmaz. Yine de atayabilirsiniz, ancak buluşma saatlerini kontrol edin.
           </div>
         </div>
       )}
@@ -5850,9 +5037,9 @@ function NewReservationModal({ onClose, onSuccess }) {
         }}>
           <URIc d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" size={16} sw={2} color={C.amber}/>
           <div style={{fontSize:12.5, color:C.text, fontFamily:"'DM Sans',sans-serif", lineHeight:1.5}}>
-            <b>Takvim çakışması:</b> Bu rehber seçilen tarihte başka bir rezervasyona atanmış —
+            <b>Aynı gün ataması:</b> Bu rehber seçilen tarih aralığında başka bir rezervasyona da atanmış —
             {' '}{conflicts.map(c=>`${c.tour||c.resNumber} (${c.checkIn})`).join(', ')}.
-            Yine de devam edebilirsiniz, ancak lütfen kontrol edin.
+            Bu, yalnızca tarih bazlı bir kontroldür; saat çakışması hesaplanmaz. Yine de devam edebilirsiniz, ancak buluşma saatlerini kontrol edin.
           </div>
         </div>
       )}
@@ -7511,620 +6698,6 @@ function CalendarPage() {
   );
 }
 
-const TASK_PRIORITY = {
-  "Acil":   { color:"#C0392B", bg:"#FDECEC", dot:"#C0392B", order:0 },
-  "Yüksek": { color:"#B45309", bg:"#FEF3E2", dot:"#B45309", order:1 },
-  "Orta":   { color:"#1A6FAE", bg:"#E8F2FB", dot:"#1A6FAE", order:2 },
-  "Düşük":  { color:"#6B7280", bg:"#F3F4F6", dot:"#9CA3AF", order:3 },
-};
-
-const TASK_STATUS = {
-  "Açık":         { color:"#1A6FAE", bg:"#E8F2FB" },
-  "Devam Ediyor": { color:"#B45309", bg:"#FEF3E2" },
-  "Tamamlandı":   { color:"#2E7D52", bg:"#EBF5EF" },
-  "İptal":        { color:"#9CA3AF", bg:"#F3F4F6" },
-};
-
-const TASK_CATEGORY = {
-  "Teklif":        { color:"#6B3FA0", bg:"#F3EEF9" },
-  "Ödeme":         { color:"#C05621", bg:"#FEF0E8" },
-  "Rezervasyon":   { color:"#1A6FAE", bg:"#E8F2FB" },
-  "Operasyon":     { color:"#2E7D52", bg:"#EBF5EF" },
-  "Rehber":        { color:"#B8973A", bg:"#F5EDD4" },
-  "Pickup":        { color:"#0E7490", bg:"#ECFEFF" },
-  "Müşteri Takibi":{ color:"#6B7280", bg:"#F3F4F6" },
-};
-
-const TODAY_STR = "03 Haz 2026";
-const TOMORROW_STR = "04 Haz 2026";
-
-const MOCK_TASKS = DB.tasks; // → centralized DB
-
-function TIc({ d, size=15, sw=1.6, color }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
-      stroke={color||"currentColor"} strokeWidth={sw}
-      strokeLinecap="round" strokeLinejoin="round">
-      <path d={d}/>
-    </svg>
-  );
-}
-
-function TPill({ label, map, small }) {
-  const m = map[label] || { color:"#6B7280", bg:"#F3F4F6" };
-  return (
-    <span style={{
-      display:"inline-flex", alignItems:"center", gap:5,
-      padding: small ? "3px 8px" : "4px 10px",
-      borderRadius:99, fontSize: small ? 10.5 : 11.5,
-      fontWeight:500, color:m.color, background:m.bg,
-      fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap",
-    }}>
-      {m.dot && <span style={{width:5, height:5, borderRadius:"50%", background:m.dot, flexShrink:0}}/>}
-      {label}
-    </span>
-  );
-}
-
-function TCatPill({ label }) {
-  const m = TASK_CATEGORY[label] || { color:"#6B7280", bg:"#F3F4F6" };
-  return (
-    <span style={{
-      display:"inline-block", padding:"2px 8px", borderRadius:5,
-      fontSize:11, fontWeight:500, color:m.color, background:m.bg,
-      fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap",
-    }}>{label}</span>
-  );
-}
-
-function TAssignee({ name, initials }) {
-  if (!initials) return (
-    <span style={{fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", fontStyle:"italic"}}>
-      Atanmadı
-    </span>
-  );
-  return (
-    <div style={{display:"flex", alignItems:"center", gap:7}}>
-      <div style={{
-        width:26, height:26, borderRadius:"50%", flexShrink:0,
-        background:"rgba(27,45,79,0.09)", border:"1.5px solid rgba(27,45,79,0.14)",
-        display:"flex", alignItems:"center", justifyContent:"center",
-      }}>
-        <span style={{fontSize:9.5, fontWeight:700, color:C.navy}}>{initials}</span>
-      </div>
-      <span style={{fontSize:12.5, color:C.textMid, fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap"}}>{name}</span>
-    </div>
-  );
-}
-
-function TDueDate({ task }) {
-  const overdue  = task.dueDateRaw < 0 && task.status !== "Tamamlandı";
-  const isToday  = task.dueDateRaw === 0;
-  const isTomorrow = task.dueDateRaw === 1;
-  const done     = task.status === "Tamamlandı";
-  const color    = done ? C.textFaint : overdue ? C.red : isToday ? C.amber : C.textMid;
-  const label    = done ? task.dueDate : overdue ? `${Math.abs(task.dueDateRaw)} gün gecikti`
-    : isToday ? "Bugün" : isTomorrow ? "Yarın" : task.dueDate;
-
-  return (
-    <div style={{display:"flex", alignItems:"center", gap:5}}>
-      {overdue && !done && (
-        <span style={{width:6, height:6, borderRadius:"50%", background:C.red, flexShrink:0}}/>
-      )}
-      <span style={{
-        fontSize:12.5, color,
-        fontFamily:"'DM Sans',sans-serif",
-        fontWeight: (overdue || isToday) && !done ? 600 : 400,
-      }}>{label}</span>
-    </div>
-  );
-}
-
-function TaskRow({ task, isLast, onToggle }) {
-  const done = task.status === "Tamamlandı";
-  const pMeta = TASK_PRIORITY[task.priority] || {};
-
-  return (
-    <tr className="dt-row"
-      style={{
-        background:C.white,
-        transition:"background .1s",
-        opacity: task.status === "İptal" ? 0.5 : 1,
-      }}
-    >
-      {}
-      <td style={{
-        padding:"13px 8px 13px 20px",
-        borderBottom: isLast ? "none" : `1px solid ${C.borderLight}`,
-        verticalAlign:"middle", width:40,
-      }}>
-        <div
-          onClick={()=>onToggle(task.id)}
-          style={{
-            width:18, height:18, borderRadius:5, cursor:"pointer",
-            border: done ? "none" : `1.5px solid ${C.border}`,
-            background: done ? C.green : C.white,
-            display:"flex", alignItems:"center", justifyContent:"center",
-            transition:"all .15s", flexShrink:0,
-          }}
-        >
-          {done && <TIc d="M20 6L9 17l-5-5" size={11} sw={2.5} color="#fff"/>}
-        </div>
-      </td>
-
-      {}
-      <td style={{
-        padding:"13px 12px",
-        borderBottom: isLast ? "none" : `1px solid ${C.borderLight}`,
-        verticalAlign:"middle",
-      }}>
-        <div style={{display:"flex", alignItems:"flex-start", gap:10}}>
-          {}
-          <div style={{
-            width:3, height:36, borderRadius:99, flexShrink:0, marginTop:2,
-            background: done ? C.border : pMeta.dot || C.border,
-          }}/>
-          <div style={{minWidth:0}}>
-            <div style={{
-              fontSize:13.5, fontWeight:500,
-              color: done ? C.textFaint : C.text,
-              fontFamily:"'DM Sans',sans-serif",
-              textDecoration: done ? "line-through" : "none",
-              lineHeight:1.4,
-            }}>{task.title}</div>
-            <div style={{
-              fontSize:11.5, color:C.textFaint,
-              fontFamily:"'DM Sans',sans-serif", marginTop:3,
-              display:"flex", alignItems:"center", gap:6,
-            }}>
-              <span>{task.guestFlag} {task.guest}</span>
-              <span style={{color:C.borderLight}}>·</span>
-              <span style={{
-                fontSize:11, color:C.textFaint,
-                fontFamily:"'DM Mono',monospace",
-              }}>{task.relatedType}: {task.relatedId}</span>
-            </div>
-          </div>
-        </div>
-      </td>
-
-      {}
-      <td style={{
-        padding:"13px 12px",
-        borderBottom: isLast ? "none" : `1px solid ${C.borderLight}`,
-        verticalAlign:"middle",
-      }}>
-        <TCatPill label={task.category}/>
-      </td>
-
-      {}
-      <td style={{
-        padding:"13px 12px",
-        borderBottom: isLast ? "none" : `1px solid ${C.borderLight}`,
-        verticalAlign:"middle",
-      }}>
-        <TPill label={task.priority} map={TASK_PRIORITY} small/>
-      </td>
-
-      {}
-      <td style={{
-        padding:"13px 12px",
-        borderBottom: isLast ? "none" : `1px solid ${C.borderLight}`,
-        verticalAlign:"middle",
-      }}>
-        <TDueDate task={task}/>
-      </td>
-
-      {}
-      <td style={{
-        padding:"13px 12px",
-        borderBottom: isLast ? "none" : `1px solid ${C.borderLight}`,
-        verticalAlign:"middle",
-      }}>
-        <TAssignee name={task.assignee} initials={task.assigneeInitials}/>
-      </td>
-
-      {}
-      <td style={{
-        padding:"13px 16px 13px 8px",
-        borderBottom: isLast ? "none" : `1px solid ${C.borderLight}`,
-        verticalAlign:"middle",
-      }}>
-        <TPill label={task.status} map={TASK_STATUS} small/>
-      </td>
-    </tr>
-  );
-}
-
-function TaskSidebar({ tasks }) {
-  const urgent = tasks
-    .filter(t => t.status !== "Tamamlandı" && t.status !== "İptal")
-    .sort((a,b) => {
-      const pOrder = (TASK_PRIORITY[a.priority]?.order||9) - (TASK_PRIORITY[b.priority]?.order||9);
-      if (pOrder !== 0) return pOrder;
-      return a.dueDateRaw - b.dueDateRaw;
-    })
-    .slice(0, 6);
-
-  return (
-    <div style={{
-      background:C.white, border:`1px solid ${C.border}`, borderRadius:12,
-      overflow:"hidden",
-    }}>
-      {}
-      <div style={{
-        background:`linear-gradient(135deg, ${C.navyDeep} 0%, ${C.navy} 100%)`,
-        padding:"16px 18px",
-      }}>
-        <div style={{fontSize:14, fontWeight:600, color:C.ivory, fontFamily:"'Playfair Display',serif", marginBottom:2}}>
-          Öncelikli İşler
-        </div>
-        <div style={{fontSize:11.5, color:"rgba(248,245,238,0.5)", fontFamily:"'DM Sans',sans-serif"}}>
-          Acil ve yaklaşan görevler
-        </div>
-      </div>
-
-      {}
-      <div style={{padding:"8px 0"}}>
-        {urgent.length === 0 ? (
-          <div style={{
-            padding:"32px 20px", textAlign:"center",
-            color:C.textFaint, fontFamily:"'DM Sans',sans-serif", fontSize:13,
-          }}>
-            Tüm öncelikli görevler tamamlandı ✓
-          </div>
-        ) : urgent.map((task, i) => {
-          const pMeta = TASK_PRIORITY[task.priority] || {};
-          const overdue = task.dueDateRaw < 0;
-          const isToday = task.dueDateRaw === 0;
-          return (
-            <div key={task.id} style={{
-              padding:"11px 16px",
-              borderBottom: i < urgent.length-1 ? `1px solid ${C.borderLight}` : "none",
-              display:"flex", gap:11, alignItems:"flex-start",
-              cursor:"pointer",
-            }}
-              onMouseEnter={e=>e.currentTarget.style.background=C.ivory}
-              onMouseLeave={e=>e.currentTarget.style.background="transparent"}
-            >
-              {}
-              <div style={{
-                width:8, height:8, borderRadius:"50%", flexShrink:0,
-                background:pMeta.dot, marginTop:6,
-                boxShadow:`0 0 0 3px ${pMeta.dot}22`,
-              }}/>
-              <div style={{flex:1, minWidth:0}}>
-                <div style={{
-                  fontSize:13, fontWeight:500, color:C.text,
-                  fontFamily:"'DM Sans',sans-serif", lineHeight:1.35,
-                  marginBottom:4,
-                  overflow:"hidden", textOverflow:"ellipsis",
-                  display:"-webkit-box", WebkitLineClamp:2,
-                  WebkitBoxOrient:"vertical",
-                }}>{task.title}</div>
-                <div style={{display:"flex", alignItems:"center", gap:6, flexWrap:"wrap"}}>
-                  <TCatPill label={task.category}/>
-                  <span style={{
-                    fontSize:11, fontWeight:600,
-                    color: overdue ? C.red : isToday ? C.amber : C.textFaint,
-                    fontFamily:"'DM Sans',sans-serif",
-                  }}>
-                    {overdue ? `${Math.abs(task.dueDateRaw)} gün gecikti`
-                     : isToday ? "Bugün"
-                     : task.dueDate}
-                  </span>
-                </div>
-              </div>
-              <TIc d="M9 18l6-6-6-6" size={13} sw={1.8} color={C.textFaint}/>
-            </div>
-          );
-        })}
-      </div>
-
-      {}
-      <div style={{
-        padding:"10px 16px",
-        borderTop:`1px solid ${C.borderLight}`,
-        background:C.ivory,
-      }}>
-        <button style={{
-          width:"100%", background:"none", border:"none", cursor:"pointer",
-          fontSize:12.5, color:C.goldLight, fontWeight:500,
-          fontFamily:"'DM Sans',sans-serif",
-          display:"flex", alignItems:"center", justifyContent:"center", gap:5,
-        }}>
-          Tüm Görevleri Gör
-          <TIc d="M9 18l6-6-6-6" size={13} sw={2} color={C.goldLight}/>
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function TasksPage() {
-  const [showNewTask, setShowNewTask] = useState(false);
-  const [_taskTick, setTaskTick] = useState(0);
-  const [activeTab, setActiveTab]   = useState("Tümü");
-  const [activeFilter, setActiveFilter] = useState("Tümü");
-  const [search, setSearch]         = useState("");
-  const { data:repoTasks, loading:tasksLoading, error:tasksError, reload:reloadTasks }
-    = useRepo("task", "getAll");
-
-  const TABS = ["Tümü", "Bugün", "Geciken", "Bu Hafta", "Tamamlananlar"];
-
-  async function toggleTask(id) {
-    const repo = getActiveRepo("task");
-    await Promise.resolve(repo.toggle(id));
-    setTaskTick(n=>n+1);
-    reloadTasks && reloadTasks();
-  }
-
-  const tasks = repoTasks ?? [];
-  const filtered = tasks.filter(t => {
-    if (search && !t.title.toLowerCase().includes(search.toLowerCase()) &&
-        !t.guest.toLowerCase().includes(search.toLowerCase())) return false;
-    if (activeTab === "Bugün")         return t.dueDateRaw === 0 && t.status !== "Tamamlandı";
-    if (activeTab === "Geciken")       return t.dueDateRaw < 0 && t.status !== "Tamamlandı";
-    if (activeTab === "Bu Hafta")      return t.dueDateRaw >= 0 && t.dueDateRaw <= 7 && t.status !== "Tamamlandı";
-    if (activeTab === "Tamamlananlar") return t.status === "Tamamlandı";
-    return true;
-  });
-
-  const sorted = [...filtered].sort((a, b) => {
-    if (a.status === "Tamamlandı" && b.status !== "Tamamlandı") return 1;
-    if (b.status === "Tamamlandı" && a.status !== "Tamamlandı") return -1;
-    const pOrder = (TASK_PRIORITY[a.priority]?.order||9) - (TASK_PRIORITY[b.priority]?.order||9);
-    if (pOrder !== 0) return pOrder;
-    return a.dueDateRaw - b.dueDateRaw;
-  });
-
-  const todayCount    = tasks.filter(t => t.dueDateRaw === 0 && t.status !== "Tamamlandı").length;
-  const overdueCount  = tasks.filter(t => t.dueDateRaw < 0  && t.status !== "Tamamlandı").length;
-  const urgentCount   = tasks.filter(t => t.priority === "Acil" && t.status !== "Tamamlandı").length;
-  const doneCount     = tasks.filter(t => t.status === "Tamamlandı").length;
-
-  const tabCounts = {
-    "Tümü":          tasks.filter(t=>t.status!=="Tamamlandı").length,
-    "Bugün":         todayCount,
-    "Geciken":       overdueCount,
-    "Bu Hafta":      tasks.filter(t=>t.dueDateRaw>=0&&t.dueDateRaw<=7&&t.status!=="Tamamlandı").length,
-    "Tamamlananlar": doneCount,
-  };
-
-  return (
-    <>
-    {showNewTask ? (<NewTaskModal onClose={()=>{ setShowNewTask(false); reloadTasks && reloadTasks(); }}/>) : null}
-    <div style={{display:"flex", flexDirection:"column", gap:20}}>
-
-      {}
-      <div className="page-header" style={{
-        background:C.white, border:`1px solid ${C.border}`, borderRadius:12,
-        padding:"20px 24px",
-        display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:20,
-      }}>
-        <div>
-          <h1 style={{margin:0, fontSize:24, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif", marginBottom:5}}>Görevler</h1>
-          <p style={{margin:0, fontSize:13.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif"}}>
-            Satış ve operasyon ekibinin yapması gereken işleri takip edin.
-          </p>
-        </div>
-        <div className="page-header-actions" style={{display:"flex", alignItems:"center", gap:10, flexShrink:0}}>
-          {}
-          <div style={{position:"relative"}}>
-            <span style={{position:"absolute", left:10, top:"50%", transform:"translateY(-50%)", color:C.textFaint, pointerEvents:"none"}}>
-              <TIc d="M21 21l-4.35-4.35 M17 11A6 6 0 105 11a6 6 0 0012 0z" size={14} sw={1.8}/>
-            </span>
-            <input type="text" value={search} onChange={e=>setSearch(e.target.value)}
-              placeholder="Görev veya misafir ara…"
-              style={{
-                paddingLeft:32, paddingRight:12, paddingTop:8, paddingBottom:8,
-                border:`1px solid ${C.border}`, borderRadius:8,
-                background:C.ivory, fontSize:13, color:C.text,
-                fontFamily:"'DM Sans',sans-serif", outline:"none", width:"min(220px,45vw)",
-                transition:"border-color .15s, box-shadow .15s",
-              }}
-              onFocus={e=>{ e.target.style.borderColor=C.gold; e.target.style.boxShadow=`0 0 0 3px ${C.gold}20`; }}
-              onBlur={e=>{ e.target.style.borderColor=C.border; e.target.style.boxShadow="none"; }}
-            />
-          </div>
-          <button style={{
-            display:"flex", alignItems:"center", gap:7,
-            padding:"9px 16px", borderRadius:8,
-            border:"none", background:C.navy, cursor:"pointer", color:C.white,
-            fontFamily:"'DM Sans',sans-serif", fontSize:13, fontWeight:500,
-          }}
-            onMouseEnter={e=>e.currentTarget.style.background=C.navyHover}
-            onMouseLeave={e=>e.currentTarget.style.background=C.navy}
-          onClick={()=>setShowNewTask(true)}
-          >
-            <TIc d="M12 5v14M5 12h14" size={14} sw={2.5} color="#fff"/>
-            Yeni Görev Ekle
-          </button>
-        </div>
-      </div>
-
-      {}
-      <div className="rsp-stat-grid" style={{display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:14}}>
-        {[
-          {
-            label:"Bugünkü Görevler", val:todayCount,
-            icon:"M8 2v4M16 2v4M3 10h18M21 8a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2h14a2 2 0 002-2V8z",
-            color:C.blue, bg:C.blueBg,
-            sub: todayCount > 0 ? "Bugün tamamlanmalı" : "Bugün görev yok",
-          },
-          {
-            label:"Geciken Görevler", val:overdueCount,
-            icon:"M12 8v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z",
-            color:C.red, bg:C.redBg,
-            sub: overdueCount > 0 ? "Hemen ilgilenilmeli" : "Geciken görev yok ✓",
-          },
-          {
-            label:"Acil Görevler", val:urgentCount,
-            icon:"M13 10V3L4 14h7v7l9-11h-7z",
-            color:C.amber, bg:C.amberBg,
-            sub: urgentCount > 0 ? "Acil öncelikli" : "Acil görev yok ✓",
-          },
-          {
-            label:"Tamamlananlar", val:doneCount,
-            icon:"M22 11.08V12a10 10 0 11-5.93-9.14 M22 4L12 14.01l-3-3",
-            color:C.green, bg:C.greenBg,
-            sub:`${tasks.length} görevden ${doneCount} tamamlandı`,
-          },
-        ].map((k,i)=>(
-          <div key={i} style={{
-            background:C.white, border:`1px solid ${C.border}`, borderRadius:12,
-            padding:"18px 20px", display:"flex", alignItems:"flex-start", gap:14,
-          }}>
-            <div style={{
-              width:42, height:42, borderRadius:10, flexShrink:0,
-              background:k.bg, display:"flex", alignItems:"center", justifyContent:"center",
-              color:k.color,
-            }}>
-              <TIc d={k.icon} size={18} sw={1.6} color={k.color}/>
-            </div>
-            <div style={{flex:1}}>
-              <div style={{fontSize:26, fontWeight:700, color:k.color, fontFamily:"'Playfair Display',serif", lineHeight:1, marginBottom:4}}>
-                {k.val}
-              </div>
-              <div style={{fontSize:12, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", marginBottom:3}}>{k.label}</div>
-              <div style={{fontSize:11, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>{k.sub}</div>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {}
-      <div className="rsp-split" style={{display:"grid", gridTemplateColumns:"1fr 280px", gap:20, alignItems:"start"}}>
-
-        {}
-        <div style={{background:C.white, border:`1px solid ${C.border}`, borderRadius:12, overflow:"hidden"}}>
-
-          {}
-          <div style={{
-            display:"flex", alignItems:"center",
-            borderBottom:`1px solid ${C.borderLight}`,
-            padding:"0 20px", overflowX:"auto",
-          }}>
-            {TABS.map(tab => {
-              const on = activeTab === tab;
-              const cnt = tabCounts[tab];
-              return (
-                <button key={tab} onClick={()=>setActiveTab(tab)} style={{
-                  padding:"13px 14px",
-                  border:"none", borderBottom: on ? `2px solid ${C.gold}` : "2px solid transparent",
-                  background:"transparent",
-                  color: on ? C.gold : C.textMuted,
-                  fontFamily:"'DM Sans',sans-serif", fontSize:13,
-                  fontWeight: on ? 600 : 400, cursor:"pointer",
-                  whiteSpace:"nowrap", marginBottom:-1,
-                  display:"flex", alignItems:"center", gap:6,
-                  transition:"color .12s",
-                }}>
-                  {tab}
-                  {cnt > 0 && (
-                    <span style={{
-                      minWidth:18, height:18, borderRadius:99, padding:"0 5px",
-                      display:"inline-flex", alignItems:"center", justifyContent:"center",
-                      fontSize:10.5, fontWeight:600,
-                      background: on ? `${C.gold}22` : C.ivoryDark,
-                      color: on ? C.gold : C.textFaint,
-                    }}>{cnt}</span>
-                  )}
-                </button>
-              );
-            })}
-            <div style={{marginLeft:"auto", padding:"0 4px", flexShrink:0}}>
-              <span style={{fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>
-                {sorted.length} görev
-              </span>
-            </div>
-          </div>
-
-          {}
-          {tasksLoading ? <LoadingState label="Görevler yükleniyor…"/> :
-           tasksError   ? <ErrorState message={tasksError} onRetry={reloadTasks}/> :
-           sorted.length === 0 ? (
-            <div style={{padding:"64px 40px", textAlign:"center"}}>
-              <div style={{fontSize:36, opacity:.2, marginBottom:14}}>✓</div>
-              <div style={{fontSize:16, fontWeight:600, color:C.text, fontFamily:"'Playfair Display',serif", marginBottom:6}}>
-                Henüz görev bulunmuyor.
-              </div>
-              <div style={{fontSize:13.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif"}}>
-                Bu filtre için tamamlanmış veya kayıt yok.
-              </div>
-              <button style={{
-                marginTop:20, display:"inline-flex", alignItems:"center", gap:7,
-                padding:"9px 18px", borderRadius:8,
-                border:`1.5px solid ${C.gold}`, background:C.goldPale,
-                cursor:"pointer", color:C.gold,
-                fontFamily:"'DM Sans',sans-serif", fontSize:13, fontWeight:500,
-              }}>
-                <TIc d="M12 5v14M5 12h14" size={14} sw={2.5} color={C.gold}/>
-                Yeni Görev Ekle
-              </button>
-            </div>
-          ) : (
-            <>
-              <table style={{width:"100%", borderCollapse:"collapse"}}>
-                <thead>
-                  <tr style={{borderBottom:`1px solid ${C.border}`, background:C.ivory}}>
-                    <th style={{padding:"10px 8px 10px 20px", width:40}}/>
-                    {["Görev","Kategori","Öncelik","Son Tarih","Sorumlu","Durum"].map((h,i)=>(
-                      <th key={h} style={{
-                        padding:"10px 12px",
-                        textAlign:"left", fontSize:10.5, fontWeight:600,
-                        color:C.textFaint, fontFamily:"'DM Sans',sans-serif",
-                        textTransform:"uppercase", letterSpacing:"0.07em",
-                        whiteSpace:"nowrap",
-                      }}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {sorted.map((task, i) => (
-                    <TaskRow
-                      key={task.id} task={task}
-                      isLast={i===sorted.length-1}
-                      onToggle={toggleTask}
-                    />
-                  ))}
-                </tbody>
-              </table>
-            <div className="rsp-cards"><MobileCardList items={filtered} renderCard={(item,i)=>(
-                <MobileCard key={item.id}>
-                  <div>
-                    <div style={{fontWeight:600,fontSize:14,color:C.text}}>{item.title}</div>
-                    <div style={{fontSize:12,color:C.textMuted,marginTop:2}}>{item.dueDate||"—"} · {item.assignee||"—"}</div>
-                  </div>
-                </MobileCard>
-              )}/></div>
-
-              {}
-              <div style={{
-                padding:"10px 20px", background:C.ivory,
-                borderTop:`1px solid ${C.borderLight}`,
-                display:"flex", alignItems:"center", justifyContent:"space-between",
-              }}>
-                <span style={{fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>
-                  {sorted.length} / {tasks.length} görev gösteriliyor
-                </span>
-                <div style={{display:"flex", alignItems:"center", gap:6}}>
-                  <span style={{fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>
-                    {doneCount} tamamlandı · {overdueCount > 0 ? `${overdueCount} gecikiyor` : "geciken yok"}
-                  </span>
-                </div>
-              </div>
-            </>
-          )}
-        </div>
-
-        {}
-        <TaskSidebar tasks={tasks}/>
-      </div>
-    </div>
-    </>
-  );
-}
 
 const PAY_STATUS_MAP = {
   "Bekliyor":      { color:"#C05621", bg:"#FEF0E8", dot:"#C05621" },
@@ -10802,19 +9375,19 @@ function GuideDetailPage({ guideId, onBack }) {
 
         <div style={{display:"flex", flexDirection:"column", gap:18}}>
 
-          <DetailCard title={`Yaklaşan Turlar (${upcoming.length})`}>
+          <GuideSectionCard title={`Yaklaşan Turlar (${upcoming.length})`}>
             {upcoming.length===0 ? <EmptyRow text="Yaklaşan tur yok."/> : upcoming.map(r=>(
               <ResRow key={r.id} r={r}/>
             ))}
-          </DetailCard>
+          </GuideSectionCard>
 
-          <DetailCard title={`Tur Geçmişi (${past.length})`}>
+          <GuideSectionCard title={`Tur Geçmişi (${past.length})`}>
             {past.length===0 ? <EmptyRow text="Geçmiş tur yok."/> : past.map(r=>(
               <ResRow key={r.id} r={r}/>
             ))}
-          </DetailCard>
+          </GuideSectionCard>
 
-          <DetailCard title={`Misafir Geçmişi (${customers.length})`}>
+          <GuideSectionCard title={`Misafir Geçmişi (${customers.length})`}>
             {customers.length===0 ? <EmptyRow text="Bu rehber henüz bir misafire atanmadı."/> : customers.map(c=>(
               <div key={c.id} style={{display:"flex", alignItems:"center", justifyContent:"space-between", padding:"10px 0", borderBottom:`1px solid ${C.borderLight}`}}>
                 <div>
@@ -10824,9 +9397,9 @@ function GuideDetailPage({ guideId, onBack }) {
                 <IDLink id={c.id} type="customer"/>
               </div>
             ))}
-          </DetailCard>
+          </GuideSectionCard>
 
-          <DetailCard title={`Ödeme Geçmişi (${payments.length})`} action={
+          <GuideSectionCard title={`Ödeme Geçmişi (${payments.length})`} action={
             <button onClick={()=>setShowAddPayment(true)} style={{
               padding:"6px 12px", borderRadius:7, border:"none", background:C.navy,
               color:C.white, fontSize:12, fontWeight:500, fontFamily:"'DM Sans',sans-serif", cursor:"pointer",
@@ -10848,32 +9421,32 @@ function GuideDetailPage({ guideId, onBack }) {
                   bg={p.status==="Ödendi"?C.greenBg:p.status==="İptal"?C.redBg:C.amberBg}/>
               </div>
             ))}
-          </DetailCard>
+          </GuideSectionCard>
 
         </div>
 
         <div style={{display:"flex", flexDirection:"column", gap:18}}>
-          <DetailCard title="Profil Bilgileri">
-            <InfoRow label="Telefon" value={guide.phone}/>
-            <InfoRow label="E-posta" value={guide.email}/>
-            <InfoRow label="Uyruk"   value={guide.nationality}/>
-            <InfoRow label="Lisans No" value={guide.licenseNumber}/>
-            <InfoRow label="Lisans Bilgisi" value={guide.licenseNotes}/>
-            <InfoRow label="Bölge"   value={guide.region}/>
+          <GuideSectionCard title="Profil Bilgileri">
+            <GuideInfoRow label="Telefon" value={guide.phone}/>
+            <GuideInfoRow label="E-posta" value={guide.email}/>
+            <GuideInfoRow label="Uyruk"   value={guide.nationality}/>
+            <GuideInfoRow label="Lisans No" value={guide.licenseNumber}/>
+            <GuideInfoRow label="Lisans Bilgisi" value={guide.licenseNotes}/>
+            <GuideInfoRow label="Bölge"   value={guide.region}/>
             {guide.notes && (
               <div style={{marginTop:10, padding:"10px 12px", background:C.ivory, borderRadius:8, fontSize:12.5, color:C.textMid, fontFamily:"'DM Sans',sans-serif", lineHeight:1.5}}>
                 {guide.notes}
               </div>
             )}
-          </DetailCard>
+          </GuideSectionCard>
 
-          <DetailCard title="Diller">
+          <GuideSectionCard title="Diller">
             {(guide.languageNames||[]).length===0 ? <EmptyRow text="Dil belirtilmemiş."/> : (
               <div style={{display:"flex", flexWrap:"wrap", gap:6}}>
                 {guide.languageNames.map(l=><Pill key={l} label={l} color={C.navy} bg={C.ivoryDark}/>)}
               </div>
             )}
-          </DetailCard>
+          </GuideSectionCard>
         </div>
 
       </div>
@@ -10882,7 +9455,7 @@ function GuideDetailPage({ guideId, onBack }) {
   );
 }
 
-function DetailCard({ title, action, children }) {
+function GuideSectionCard({ title, action, children }) {
   return (
     <div style={{background:C.white, border:`1px solid ${C.border}`, borderRadius:12, padding:"16px 18px"}}>
       <div style={{display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:10}}>
@@ -10896,7 +9469,7 @@ function DetailCard({ title, action, children }) {
 function EmptyRow({ text }) {
   return <div style={{padding:"14px 0", fontSize:12.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", textAlign:"center"}}>{text}</div>;
 }
-function InfoRow({ label, value }) {
+function GuideInfoRow({ label, value }) {
   return (
     <div style={{display:"flex", justifyContent:"space-between", padding:"7px 0", borderBottom:`1px solid ${C.borderLight}`}}>
       <span style={{fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>{label}</span>
@@ -13563,61 +12136,6 @@ function NewGuestModal({ onClose }) {
   );
 }
 
-function NewTaskModal({ onClose, prefillCustomerId, prefillLeadId, prefillResId }) {
-  const [title,setTitle]=useState("");
-  const [category,setCategory]=useState("Operasyon");
-  const [priority,setPriority]=useState("Orta");
-  const [dueDate,setDueDate]=useState("");
-  const [custId,setCustId]=useState(prefillCustomerId||"");
-  const [assignee,setAssignee]=useState(DB.staff[0]?.id||"STAFF-001");
-  const [notes,setNotes]=useState("");
-  const [errs,setErrs]=useState({});
-  const { mutate:mutTask, mutating:taskMut } = useRepoMutation("task");
-
-  async function handleSubmit() {
-    const e = validate({ title:{ required:"Görev başlığı zorunludur" } }, { title });
-    setErrs(e); if (Object.keys(e).length) return;
-    const { error:te } = await mutTask("create", {
-      title, customerId:custId||null,
-      leadId:prefillLeadId||null, resId:prefillResId||null,
-      category, priority, dueDate:dueDate||"—", assigneeId:assignee, notes,
-    });
-    if (te) { showToast("Görev oluşturulamadı ✗"); return; }
-    showToast("Görev oluşturuldu ✓"); onClose();
-  }
-  return (
-    <Modal title="Yeni Görev Ekle" onClose={onClose} onSubmit={handleSubmit}
-      submitLabel={taskMut?"Kaydediliyor…":"Görevi Kaydet"}>
-      <FRow label="Görev Başlığı" required error={errs.title}>
-        <FText value={title} onChange={setTitle} placeholder="Görevi kısaca açıklayın…"/>
-      </FRow>
-      <FGrid>
-        <FRow label="Kategori">
-          <FSelect value={category} onChange={setCategory}
-            options={["Operasyon","Ödeme","Rehber","Ulaşım","Müşteri","Teklif","Genel"]}/>
-        </FRow>
-        <FRow label="Öncelik">
-          <FSelect value={priority} onChange={setPriority}
-            options={["Düşük","Orta","Yüksek","Acil"]}/>
-        </FRow>
-        <FRow label="Son Tarih">
-          <FText value={dueDate} onChange={setDueDate} placeholder="22 Haz 2026"/>
-        </FRow>
-        <FRow label="Sorumlu">
-          <FSelect value={assignee} onChange={setAssignee}
-            options={DB.staff.map(s=>[s.id,s.name])}/>
-        </FRow>
-      </FGrid>
-      <FRow label="İlgili Müşteri">
-        <FSelect value={custId} onChange={setCustId}
-          options={[["","— Seçin —"], ...DB.customers.map(c=>[c.id,c.name])]}/>
-      </FRow>
-      <FRow label="Notlar">
-        <FTextArea value={notes} onChange={setNotes} placeholder="Ek notlar…"/>
-      </FRow>
-    </Modal>
-  );
-}
 
 function NewReminderModal({ onClose }) {
   const [title,setTitle]=useState("");
@@ -15159,123 +13677,6 @@ function useSources() {
   const sourceOptions = (sources || DB.sources).map(s => s.name || s.label || s.slug || "");
   return { sources: sources || [], srcLoading, getSourceId, sourceOptions };
 }
-function NewLeadModal({ onClose, onSuccess }) {
-  const { isMobile } = useBreakpoint();
-  const { getSourceId, sourceOptions } = useSources();
-  const [name,    setName]    = useState("");
-  const [phone,   setPhone]   = useState("");
-  const [email,   setEmail]   = useState("");
-  const [tour,    setTour]    = useState("");
-  const [source,  setSource]  = useState("");
-  const [adults,  setAdults]  = useState("2");
-  const [date,    setDate]    = useState("");
-  const [currency,setCurrency]= useState("EUR");
-  const [notes,   setNotes]   = useState("");
-  const [errs,    setErrs]    = useState({});
-  const { mutate:mutCust } = useRepoMutation("customer");
-  const { mutate:mutLead } = useRepoMutation("lead");
-  const [busy, setBusy] = useState(false);
-
-  async function handleSubmit() {
-    const e = validate({
-      name:  { required:"Ad Soyad zorunludur" },
-      phone: { phone:"Geçerli bir telefon numarası girin (örn: +90 555 000 0000)" },
-      email: { email:"Geçerli bir e-posta adresi girin" },
-      adults:{ number:"Kişi sayısı sayısal olmalıdır", min:1, max:100 },
-    }, { name, phone: phone||"0", email: email||"a@b.c", adults });
-    const eReq = validate({ name:{ required:"Ad Soyad zorunludur" } }, { name });
-    const ePhone = phone ? validate({ phone:{ phone:"Geçerli telefon numarası girin" } }, { phone }) : {};
-    const eEmail = email ? validate({ email:{ email:"Geçerli e-posta adresi girin" } }, { email }) : {};
-    const merged = { ...eReq, ...ePhone, ...eEmail };
-    setErrs(merged);
-    if (Object.keys(merged).length) return;
-
-    setBusy(true);
-    try {
-      // ── Resolve real source UUID from Supabase (mock IDs break FK) ──
-      const resolvedSourceId = getSourceId(source);
-
-      // ── Find or create customer ─────────────────────────────────────
-      let custId = null;
-      if (AppConfig.useSupabase) {
-        const repo = getActiveRepo('customer');
-        const existing = await Promise.resolve(
-          repo.findByContact({ email:email||null, phone:phone||null })
-        ).catch(()=>null);
-        if (existing) {
-          custId = existing.id;
-        } else {
-          const { data:newCust, error:custErr } = await mutCust("create", {
-            name, phone, email, country:"Diğer", language:"İngilizce",
-            importType:"manual", sourceId: resolvedSourceId,
-          });
-          if (custErr) throw new Error("Müşteri oluşturulamadı: " + custErr);
-          custId = newCust?.id || null;
-        }
-      } else {
-        const nc = { id:`CUST-${Date.now()}`, name, phone, email, flag:"🌍",
-          country:"Diğer", language:"İngilizce", status:"Aktif", sourceId:"SRC-01",
-          initials:name.split(" ").map(w=>w[0]||"").join("").slice(0,2).toUpperCase() };
-        DB.customers.push(nc);
-        custId = nc.id;
-      }
-
-      // ── Create lead ─────────────────────────────────────────────────
-      const { data:newLead, error } = await mutLead("create", {
-        customerId: custId, name, phone, email, tour,
-        paxAdult: parseInt(adults)||2, travelStart: date||null,
-        currency, notes, sourceId: resolvedSourceId, importType:"manual",
-      });
-      if (error) throw new Error("Talep oluşturulamadı: " + error);
-
-      showToast("Talep başarıyla oluşturuldu.");
-      onSuccess && onSuccess(newLead);
-      onClose();
-    } catch(err) {
-      console.error('[NewLeadModal] create failed:', err);
-      showToast("Talep oluşturulurken bir hata oluştu: " + (err?.message || err));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <FormShell isMobile={isMobile} title="Yeni Talep Ekle" onClose={onClose} onSubmit={handleSubmit}
-      submitLabel="Talebi Kaydet" submitting={busy}>
-      <FGrid>
-        <FRow label="Ad Soyad" required error={errs.name}>
-          <FText value={name} onChange={setName} placeholder="Sarah Johnson" error={errs.name}/>
-        </FRow>
-        <FRow label="Kaynak">
-          <FSelect value={source} onChange={setSource} options={sourceOptions}/>
-        </FRow>
-        <FRow label="Telefon" error={errs.phone}>
-          <FText value={phone} onChange={setPhone} placeholder="+90 555 000 0000" mono error={errs.phone}/>
-        </FRow>
-        <FRow label="E-posta" error={errs.email}>
-          <FText value={email} onChange={setEmail} placeholder="email@example.com" type="email" error={errs.email}/>
-        </FRow>
-      </FGrid>
-      <FRow label="Tur / Destinasyon" full>
-        <FText value={tour} onChange={setTour} placeholder="Private Istanbul Experience"/>
-      </FRow>
-      <FGrid>
-        <FRow label="Kişi Sayısı" error={errs.adults}>
-          <FText value={adults} onChange={setAdults} placeholder="2" mono error={errs.adults}/>
-        </FRow>
-        <FRow label="Seyahat Tarihi (yaklaşık)">
-          <FText value={date} onChange={setDate} placeholder="2026-07-15" mono/>
-        </FRow>
-        <FRow label="Para Birimi">
-          <FSelect value={currency} onChange={setCurrency} options={["EUR","USD","GBP","TRY"]}/>
-        </FRow>
-      </FGrid>
-      <FRow label="Notlar" full>
-        <FTextArea value={notes} onChange={setNotes} placeholder="Müşteri hakkında ekstra bilgi…"/>
-      </FRow>
-    </FormShell>
-  );
-}
 
 function NewTourModal({ onClose }) {
   const [name,     setName]     = useState("");
@@ -15376,9 +13777,9 @@ function mapQuoteFromDB(r, items) {
     customerId:    r.customer_id   || null,
     tourId:        r.tour_id       || tourItem?.tourId || null,
     // Real Supabase rows never had this field, only mock data did — every
-    // consumer (QuotesPage's search filter, QuoteDetailPage) calls
-    // .toLowerCase() / renders it directly as a string, so a missing
-    // value here was a hard crash in Supabase mode, not just a blank cell.
+    // remaining consumer (QuoteDetailPage) calls .toLowerCase() / renders it
+    // directly as a string, so a missing value here was a hard crash in
+    // Supabase mode, not just a blank cell.
     customer:      r.customer?.full_name || '',
     flag:          r.flag || '🌍',
     tour:          r.tour_name || (r.lead && r.lead.destination) || r.destination || '—',
