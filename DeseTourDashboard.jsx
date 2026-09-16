@@ -12773,13 +12773,21 @@ function canAccess(role, page) {
   return perms ? perms.includes(page) : false;
 }
 
+// Returns { data, error }. Deliberately does NOT collapse a failed query
+// into "no profile" — .single() throws/errors on zero rows, which used to
+// be swallowed by a bare try/catch and returned as null indistinguishably
+// from "no staff_users row exists". .maybeSingle() correctly returns
+// {data:null, error:null} for a genuine zero-row result, and a real
+// {data:null, error:{...}} for an actual failure (network, RLS denial,
+// bad column, etc.) — the caller must branch on `error`, not just on
+// whether `data` is falsy, or a real failure looks identical to a
+// genuinely-missing profile.
 async function loadStaffData(userId) {
   const sb = getSB();
-  if (!sb) return null;
-  try {
-    const { data } = await sb.from('staff_users').select('*').eq('id', userId).single();
-    return data || null;
-  } catch(_) { return null; }
+  if (!sb) return { data:null, error:null };
+  const { data, error } = await sb.from('staff_users').select('*').eq('id', userId).maybeSingle();
+  if (error) console.error('[Auth] staff_users query failed for', userId, ':', error);
+  return { data: data || null, error: error || null };
 }
 
 // A hung Supabase call (paused project, unreachable network, bad API key)
@@ -12797,6 +12805,29 @@ let _authCache = null;
 let _authListeners = [];
 function _notifyAuthListeners() { _authListeners.forEach(fn => fn(_authCache)); }
 
+// Resolves { session, staff, staffQueryError } for a given Supabase auth
+// session. Two genuinely different failure modes are kept apart so
+// AuthGuard can show the right screen for each:
+//   - staffQueryError set   → the staff_users query itself failed (timeout,
+//     network, RLS denial, bad column, etc.) — the profile's real state is
+//     UNKNOWN, not "missing".
+//   - staff null, no error  → the query succeeded and genuinely returned
+//     zero rows — no staff_users row exists for this auth UUID.
+async function _resolveStaffState(s) {
+  if (!s?.user) return { session:s, staff:null, authLoading:false, staffQueryError:null };
+  try {
+    const { data, error } = await _withTimeout(loadStaffData(s.user.id), 12000, 'Personel profili');
+    if (error) {
+      console.error('[Auth] staff_users query returned an error (session kept):', error);
+      return { session:s, staff:null, authLoading:false, staffQueryError: error.message || String(error) };
+    }
+    return { session:s, staff:data, authLoading:false, staffQueryError:null };
+  } catch(e) {
+    console.error('[Auth] staff profile lookup threw (session kept):', e);
+    return { session:s, staff:null, authLoading:false, staffQueryError: e.message };
+  }
+}
+
 function useAuth() {
   const [authState, setAuthState] = useState(() => _authCache || {
     session: null, staff: null, authLoading: true
@@ -12806,6 +12837,18 @@ function useAuth() {
   const staff      = authState.staff;
   const authLoading = authState.authLoading;
   const authError   = authState.authError || null;
+  const staffQueryError = authState.staffQueryError || null;
+
+  // Re-runs only the staff_users lookup for the current session, without
+  // dropping back to a full "Yükleniyor…" screen — used by the "Tekrar
+  // Dene" button on the staff-query-failed screen.
+  async function retryStaffLookup() {
+    if (!session) return;
+    const patch = await _resolveStaffState(session);
+    _authCache = { ...(_authCache || {}), ...patch };
+    setAuthState(_authCache);
+    _notifyAuthListeners();
+  }
 
   function updateAuth(patch) {
     _authCache = { ...(_authCache || { session:null, staff:null, authLoading:true }), ...patch };
@@ -12857,18 +12900,12 @@ function useAuth() {
       // Step 2: the session check above succeeded (session may legitimately
       // be null, i.e. genuinely signed out). A failure fetching the staff
       // profile below is a separate concern — it must NOT wipe out a valid
-      // session. Keep `s` as-is either way; only `staff`/`authError` reflect
-      // this step's outcome.
-      let st = null, staffErr = null;
-      if (s?.user) {
-        try {
-          st = await _withTimeout(loadStaffData(s.user.id), 12000, 'Personel profili');
-        } catch(e) {
-          console.error('[Auth] staff profile lookup failed (session kept):', e);
-          staffErr = e.message;
-        }
-      }
-      const newState = { session:s, staff:st, authLoading:false, authError:staffErr };
+      // session. Keep `s` as-is either way; only `staff`/`staffQueryError`
+      // reflect this step's outcome. staffQueryError is kept SEPARATE from
+      // authError (session-check failures, shown on the login screen) so a
+      // failed staff_users query never gets silently reinterpreted as "no
+      // profile exists" — AuthGuard shows a distinct screen for each.
+      const newState = await _resolveStaffState(s);
       _authCache = newState;
       setAuthState(newState);
       _notifyAuthListeners();
@@ -12880,16 +12917,7 @@ function useAuth() {
       // auth event itself — a staff_users lookup failure must not override
       // it with `null`, or a transient DB hiccup during an active session
       // (e.g. right after some unrelated insert) would look like a logout.
-      let st = null, staffErr = null;
-      if (s?.user) {
-        try {
-          st = await _withTimeout(loadStaffData(s.user.id), 12000, 'Personel profili');
-        } catch(e) {
-          console.error('[Auth] onAuthStateChange staff lookup failed (session kept):', e);
-          staffErr = e.message;
-        }
-      }
-      const newState = { session:s, staff:st, authLoading:false, authError:staffErr };
+      const newState = await _resolveStaffState(s);
       _authCache = newState;
       setAuthState(newState);
       _notifyAuthListeners();
@@ -12908,8 +12936,16 @@ function useAuth() {
       const found = DB.staff.find(s => s.email === email);
       if (found && password === "demo") {
         const mockUser = { ...found, full_name:found.name };
-        setStaff(mockUser);
-        setSession({ user:{ email:found.email, id:found.id } });
+        // Pre-existing bug fixed here: this used to call setStaff()/
+        // setSession(), neither of which exist in this hook (state lives
+        // in a single authState object updated via updateAuth), so a mock
+        // -mode login with the correct demo credentials threw a
+        // ReferenceError instead of logging in.
+        updateAuth({
+          staff: mockUser,
+          session: { user:{ email:found.email, id:found.id } },
+          authLoading: false, authError:null, staffQueryError:null,
+        });
         return { error:null };
       }
       return { error:"Hatalı email veya şifre." };
@@ -12922,8 +12958,9 @@ function useAuth() {
   async function logout() {
     const sb = getSB();
     if (sb) await sb.auth.signOut();
-    setSession(null);
-    setStaff(null);
+    // Same pre-existing bug as login(): setSession()/setStaff() don't
+    // exist here — fixed to go through updateAuth() like everything else.
+    updateAuth({ session:null, staff:null, authLoading:false, authError:null, staffQueryError:null });
     if (typeof NAV_REF.fn === 'function') NAV_REF.fn('/login');
   }
 
@@ -12936,8 +12973,14 @@ function useAuth() {
   // is not this person's name). Show the real authenticated email verbatim
   // instead — truthful about what we actually know — and flag it in the
   // console so it's easy to spot during setup/QA.
-  if (!staff && session?.user?.email && !authLoading) {
-    console.warn('[Auth] No staff_users row resolved for', session.user.email, '— check that a staff_users row exists with id =', session.user.id);
+  if (!staff && session?.user?.email && !authLoading && !staffQueryError) {
+    // The query itself completed with no error, but PostgREST/Supabase
+    // returns zero rows identically whether (a) no staff_users row exists
+    // for this id, or (b) a row exists but RLS silently filtered it out —
+    // a SELECT-with-RLS denial is NOT an error, it just looks like an
+    // empty result. This log can't tell those apart; a direct SQL check
+    // against staff_users (and its RLS policies) is the way to.
+    console.warn('[Auth] staff_users query returned zero rows for', session.user.email, '(auth id', session.user.id, '). This means either no matching row exists, or one exists but RLS is filtering it out for this session — check both.');
   }
   const displayName = staff?.full_name || staff?.name || session?.user?.email || "Kullanıcı";
   const initials    = staff?.full_name || staff?.name
@@ -12959,7 +13002,7 @@ function useAuth() {
   const role    = rawRole ? (ROLE_MAP[rawRole] || rawRole) : null;
   const staffLinked = !!staff;
 
-  return { session, staff, authLoading, authError, login, logout, displayName, initials, role, staffLinked, isLoggedIn:!!session };
+  return { session, staff, authLoading, authError, staffQueryError, retryStaffLookup, login, logout, displayName, initials, role, staffLinked, isLoggedIn:!!session };
 }
 
 const AuthContext = createContext(null);
@@ -13310,9 +13353,62 @@ function AuthGuard({ children }) {
     />;
   }
 
-  // Authenticated, but no staff_users row resolved for this account — never
-  // let the app render as if this were a real, role-permissioned user.
-  // Report the problem explicitly instead of inventing a name or a role.
+  // Authenticated, but the staff_users query itself failed (timeout,
+  // network, RLS denial, bad column, anything) — this is NOT the same as
+  // "no profile exists". Surface the real error and offer a retry instead
+  // of silently reinterpreting a failed query as a missing profile.
+  if (!auth.staffLinked && auth.staffQueryError) {
+    return (
+      <div style={{
+        minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center",
+        background:`linear-gradient(135deg, ${C.navyDeep} 0%, ${C.navy} 100%)`, padding:20,
+      }}>
+        <div style={{
+          maxWidth:460, width:"100%", background:C.white, borderRadius:14,
+          padding:"32px 30px", textAlign:"center", boxShadow:"0 20px 60px rgba(0,0,0,0.3)",
+        }}>
+          <div style={{
+            width:52, height:52, borderRadius:"50%", background:C.amberBg, margin:"0 auto 16px",
+            display:"flex", alignItems:"center", justifyContent:"center",
+          }}>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={C.amber} strokeWidth="2" strokeLinecap="round">
+              <path d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
+            </svg>
+          </div>
+          <div style={{fontSize:17, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif", marginBottom:8}}>
+            Personel Profili Sorgulanamadı
+          </div>
+          <div style={{fontSize:13.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", lineHeight:1.6, marginBottom:8}}>
+            <b>{auth.session?.user?.email}</b> hesabı için <code style={{background:C.ivory, padding:"1px 5px", borderRadius:4, fontFamily:"'DM Mono',monospace", fontSize:12}}>staff_users</code> sorgusu bir hata ile sonuçlandı — bu, profilin eksik olduğu anlamına gelmez, sorgunun kendisi başarısız oldu.
+          </div>
+          <div style={{
+            fontSize:12, color:C.red, fontFamily:"'DM Mono',monospace", lineHeight:1.6, marginBottom:20,
+            background:C.redBg, borderRadius:8, padding:"10px 12px", textAlign:"left", wordBreak:"break-word",
+          }}>
+            {auth.staffQueryError}
+          </div>
+          <div style={{display:"flex", gap:10, justifyContent:"center"}}>
+            <button onClick={auth.retryStaffLookup} style={{
+              padding:"10px 22px", borderRadius:9, border:"none",
+              background:`linear-gradient(135deg,${C.navyDeep},${C.navy})`,
+              color:C.white, fontSize:13.5, fontWeight:500,
+              fontFamily:"'DM Sans',sans-serif", cursor:"pointer",
+            }}>Tekrar Dene</button>
+            <button onClick={auth.logout} style={{
+              padding:"10px 22px", borderRadius:9, border:`1px solid ${C.border}`,
+              background:C.white, color:C.textMid, fontSize:13.5, fontWeight:500,
+              fontFamily:"'DM Sans',sans-serif", cursor:"pointer",
+            }}>Çıkış Yap</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Authenticated, staff_users query succeeded, but genuinely returned zero
+  // rows for this auth UUID — never let the app render as if this were a
+  // real, role-permissioned user. Report the problem explicitly instead of
+  // inventing a name or a role.
   if (!auth.staffLinked) {
     return (
       <div style={{
@@ -13336,10 +13432,10 @@ function AuthGuard({ children }) {
             Personel Profili Bağlı Değil
           </div>
           <div style={{fontSize:13.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", lineHeight:1.6, marginBottom:8}}>
-            <b>{auth.session?.user?.email}</b> hesabı ile giriş yaptınız, ancak bu hesaba bağlı bir <code style={{background:C.ivory, padding:"1px 5px", borderRadius:4, fontFamily:"'DM Mono',monospace", fontSize:12}}>staff_users</code> kaydı bulunamadı.
+            <b>{auth.session?.user?.email}</b> hesabı ile giriş yaptınız, ancak bu hesaba bağlı bir <code style={{background:C.ivory, padding:"1px 5px", borderRadius:4, fontFamily:"'DM Mono',monospace", fontSize:12}}>staff_users</code> kaydı görüntülenemedi.
           </div>
           <div style={{fontSize:12.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", lineHeight:1.6, marginBottom:20}}>
-            Bir yönetici, <code style={{background:C.ivory, padding:"1px 5px", borderRadius:4, fontFamily:"'DM Mono',monospace", fontSize:11.5}}>staff_users.id</code> alanı bu hesabın kimliğiyle eşleşen bir kayıt oluşturana kadar rol veya erişim yetkisi tanımlanamaz.
+            Bunun iki olası nedeni var: (1) bu hesabın auth kimliğiyle eşleşen bir <code style={{background:C.ivory, padding:"1px 5px", borderRadius:4, fontFamily:"'DM Mono',monospace", fontSize:11.5}}>staff_users</code> satırı gerçekten yok, ya da (2) satır var ama satır düzeyi güvenlik (RLS) politikaları bu oturumun onu okumasını engelliyor — bir sorgu hatası olmadığı için bu iki durum istemci tarafında birbirinden ayırt edilemez. Veritabanını doğrudan kontrol etmek gerekir.
           </div>
           <button onClick={auth.logout} style={{
             padding:"10px 22px", borderRadius:9, border:"none",
