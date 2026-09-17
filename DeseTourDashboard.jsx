@@ -475,6 +475,7 @@ const DB = {
   // the app's own Add Guide / Add Guide Payment forms during that session.
   guides: [],
   guidePayments: [],
+  reviews: [],
 
   reservations: [
     {
@@ -1349,6 +1350,53 @@ const GuidePaymentRepository = {
     DB.guidePayments[idx].status = 'İptal';
     Store.notify();
     return true;
+  },
+};
+
+// Deliberately empty (DB.reviews:[]) — same rule as guides/guidePayments
+// above: mock-mode reviews only ever exist here after a user creates one
+// through the app's own Add Review form during this session, never seeded.
+const ReviewRepository = {
+  getAll(filters = {}) {
+    let items = DB.reviews;
+    if (filters.guideId) items = items.filter(r => r.guideId === filters.guideId);
+    if (filters.resId)   items = items.filter(r => r.resId === filters.resId);
+    return items;
+  },
+  getById(id) { return DB.reviews.find(r => r.id === id) || null; },
+  getByReservation(resId) { return DB.reviews.filter(r => r.resId === resId); },
+  getByGuide(guideId) { return DB.reviews.filter(r => r.guideId === guideId); },
+  create(data) {
+    const id = 'REV-' + new Date().getFullYear() + '-' + String(DB.reviews.length + 1).padStart(3, '0');
+    const res = DB.reservations.find(r => r.id === data.resId);
+    const src = DB.sources.find(s => s.id === data.sourceId);
+    const cust = res ? DB.customers.find(c => c.id === res.customerId) : null;
+    const record = {
+      id, resId:data.resId||null, guideId:data.guideId||null,
+      rating:parseInt(data.rating), reviewText:data.reviewText||'',
+      sourceId:data.sourceId||null, externalReviewId:data.externalReviewId||'',
+      reviewDate:data.reviewDate||'', reviewerName:data.reviewerName||'',
+      createdBy:data.createdBy||null,
+      createdAt:new Date().toISOString().split('T')[0],
+      updatedAt:new Date().toISOString().split('T')[0],
+      sourceName:src?.label||src?.name||'', resRef:res?.id||'',
+      tourName:res?.tour||'', customerName:cust?.name||'',
+    };
+    DB.reviews.push(record);
+    ActivityRepository.create({ entityType:'reservation_review', entityId:id, action:'created', description:`Değerlendirme eklendi: ${data.rating}★` });
+    Store.notify();
+    return record;
+  },
+  update(id, patch) {
+    const idx = DB.reviews.findIndex(r => r.id === id);
+    if (idx < 0) return null;
+    // guide_id is a historical snapshot captured only at creation time — an
+    // edit must never silently move a review's guide attribution, so any
+    // guideId present in the patch is deliberately ignored here.
+    const { guideId, ...safePatch } = patch;
+    Object.assign(DB.reviews[idx], safePatch);
+    Store.notify();
+    return DB.reviews[idx];
   },
 };
 
@@ -2786,7 +2834,42 @@ function Dashboard() {
 
       {}
       <GuideOpsPanel/>
+
+      {}
+      <RecentReviewsPanel/>
     </div>
+  );
+}
+
+// Minimal, additive-only "Son Değerlendirmeler" panel — real reservation_
+// reviews rows only, newest first, capped at 5. Deliberately does not
+// compute any rate, ranking, or guide comparison; that scope is explicitly
+// out for this pass.
+function RecentReviewsPanel() {
+  const { data:repoReviews, loading } = useRepo("review", "getAll");
+  const reviews = (repoReviews || [])
+    .slice()
+    .sort((a,b)=>(b.reviewDate||b.createdAt||"").localeCompare(a.reviewDate||a.createdAt||""))
+    .slice(0,5);
+  return (
+    <Card>
+      <SectionHeader title="Son Değerlendirmeler"/>
+      {loading && <LoadingState label="Yükleniyor…"/>}
+      {!loading && reviews.length===0 && (
+        <div style={{padding:"12px 0 4px", color:C.textFaint, fontFamily:"'DM Sans',sans-serif", fontSize:13}}>
+          Henüz değerlendirme yok.
+        </div>
+      )}
+      {!loading && reviews.map(rv=>(
+        <div key={rv.id} style={{display:"flex", alignItems:"center", justifyContent:"space-between", padding:"9px 0", borderBottom:`1px solid ${C.borderLight}`, gap:10}}>
+          <div style={{minWidth:0}}>
+            <div style={{fontSize:12.5, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{rv.tourName||"—"}</div>
+            <div style={{fontSize:11, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:1}}>{rv.customerName||"—"}{rv.sourceName?` · ${rv.sourceName}`:""}</div>
+          </div>
+          <RatingStars rating={rv.rating} size={13}/>
+        </div>
+      ))}
+    </Card>
   );
 }
 
@@ -4919,6 +5002,184 @@ function AssignGuideModal({ r, onClose }) {
   );
 }
 
+function EditTourLanguageModal({ r, onClose }) {
+  const { mutate, mutating } = useRepoMutation("reservation");
+  const [tourLanguage, setTourLanguage] = useState(r.tourLanguage || "");
+
+  async function handleSubmit() {
+    await mutate("update", r.id, { tourLanguage: tourLanguage||null });
+    onClose();
+  }
+
+  return (
+    <Modal title="Tur Dili" onClose={onClose} onSubmit={handleSubmit} submitLabel={mutating?"Kaydediliyor…":"Kaydet"}>
+      <FRow label="Tur Dili" hint="Bu turun yürütüleceği dil — misafirin kendi dilinden (customers.language) farklı bir kavramdır.">
+        <FSelect value={tourLanguage} onChange={setTourLanguage} options={[["","— Belirtilmemiş —"], ...LANGUAGE_OPTIONS.map(l=>[l,l])]}/>
+      </FRow>
+    </Modal>
+  );
+}
+
+/* -- Review UI: star display/picker + Add/Edit modal + reservation card - */
+function RatingStars({ rating, size }) {
+  const s = size || 14;
+  const r = rating || 0;
+  return (
+    <span style={{display:"inline-flex", gap:1}}>
+      {[1,2,3,4,5].map(n => (
+        <svg key={n} width={s} height={s} viewBox="0 0 24 24" fill={n<=r?C.gold:"none"} stroke={n<=r?C.gold:C.borderLight} strokeWidth="1.5">
+          <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
+        </svg>
+      ))}
+    </span>
+  );
+}
+
+function StarPicker({ value, onChange }) {
+  const [hover, setHover] = useState(0);
+  return (
+    <div style={{display:"flex", gap:4}}>
+      {[1,2,3,4,5].map(n => (
+        <button key={n} type="button" onClick={()=>onChange(n)}
+          onMouseEnter={()=>setHover(n)} onMouseLeave={()=>setHover(0)}
+          style={{background:"none", border:"none", cursor:"pointer", padding:2}}>
+          <svg width="26" height="26" viewBox="0 0 24 24" fill={n<=(hover||value)?C.gold:"none"} stroke={n<=(hover||value)?C.gold:C.border} strokeWidth="1.5">
+            <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
+          </svg>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// resId/guideId are only used on create — guideId is the reservation's
+// CURRENT guide_id at the moment "Değerlendirme Ekle" is opened, captured
+// once as the review's permanent historical snapshot. Editing an existing
+// review never touches guide attribution: `review` supplies only display
+// values here, and the update payload below never includes guideId.
+function AddEditReviewModal({ resId, guideId, review, onClose }) {
+  const isEdit = !!review;
+  const { mutate, mutating } = useRepoMutation("review");
+  const { sources } = useSources();
+  const [rating, setRating] = useState(review?.rating || 0);
+  const [reviewText, setReviewText] = useState(review?.reviewText || "");
+  const [sourceId, setSourceId] = useState(review?.sourceId || "");
+  const [reviewDate, setReviewDate] = useState(review?.reviewDate || new Date().toISOString().split("T")[0]);
+  const [reviewerName, setReviewerName] = useState(review?.reviewerName || "");
+  const [externalReviewId, setExternalReviewId] = useState(review?.externalReviewId || "");
+  const [error, setError] = useState("");
+
+  async function handleSubmit() {
+    if (!rating) { setError("Puan seçilmelidir."); return; }
+    setError("");
+    const payload = {
+      rating, reviewText: reviewText || null, sourceId: sourceId || null,
+      reviewDate: reviewDate || null, reviewerName: reviewerName || null,
+      externalReviewId: externalReviewId || null,
+    };
+    const { error: err } = isEdit
+      ? await mutate("update", review.id, payload)
+      : await mutate("create", { ...payload, resId, guideId });
+    if (err) { setError(err); return; }
+    onClose();
+  }
+
+  return (
+    <Modal title={isEdit ? "Değerlendirmeyi Düzenle" : "Değerlendirme Ekle"} onClose={onClose} onSubmit={handleSubmit} submitLabel={mutating?"Kaydediliyor…":"Kaydet"}>
+      <FRow label="Puan" required full>
+        <StarPicker value={rating} onChange={setRating}/>
+      </FRow>
+      <FGrid cols={2}>
+        <FRow label="Review Kaynağı" hint="Değerlendirmenin yayınlandığı platform (booking kaynağından farklı bir kavram).">
+          <FSelect value={sourceId} onChange={setSourceId} options={[["","— Seçiniz —"], ...(sources||[]).map(s=>[s.id, s.name||s.label||s.slug])]}/>
+        </FRow>
+        <FRow label="Değerlendirme Tarihi">
+          <FText type="date" value={reviewDate} onChange={setReviewDate}/>
+        </FRow>
+      </FGrid>
+      <FGrid cols={2}>
+        <FRow label="Değerlendiren" hint="Misafirin adı (varsa).">
+          <FText value={reviewerName} onChange={setReviewerName} placeholder="Ad Soyad"/>
+        </FRow>
+        <FRow label="External Review ID" hint="Platformun kendi değerlendirme kimliği (opsiyonel).">
+          <FText value={externalReviewId} onChange={setExternalReviewId} mono placeholder="örn. g_18293…"/>
+        </FRow>
+      </FGrid>
+      <FRow label="Değerlendirme" hint="Opsiyonel — misafirin yazdığı yorum.">
+        <FTextArea value={reviewText} onChange={setReviewText} rows={4} placeholder="Değerlendirme metni…"/>
+      </FRow>
+      {error && <div style={{fontSize:12, color:C.red, marginTop:10, fontFamily:"'DM Sans',sans-serif"}}>{error}</div>}
+    </Modal>
+  );
+}
+
+function ReviewCard({ r }) {
+  const { data: reviews, loading } = useRepo("review", "getByReservation", r.id);
+  const [showAdd, setShowAdd] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const canWrite = ["Yönetici","Operasyon"].includes(getAuthContext()?.role);
+  const list = reviews || [];
+
+  return (
+    <RCard>
+      {(showAdd || editing) && (
+        <AddEditReviewModal
+          resId={r.id} guideId={r.guideId} review={editing}
+          onClose={()=>{ setShowAdd(false); setEditing(null); }}
+        />
+      )}
+      <RCardHead title="Değerlendirme"
+        right={canWrite ? (
+          <button onClick={()=>setShowAdd(true)} style={{
+            display:"flex", alignItems:"center", gap:5,
+            padding:"5px 10px", borderRadius:6, border:`1px solid ${C.border}`,
+            background:C.white, cursor:"pointer", color:C.textMid,
+            fontFamily:"'DM Sans',sans-serif", fontSize:11.5,
+          }}>
+            <RIc d="M12 5v14m-7-7h14" size={12} sw={1.8}/>
+            Değerlendirme Ekle
+          </button>
+        ) : null}
+      />
+      {loading && <div style={{padding:"16px 20px", fontSize:12.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>Yükleniyor…</div>}
+      {!loading && list.length === 0 && (
+        <div style={{padding:"22px 20px", textAlign:"center"}}>
+          <div style={{fontSize:12.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", fontStyle:"italic"}}>
+            {r.opStatus === "Tamamlandı"
+              ? "Bu rezervasyon için henüz değerlendirme eklenmedi."
+              : "Bu rezervasyon için henüz değerlendirme yok."}
+          </div>
+        </div>
+      )}
+      {!loading && list.map(rv => (
+        <div key={rv.id} style={{ padding:"14px 20px", borderTop:`1px solid ${C.borderLight}` }}>
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:7, gap:8 }}>
+            <RatingStars rating={rv.rating} size={15}/>
+            {canWrite && (
+              <button onClick={()=>setEditing(rv)} style={{
+                background:"none", border:"none", cursor:"pointer",
+                color:C.textFaint, fontFamily:"'DM Sans',sans-serif", fontSize:11.5,
+                textDecoration:"underline", padding:0,
+              }}>Değerlendirmeyi Düzenle</button>
+            )}
+          </div>
+          <div style={{ display:"flex", gap:8, flexWrap:"wrap", fontSize:11, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginBottom: rv.reviewText ? 7 : 0 }}>
+            {rv.sourceName && <span>{rv.sourceName}</span>}
+            {rv.reviewDate && <span>· {rv.reviewDate}</span>}
+            {rv.reviewerName && <span>· {rv.reviewerName}</span>}
+          </div>
+          {rv.reviewText && (
+            <div style={{ fontSize:13, color:C.textMid, fontFamily:"'DM Sans',sans-serif", lineHeight:1.6 }}>{rv.reviewText}</div>
+          )}
+          {rv.externalReviewId && (
+            <div style={{ fontSize:10, color:C.textFaint, fontFamily:"'DM Mono',monospace", marginTop:5 }}>ID: {rv.externalReviewId}</div>
+          )}
+        </div>
+      ))}
+    </RCard>
+  );
+}
+
 /* -- NewReservationModal -------------------------------------------- */
 function NewReservationModal({ onClose, onSuccess }) {
   const { isMobile } = useBreakpoint();
@@ -4938,6 +5199,7 @@ function NewReservationModal({ onClose, onSuccess }) {
   const [total,    setTotal]    = useState("");
   const [deposit,  setDeposit]  = useState("");
   const [currency, setCurrency] = useState("EUR");
+  const [tourLanguage, setTourLanguage] = useState("");
   const [notes,    setNotes]    = useState("");
   const [errs,     setErrs]     = useState({});
   const [busy,     setBusy]     = useState(false);
@@ -4968,7 +5230,7 @@ function NewReservationModal({ onClose, onSuccess }) {
         guideId: guideId||null, guide: guide?.name||null,
         checkIn, checkOut, time: time||null,
         paxAdult: parseInt(pax)||1, paxChild: parseInt(paxChild)||0,
-        pickup: pickup||null,
+        pickup: pickup||null, tourLanguage: tourLanguage||null,
         total: total?parseFloat(total):0, deposit: deposit?parseFloat(deposit):0,
         currency, notes,
       });
@@ -5028,6 +5290,9 @@ function NewReservationModal({ onClose, onSuccess }) {
       <FGrid>
         <FRow label="Rehber (opsiyonel)" hint={guides.length===0?"Kayıtlı aktif rehber yok.":undefined}>
           <FSelect value={guideId} onChange={setGuideId} options={[["","— Rehber atanmadı —"], ...guides.map(g=>[g.id, `${g.name}${(g.languageNames||[]).length?' · '+g.languageNames.join(', '):''}`])]}/>
+        </FRow>
+        <FRow label="Tur Dili (opsiyonel)" hint="Bu turun yürütüleceği dil — misafirin kendi dilinden farklı olabilir.">
+          <FSelect value={tourLanguage} onChange={setTourLanguage} options={[["","— Belirtilmemiş —"], ...LANGUAGE_OPTIONS.map(l=>[l,l])]}/>
         </FRow>
       </FGrid>
       {conflicts.length > 0 && (
@@ -5598,6 +5863,7 @@ function ReservationDetailPage({ resId, onBack }) {
   const { mutate:mutGuideAssign } = useRepoMutation("reservation");
   const [showAssignGuide, setShowAssignGuide] = useState(false);
   const [removingGuide, setRemovingGuide] = useState(false);
+  const [showEditLanguage, setShowEditLanguage] = useState(false);
   if (resDetLoading) return <LoadingState label="Rezervasyon yükleniyor…"/>;
   if (resDetError)   return <ErrorState message={resDetError} onRetry={()=>{}}/>;
   if (!_resRec)      return <NotFoundCard entityType="Rezervasyon" entityId={resId} onBack={onBack}/>;
@@ -5609,6 +5875,7 @@ function ReservationDetailPage({ resId, onBack }) {
   return (
     <>
     {showAssignGuide && <AssignGuideModal r={r} onClose={()=>setShowAssignGuide(false)}/>}
+    {showEditLanguage && <EditTourLanguageModal r={r} onClose={()=>setShowEditLanguage(false)}/>}
     <div style={{ display:"flex", flexDirection:"column", gap:20 }}>
 
       {}
@@ -5701,6 +5968,22 @@ function ReservationDetailPage({ resId, onBack }) {
                 Kişi Sayısı
               </span>
               <span style={{ fontSize:14, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif" }}>{r.pax} Kişi</span>
+            </div>
+            <div style={{ padding:"10px 20px", display:"flex", justifyContent:"space-between", alignItems:"center", gap:8 }}>
+              <span style={{ fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", display:"flex", alignItems:"center", gap:5 }}>
+                <RIc d="M5 8l6 6M4 14l6-6 2-3M2 5h12M7 2h1M22 22l-5-10-5 10M14 18h6" size={12} sw={1.5}/>
+                Tur Dili
+              </span>
+              <div style={{display:"flex", alignItems:"center", gap:8}}>
+                <span style={{ fontSize:13, color:r.tourLanguage?C.text:C.textFaint, fontFamily:"'DM Sans',sans-serif", fontStyle:r.tourLanguage?"normal":"italic" }}>
+                  {r.tourLanguage || "Belirtilmemiş"}
+                </span>
+                <button onClick={()=>setShowEditLanguage(true)} style={{
+                  padding:"4px 10px", borderRadius:6, border:`1px solid ${C.border}`,
+                  background:C.white, cursor:"pointer", color:C.textMid,
+                  fontFamily:"'DM Sans',sans-serif", fontSize:11.5,
+                }}>{r.tourLanguage ? "Değiştir" : "Belirle"}</button>
+              </div>
             </div>
           </RCard>
 
@@ -5810,6 +6093,9 @@ function ReservationDetailPage({ resId, onBack }) {
               </div>
             )}
           </RCard>
+
+          {}
+          <ReviewCard r={r}/>
 
           {}
           <RCard>
@@ -9216,6 +9502,7 @@ function AddGuidePaymentModal({ guideId, onClose }) {
     const { error } = await mutate("create", {
       guideId, resId: resId||null, tourId: tourId||null,
       amount: parseFloat(amount), currency, status, paymentDate: paymentDate||null, notes,
+      createdBy: getAuthContext()?.staff?.id || null,
     });
     if (error) { setErrors({ amount: error }); return; }
     onClose();
@@ -9268,6 +9555,13 @@ function GuideDetailPage({ guideId, onBack }) {
   const { data:guide, loading, error, reload } = useRepo("guide", "getById", guideId);
   const { data:repoRes }  = useRepo("reservation", "getAll");
   const { data:repoGP, reload:reloadGP } = useRepo("guidePayment", "getByGuideId", guideId);
+  // Reviews are fetched by reservation_reviews.guide_id directly (the
+  // historical snapshot) — never by joining reservations.guide_id — so this
+  // list, and every metric derived from it below, stays correct even after
+  // a reservation is later reassigned to a different guide.
+  const { data:repoReviews } = useRepo("review", "getByGuide", guideId);
+  const { data:repoCustomers } = useRepo("customer", "getAll");
+  const { sources } = useSources();
   const [showEdit, setShowEdit]               = useState(false);
   const [showAddPayment, setShowAddPayment]   = useState(false);
 
@@ -9298,6 +9592,33 @@ function GuideDetailPage({ guideId, onBack }) {
     if ((r.checkIn||"") > (c.lastDate||"")) c.lastDate = r.checkIn;
   });
   const customers = Array.from(customerMap.values()).sort((a,b)=>(b.lastDate||"").localeCompare(a.lastDate||""));
+
+  // Performance summary — precise definitions per spec, computed from real
+  // data only. "Toplam Tur"/"Toplam Misafir" here are deliberately scoped
+  // to COMPLETED reservations only, which is a different (narrower)
+  // definition than the operational "Toplam Tur" KPI above (all active
+  // assigned tours) — the two cards serve different purposes and are kept
+  // separate rather than overloading one metric with two meanings.
+  const completedRes = guideRes.filter(r => r.opStatus === "Tamamlandı");
+  const perfTours  = completedRes.length;
+  const perfGuests = completedRes.reduce((s,r)=>s+(r.pax||0)+(r.paxChild||0),0);
+  const reviews = repoReviews || [];
+  const reviewedTourCount = new Set(reviews.map(rv=>rv.resId).filter(Boolean)).size;
+  const avgRating = reviews.length ? (reviews.reduce((s,rv)=>s+(rv.rating||0),0) / reviews.length) : null;
+  const fiveStarCount = reviews.filter(rv=>rv.rating===5).length;
+
+  const custById = new Map((repoCustomers||[]).map(c=>[c.id,c]));
+  const sourceById = new Map((sources||[]).map(s=>[s.id, s.name||s.label||s.slug]));
+  function resSourceName(r) {
+    const cust = custById.get(r.customerId);
+    return (cust && cust.sourceId) ? (sourceById.get(cust.sourceId) || "") : "";
+  }
+  const reviewsByRes = new Map();
+  reviews.forEach(rv => {
+    if (!rv.resId) return;
+    if (!reviewsByRes.has(rv.resId)) reviewsByRes.set(rv.resId, []);
+    reviewsByRes.get(rv.resId).push(rv);
+  });
 
   const KPIS = [
     { label:"Toplam Tur",              val:activeRes.length, icon:"M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z M9 22V12h6v10", color:C.text,  bg:C.ivoryDark },
@@ -9375,6 +9696,16 @@ function GuideDetailPage({ guideId, onBack }) {
 
         <div style={{display:"flex", flexDirection:"column", gap:18}}>
 
+          <GuideSectionCard title="Performans Özeti">
+            <div style={{display:"grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(5,1fr)", gap:14}}>
+              <PerfStat label="Toplam Tur" value={perfTours}/>
+              <PerfStat label="Toplam Misafir" value={perfGuests}/>
+              <PerfStat label="Değerlendirilen Tur" value={reviewedTourCount}/>
+              <PerfStat label="Ortalama Puan" value={avgRating!=null ? avgRating.toFixed(1) : null} empty="Henüz değerlendirme yok"/>
+              <PerfStat label="5 Yıldızlı Değerlendirme" value={fiveStarCount}/>
+            </div>
+          </GuideSectionCard>
+
           <GuideSectionCard title={`Yaklaşan Turlar (${upcoming.length})`}>
             {upcoming.length===0 ? <EmptyRow text="Yaklaşan tur yok."/> : upcoming.map(r=>(
               <ResRow key={r.id} r={r}/>
@@ -9383,8 +9714,25 @@ function GuideDetailPage({ guideId, onBack }) {
 
           <GuideSectionCard title={`Tur Geçmişi (${past.length})`}>
             {past.length===0 ? <EmptyRow text="Geçmiş tur yok."/> : past.map(r=>(
-              <ResRow key={r.id} r={r}/>
+              <GuideTourHistoryRow key={r.id} r={r} sourceName={resSourceName(r)} reviews={reviewsByRes.get(r.id)}/>
             ))}
+          </GuideSectionCard>
+
+          <GuideSectionCard title={`Değerlendirmeler (${reviews.length})`}>
+            {reviews.length===0 ? <EmptyRow text="Henüz değerlendirme yok."/> : (
+              [...reviews].sort((a,b)=>(b.reviewDate||"").localeCompare(a.reviewDate||"")).map(rv=>(
+                <div key={rv.id} style={{padding:"12px 0", borderBottom:`1px solid ${C.borderLight}`}}>
+                  <div style={{display:"flex", alignItems:"center", justifyContent:"space-between", gap:8, marginBottom:4}}>
+                    <RatingStars rating={rv.rating} size={13}/>
+                    <span style={{fontSize:11, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>{rv.reviewDate || "—"}</span>
+                  </div>
+                  <div style={{fontSize:12, color:C.textMid, fontFamily:"'DM Sans',sans-serif", marginBottom:3}}>
+                    {rv.tourName || "—"}{rv.customerName ? ` · ${rv.customerName}` : ""}{rv.sourceName ? ` · ${rv.sourceName}` : ""}
+                  </div>
+                  {rv.reviewText && <div style={{fontSize:12.5, color:C.textMid, fontFamily:"'DM Sans',sans-serif", lineHeight:1.55}}>{rv.reviewText}</div>}
+                </div>
+              ))
+            )}
           </GuideSectionCard>
 
           <GuideSectionCard title={`Misafir Geçmişi (${customers.length})`}>
@@ -9477,6 +9825,62 @@ function GuideInfoRow({ label, value }) {
     </div>
   );
 }
+function PerfStat({ label, value, empty }) {
+  const isEmpty = value === null || value === undefined;
+  return (
+    <div>
+      <div style={{
+        fontSize: isEmpty ? 12 : 20, fontWeight: isEmpty ? 500 : 700,
+        color: isEmpty ? C.textFaint : C.text,
+        fontFamily: isEmpty ? "'DM Sans',sans-serif" : "'Playfair Display',serif",
+        fontStyle: isEmpty ? "italic" : "normal", lineHeight:1.25,
+      }}>{isEmpty ? (empty || "—") : value}</div>
+      <div style={{fontSize:11, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:4}}>{label}</div>
+    </div>
+  );
+}
+
+// Upgraded tour-history row for GuideDetailPage's "Tur Geçmişi" (real
+// tour_language + booking-source + review data — never derived via
+// reservation_id → reservations.guide_id, only via the review's own
+// guide_id snapshot passed in as `reviews`). Multiple reviews for one
+// reservation are rendered as separate compact star rows, never collapsed.
+function GuideTourHistoryRow({ r, sourceName, reviews }) {
+  const list = reviews || [];
+  return (
+    <div style={{ padding:"12px 0", borderBottom:`1px solid ${C.borderLight}` }}>
+      <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:10 }}>
+        <div style={{minWidth:0, flex:1}}>
+          <div style={{fontSize:13, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{r.tour || "—"}</div>
+          <div style={{fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:1}}>{r.date} · {r.name || "—"} · {r.pax} kişi</div>
+          <div style={{fontSize:11, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:3, display:"flex", gap:10, flexWrap:"wrap"}}>
+            <span>Tur Dili: {r.tourLanguage || "Belirtilmemiş"}</span>
+            <span>Kaynak: {sourceName || "—"}</span>
+          </div>
+        </div>
+        <div style={{display:"flex", flexDirection:"column", alignItems:"flex-end", gap:6, flexShrink:0}}>
+          <div style={{display:"flex", alignItems:"center", gap:8}}>
+            <StatusBadge status={r.opStatus}/>
+            <IDLink id={r.id} type="reservation"/>
+          </div>
+          {list.length > 0 ? (
+            <div style={{display:"flex", flexDirection:"column", alignItems:"flex-end", gap:3}}>
+              {list.map(rv => (
+                <div key={rv.id} style={{display:"flex", alignItems:"center", gap:6}}>
+                  <RatingStars rating={rv.rating} size={12}/>
+                  {rv.reviewText && <span style={{fontSize:11, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", maxWidth:160, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{rv.reviewText}</span>}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div style={{fontSize:11, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>Puan: — · Değerlendirme yok</div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ResRow({ r }) {
   return (
     <div style={{display:"flex", alignItems:"center", justifyContent:"space-between", padding:"10px 0", borderBottom:`1px solid ${C.borderLight}`, gap:10}}>
@@ -12365,6 +12769,7 @@ function mapResFromDB(r) {
     pax:r.pax_adult||1, paxChild:r.pax_child||0,
     guide:r.guide_name||'', guideId:r.guide_id||null, assignedGuideName:r.guide?.full_name||'', vehicle:r.vehicle_info||'', driver:r.driver_name||'',
     pickup:r.pickup_location||'', pickupTime:r.pickup_time||'—',
+    tourLanguage:r.tour_language||'',
     opStatus:_r2App(r.status), payStatus:_p2App(r.payment_status),
     total:parseFloat(r.total_amount)||0, deposit:parseFloat(r.deposit_amount)||0,
     remaining:parseFloat(r.total_amount||0)-parseFloat(r.deposit_amount||0),
@@ -12474,6 +12879,45 @@ function mapGuidePaymentFromDB(r) {
   };
 }
 
+// ── reservation_reviews mapping ─────────────────────────────────────────
+// guideId here is ALWAYS the snapshot stored on the review row itself
+// (reservation_reviews.guide_id) — never derived by joining through
+// reservation_id → reservations.guide_id. This is the historical
+// attribution rule: once a review is created, its guide attribution must
+// never silently follow a later change to the reservation's own guide_id.
+function mapReviewFromDB(r) {
+  if(!r) return null;
+  return {
+    id:r.id, resId:r.reservation_id||null, guideId:r.guide_id||null,
+    rating:r.rating!=null?parseInt(r.rating):null,
+    reviewText:r.review_text||'', sourceId:r.source_id||null,
+    externalReviewId:r.external_review_id||'', reviewDate:r.review_date||'',
+    reviewerName:r.reviewer_name||'', createdBy:r.created_by||null,
+    createdAt:r.created_at?r.created_at.split('T')[0]:'',
+    updatedAt:r.updated_at?r.updated_at.split('T')[0]:'',
+    sourceName:r.source?.name||'',
+    resRef:r.reservation?.reservation_number||'',
+    tourName:r.reservation?.destination||r.reservation?.tour?.name||'',
+    customerName:r.reservation?.customer?.full_name||'',
+    _fromDB:true,
+  };
+}
+function mapReviewToDB(d) {
+  const row = {};
+  if(d.resId!==undefined)            row.reservation_id = d.resId;
+  // guide_id is set ONLY on create (the snapshot) — see SupabaseReviewRepo
+  // below, which never lets update() touch this column.
+  if(d.guideId!==undefined)          row.guide_id = d.guideId||null;
+  if(d.rating!==undefined)           row.rating = parseInt(d.rating);
+  if(d.reviewText!==undefined)       row.review_text = d.reviewText||null;
+  if(d.sourceId!==undefined)         row.source_id = d.sourceId||null;
+  if(d.externalReviewId!==undefined) row.external_review_id = d.externalReviewId||null;
+  if(d.reviewDate!==undefined)       row.review_date = d.reviewDate||null;
+  if(d.reviewerName!==undefined)     row.reviewer_name = d.reviewerName||null;
+  if(d.createdBy!==undefined)        row.created_by = d.createdBy||null;
+  return row;
+}
+
 async function _updateResPayStatus(sb, resId) {
   try {
     const {data:pays}=await sb.from('payments').select('amount,status').eq('reservation_id',resId);
@@ -12515,8 +12959,8 @@ const SupabaseReservationRepo = {
   async getAll(f={}){const sb=getSB();if(!sb)return ReservationRepository.getAll(f);let q=sb.from('reservations').select('*,customer:customers(id,full_name,email,phone,nationality),tour:tours(id,name,category),guide:guides(id,full_name,status,phone)').order('check_in',{ascending:true});if(f.status)q=q.eq('status',_r2DB(f.status));if(f.payStatus)q=q.eq('payment_status',_p2DB(f.payStatus));if(f.customerId)q=q.eq('customer_id',f.customerId);if(f.search)q=q.or(`reservation_number.ilike.%${f.search}%,destination.ilike.%${f.search}%`);const{data,error}=await q;if(error)throw new Error(error.message);return(data||[]).map(mapResFromDB);},
   async getById(id){const sb=getSB();if(!sb)return ReservationRepository.getById(id);const{data,error}=await sb.from('reservations').select('*,customer:customers(*),tour:tours(*),guide:guides(id,full_name,status,phone,email)').eq('id',id).maybeSingle();if(error)throw new Error(error.message);return mapResFromDB(data);},
   async getByCustomerId(cid){const sb=getSB();if(!sb)return ReservationRepository.getByCustomerId(cid);const{data,error}=await sb.from('reservations').select('*').eq('customer_id',cid).order('check_in',{ascending:false});if(error)throw new Error(error.message);return(data||[]).map(mapResFromDB);},
-  async create(d){const sb=getSB();if(!sb)return ReservationRepository.create(d);let rn=`R-${new Date().getFullYear()}-${String(Date.now()).slice(-4)}`;try{const{data:ref}=await sb.rpc('next_ref_number',{prefix:'R',table_name:'reservations',number_col:'reservation_number'});if(ref)rn=ref;}catch(_){}const row={reservation_number:rn,lead_id:d.leadId||null,quote_id:d.quoteId||null,customer_id:d.customerId,tour_id:d.tourId||null,status:'pending_confirmation',payment_status:'pending',destination:d.tour||d.destination||'',check_in:d.checkIn||d.date||null,check_out:d.checkOut||d.date||null,check_in_time:d.time||null,pax_adult:parseInt(d.pax||d.paxAdult)||1,pax_child:parseInt(d.paxChild)||0,guide_name:d.guide||null,guide_id:d.guideId||null,vehicle_info:d.vehicle||null,driver_name:d.driver||null,pickup_location:d.pickup||null,pickup_time:d.pickupTime||null,total_amount:parseFloat(d.total)||0,currency:d.currency||'EUR',deposit_amount:parseFloat(d.deposit)||0,notes:d.opNotes||d.notes||null,assigned_to:d.assigneeId||null};const{data:c,error}=await sb.from('reservations').insert(row).select().single();if(error)throw new Error(error.message);await _sbLog('reservation',c.id,'created',`Rezervasyon: ${c.reservation_number}`);return mapResFromDB(c);},
-  async update(id,p){const sb=getSB();if(!sb)return ReservationRepository.update(id,p);const fm={opStatus:'status',payStatus:'payment_status',guide:'guide_name',guideId:'guide_id',vehicle:'vehicle_info',driver:'driver_name',pickup:'pickup_location',opNotes:'notes',total:'total_amount'};const row={};for(const[k,v]of Object.entries(p)){const col=fm[k]||k;if(col==='status')row[col]=_r2DB(v);else if(col==='payment_status')row[col]=_p2DB(v);else row[col]=v;}if(p.opStatus==='Tamamlandı')row.completed_at=new Date().toISOString();if(p.opStatus==='İptal')row.cancelled_at=new Date().toISOString();const{data:u,error}=await sb.from('reservations').update(row).eq('id',id).select().single();if(error)throw new Error(error.message);await _sbLog('reservation',id,'updated',`Güncellendi: ${Object.keys(p).join(', ')}`);return mapResFromDB(u);},
+  async create(d){const sb=getSB();if(!sb)return ReservationRepository.create(d);let rn=`R-${new Date().getFullYear()}-${String(Date.now()).slice(-4)}`;try{const{data:ref}=await sb.rpc('next_ref_number',{prefix:'R',table_name:'reservations',number_col:'reservation_number'});if(ref)rn=ref;}catch(_){}const row={reservation_number:rn,lead_id:d.leadId||null,quote_id:d.quoteId||null,customer_id:d.customerId,tour_id:d.tourId||null,status:'pending_confirmation',payment_status:'pending',destination:d.tour||d.destination||'',check_in:d.checkIn||d.date||null,check_out:d.checkOut||d.date||null,check_in_time:d.time||null,pax_adult:parseInt(d.pax||d.paxAdult)||1,pax_child:parseInt(d.paxChild)||0,guide_name:d.guide||null,guide_id:d.guideId||null,vehicle_info:d.vehicle||null,driver_name:d.driver||null,pickup_location:d.pickup||null,pickup_time:d.pickupTime||null,tour_language:d.tourLanguage||null,total_amount:parseFloat(d.total)||0,currency:d.currency||'EUR',deposit_amount:parseFloat(d.deposit)||0,notes:d.opNotes||d.notes||null,assigned_to:d.assigneeId||null};const{data:c,error}=await sb.from('reservations').insert(row).select().single();if(error)throw new Error(error.message);await _sbLog('reservation',c.id,'created',`Rezervasyon: ${c.reservation_number}`);return mapResFromDB(c);},
+  async update(id,p){const sb=getSB();if(!sb)return ReservationRepository.update(id,p);const fm={opStatus:'status',payStatus:'payment_status',guide:'guide_name',guideId:'guide_id',vehicle:'vehicle_info',driver:'driver_name',pickup:'pickup_location',opNotes:'notes',total:'total_amount',tourLanguage:'tour_language'};const row={};for(const[k,v]of Object.entries(p)){const col=fm[k]||k;if(col==='status')row[col]=_r2DB(v);else if(col==='payment_status')row[col]=_p2DB(v);else row[col]=v;}if(p.opStatus==='Tamamlandı')row.completed_at=new Date().toISOString();if(p.opStatus==='İptal')row.cancelled_at=new Date().toISOString();const{data:u,error}=await sb.from('reservations').update(row).eq('id',id).select().single();if(error)throw new Error(error.message);await _sbLog('reservation',id,'updated',`Güncellendi: ${Object.keys(p).join(', ')}`);return mapResFromDB(u);},
   async delete(id){const sb=getSB();if(!sb)return ReservationRepository.delete(id);const{error}=await sb.from('reservations').update({status:'cancelled',cancelled_at:new Date().toISOString()}).eq('id',id);if(error)throw new Error(error.message);return true;},
 };
 
@@ -12618,6 +13062,50 @@ const SupabaseGuidePaymentRepo = {
   async delete(id){const sb=getSB();if(!sb)return GuidePaymentRepository.delete(id);const{error}=await sb.from('guide_payments').update({status:'cancelled'}).eq('id',id);if(error)throw new Error(error.message);return true;},
 };
 
+const _REVIEW_SELECT = '*,source:sources(id,name),reservation:reservations(id,reservation_number,destination,customer:customers(id,full_name),tour:tours(id,name))';
+const SupabaseReviewRepo = {
+  async getAll(f={}){
+    const sb=getSB(); if(!sb) return ReviewRepository.getAll(f);
+    let q=sb.from('reservation_reviews').select(_REVIEW_SELECT).order('review_date',{ascending:false,nullsFirst:false});
+    if(f.guideId) q=q.eq('guide_id',f.guideId);
+    if(f.resId)   q=q.eq('reservation_id',f.resId);
+    const{data,error}=await q; if(error) throw new Error(error.message);
+    return (data||[]).map(mapReviewFromDB);
+  },
+  async getById(id){const sb=getSB();if(!sb)return ReviewRepository.getById(id);const{data,error}=await sb.from('reservation_reviews').select(_REVIEW_SELECT).eq('id',id).maybeSingle();if(error)throw new Error(error.message);return mapReviewFromDB(data);},
+  async getByReservation(resId){return SupabaseReviewRepo.getAll({resId});},
+  async getByGuide(guideId){return SupabaseReviewRepo.getAll({guideId});},
+  async create(d){
+    const sb=getSB(); if(!sb) return ReviewRepository.create({...d, createdBy:getAuthContext()?.staff?.id||null});
+    // guide_id is captured here, once, from the caller-supplied snapshot of
+    // the reservation's guide_id at the moment the review is created — the
+    // repo never re-derives it, and update() below never touches it again.
+    const row = mapReviewToDB(d);
+    row.created_by = getAuthContext()?.staff?.id || null;
+    const{data:c,error}=await sb.from('reservation_reviews').insert(row).select(_REVIEW_SELECT).single();
+    if(error) throw new Error(error.message);
+    await _sbLog('reservation_review', c.id, 'created', `Değerlendirme eklendi: ${d.rating}★`);
+    return mapReviewFromDB(c);
+  },
+  async update(id,p){
+    const sb=getSB(); if(!sb) return ReviewRepository.update(id,p);
+    // Deliberately hand-built, field by field — guide_id/guideId is never
+    // read or written here under any circumstance. See SupabaseGuidePaymentRepo
+    // .update() for the identical precedent this mirrors.
+    const row={};
+    if(p.rating!==undefined)           row.rating = parseInt(p.rating);
+    if(p.reviewText!==undefined)       row.review_text = p.reviewText||null;
+    if(p.sourceId!==undefined)         row.source_id = p.sourceId||null;
+    if(p.externalReviewId!==undefined) row.external_review_id = p.externalReviewId||null;
+    if(p.reviewDate!==undefined)       row.review_date = p.reviewDate||null;
+    if(p.reviewerName!==undefined)     row.reviewer_name = p.reviewerName||null;
+    const{data:u,error}=await sb.from('reservation_reviews').update(row).eq('id',id).select(_REVIEW_SELECT).single();
+    if(error) throw new Error(error.message);
+    await _sbLog('reservation_review', u.id, 'updated', `Değerlendirme güncellendi`);
+    return mapReviewFromDB(u);
+  },
+};
+
 const SupabaseTaskRepo = {
   async getAll(f={}){const sb=getSB();if(!sb)return TaskRepository.getAll(f);let q=sb.from('tasks').select('*,assignee:staff_users!assigned_to(id,full_name)').order('due_date',{ascending:true,nullsLast:true});if(f.status)q=q.eq('status',_TS_DB[f.status]||f.status);if(f.priority)q=q.eq('priority',_TP_DB[f.priority]||f.priority);if(f.customerId)q=q.eq('customer_id',f.customerId);if(f.assigneeId)q=q.eq('assigned_to',f.assigneeId);if(f.search)q=q.ilike('title',`%${f.search}%`);const{data,error}=await q;if(error)throw new Error(error.message);return(data||[]).map(mapTaskFromDB);},
   async getById(id){const sb=getSB();if(!sb)return TaskRepository.getById(id);const{data,error}=await sb.from('tasks').select('*').eq('id',id).maybeSingle();if(error)throw new Error(error.message);return mapTaskFromDB(data);},
@@ -12662,6 +13150,7 @@ function getActiveRepo(entity) {
   if(entity==='tour')       return useReal ? SupabaseTourRepo        : TourRepository;
   if(entity==='guide')      return useReal ? SupabaseGuideRepo       : GuideRepository;
   if(entity==='guidePayment')return useReal ? SupabaseGuidePaymentRepo : GuidePaymentRepository;
+  if(entity==='review')     return useReal ? SupabaseReviewRepo       : ReviewRepository;
   if(entity==='staff')      return useReal ? SupabaseStaffRepo       : { getAll: async () => DB.staff };
   return null;
 }
