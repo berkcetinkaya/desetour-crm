@@ -5057,10 +5057,22 @@ function StarPicker({ value, onChange }) {
 // once as the review's permanent historical snapshot. Editing an existing
 // review never touches guide attribution: `review` supplies only display
 // values here, and the update payload below never includes guideId.
+// Single reusable modal for both entry points (Reservation Detail and
+// Guide Detail) — same repository, same create/update payloads, no
+// duplicated review business logic. Reservation Detail always knows its
+// resId already and passes it in, so no picker renders there. Guide Detail
+// only knows guideId, so when resId is absent (and we're not editing) a
+// "Rezervasyon / Tur" picker appears first, scoped to that guide's own
+// real reservations — never a hand-built dataset. Whichever entry point is
+// used, guide_id is always the guideId prop (this guide, snapshotted once
+// at creation) — never re-derived from the reservation afterward.
 function AddEditReviewModal({ resId, guideId, review, onClose }) {
   const isEdit = !!review;
+  const needsResPicker = !isEdit && !resId;
   const { mutate, mutating } = useRepoMutation("review");
   const { sources } = useSources();
+  const { data: repoRes } = useRepo("reservation", "getAll");
+  const [selectedResId, setSelectedResId] = useState("");
   const [rating, setRating] = useState(review?.rating || 0);
   const [reviewText, setReviewText] = useState(review?.reviewText || "");
   const [sourceId, setSourceId] = useState(review?.sourceId || "");
@@ -5069,7 +5081,21 @@ function AddEditReviewModal({ resId, guideId, review, onClose }) {
   const [externalReviewId, setExternalReviewId] = useState(review?.externalReviewId || "");
   const [error, setError] = useState("");
 
+  const guideReservations = needsResPicker
+    ? (repoRes || [])
+        .filter(r => r.guideId === guideId && r.opStatus !== "İptal")
+        .sort((a,b) => {
+          const aDone = a.opStatus === "Tamamlandı" ? 0 : 1;
+          const bDone = b.opStatus === "Tamamlandı" ? 0 : 1;
+          if (aDone !== bDone) return aDone - bDone;
+          return (b.checkIn||"").localeCompare(a.checkIn||"");
+        })
+    : [];
+  const selectedRes = needsResPicker ? guideReservations.find(r=>r.id===selectedResId) : null;
+  const effectiveResId = needsResPicker ? selectedResId : resId;
+
   async function handleSubmit() {
+    if (needsResPicker && !selectedResId) { setError("Rezervasyon / Tur seçilmelidir."); return; }
     if (!rating) { setError("Puan seçilmelidir."); return; }
     setError("");
     const payload = {
@@ -5079,34 +5105,58 @@ function AddEditReviewModal({ resId, guideId, review, onClose }) {
     };
     const { error: err } = isEdit
       ? await mutate("update", review.id, payload)
-      : await mutate("create", { ...payload, resId, guideId });
+      : await mutate("create", { ...payload, resId: effectiveResId, guideId });
     if (err) { setError(err); return; }
     onClose();
   }
 
   return (
     <Modal title={isEdit ? "Değerlendirmeyi Düzenle" : "Değerlendirme Ekle"} onClose={onClose} onSubmit={handleSubmit} submitLabel={mutating?"Kaydediliyor…":"Kaydet"}>
+      {needsResPicker && (
+        <>
+          <FRow label="Rezervasyon / Tur" required full hint="Yalnızca bu rehbere atanmış gerçek rezervasyonlar listelenir; tamamlanmış turlar önce gösterilir.">
+            <FSelect value={selectedResId} onChange={setSelectedResId} options={[
+              ["", "— Seçiniz —"],
+              ...guideReservations.map(r => [r.id, `${r.date} · ${r.tour || "—"} · ${r.name || "—"}`]),
+            ]}/>
+          </FRow>
+          {guideReservations.length===0 && (
+            <div style={{fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:-8, marginBottom:14}}>
+              Bu rehbere atanmış bir rezervasyon bulunamadı.
+            </div>
+          )}
+          {selectedRes && (
+            <div style={{
+              display:"flex", flexWrap:"wrap", gap:14, padding:"10px 12px", marginBottom:14,
+              background:C.ivory, border:`1px solid ${C.borderLight}`, borderRadius:8,
+              fontSize:12, color:C.textMid, fontFamily:"'DM Sans',sans-serif",
+            }}>
+              <span><b>Misafir:</b> {selectedRes.name || "—"}</span>
+              <span><b>Tur:</b> {selectedRes.tour || "—"}</span>
+              <span><b>Tarih:</b> {selectedRes.date || "—"}</span>
+            </div>
+          )}
+        </>
+      )}
       <FRow label="Puan" required full>
         <StarPicker value={rating} onChange={setRating}/>
       </FRow>
       <FGrid cols={2}>
-        <FRow label="Review Kaynağı" hint="Değerlendirmenin yayınlandığı platform (booking kaynağından farklı bir kavram).">
+        <FRow label="Değerlendirme Kaynağı" hint="Değerlendirmenin yayınlandığı platform (booking kaynağından farklı bir kavram).">
           <FSelect value={sourceId} onChange={setSourceId} options={[["","— Seçiniz —"], ...(sources||[]).map(s=>[s.id, s.name||s.label||s.slug])]}/>
         </FRow>
         <FRow label="Değerlendirme Tarihi">
           <FText type="date" value={reviewDate} onChange={setReviewDate}/>
         </FRow>
       </FGrid>
-      <FGrid cols={2}>
-        <FRow label="Değerlendiren" hint="Misafirin adı (varsa).">
-          <FText value={reviewerName} onChange={setReviewerName} placeholder="Ad Soyad"/>
-        </FRow>
-        <FRow label="External Review ID" hint="Platformun kendi değerlendirme kimliği (opsiyonel).">
-          <FText value={externalReviewId} onChange={setExternalReviewId} mono placeholder="örn. g_18293…"/>
-        </FRow>
-      </FGrid>
-      <FRow label="Değerlendirme" hint="Opsiyonel — misafirin yazdığı yorum.">
+      <FRow label="Değerlendiren" hint="Misafirin adı (varsa).">
+        <FText value={reviewerName} onChange={setReviewerName} placeholder="Ad Soyad"/>
+      </FRow>
+      <FRow label="Değerlendirme Metni" hint="Opsiyonel — misafirin yazdığı yorum.">
         <FTextArea value={reviewText} onChange={setReviewText} rows={4} placeholder="Değerlendirme metni…"/>
+      </FRow>
+      <FRow label="External Review ID" hint="Platformun kendi değerlendirme kimliği (opsiyonel).">
+        <FText value={externalReviewId} onChange={setExternalReviewId} mono placeholder="örn. g_18293…"/>
       </FRow>
       {error && <div style={{fontSize:12, color:C.red, marginTop:10, fontFamily:"'DM Sans',sans-serif"}}>{error}</div>}
     </Modal>
@@ -9564,6 +9614,8 @@ function GuideDetailPage({ guideId, onBack }) {
   const { sources } = useSources();
   const [showEdit, setShowEdit]               = useState(false);
   const [showAddPayment, setShowAddPayment]   = useState(false);
+  const [showAddReview, setShowAddReview]     = useState(false);
+  const canWriteReview = ["Yönetici","Operasyon"].includes(getAuthContext()?.role);
 
   if (loading) return <LoadingState label="Rehber profili yükleniyor…"/>;
   if (error)   return <ErrorState message={error} onRetry={()=>{}}/>;
@@ -9632,6 +9684,7 @@ function GuideDetailPage({ guideId, onBack }) {
     <>
     {showEdit && <AddGuideModal guide={guide} onClose={()=>{ setShowEdit(false); reload&&reload(); }}/>}
     {showAddPayment && <AddGuidePaymentModal guideId={guide.id} onClose={()=>{ setShowAddPayment(false); reloadGP&&reloadGP(); }}/>}
+    {showAddReview && <AddEditReviewModal guideId={guide.id} onClose={()=>setShowAddReview(false)}/>}
     <div style={{display:"flex", flexDirection:"column", gap:20}}>
 
       <div style={{
@@ -9718,7 +9771,14 @@ function GuideDetailPage({ guideId, onBack }) {
             ))}
           </GuideSectionCard>
 
-          <GuideSectionCard title={`Değerlendirmeler (${reviews.length})`}>
+          <GuideSectionCard title={`Değerlendirmeler (${reviews.length})`} action={
+            canWriteReview ? (
+              <button onClick={()=>setShowAddReview(true)} style={{
+                padding:"6px 12px", borderRadius:7, border:"none", background:C.navy,
+                color:C.white, fontSize:12, fontWeight:500, fontFamily:"'DM Sans',sans-serif", cursor:"pointer",
+              }}>+ Değerlendirme Ekle</button>
+            ) : null
+          }>
             {reviews.length===0 ? <EmptyRow text="Henüz değerlendirme yok."/> : (
               [...reviews].sort((a,b)=>(b.reviewDate||"").localeCompare(a.reviewDate||"")).map(rv=>(
                 <div key={rv.id} style={{padding:"12px 0", borderBottom:`1px solid ${C.borderLight}`}}>
@@ -9855,7 +9915,7 @@ function GuideTourHistoryRow({ r, sourceName, reviews }) {
           <div style={{fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:1}}>{r.date} · {r.name || "—"} · {r.pax} kişi</div>
           <div style={{fontSize:11, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:3, display:"flex", gap:10, flexWrap:"wrap"}}>
             <span>Tur Dili: {r.tourLanguage || "Belirtilmemiş"}</span>
-            <span>Kaynak: {sourceName || "—"}</span>
+            <span>Rezervasyon Kaynağı: {sourceName || "—"}</span>
           </div>
         </div>
         <div style={{display:"flex", flexDirection:"column", alignItems:"flex-end", gap:6, flexShrink:0}}>
