@@ -8376,6 +8376,37 @@ function TourCatPill({ category }) {
   );
 }
 
+// Offered language names for a tour, from the real tour_languages join
+// already present on the loaded tour object. Supabase-loaded tours carry
+// the derived t.languageNames (from mapTourFromDB); mock/local tours only
+// carry t.languages ([{code,name}]) — fall back to deriving names from
+// that so both sources render identically. Never raw codes, never a
+// separate dataset.
+function tourLanguageNames(tour) {
+  if (tour?.languageNames?.length) return tour.languageNames.filter(Boolean);
+  return (tour?.languages || []).map(l => l?.name).filter(Boolean);
+}
+// Names of the tour's currently active sales-channel listings, from the
+// real tour_channels join (t.channels[].sourceName) — "where it's actually
+// published" is defined as active listings, matching the "Yayında" card
+// already used on Tour Detail.
+function tourPlatformNames(tour) {
+  return (tour?.channels || []).filter(c => c && c.isActive !== false && c.sourceName).map(c => c.sourceName);
+}
+// Compact "A · B · +N" inline summary — quiet, scannable, no pills/icons.
+function InlineNameSummary({ items, emptyLabel }) {
+  if (!items || items.length === 0) {
+    return <span style={{fontSize:12.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", fontStyle:"italic"}}>{emptyLabel}</span>;
+  }
+  const shown = items.slice(0, 2);
+  const extra = items.length - shown.length;
+  return (
+    <span style={{fontSize:13, color:C.textMid, fontFamily:"'DM Sans',sans-serif"}} title={items.join(" · ")}>
+      {shown.join(" · ")}{extra > 0 ? ` · +${extra}` : ""}
+    </span>
+  );
+}
+
 function TourDetailPage({ tourId, onBack }) {
   const { isMobile } = useBreakpoint();
   const _sp = safeParam(tourId);
@@ -8594,9 +8625,12 @@ function ToursPage({ onSelect }) {
   const filtered = allTours.filter(t => {
     const tabOk  = activeTab==="Tümü" || t.status===activeTab;
     const catLabel = TOUR_CATEGORY_LABEL[t.category] || t.category || '';
+    const q = search.toLowerCase();
     const srchOk = !search ||
-      t.name.toLowerCase().includes(search.toLowerCase()) ||
-      catLabel.toLowerCase().includes(search.toLowerCase());
+      t.name.toLowerCase().includes(q) ||
+      catLabel.toLowerCase().includes(q) ||
+      tourLanguageNames(t).some(n => n.toLowerCase().includes(q)) ||
+      tourPlatformNames(t).some(n => n.toLowerCase().includes(q));
     return tabOk && srchOk;
   });
 
@@ -8629,7 +8663,7 @@ function ToursPage({ onSelect }) {
               <URIc d="M21 21l-4.35-4.35 M17 11A6 6 0 105 11a6 6 0 0012 0z" size={14} sw={1.8}/>
             </span>
             <input type="text" value={search} onChange={e=>setSearch(e.target.value)}
-              placeholder="Tur adı veya kategori ara…"
+              placeholder="Tur adı, kategori, dil veya platform ara…"
               style={{
                 paddingLeft:32, paddingRight:12, paddingTop:8, paddingBottom:8,
                 border:`1px solid ${C.border}`, borderRadius:8,
@@ -8726,7 +8760,7 @@ function ToursPage({ onSelect }) {
             <table className="rsp-table" style={{width:"100%", borderCollapse:"collapse"}}>
               <thead>
                 <tr style={{borderBottom:`1px solid ${C.border}`, background:C.ivory}}>
-                  {["Tur Adı","Kategori","Süre","Fiyatlandırma","Başlangıç Fiyatı","Kanal","Durum","Son Güncelleme",""].map((h,i)=>(
+                  {["Tur Adı","Dil","Platform","Kategori","Süre","Başlangıç Fiyatı","Durum","Son Güncelleme",""].map((h,i)=>(
                     <th key={i} style={{
                       padding: i===0?"11px 16px 11px 22px":"11px 12px",
                       textAlign:"left", fontSize:10.5, fontWeight:600,
@@ -8754,6 +8788,14 @@ function ToursPage({ onSelect }) {
                       </td>
                       {}
                       <td style={{padding:"14px 12px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle"}}>
+                        <InlineNameSummary items={tourLanguageNames(tour)} emptyLabel="Belirtilmemiş"/>
+                      </td>
+                      {}
+                      <td style={{padding:"14px 12px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle"}}>
+                        <InlineNameSummary items={tourPlatformNames(tour)} emptyLabel="Direkt / Belirtilmemiş"/>
+                      </td>
+                      {}
+                      <td style={{padding:"14px 12px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle"}}>
                         <TourCatPill category={tour.category}/>
                       </td>
                       {}
@@ -8765,17 +8807,9 @@ function ToursPage({ onSelect }) {
                       </td>
                       {}
                       <td style={{padding:"14px 12px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle"}}>
-                        <span style={{fontSize:12.5, color:C.textMid, fontFamily:"'DM Sans',sans-serif"}}>{TOUR_PRICING_TYPE_LABEL[tour.pricingType] || tour.pricingType}</span>
-                      </td>
-                      {}
-                      <td style={{padding:"14px 12px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle"}}>
                         <div style={{fontSize:15, fontWeight:700, color:C.gold, fontFamily:"'Playfair Display',serif"}}>
                           {sym}{tour.basePrice}
                         </div>
-                      </td>
-                      {}
-                      <td style={{padding:"14px 12px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle"}}>
-                        <span style={{fontSize:13, color:C.textMid, fontFamily:"'DM Sans',sans-serif"}}>{(tour.channels||[]).filter(c=>c.isActive).length}</span>
                       </td>
                       {}
                       <td style={{padding:"14px 12px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle"}}>
@@ -8803,9 +8837,13 @@ function ToursPage({ onSelect }) {
                     <div style={{fontSize:14,fontWeight:600,color:C.text,fontFamily:"'DM Sans',sans-serif"}}>{tour.name}</div>
                     <span style={{fontSize:11,padding:"2px 7px",borderRadius:99,color:tscm.color,background:tscm.bg,fontFamily:"'DM Sans',sans-serif",fontWeight:500,flexShrink:0}}>{tour.status}</span>
                   </div>
-                  <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+                  <div style={{display:"flex",gap:10,flexWrap:"wrap",marginBottom:6}}>
                     <span style={{fontSize:12,color:C.textMuted,fontFamily:"'DM Sans',sans-serif"}}>{TOUR_CATEGORY_LABEL[tour.category]||tour.category} · {tour.duration ? `${tour.duration} gün` : "—"}</span>
                     <span style={{fontSize:13,fontWeight:700,color:C.gold,fontFamily:"'Playfair Display',serif"}}>{sym}{tour.basePrice}</span>
+                  </div>
+                  <div style={{display:"flex",flexDirection:"column",gap:3}}>
+                    <InlineNameSummary items={tourLanguageNames(tour)} emptyLabel="Belirtilmemiş"/>
+                    <InlineNameSummary items={tourPlatformNames(tour)} emptyLabel="Direkt / Belirtilmemiş"/>
                   </div>
                 </MobileCard>
               );
