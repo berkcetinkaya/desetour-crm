@@ -2207,10 +2207,10 @@ function Welcome() {
   );
 
   return (
-    <div style={{
+    <div className="hero-shell" style={{
       position:"relative", overflow:"hidden",
       background:C.white, border:`1px solid ${C.border}`, borderRadius:T.radius,
-      boxShadow:T.shadowSoft, minHeight:296,
+      boxShadow:T.shadowSoft,
     }}>
       {showNewRes && <NewReservationModal onClose={()=>setShowNewRes(false)} onSuccess={()=>setShowNewRes(false)}/>}
 
@@ -8407,6 +8407,21 @@ function InlineNameSummary({ items, emptyLabel }) {
   );
 }
 
+// Dese Tour experiences are primarily hour-based (walking/day experiences),
+// not day-based, so duration_text — already in the schema, previously
+// unused — is now the single authoritative, operator-entered, human-
+// readable duration ("3 saat", "4.5 saat", "1 gün"…). duration_days is
+// kept only for backward compatibility on tours created before this field
+// existed: the app never writes it anymore (see mapTourToDB), it is only
+// ever read here as a graceful fallback so those older tours still show
+// their real (if less precise) duration instead of going blank. A tour
+// with neither returns null — never an invented duration.
+function tourDurationLabel(tour) {
+  if (tour?.durationText) return tour.durationText;
+  if (tour?.duration) return `${tour.duration} gün`;
+  return null;
+}
+
 function TourDetailPage({ tourId, onBack }) {
   const { isMobile } = useBreakpoint();
   const _sp = safeParam(tourId);
@@ -8427,7 +8442,7 @@ function TourDetailPage({ tourId, onBack }) {
   const [name, setName]                 = useState("");
   const [category, setCategory]         = useState("cultural");
   const [description, setDescription]   = useState("");
-  const [duration, setDuration]         = useState("");
+  const [durationText, setDurationText] = useState("");
   const [basePrice, setBasePrice]       = useState("");
   const [currency, setCurrency]         = useState("EUR");
   const [status, setStatus]             = useState("Aktif");
@@ -8445,7 +8460,12 @@ function TourDetailPage({ tourId, onBack }) {
       setName(orig.name || "");
       setCategory(orig.category || "cultural");
       setDescription(orig.description || "");
-      setDuration(orig.duration ? String(orig.duration) : "");
+      // Never auto-populate from the legacy duration_days fallback here —
+      // that would silently write a fabricated "X gün" into duration_text
+      // the moment this tour is next saved. The field starts blank for a
+      // tour that has no duration_text yet; the header preview below still
+      // falls back to orig.duration (via tourDurationLabel) for display.
+      setDurationText(orig.durationText || "");
       setBasePrice(orig.basePrice ? String(orig.basePrice) : "");
       setCurrency(orig.currency || "EUR");
       setStatus(orig.status || "Aktif");
@@ -8478,7 +8498,7 @@ function TourDetailPage({ tourId, onBack }) {
     setErrs(e);
     if (Object.keys(e).length) { showToast(Object.values(e)[0]); return; }
     const { data, error } = await mutTour("update", orig.id, {
-      name, category, description, duration: duration || null,
+      name, category, description, durationText: durationText || null,
       basePrice: basePrice ? parseFloat(basePrice) : 0, currency, status,
       tourType, maxGuests: maxGuests || null, meetingPoint, notes,
       languages, channels,
@@ -8520,7 +8540,7 @@ function TourDetailPage({ tourId, onBack }) {
           <div style={{minWidth:0}}>
             <div style={{fontSize:16, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif", lineHeight:1.2, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{name}</div>
             <div style={{fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:2}}>
-              {TOUR_CATEGORY_LABEL[category] || category} · {duration ? `${duration} gün` : "Süre belirtilmemiş"}
+              {TOUR_CATEGORY_LABEL[category] || category} · {tourDurationLabel({ durationText, duration: orig?.duration }) || "Süre belirtilmemiş"}
             </div>
           </div>
         </div>
@@ -8548,7 +8568,7 @@ function TourDetailPage({ tourId, onBack }) {
           <TourFormFields
             name={name} setName={setName} category={category} setCategory={setCategory}
             description={description} setDescription={setDescription}
-            duration={duration} setDuration={setDuration}
+            durationText={durationText} setDurationText={setDurationText}
             basePrice={basePrice} setBasePrice={setBasePrice} currency={currency} setCurrency={setCurrency}
             status={status} setStatus={setStatus}
             tourType={tourType} setTourType={setTourType}
@@ -8802,7 +8822,7 @@ function ToursPage({ onSelect }) {
                       <td style={{padding:"14px 12px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle"}}>
                         <div style={{display:"flex", alignItems:"center", gap:6, color:C.textMid}}>
                           <URIc d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" size={13} sw={1.5} color={C.textFaint}/>
-                          <span style={{fontSize:13, fontFamily:"'DM Sans',sans-serif"}}>{tour.duration ? `${tour.duration} gün` : "—"}</span>
+                          <span style={{fontSize:13, fontFamily:"'DM Sans',sans-serif"}}>{tourDurationLabel(tour) || "—"}</span>
                         </div>
                       </td>
                       {}
@@ -8838,7 +8858,7 @@ function ToursPage({ onSelect }) {
                     <span style={{fontSize:11,padding:"2px 7px",borderRadius:99,color:tscm.color,background:tscm.bg,fontFamily:"'DM Sans',sans-serif",fontWeight:500,flexShrink:0}}>{tour.status}</span>
                   </div>
                   <div style={{display:"flex",gap:10,flexWrap:"wrap",marginBottom:6}}>
-                    <span style={{fontSize:12,color:C.textMuted,fontFamily:"'DM Sans',sans-serif"}}>{TOUR_CATEGORY_LABEL[tour.category]||tour.category} · {tour.duration ? `${tour.duration} gün` : "—"}</span>
+                    <span style={{fontSize:12,color:C.textMuted,fontFamily:"'DM Sans',sans-serif"}}>{TOUR_CATEGORY_LABEL[tour.category]||tour.category} · {tourDurationLabel(tour) || "—"}</span>
                     <span style={{fontSize:13,fontWeight:700,color:C.gold,fontFamily:"'Playfair Display',serif"}}>{sym}{tour.basePrice}</span>
                   </div>
                   <div style={{display:"flex",flexDirection:"column",gap:3}}>
@@ -11720,6 +11740,21 @@ function GuestDetailPage({ guestId, onBack, onNavigate }) {
   );
 }
 
+// Real joined source name for a customer (customers.source_id → sources),
+// never a fabricated/inferred value. Supabase-loaded customers carry the
+// joined c.source ({id,name}) from mapCustomerFromDB; mock/local customers
+// only carry c.sourceId — fall back to a DB.sources lookup (mock rows use
+// .label, real Supabase rows use .name) so both render identically. Empty
+// string when unassigned — the caller decides the "Belirtilmemiş" wording.
+function customerSourceName(customer) {
+  if (customer?.source?.name) return customer.source.name;
+  if (customer?.sourceId) {
+    const s = DB.sources.find(x => x.id === customer.sourceId);
+    if (s) return s.label || s.name || '';
+  }
+  return '';
+}
+
 function CustomersPage({ onSelectGuest }) {
   const { isMobile } = useBreakpoint();
   const [showNewGuest, setShowNewGuest] = useState(false);
@@ -11743,11 +11778,13 @@ function CustomersPage({ onSelectGuest }) {
   const allGuests  = _rawGuests.map(c => enrichCustomer(c.id) || c);
   const filtered = allGuests.filter(g => {
     const tabOk  = (tabMap[activeTab]||tabMap["Tümü"])(g);
+    const q = search.toLowerCase();
     const srchOk = !search ||
-      g.name.toLowerCase().includes(search.toLowerCase()) ||
-      g.country.toLowerCase().includes(search.toLowerCase()) ||
-      g.email.toLowerCase().includes(search.toLowerCase()) ||
-      g.phone.includes(search);
+      g.name.toLowerCase().includes(q) ||
+      g.country.toLowerCase().includes(q) ||
+      g.email.toLowerCase().includes(q) ||
+      g.phone.includes(search) ||
+      customerSourceName(g).toLowerCase().includes(q);
     return tabOk && srchOk;
   });
 
@@ -11777,7 +11814,7 @@ function CustomersPage({ onSelectGuest }) {
               <GIc d="M21 21l-4.35-4.35 M17 11A6 6 0 105 11a6 6 0 0012 0z" size={14} sw={1.8}/>
             </span>
             <input type="text" value={search} onChange={e=>setSearch(e.target.value)}
-              placeholder="Misafir adı, ülke, telefon veya email ara…"
+              placeholder="Misafir adı, ülke, kaynak, telefon veya email ara…"
               style={{
                 paddingLeft:32, paddingRight:12, paddingTop:8, paddingBottom:8,
                 border:`1px solid ${C.border}`, borderRadius:8,
@@ -11859,7 +11896,7 @@ function CustomersPage({ onSelectGuest }) {
             <table style={{width:"100%", borderCollapse:"collapse"}}>
               <thead>
                 <tr style={{borderBottom:`1px solid ${C.border}`, background:C.ivory}}>
-                  {["Misafir","Ülke / Dil","İletişim","Talep","Teklif","Rez.","Harcama","Son İletişim","Durum",""].map((h,i)=>(
+                  {["Misafir","Ülke / Dil","Kaynak","İletişim","Rezervasyon","Harcama","Son İletişim","Durum",""].map((h,i)=>(
                     <th key={i} style={{
                       padding: i===0?"11px 16px 11px 22px":"11px 12px",
                       textAlign:"left", fontSize:10.5, fontWeight:600,
@@ -11899,16 +11936,16 @@ function CustomersPage({ onSelectGuest }) {
                       </td>
                       {}
                       <td style={{padding:"14px 12px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle"}}>
+                        {customerSourceName(g) ? (
+                          <span style={{fontSize:12.5, color:C.textMid, fontFamily:"'DM Sans',sans-serif"}}>{customerSourceName(g)}</span>
+                        ) : (
+                          <span style={{fontSize:12.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", fontStyle:"italic"}}>Belirtilmemiş</span>
+                        )}
+                      </td>
+                      {}
+                      <td style={{padding:"14px 12px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle"}}>
                         <div style={{fontSize:12.5, color:C.textMid, fontFamily:"'DM Mono',monospace"}}>{g.phone}</div>
                         <div style={{fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:2}}>{g.email}</div>
-                      </td>
-                      {}
-                      <td style={{padding:"14px 12px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, textAlign:"center", verticalAlign:"middle"}}>
-                        <span style={{fontSize:14, fontWeight:600, color:C.blue, fontFamily:"'Playfair Display',serif"}}>{g.leads}</span>
-                      </td>
-                      {}
-                      <td style={{padding:"14px 12px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, textAlign:"center", verticalAlign:"middle"}}>
-                        <span style={{fontSize:14, fontWeight:600, color:C.amber, fontFamily:"'Playfair Display',serif"}}>{g.quotes}</span>
                       </td>
                       {}
                       <td style={{padding:"14px 12px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, textAlign:"center", verticalAlign:"middle"}}>
@@ -11946,6 +11983,11 @@ function CustomersPage({ onSelectGuest }) {
                     </div>
                     <span style={{fontSize:11,padding:"3px 8px",borderRadius:99,background:C.ivoryDark,color:C.textMid}}>{item.status||"Aktif"}</span>
                   </div>
+                  {customerSourceName(item) ? (
+                    <div style={{fontSize:11.5,color:C.textFaint,marginTop:6,fontFamily:"'DM Sans',sans-serif"}}>Kaynak: {customerSourceName(item)}</div>
+                  ) : (
+                    <div style={{fontSize:11.5,color:C.textFaint,marginTop:6,fontFamily:"'DM Sans',sans-serif",fontStyle:"italic"}}>Kaynak belirtilmemiş</div>
+                  )}
                 </MobileCard>
               )}/></div>
             <div style={{padding:"11px 20px", background:C.ivory, borderTop:`1px solid ${C.borderLight}`}}>
@@ -12491,6 +12533,7 @@ function mapCustomerFromDB(r) {
     tags:r.tags||[], status:r.is_active===false?'Arşiv':'Aktif',
     initials:(r.full_name||'?').split(' ').map(w=>w[0]||'').join('').slice(0,2).toUpperCase(),
     flag:'🌍', sourceId:r.source_id||null,
+    source:r.source?{id:r.source.id,name:r.source.name}:null,
     firstContact:r.created_at?new Date(r.created_at).toLocaleDateString('tr-TR',{day:'2-digit',month:'short',year:'numeric'}):'—',
     lastContact:r.updated_at?new Date(r.updated_at).toLocaleDateString('tr-TR',{day:'2-digit',month:'short',year:'numeric'}):'—',
     importType:r.import_type||'manual', _fromDB:true };
@@ -12715,7 +12758,7 @@ async function _updateResPayStatus(sb, resId) {
 const SupabaseCustomerRepo = {
   async getAll(f={}) {
     const sb=getSB(); if(!sb)return CustomerRepository.getAll(f);
-    let q=sb.from('customers').select('id,full_name,email,phone,nationality,language,notes,tags,import_type,is_active,source_id,created_at,updated_at').eq('is_active',true).order('created_at',{ascending:false});
+    let q=sb.from('customers').select('id,full_name,email,phone,nationality,language,notes,tags,import_type,is_active,source_id,created_at,updated_at,source:sources(id,name)').eq('is_active',true).order('created_at',{ascending:false});
     if(f?.search)q=q.or(`full_name.ilike.%${f.search}%,email.ilike.%${f.search}%,phone.ilike.%${f.search}%`);
     const {data,error}=await q; if(error)throw new Error(error.message);
     return (data||[]).map(mapCustomerFromDB);
@@ -14295,7 +14338,7 @@ function TourChannelRows({ channels, setChannels, sources, srcLoading }) {
 // never drift apart. Purely controlled: all state/setters come from props.
 function TourFormFields({
   name, setName, category, setCategory, description, setDescription,
-  duration, setDuration, basePrice, setBasePrice, currency, setCurrency,
+  durationText, setDurationText, basePrice, setBasePrice, currency, setCurrency,
   status, setStatus, tourType, setTourType, maxGuests, setMaxGuests,
   meetingPoint, setMeetingPoint, notes, setNotes,
   languages, setLanguages, channels, setChannels, errors,
@@ -14310,8 +14353,8 @@ function TourFormFields({
         <FRow label="Kategori" required>
           <FSelect value={category} onChange={setCategory} options={TOUR_CATEGORIES}/>
         </FRow>
-        <FRow label="Süre (gün)">
-          <FText type="number" value={duration} onChange={setDuration} placeholder="Opsiyonel" mono/>
+        <FRow label="Süre" hint="Dese Tour deneyimleri saat bazlıdır.">
+          <FText value={durationText} onChange={setDurationText} placeholder="Örn: 3 saat, 4.5 saat, 1 gün"/>
         </FRow>
       </FGrid>
       <FRow label="Açıklama" full>
@@ -14376,7 +14419,7 @@ function NewTourModal({ onClose }) {
   const [name, setName]                 = useState("");
   const [category, setCategory]         = useState("cultural");
   const [description, setDescription]   = useState("");
-  const [duration, setDuration]         = useState("");
+  const [durationText, setDurationText] = useState("");
   const [basePrice, setBasePrice]       = useState("");
   const [currency, setCurrency]         = useState("EUR");
   const [status, setStatus]             = useState("Aktif");
@@ -14397,7 +14440,7 @@ function NewTourModal({ onClose }) {
     setErrs(e);
     if (Object.keys(e).length) return;
     const { data, error } = await mutTour("create", {
-      name, category, description, duration: duration || null,
+      name, category, description, durationText: durationText || null,
       basePrice: basePrice ? parseFloat(basePrice) : 0, currency, status,
       tourType, maxGuests: maxGuests || null, meetingPoint, notes,
       languages, channels,
@@ -14417,7 +14460,7 @@ function NewTourModal({ onClose }) {
       <TourFormFields
         name={name} setName={setName} category={category} setCategory={setCategory}
         description={description} setDescription={setDescription}
-        duration={duration} setDuration={setDuration}
+        durationText={durationText} setDurationText={setDurationText}
         basePrice={basePrice} setBasePrice={setBasePrice} currency={currency} setCurrency={setCurrency}
         status={status} setStatus={setStatus}
         tourType={tourType} setTourType={setTourType}
@@ -14731,7 +14774,11 @@ function mapTourFromDB(r) {
     id:          r.id,
     name:        r.name          || '',
     category:    r.category      || 'other',
+    // duration_days: legacy day-count, kept read-only for graceful fallback
+    // (see tourDurationLabel). duration_text: the authoritative operator-
+    // entered human-readable duration going forward (e.g. "3 saat").
     duration:    r.duration_days || null,
+    durationText:r.duration_text || '',
     status:      _TOUR_STATUS_APP[r.status] || r.status || 'Aktif',
     basePrice:   parseFloat(r.base_price || 0),
     currency:    r.currency      || 'EUR',
@@ -14754,7 +14801,11 @@ function mapTourToDB(d) {
   const row = {};
   if (d.name         !== undefined) row.name = d.name;
   if (d.category      !== undefined) row.category = d.category || 'other';
-  if (d.duration       !== undefined) row.duration_days = d.duration ? parseInt(d.duration) : null;
+  // duration_days is never written from here on — duration_text (operator
+  // free-text, hour-based) is now the sole authoritative duration write.
+  // duration_days stays in the schema/row untouched for whatever legacy
+  // value it already holds; see tourDurationLabel's read-side fallback.
+  if (d.durationText   !== undefined) row.duration_text = d.durationText || null;
   if (d.basePrice      !== undefined) row.base_price = parseFloat(d.basePrice) || 0;
   if (d.currency       !== undefined) row.currency = d.currency || 'EUR';
   if (d.description    !== undefined) row.description = d.description || null;
@@ -17158,7 +17209,8 @@ function MobileGuestsPage({ onSelectGuest }) {
     (g.name||"").toLowerCase().includes(q) ||
     (g.country||"").toLowerCase().includes(q) ||
     (g.email||"").toLowerCase().includes(q) ||
-    (g.phone||"").includes(q)
+    (g.phone||"").includes(q) ||
+    customerSourceName(g).toLowerCase().includes(q)
   );
 
   return (
@@ -17179,7 +17231,7 @@ function MobileGuestsPage({ onSelectGuest }) {
         <span style={{ position:"absolute", left:12, top:"50%", transform:"translateY(-50%)", color:C.textFaint, pointerEvents:"none" }}>
           <GIc d="M21 21l-4.35-4.35 M17 11A6 6 0 105 11a6 6 0 0012 0z" size={14} sw={1.8}/>
         </span>
-        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="İsim, ülke, telefon veya email ara…" style={{
+        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="İsim, ülke, kaynak, telefon veya email ara…" style={{
           width:"100%", boxSizing:"border-box", padding:"11px 12px 11px 36px", borderRadius:12,
           border:`1px solid ${C.border}`, background:C.white, fontSize:14, color:C.text,
           fontFamily:"'DM Sans',sans-serif", outline:"none",
@@ -17207,6 +17259,9 @@ function MobileGuestsPage({ onSelectGuest }) {
                 <div style={{ fontSize:14, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{g.flag} {g.name}</div>
                 <div style={{ fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
                   {g.country}{g.country && (g.phone||g.email) ? " · " : ""}{g.phone||g.email||""}
+                </div>
+                <div style={{ fontSize:11, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", fontStyle: customerSourceName(g) ? "normal" : "italic", marginTop:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                  {customerSourceName(g) || "Kaynak belirtilmemiş"}
                 </div>
               </div>
               <MobileStatusChip label={g.status||"Aktif"} tone={g.status==="Arşiv"?"neutral":"good"}/>

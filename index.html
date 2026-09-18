@@ -6,6 +6,13 @@
   <meta name="description" content="Dese Tour Operasyon Merkezi — CRM"/>
   <title>Dese Tour Operasyon Merkezi</title>
 
+  <!-- Favicon — cropped from the existing dese-logo-mark.png brand asset
+       (the "D" glyph, a plain crop with no redrawing/recoloring), never a
+       generated or external image. -->
+  <link rel="icon" type="image/x-icon" href="/favicon.ico"/>
+  <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png"/>
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png"/>
+
   <!--
   ══════════════════════════════════════════════════════════════════════
   DESE TOUR OPERATIONS CENTER — index.html
@@ -73,6 +80,23 @@
       to   { opacity: 1; transform: translateY(0); }
     }
     .fade { animation: fadeInUp 0.18s ease; }
+
+    /* Dashboard hero shell height — the hero-photo box's crop ratio is its
+       width (72% of this shell) divided by this height. The shell's height
+       used to come from an inline minHeight:296 that never grew with the
+       viewport, so on a wide screen the box got much wider without getting
+       any taller, forcing object-fit:cover to zoom in far past the source
+       photo's own ~2.5:1 ratio to fill it — cropping most of the image's
+       height away. Growing the shell at the same breakpoints already used
+       below keeps the crop close to that native ratio at every width
+       instead of only at the narrowest one. */
+    .hero-shell { min-height: 320px; }
+    @media (min-width: 1440px) {
+      .hero-shell { min-height: 340px; }
+    }
+    @media (min-width: 1920px) {
+      .hero-shell { min-height: 430px; }
+    }
 
     /* Dashboard hero photo — now a real <img> (object-fit) confined to the
        hero's right ~72% instead of a full-bleed background, so cover crops
@@ -201,7 +225,7 @@
 
 
   <!-- App (pre-transpiled JSX — no Babel needed in browser) -->
-  <script src="app.js?v=1792ebfe5b"></script>
+  <script src="app.js?v=1af352f842"></script>
 
   <!-- Hide boot screen once React renders -->
   <script>
