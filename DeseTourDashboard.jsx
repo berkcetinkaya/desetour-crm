@@ -1880,7 +1880,7 @@ function NavItem({ item, currentBase }) {
 }
 
 function SidebarInner({ currentBase, onNavItem, liveBadges }) {
-  const auth = getAuthContext();
+  const auth = useAuthContext();
   const role = auth.role;
   const badgeFor = (it) => (liveBadges && liveBadges[it.id] !== undefined) ? liveBadges[it.id] : it.badge;
 
@@ -2011,7 +2011,7 @@ function SidebarInner({ currentBase, onNavItem, liveBadges }) {
 }
 
 function Sidebar({ currentBase, collapsed, onToggle, mobileOpen, onMobileClose }) {
-  const auth = getAuthContext();
+  const auth = useAuthContext();
   const { isMobile } = useBreakpoint();
   const W = collapsed ? 64 : 208;
 
@@ -2191,7 +2191,7 @@ function Sidebar({ currentBase, collapsed, onToggle, mobileOpen, onMobileClose }
 }
 
 function Welcome() {
-  const auth = getAuthContext();
+  const auth = useAuthContext();
   const firstName = auth.displayName.split(" ")[0] || "Hoş geldiniz";
   const hour = new Date().getHours();
   const greeting = hour < 12 ? "Günaydın" : hour < 18 ? "İyi günler" : "İyi akşamlar";
@@ -5167,7 +5167,7 @@ function ReviewCard({ r }) {
   const { data: reviews, loading } = useRepo("review", "getByReservation", r.id);
   const [showAdd, setShowAdd] = useState(false);
   const [editing, setEditing] = useState(null);
-  const canWrite = ["Yönetici","Operasyon"].includes(getAuthContext()?.role);
+  const canWrite = ["Yönetici","Operasyon"].includes(useAuthContext()?.role);
   const list = reviews || [];
 
   return (
@@ -9615,7 +9615,7 @@ function GuideDetailPage({ guideId, onBack }) {
   const [showEdit, setShowEdit]               = useState(false);
   const [showAddPayment, setShowAddPayment]   = useState(false);
   const [showAddReview, setShowAddReview]     = useState(false);
-  const canWriteReview = ["Yönetici","Operasyon"].includes(getAuthContext()?.role);
+  const canWriteReview = ["Yönetici","Operasyon"].includes(useAuthContext()?.role);
 
   if (loading) return <LoadingState label="Rehber profili yükleniyor…"/>;
   if (error)   return <ErrorState message={error} onRetry={()=>{}}/>;
@@ -13354,26 +13354,63 @@ let _authCache = null;
 let _authListeners = [];
 function _notifyAuthListeners() { _authListeners.forEach(fn => fn(_authCache)); }
 
-// Resolves { session, staff, staffQueryError } for a given Supabase auth
-// session. Two genuinely different failure modes are kept apart so
-// AuthGuard can show the right screen for each:
+// Monotonic token for every in-flight staff-profile resolution. A resolution
+// started before a newer one (e.g. init() racing the first onAuthStateChange
+// event, or two background refreshes overlapping) is discarded when it
+// finally settles, instead of being allowed to overwrite whatever the most
+// recently *started* resolution already produced.
+let _authReqSeq = 0;
+
+// Applies a resolved { session, staff, staffQueryError } patch to the shared
+// auth cache, guarding against the exact failure this was built to fix: a
+// transient refresh failure silently erasing an already-verified identity.
+//   - A stale/out-of-order resolution (reqId no longer the latest) is
+//     dropped entirely.
+//   - A resolution that merely FAILED (staffQueryError set) for the SAME
+//     user who already had a verified staff profile never overwrites that
+//     profile — the failure is recorded separately (staffRefreshError) so
+//     it can be surfaced without gating the whole app off.
+//   - Anything else (a genuine result, a different/new user, first-ever
+//     resolution) replaces the cache outright, same as before.
+function _applyAuthResolution(reqId, patch, prevCache, prevUserId) {
+  if (reqId !== _authReqSeq) return false;
+  const newUserId = patch.session?.user?.id || null;
+  if (patch.staffQueryError && newUserId === prevUserId && prevCache?.staff) {
+    _authCache = { ...prevCache, session: patch.session, staffRefreshError: patch.staffQueryError };
+  } else {
+    _authCache = { ...patch, staffRefreshError: null };
+  }
+  return true;
+}
+
+// Resolves { session, staff, staffQueryError, staffInactive } for a given
+// Supabase auth session. Genuinely different outcomes are kept apart so
+// AuthGuard can show the right screen for each, and so no state is ever
+// conflated with a more permissive one:
 //   - staffQueryError set   → the staff_users query itself failed (timeout,
 //     network, RLS denial, bad column, etc.) — the profile's real state is
 //     UNKNOWN, not "missing".
-//   - staff null, no error  → the query succeeded and genuinely returned
-//     zero rows — no staff_users row exists for this auth UUID.
+//   - staff null, no error, staffInactive false → the query succeeded and
+//     genuinely returned zero rows — no staff_users row exists for this
+//     auth UUID.
+//   - staff null, staffInactive true → a row exists and is linked, but
+//     is_active is false. This must never be treated as "missing" (which
+//     invites the wrong troubleshooting) or silently granted a role.
 async function _resolveStaffState(s) {
-  if (!s?.user) return { session:s, staff:null, authLoading:false, staffQueryError:null };
+  if (!s?.user) return { session:s, staff:null, authLoading:false, staffQueryError:null, staffInactive:false };
   try {
     const { data, error } = await _withTimeout(loadStaffData(s.user.id), 12000, 'Personel profili');
     if (error) {
       console.error('[Auth] staff_users query returned an error (session kept):', error);
-      return { session:s, staff:null, authLoading:false, staffQueryError: error.message || String(error) };
+      return { session:s, staff:null, authLoading:false, staffQueryError: error.message || String(error), staffInactive:false };
     }
-    return { session:s, staff:data, authLoading:false, staffQueryError:null };
+    if (data && data.is_active === false) {
+      return { session:s, staff:null, authLoading:false, staffQueryError:null, staffInactive:true };
+    }
+    return { session:s, staff:data, authLoading:false, staffQueryError:null, staffInactive:false };
   } catch(e) {
     console.error('[Auth] staff profile lookup threw (session kept):', e);
-    return { session:s, staff:null, authLoading:false, staffQueryError: e.message };
+    return { session:s, staff:null, authLoading:false, staffQueryError: e.message, staffInactive:false };
   }
 }
 
@@ -13387,14 +13424,22 @@ function useAuth() {
   const authLoading = authState.authLoading;
   const authError   = authState.authError || null;
   const staffQueryError = authState.staffQueryError || null;
+  // A background refresh that failed while a verified profile from the
+  // SAME user was already cached — never gates the app (staff/role stay
+  // intact), but is kept visible separately rather than silently dropped.
+  const staffRefreshError = authState.staffRefreshError || null;
+  const staffInactive = authState.staffInactive || false;
 
   // Re-runs only the staff_users lookup for the current session, without
   // dropping back to a full "Yükleniyor…" screen — used by the "Tekrar
   // Dene" button on the staff-query-failed screen.
   async function retryStaffLookup() {
     if (!session) return;
+    const prevCache = _authCache;
+    const prevUserId = prevCache?.session?.user?.id || null;
+    const reqId = ++_authReqSeq;
     const patch = await _resolveStaffState(session);
-    _authCache = { ...(_authCache || {}), ...patch };
+    if (!_applyAuthResolution(reqId, patch, prevCache, prevUserId)) return;
     setAuthState(_authCache);
     _notifyAuthListeners();
   }
@@ -13454,21 +13499,56 @@ function useAuth() {
       // authError (session-check failures, shown on the login screen) so a
       // failed staff_users query never gets silently reinterpreted as "no
       // profile exists" — AuthGuard shows a distinct screen for each.
-      const newState = await _resolveStaffState(s);
-      _authCache = newState;
-      setAuthState(newState);
+      const prevCache = _authCache;
+      const prevUserId = prevCache?.session?.user?.id || null;
+      const reqId = ++_authReqSeq;
+      const patch = await _resolveStaffState(s);
+      if (!_applyAuthResolution(reqId, patch, prevCache, prevUserId)) return;
+      setAuthState(_authCache);
       _notifyAuthListeners();
     }
     init();
 
-    const { data:{ subscription } } = sb.auth.onAuthStateChange(async (_ev, s) => {
-      // Same principle: `s` (null or a session) comes straight from the
-      // auth event itself — a staff_users lookup failure must not override
-      // it with `null`, or a transient DB hiccup during an active session
-      // (e.g. right after some unrelated insert) would look like a logout.
-      const newState = await _resolveStaffState(s);
-      _authCache = newState;
-      setAuthState(newState);
+    const { data:{ subscription } } = sb.auth.onAuthStateChange(async (ev, s) => {
+      const prevCache  = _authCache;
+      const prevUserId = prevCache?.session?.user?.id || null;
+      const newUserId  = s?.user?.id || null;
+
+      // TOKEN_REFRESHED (and a duplicate INITIAL_SESSION firing right after
+      // init() already resolved it) mean the same already-authenticated
+      // user just received a new JWT — nothing about their staff_users row
+      // changed as a side effect of that, so there is nothing to re-query.
+      // Re-running the staff_users lookup on every background refresh is
+      // exactly what let a purely transient timeout overwrite an
+      // already-valid profile — skip the query entirely when identity
+      // hasn't changed and a verified profile is already cached for it.
+      if ((ev === 'TOKEN_REFRESHED' || ev === 'INITIAL_SESSION') && newUserId && newUserId === prevUserId && prevCache?.staff) {
+        _authCache = { ...prevCache, session: s };
+        setAuthState(_authCache);
+        _notifyAuthListeners();
+        return;
+      }
+
+      const reqId = ++_authReqSeq;
+
+      // A different user signed in, or the session ended — never let a
+      // previous user's cached profile leak into the new session, even
+      // for the moment it takes the new lookup to resolve.
+      if (newUserId !== prevUserId) {
+        _authCache = { session:s, staff:null, authLoading:true, staffQueryError:null, staffRefreshError:null };
+        setAuthState(_authCache);
+        _notifyAuthListeners();
+      }
+
+      // Same principle as init(): `s` (null or a session) comes straight
+      // from the auth event itself — a staff_users lookup failure must not
+      // override it with `null`, or a transient DB hiccup during an active
+      // session (e.g. right after some unrelated insert) would look like a
+      // logout. _applyAuthResolution additionally protects an already
+      // -verified same-user profile from being erased by this failure.
+      const patch = await _resolveStaffState(s);
+      if (!_applyAuthResolution(reqId, patch, prevCache, prevUserId)) return;
+      setAuthState(_authCache);
       _notifyAuthListeners();
     });
     return () => {
@@ -13551,7 +13631,7 @@ function useAuth() {
   const role    = rawRole ? (ROLE_MAP[rawRole] || rawRole) : null;
   const staffLinked = !!staff;
 
-  return { session, staff, authLoading, authError, staffQueryError, retryStaffLookup, login, logout, displayName, initials, role, staffLinked, isLoggedIn:!!session };
+  return { session, staff, authLoading, authError, staffQueryError, staffRefreshError, staffInactive, retryStaffLookup, login, logout, displayName, initials, role, staffLinked, isLoggedIn:!!session };
 }
 
 const AuthContext = createContext(null);
@@ -13954,6 +14034,45 @@ function AuthGuard({ children }) {
     );
   }
 
+  // Authenticated, a matching staff_users row was found, but is_active is
+  // false. Never conflate this with "no row exists" (wrong troubleshooting)
+  // or grant any role-based access — the account was deliberately
+  // deactivated.
+  if (!auth.staffLinked && auth.staffInactive) {
+    return (
+      <div style={{
+        minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center",
+        background:`linear-gradient(135deg, ${C.navyDeep} 0%, ${C.navy} 100%)`, padding:20,
+      }}>
+        <div style={{
+          maxWidth:440, width:"100%", background:C.white, borderRadius:14,
+          padding:"32px 30px", textAlign:"center", boxShadow:"0 20px 60px rgba(0,0,0,0.3)",
+        }}>
+          <div style={{
+            width:52, height:52, borderRadius:"50%", background:C.redBg, margin:"0 auto 16px",
+            display:"flex", alignItems:"center", justifyContent:"center",
+          }}>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={C.red} strokeWidth="2" strokeLinecap="round">
+              <circle cx="12" cy="12" r="10"/><line x1="8" y1="8" x2="16" y2="16"/>
+            </svg>
+          </div>
+          <div style={{fontSize:17, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif", marginBottom:8}}>
+            Hesap Pasif
+          </div>
+          <div style={{fontSize:13.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", lineHeight:1.6, marginBottom:20}}>
+            <b>{auth.session?.user?.email}</b> hesabına bağlı bir <code style={{background:C.ivory, padding:"1px 5px", borderRadius:4, fontFamily:"'DM Mono',monospace", fontSize:12}}>staff_users</code> kaydı bulundu, ancak bu hesap pasif olarak işaretlenmiş. Erişim için bir yöneticinin hesabı yeniden aktifleştirmesi gerekir.
+          </div>
+          <button onClick={auth.logout} style={{
+            padding:"10px 22px", borderRadius:9, border:"none",
+            background:`linear-gradient(135deg,${C.navyDeep},${C.navy})`,
+            color:C.white, fontSize:13.5, fontWeight:500,
+            fontFamily:"'DM Sans',sans-serif", cursor:"pointer",
+          }}>Çıkış Yap</button>
+        </div>
+      </div>
+    );
+  }
+
   // Authenticated, staff_users query succeeded, but genuinely returned zero
   // rows for this auth UUID — never let the app render as if this were a
   // real, role-permissioned user. Report the problem explicitly instead of
@@ -14007,15 +14126,17 @@ function AuthGuard({ children }) {
 // AuthGuard._current is set synchronously during AuthGuard's own render,
 // before any child (which is everything that calls getAuthContext) can
 // render — so this fallback is only ever reached if a component somehow
-// calls it outside the AuthGuard tree. Kept generic and non-personal
-// rather than a specific person's name, matching the real fallback chain
-// in useAuth() above.
+// calls it outside the AuthGuard tree. Fails CLOSED: no role and not
+// logged in, so canAccess()/role-gated UI everywhere treats it as zero
+// access rather than silently granting Yönetici. A previous version of
+// this fallback defaulted to role:"Yönetici" — that was a live
+// admin-by-default landmine and must never be reintroduced.
 function getAuthContext() {
   return AuthGuard._current || {
     displayName: "Kullanıcı",
     initials:    "?",
-    role:        "Yönetici",
-    isLoggedIn:  true,
+    role:        null,
+    isLoggedIn:  false,
     logout:      ()=>{},
   };
 }
@@ -16127,7 +16248,7 @@ function GlobalSearch() {
 
 // Thin persistent desktop top bar (search shell + notification + identity).
 function DesktopTopBar({ leftOffset }) {
-  const auth = getAuthContext();
+  const auth = useAuthContext();
   return (
     <div style={{
       position:"fixed", top:0, left:leftOffset, right:0, height:56, zIndex:40,
@@ -16159,6 +16280,95 @@ function DesktopTopBar({ leftOffset }) {
   );
 }
 
+// The actual route guard + page switch — deliberately a real component
+// (rendered via JSX from App, mounted as a descendant of AuthGuard's
+// AuthContext.Provider) rather than a plain function App calls directly
+// during its own render. App itself sits ABOVE AuthGuard in the tree (it
+// renders <AuthGuard>{...}</AuthGuard>), so a hook called from a function
+// invoked eagerly inside App's own body can never see AuthGuard's Provider
+// — this used to be exactly that eager call, reading the non-reactive
+// getAuthContext() instead, which is what let this route guard evaluate a
+// stale/inconsistent auth snapshot independently of the rest of the UI.
+function PageRouter({ base, param, isMobile, navigate }) {
+  const auth = useAuthContext();
+  const role = auth.role;
+
+  if (!canAccess(role, base)) {
+    return <AccessDenied page={base}/>;
+  }
+
+  if (base === "more") return <MobileMorePage navigate={navigate}/>;
+
+  // ── Mobile: dedicated screens for every route reachable from daily
+  // operations, list AND detail. Each one is its own information
+  // architecture — not the desktop page reused at a narrow width.
+  if (isMobile) {
+    if (base === "dashboard") return <MobileHomePage navigate={navigate}/>;
+    if (base === "calendar") return <MobileCalendarPage navigate={navigate}/>;
+    if (base === "messages") return <MobileMessagesPage/>;
+
+    // leads/quotes list+create/edit are retired from active navigation
+    // (Talepler/Teklifler simplification) — the detail views stay reachable
+    // by direct link only, since surviving pages (Reservation/Customer/
+    // Messages detail) still show historical IDLinks into them.
+    if (base === "leads" && param) return <MobileLeadDetailPage leadId={param} onBack={()=>navigate('/dashboard')}/>;
+
+    if (base === "reservations" && param) return <MobileReservationDetailPage resId={param} onBack={()=>navigate('/reservations')}/>;
+    if (base === "reservations") return <MobileReservationsPage onSelect={id=>navigate('/reservations/'+id)}/>;
+
+    if (base === "customers" && param) return <MobileGuestDetailPage guestId={param} onBack={()=>navigate('/customers')}/>;
+    if (base === "customers") return <MobileGuestsPage onSelectGuest={id=>navigate('/customers/'+id)}/>;
+
+    if (base === "quotes" && param) return <MobileQuoteDetailPage quoteId={param} onBack={()=>navigate('/dashboard')}/>;
+
+    if (base === "guides" && param) return <GuideDetailPage guideId={param} onBack={()=>navigate('/guides')}/>;
+    if (base === "guides") return <GuidesPage onSelect={id=>navigate('/guides/'+id)}/>;
+
+    if (base === "payments") return <MobilePaymentsPage/>;
+    if (base === "reminders") return <MobileTasksQueuePage/>;
+  }
+
+  if (base === "dashboard") return <Dashboard/>;
+
+  // Retired from active navigation — no more list/create/edit entry
+  // points — but detail views stay reachable by direct link for
+  // historical records still referenced from Reservation/Customer/
+  // Messages pages (leads/quotes tables are not deleted).
+  if (base === "leads" && param)
+    return <LeadDetailPage onBack={()=>navigate('/dashboard')} leadId={param}/>;
+
+  if (base === "quotes" && param)
+    return <QuoteDetailPage quoteId={param} onBack={()=>navigate('/dashboard')}/>;
+
+  if (base === "reservations" && param)
+    return <ReservationDetailPage resId={param} onBack={()=>navigate('/reservations')}/>;
+  if (base === "reservations")
+    return <ReservationsPage onSelect={id=>navigate('/reservations/'+id)}/>;
+
+  if (base === "customers" && param)
+    return <GuestDetailPage guestId={param} onBack={()=>navigate('/customers')}/>;
+  if (base === "customers")
+    return <CustomersPage onSelectGuest={id=>navigate('/customers/'+id)}/>;
+
+  if (base === "tours" && param)
+    return <TourDetailPage tourId={param} onBack={()=>navigate('/tours')}/>;
+  if (base === "tours")
+    return <ToursPage onSelect={id=>navigate('/tours/'+id)}/>;
+
+  if (base === "guides" && param)
+    return <GuideDetailPage guideId={param} onBack={()=>navigate('/guides')}/>;
+  if (base === "guides")    return <GuidesPage onSelect={id=>navigate('/guides/'+id)}/>;
+
+  if (base === "calendar")  return <CalendarPage/>;
+  if (base === "payments")  return <PaymentsPage/>;
+  if (base === "reminders") return <RemindersPage/>;
+  if (base === "reports")   return <ReportsPage/>;
+  if (base === "settings")  return <SettingsPage/>;
+  if (base === "messages")  return <MessagesPage/>;
+
+  return <NotFound404/>;
+}
+
 function App() {
   const { base, param, subParam, navigate, path } = useHashRouter();
   const { isMobile, isTablet } = useBreakpoint();
@@ -16175,86 +16385,6 @@ function App() {
 
   if (base === "reset-password") {
     return <ResetPasswordPage/>;
-  }
-
-  function renderPage() {
-    const auth = getAuthContext();
-    const role = auth.role;
-
-    if (!canAccess(role, base)) {
-      return <AccessDenied page={base}/>;
-    }
-
-    if (base === "more") return <MobileMorePage navigate={navigate}/>;
-
-    // ── Mobile: dedicated screens for every route reachable from daily
-    // operations, list AND detail. Each one is its own information
-    // architecture — not the desktop page reused at a narrow width.
-    if (isMobile) {
-      if (base === "dashboard") return <MobileHomePage navigate={navigate}/>;
-      if (base === "calendar") return <MobileCalendarPage navigate={navigate}/>;
-      if (base === "messages") return <MobileMessagesPage/>;
-
-      // leads/quotes list+create/edit are retired from active navigation
-      // (Talepler/Teklifler simplification) — the detail views stay reachable
-      // by direct link only, since surviving pages (Reservation/Customer/
-      // Messages detail) still show historical IDLinks into them.
-      if (base === "leads" && param) return <MobileLeadDetailPage leadId={param} onBack={()=>navigate('/dashboard')}/>;
-
-      if (base === "reservations" && param) return <MobileReservationDetailPage resId={param} onBack={()=>navigate('/reservations')}/>;
-      if (base === "reservations") return <MobileReservationsPage onSelect={id=>navigate('/reservations/'+id)}/>;
-
-      if (base === "customers" && param) return <MobileGuestDetailPage guestId={param} onBack={()=>navigate('/customers')}/>;
-      if (base === "customers") return <MobileGuestsPage onSelectGuest={id=>navigate('/customers/'+id)}/>;
-
-      if (base === "quotes" && param) return <MobileQuoteDetailPage quoteId={param} onBack={()=>navigate('/dashboard')}/>;
-
-      if (base === "guides" && param) return <GuideDetailPage guideId={param} onBack={()=>navigate('/guides')}/>;
-      if (base === "guides") return <GuidesPage onSelect={id=>navigate('/guides/'+id)}/>;
-
-      if (base === "payments") return <MobilePaymentsPage/>;
-      if (base === "reminders") return <MobileTasksQueuePage/>;
-    }
-
-    if (base === "dashboard") return <Dashboard/>;
-
-    // Retired from active navigation — no more list/create/edit entry
-    // points — but detail views stay reachable by direct link for
-    // historical records still referenced from Reservation/Customer/
-    // Messages pages (leads/quotes tables are not deleted).
-    if (base === "leads" && param)
-      return <LeadDetailPage onBack={()=>navigate('/dashboard')} leadId={param}/>;
-
-    if (base === "quotes" && param)
-      return <QuoteDetailPage quoteId={param} onBack={()=>navigate('/dashboard')}/>;
-
-    if (base === "reservations" && param)
-      return <ReservationDetailPage resId={param} onBack={()=>navigate('/reservations')}/>;
-    if (base === "reservations")
-      return <ReservationsPage onSelect={id=>navigate('/reservations/'+id)}/>;
-
-    if (base === "customers" && param)
-      return <GuestDetailPage guestId={param} onBack={()=>navigate('/customers')}/>;
-    if (base === "customers")
-      return <CustomersPage onSelectGuest={id=>navigate('/customers/'+id)}/>;
-
-    if (base === "tours" && param)
-      return <TourDetailPage tourId={param} onBack={()=>navigate('/tours')}/>;
-    if (base === "tours")
-      return <ToursPage onSelect={id=>navigate('/tours/'+id)}/>;
-
-    if (base === "guides" && param)
-      return <GuideDetailPage guideId={param} onBack={()=>navigate('/guides')}/>;
-    if (base === "guides")    return <GuidesPage onSelect={id=>navigate('/guides/'+id)}/>;
-
-    if (base === "calendar")  return <CalendarPage/>;
-    if (base === "payments")  return <PaymentsPage/>;
-    if (base === "reminders") return <RemindersPage/>;
-    if (base === "reports")   return <ReportsPage/>;
-    if (base === "settings")  return <SettingsPage/>;
-    if (base === "messages")  return <MessagesPage/>;
-
-    return <NotFound404/>;
   }
 
   return (
@@ -16377,7 +16507,7 @@ function App() {
         boxSizing:"border-box",
       }}>
         <div className="fade" key={path}>
-          {renderPage()}
+          <PageRouter base={base} param={param} isMobile={isMobile} navigate={navigate}/>
         </div>
       </main>
       {toastMsg && <Toast msg={toastMsg} onDone={()=>setToastMsg(null)}/>}
@@ -16637,7 +16767,7 @@ function BottomNav({ active, navigate }) {
    hamburger drawer as the primary way to reach everything not on the
    bottom tab bar. */
 function MobileMorePage({ navigate }) {
-  const auth = getAuthContext();
+  const auth = useAuthContext();
   const ALL_ITEMS = [
     { id:"customers",  label:"Misafirler",     icon:"M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2 M23 21v-2a4 4 0 00-3-3.87 M16 3.13a4 4 0 010 7.75" },
     { id:"tours",      label:"Turlar",         icon:"M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z M9 22V12h6v10" },
@@ -16710,7 +16840,7 @@ function MobileMorePage({ navigate }) {
    (useRepo/computeUrgent/etc.) — only the presentation is different.
    ══════════════════════════════════════════════════════════════════════ */
 function MobileHomePage({ navigate }) {
-  const auth = getAuthContext();
+  const auth = useAuthContext();
   const [quickAction, setQuickAction] = useState(null); // null|'guest'|'reservation'|'payment'
 
   const { data:repoRes }    = useRepo("reservation", "getAll");
