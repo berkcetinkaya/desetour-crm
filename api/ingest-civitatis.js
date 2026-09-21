@@ -38,6 +38,18 @@
  * returns body text, customer names, phone numbers, email addresses,
  * passenger names, financial values, or any credential. Requires only
  * Gmail configuration — does not touch Supabase at all.
+ *
+ * SAFE PARSER DEBUG MODE:
+ *   GET /api/ingest-civitatis?debugParser=1&maxMessages=10
+ * For each fetched message, returns gmailMessageId, subject,
+ * selectedBodyMimeType, selectedBodyLength, and a sanitized
+ * `parserRelevantLines` array (line number + text) built from ONLY the
+ * lines that look relevant to the parser's known booking fields (plus
+ * one line of context on each side) — see
+ * api/civitatis/parserDiagnostics.js. Never returns the full message
+ * body, HTML, OAuth/credential data, email addresses, or URLs (the
+ * latter two are redacted). Requires only Gmail configuration — does
+ * not touch Supabase at all.
  * ─────────────────────────────────────────────────────────────────────────
  */
 'use strict';
@@ -45,6 +57,7 @@
 const gmailClient = require('./civitatis/gmailClient');
 const { createSupabaseCivitatisRepo } = require('./civitatis/supabaseAdmin');
 const { runCivitatisDryRun } = require('./civitatis/dryRun');
+const { buildParserRelevantLines, redactSensitiveText } = require('./civitatis/parserDiagnostics');
 
 const DEFAULT_MAX_MESSAGES = 25;
 const HARD_MAX_MESSAGES = 100; // upper bound regardless of what a caller requests, to stay inside the function's time budget
@@ -73,6 +86,36 @@ module.exports = async function handler(req, res) {
 
   const debugMimeRaw = (req.query && req.query.debugMime) || (req.body && req.body.debugMime);
   const debugMime = debugMimeRaw === '1' || debugMimeRaw === 'true' || debugMimeRaw === true;
+
+  const debugParserRaw = (req.query && req.query.debugParser) || (req.body && req.body.debugParser);
+  const debugParser = debugParserRaw === '1' || debugParserRaw === 'true' || debugParserRaw === true;
+
+  if (debugParser) {
+    try {
+      const page = await gmailClient.fetchMessagePageFull(gmailClient.buildCivitatisSearchQuery(), {
+        pageToken,
+        maxResults: maxMessages,
+      });
+      const messages = page.items.map(({ message, diagnostics }) => ({
+        gmailMessageId: message.gmailMessageId,
+        subject: redactSensitiveText(message.subject),
+        selectedBodyMimeType: diagnostics.selectedBodyMimeType,
+        selectedBodyLength: diagnostics.selectedBodyLength,
+        parserRelevantLines: buildParserRelevantLines(message.body),
+      }));
+      return res.status(200).json({
+        mode: 'debugParser',
+        messages,
+        pagination: { requestedMaxMessages: maxMessages, nextPageToken: page.nextPageToken || null },
+      });
+    } catch (err) {
+      if (err instanceof gmailClient.ConfigurationError) {
+        return res.status(503).json({ error: err.message, stage: 'gmail_configuration' });
+      }
+      console.error('[ingest-civitatis] debugParser Gmail fetch error:', err.message);
+      return res.status(502).json({ error: 'Failed to fetch messages from Gmail. See function logs for details.', stage: 'gmail_fetch' });
+    }
+  }
 
   if (debugMime) {
     try {

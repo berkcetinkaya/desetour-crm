@@ -52,15 +52,38 @@ function isKnownLabelLine(line) {
     || MODIFIED_INFO_LABEL.test(line);
 }
 
-/** Splits body text into non-empty, trimmed lines — blank lines in
- * Civitatis's format are pure visual separators with no data of their
- * own, so compacting them away simplifies every extraction rule below
- * without losing information. */
+/**
+ * Normalizes one line's whitespace WITHOUT touching its meaningful
+ * content: non-breaking (and other Unicode) spaces become regular
+ * spaces, runs of horizontal whitespace (spaces/tabs) collapse to a
+ * single space, and a space immediately before a colon ("Reservation
+ * number :") is removed so the line matches the plain "Label:" form
+ * regardless of exactly how the source template padded it. Real
+ * Civitatis plain-text bodies are not guaranteed to start a label at
+ * column zero or to use single-space, single-tab separation — this is
+ * what makes label matching tolerant of that without ever altering a
+ * label or value's actual words/casing/digits. Applied uniformly to
+ * every line, so an accidental double space inside a passenger name is
+ * collapsed the same as anywhere else — real passenger names are not
+ * expected to contain intentional multi-space runs.
+ */
+function normalizeLineWhitespace(line) {
+  return String(line)
+    .replace(/[\s ]+/g, ' ')
+    .replace(/ :/g, ':')
+    .trim();
+}
+
+/** Splits body text into non-empty, whitespace-normalized lines — blank
+ * lines in Civitatis's format are pure visual separators with no data of
+ * their own, so compacting them away simplifies every extraction rule
+ * below without losing information. */
 function compactLines(body) {
   return String(body || '')
     .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
     .split('\n')
-    .map(l => l.trim())
+    .map(l => normalizeLineWhitespace(l))
     .filter(l => l.length > 0);
 }
 
@@ -262,20 +285,34 @@ function parseCivitatisEmail(message) {
   const lines = compactLines(body);
   const reasons = [];
 
-  // Reservation number: subject-derived value must be present in the body
-  // too and the two must agree — this is the "validated against the body"
-  // requirement, not just extracted from one place and trusted blindly.
+  // Reservation number: when the body states one, it must agree with the
+  // subject-derived value ("validated against the body", not just
+  // extracted from one place and trusted blindly) — a disagreement is
+  // never silently resolved either way and always goes to needs_review.
+  //
+  // When the body's "Reservation number:" field cannot be found/parsed at
+  // all, fall back to the numeric ID already extracted from the subject.
+  // This is safe specifically because subjectReservationNumber only ever
+  // has a value here as a result of eventDetector having matched one of
+  // the two strictly-anchored, already-recognized subject patterns ("New
+  // booking A########:" / "Booking A######## modified:") earlier in this
+  // function — an unrecognized subject never reaches this point (it was
+  // already routed to needs_review/ignored above), so this fallback can
+  // never fire for an unknown subject shape.
   const bodyReservationNumber = findLabelValue(lines, LABELS.RESERVATION_NUMBER);
   const subjectReservationNumber = detection.externalBookingIdFromSubject;
   let externalBookingId = null;
+  let reservationNumberSource = null;
   if (!subjectReservationNumber) {
     reasons.push('missing reservation number in subject');
   } else if (!bodyReservationNumber) {
-    reasons.push('missing "Reservation number:" field in body');
+    externalBookingId = subjectReservationNumber;
+    reservationNumberSource = 'subject_fallback';
   } else if (bodyReservationNumber.replace(/\D/g, '') !== subjectReservationNumber) {
     reasons.push(`reservation number mismatch between subject (${subjectReservationNumber}) and body (${bodyReservationNumber})`);
   } else {
     externalBookingId = subjectReservationNumber;
+    reservationNumberSource = 'body';
   }
 
   const activityName = findLabelValue(lines, LABELS.ACTIVITY);
@@ -352,6 +389,7 @@ function parseCivitatisEmail(message) {
     ...base,
     eventType,
     externalBookingId,
+    reservationNumberSource,
     activityName,
     internalCode,
     city,

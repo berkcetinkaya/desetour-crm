@@ -484,6 +484,28 @@ async function fetchMessagePageDiagnostics(query, { pageToken, maxResults = 25 }
 }
 
 /**
+ * Same pagination contract as fetchMessagePage, but returns BOTH the
+ * normalized message (including its selected body text) and its
+ * selection diagnostics for each message — used only by the
+ * ?debugParser=1 endpoint mode, which reduces `message.body` to a
+ * sanitized line list (api/civitatis/parserDiagnostics.js) before it
+ * ever leaves the server; this function itself does not redact
+ * anything, so callers must never return `message.body` verbatim.
+ */
+async function fetchMessagePageFull(query, { pageToken, maxResults = 25 } = {}) {
+  const accessToken = await getAccessToken();
+  const listing = await gmailFetch('/messages', {
+    accessToken,
+    params: { q: query, pageToken, maxResults },
+  });
+  const items = [];
+  for (const m of listing.messages || []) {
+    items.push(await getMessage(m.id, { includeDiagnostics: true }));
+  }
+  return { items, nextPageToken: listing.nextPageToken || null };
+}
+
+/**
  * Convenience: lists and fully fetches EVERY message matching a query in
  * one call, paging internally until exhausted. Left available for small
  * queries / tests, but api/ingest-civitatis.js uses fetchMessagePage
@@ -518,6 +540,7 @@ module.exports = {
   getMessage,
   fetchMessagePage,
   fetchMessagePageDiagnostics,
+  fetchMessagePageFull,
   fetchAllMatchingMessages,
   buildCivitatisSearchQuery,
   extractPlainTextBody,

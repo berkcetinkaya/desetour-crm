@@ -168,3 +168,136 @@ test('flags a People/passenger-count mismatch for review instead of silently tru
   assert.equal(r.status, 'needs_review');
   assert.ok(r.reasons.some(m => m.includes('does not match the "People:" field guest count')));
 });
+
+// ── Real-formatting tolerance: indented labels, tabs, NBSP, repeated spaces ──
+
+test('parses correctly when every label is indented (not at column zero)', () => {
+  const indented = {
+    ...F.italianNewBooking,
+    body: F.italianNewBooking.body.split('\n').map(l => (l.trim() ? '    ' + l : l)).join('\n'),
+  };
+  const r = parseCivitatisEmail(indented);
+  assert.equal(r.ok, true, JSON.stringify(r.reasons));
+  assert.equal(r.externalBookingId, '41629692');
+  assert.equal(r.city, 'Istanbul');
+});
+
+test('parses correctly when labels and values are tab-separated on the same line', () => {
+  const body = `
+Reservation number:\t41629692
+
+Internal code:\t\tGrand Bazaar Experience
+
+Language:\tItaliano
+
+City:\tIstanbul
+
+Date:\tMonday, november 2, 2026
+
+Hour:\t9:00 (9:00 am)
+
+People:\t2 Adulti
+
+Retail price:\t4,800 TL
+
+Net price:\t3,600 TL
+
+Client details:
+Name: Someone
+Surname: Example
+`;
+  const r = parseCivitatisEmail({
+    from: 'Civitatis <notificaciones@civitatis.com>',
+    subject: 'New booking A41629692: Tour del Grande Bazar',
+    body,
+    gmailMessageId: 'msg-tabs-001',
+    gmailThreadId: 'thread-41629692',
+    receivedAt: '2026-06-01T10:00:00.000Z',
+  });
+  assert.equal(r.ok, true, JSON.stringify(r.reasons));
+  assert.equal(r.externalBookingId, '41629692');
+  assert.equal(r.internalCode, 'Grand Bazaar Experience');
+});
+
+test('parses correctly with non-breaking spaces and doubled internal spaces inside labels', () => {
+  const body = [
+    'Reservation  number: 41629692',
+    'Internal code : Grand Bazaar Experience',
+    'Language:  Italiano',
+    'City:  Istanbul',
+    'Date:  Monday, november 2, 2026',
+    'Hour:  9:00 (9:00 am)',
+    'People:  2 Adulti',
+    'Retail  price:  4,800 TL',
+    'Net  price:  3,600 TL',
+    'Client details:',
+    'Name: Someone',
+    'Surname: Example',
+  ].join('\n');
+  const r = parseCivitatisEmail({
+    from: 'Civitatis <notificaciones@civitatis.com>',
+    subject: 'New booking A41629692: Tour del Grande Bazar',
+    body,
+    gmailMessageId: 'msg-nbsp-001',
+    gmailThreadId: 'thread-41629692',
+    receivedAt: '2026-06-01T10:00:00.000Z',
+  });
+  assert.equal(r.ok, true, JSON.stringify(r.reasons));
+  assert.equal(r.externalBookingId, '41629692');
+  assert.equal(r.internalCode, 'Grand Bazaar Experience');
+  assert.equal(r.retailAmount, 4800);
+  assert.equal(r.netAmount, 3600);
+});
+
+// ── Subject reservation-number fallback ─────────────────────────────────
+
+test('falls back to the subject-derived reservation number when the body has no parseable "Reservation number:" field', () => {
+  const noBodyReservationNumber = {
+    ...F.italianNewBooking,
+    body: F.italianNewBooking.body.replace('Reservation number:\n41629692\n\n', ''),
+  };
+  const r = parseCivitatisEmail(noBodyReservationNumber);
+  assert.equal(r.ok, true, JSON.stringify(r.reasons));
+  assert.equal(r.externalBookingId, '41629692');
+  assert.equal(r.reservationNumberSource, 'subject_fallback');
+});
+
+test('falls back to the subject-derived reservation number on a recognized "modified" subject too', () => {
+  const noBodyReservationNumber = {
+    ...F.italianModification,
+    body: F.italianModification.body.replace('Reservation number:\n41629692\n\n', ''),
+  };
+  const r = parseCivitatisEmail(noBodyReservationNumber);
+  assert.equal(r.ok, true, JSON.stringify(r.reasons));
+  assert.equal(r.eventType, 'modified');
+  assert.equal(r.externalBookingId, '41629692');
+  assert.equal(r.reservationNumberSource, 'subject_fallback');
+});
+
+test('does NOT use the subject fallback for an unrecognized/unsupported subject shape', () => {
+  // malformedBookingSubject is a "Booking A######## cancelled:" subject —
+  // not a recognized new_booking/modified pattern, so eventDetector
+  // routes it to needs_review before parser.js's body parsing (and thus
+  // the reservation-number fallback) ever runs.
+  const r = parseCivitatisEmail(F.malformedBookingSubject);
+  assert.equal(r.ok, false);
+  assert.equal(r.status, 'needs_review');
+  assert.equal(r.reservationNumberSource, undefined);
+});
+
+test('records reservationNumberSource "body" when the body value is present and agrees with the subject', () => {
+  const r = parseCivitatisEmail(F.italianNewBooking);
+  assert.equal(r.ok, true);
+  assert.equal(r.reservationNumberSource, 'body');
+});
+
+test('a body/subject reservation-number MISMATCH is still needs_review, never silently resolved by the subject fallback', () => {
+  const tampered = {
+    ...F.italianNewBooking,
+    body: F.italianNewBooking.body.replace('41629692', '99999999'),
+  };
+  const r = parseCivitatisEmail(tampered);
+  assert.equal(r.ok, false);
+  assert.equal(r.status, 'needs_review');
+  assert.equal(r.externalBookingId, null);
+});
