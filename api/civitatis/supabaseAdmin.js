@@ -21,6 +21,8 @@
  */
 'use strict';
 
+const { normalizeFullNameForComparison } = require('./matching');
+
 const CIVITATIS_SOURCE_SLUG = 'civitatis';
 
 let _cachedClient = null;
@@ -155,6 +157,29 @@ async function findCustomersByContact({ email, phone }) {
   return data || [];
 }
 
+/** Conservative name-only candidate lookup for the booking CONTACT (never
+ * a passenger — see api/civitatis/dryRun.js, which only ever calls this
+ * with mergedState.clientFullName). Narrowed server-side with a
+ * case-insensitive exact-string `ilike` (no `%`/`_` wildcards, so this is
+ * NOT database-side fuzzy matching — it is a plain case-insensitive
+ * equality check on the already whitespace-normalized query string)
+ * rather than downloading the entire customers table. This is a
+ * prefilter only: the actual match decision is always made by
+ * matching.js's matchCustomerByName, which independently re-applies
+ * normalizeFullNameForComparison to every candidate returned here, so
+ * correctness never depends on this query alone. */
+async function findCustomersByName({ fullName }) {
+  const normalized = normalizeFullNameForComparison(fullName);
+  if (!normalized) return [];
+  const sb = getServiceRoleClient();
+  const { data, error } = await sb.from('customers')
+    .select('id,full_name,email,phone')
+    .ilike('full_name', normalized)
+    .limit(10);
+  if (error) throw new Error(`Supabase error reading customers by name: ${error.message}`);
+  return data || [];
+}
+
 /** The full read-only repo object shape api/civitatis/dryRun.js expects. */
 function createSupabaseCivitatisRepo() {
   return {
@@ -164,6 +189,7 @@ function createSupabaseCivitatisRepo() {
     getReservationGuestNames,
     findCandidateLegacyReservations,
     findCustomersByContact,
+    findCustomersByName,
   };
 }
 

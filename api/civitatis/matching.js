@@ -70,6 +70,13 @@ function matchTourChannel({ internalCode, civitatisSourceId, tourChannels }) {
  * phone yet. This is surfaced explicitly in the dry-run report rather
  * than silently treated as "no existing customer".
  *
+ * Conflict safety: if the email matches one existing customer and the
+ * phone matches a DIFFERENT existing customer, that is never silently
+ * resolved by picking whichever happened to come first in the query
+ * result — `conflict: true` is returned instead, with every distinct
+ * customer involved, so the caller can require manual review rather
+ * than guess a winner.
+ *
  * @param {string|null} email
  * @param {string|null} phone
  * @param {Array<{id,full_name,email,phone}>} customers
@@ -77,18 +84,93 @@ function matchTourChannel({ internalCode, civitatisSourceId, tourChannels }) {
 function matchCustomer({ email, phone, customers }) {
   if (!email && !phone) {
     return {
-      determined: false, matched: false, customer: null,
+      determined: false, matched: false, conflict: false, customer: null, candidates: [],
       reason: 'no email or phone was present in the parsed email to safely match an existing customer — name-only matching is never attempted',
     };
   }
-  const found = (customers || []).find(c =>
-    (email && c.email && c.email.toLowerCase() === String(email).toLowerCase())
-    || (phone && c.phone && c.phone === phone)
-  );
-  if (found) {
-    return { determined: true, matched: true, customer: found, reason: null };
+  const emailMatches = email
+    ? (customers || []).filter(c => c.email && c.email.toLowerCase() === String(email).toLowerCase())
+    : [];
+  const phoneMatches = phone
+    ? (customers || []).filter(c => c.phone && c.phone === phone)
+    : [];
+
+  const byId = new Map();
+  for (const c of [...emailMatches, ...phoneMatches]) byId.set(c.id, c);
+  const distinctMatches = Array.from(byId.values());
+
+  if (distinctMatches.length === 0) {
+    return {
+      determined: true, matched: false, conflict: false, customer: null, candidates: [],
+      reason: 'no existing customer found by email/phone — would create a new customer record',
+    };
   }
-  return { determined: true, matched: false, customer: null, reason: 'no existing customer found by email/phone — would create a new customer record' };
+  if (distinctMatches.length === 1) {
+    return { determined: true, matched: true, conflict: false, customer: distinctMatches[0], candidates: distinctMatches, reason: null };
+  }
+  return {
+    determined: true, matched: false, conflict: true, customer: null, candidates: distinctMatches,
+    reason: `email and phone identify ${distinctMatches.length} different existing customers — cannot safely determine a single match automatically; requires manual confirmation`,
+  };
+}
+
+/**
+ * Deterministic comparison key for a customer/contact full name: trims
+ * leading/trailing whitespace, collapses any run of whitespace (spaces,
+ * tabs, non-breaking/Unicode spaces — \s already covers these in a JS
+ * regex) to a single space, and lowercases for case-insensitive
+ * comparison. Used ONLY to build a comparison key — the actual
+ * stored/display name is never altered anywhere by this function.
+ *
+ * Deliberately does NOT: strip accents, transliterate, reorder tokens,
+ * or do substring/prefix/fuzzy matching — "Jose Garcia" and
+ * "José García" are intentionally NOT equal under this key, and
+ * "Juan Armas" is intentionally NOT equal to "Juan Armas Puente".
+ *
+ * @param {string|null|undefined} name
+ * @returns {string} '' if name is not a non-empty string
+ */
+function normalizeFullNameForComparison(name) {
+  if (typeof name !== 'string') return '';
+  return name.replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+/**
+ * Conservative NAME-ONLY candidate search for the booking CONTACT
+ * (Civitatis "Client details" — never a passenger; callers must only
+ * ever pass mergedState.clientFullName here, not a passenger name).
+ * Only ever intended to be called when email/phone did NOT already
+ * produce a confirmed match (see dryRun.js) — a name match is NEVER by
+ * itself an automatic bind, so this never returns `matched: true`
+ * meaning "use this customer"; it only surfaces candidates for a human
+ * to confirm. Exact normalized-name equality only — no fuzzy/substring
+ * matching, ever.
+ *
+ * @param {string|null} fullName - the booking contact's clientFullName
+ * @param {Array<{id,full_name,email,phone}>} customers - candidate pool
+ *   (the caller is expected to have already narrowed this, e.g. via a
+ *   database-side prefilter — this function re-verifies exact equality
+ *   itself regardless, so it is correct even given an unfiltered pool)
+ */
+function matchCustomerByName({ fullName, customers }) {
+  const key = normalizeFullNameForComparison(fullName);
+  if (!key) {
+    return { matched: false, candidates: [], reason: 'no booking contact full name was available to search for a possible existing customer' };
+  }
+  const candidates = (customers || []).filter(c => normalizeFullNameForComparison(c.full_name) === key);
+  if (candidates.length === 0) {
+    return { matched: false, candidates: [], reason: null };
+  }
+  if (candidates.length === 1) {
+    return {
+      matched: true, candidates,
+      reason: 'an existing customer with the exact same normalized full name was found — name alone is never sufficient for an automatic match; requires manual confirmation before any write',
+    };
+  }
+  return {
+    matched: true, candidates,
+    reason: `${candidates.length} existing customers share the exact same normalized full name — cannot safely select one automatically; requires manual confirmation before any write`,
+  };
 }
 
 /**
@@ -134,4 +216,10 @@ function findPossibleExistingReservation({ tourId, checkIn, checkInTime, totalGu
   };
 }
 
-module.exports = { matchTourChannel, matchCustomer, findPossibleExistingReservation };
+module.exports = {
+  matchTourChannel,
+  matchCustomer,
+  matchCustomerByName,
+  normalizeFullNameForComparison,
+  findPossibleExistingReservation,
+};

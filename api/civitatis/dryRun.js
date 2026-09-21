@@ -18,7 +18,21 @@
 'use strict';
 
 const { parseCivitatisEmail } = require('./parser');
-const { matchTourChannel, matchCustomer, findPossibleExistingReservation } = require('./matching');
+const { matchTourChannel, matchCustomer, matchCustomerByName, findPossibleExistingReservation } = require('./matching');
+
+/** Reduces a customer row to only the fields safe/useful to surface in a
+ * dry-run report — mirrors exactly what findCustomersByContact/
+ * findCustomersByName already select, so this is a rename for clarity
+ * more than a redaction, but keeps the report shape stable even if the
+ * repo layer ever selects additional columns in the future. */
+function toSafeCustomerSummary(customer) {
+  return {
+    id: customer.id,
+    fullName: customer.full_name || null,
+    email: customer.email || null,
+    phone: customer.phone || null,
+  };
+}
 
 const OUTCOME = Object.freeze({
   WOULD_CREATE: 'WOULD_CREATE',
@@ -148,6 +162,7 @@ async function buildBookingReport({ externalBookingId, events, civitatisSourceId
       tourMatch: null,
       customerMatch: null,
       possibleExistingMatch: null,
+      possibleExistingCustomerMatch: null,
       reservationDiff: null,
       passengerDiff: null,
     };
@@ -173,6 +188,7 @@ async function buildBookingReport({ externalBookingId, events, civitatisSourceId
       tourMatch,
       customerMatch: null,
       possibleExistingMatch: null,
+      possibleExistingCustomerMatch: null,
       reservationDiff: null,
       passengerDiff: null,
     };
@@ -201,6 +217,7 @@ async function buildBookingReport({ externalBookingId, events, civitatisSourceId
       tourMatch,
       customerMatch: null,
       possibleExistingMatch: null,
+      possibleExistingCustomerMatch: null,
       existingReservationId: existingLinked.id,
       reservationDiff,
       passengerDiff,
@@ -228,6 +245,7 @@ async function buildBookingReport({ externalBookingId, events, civitatisSourceId
       tourMatch,
       customerMatch: null,
       possibleExistingMatch: legacyMatch.candidates,
+      possibleExistingCustomerMatch: null,
       reservationDiff: null,
       passengerDiff: null,
     };
@@ -243,6 +261,57 @@ async function buildBookingReport({ externalBookingId, events, civitatisSourceId
     customers: customerCandidates,
   });
 
+  // A confirmed email/phone match is authoritative and is never
+  // second-guessed by a name comparison (Task 7). Only when email/phone
+  // did NOT produce a confirmed match — nothing was parsed, nothing
+  // matched, or email/phone pointed to two different existing customers
+  // (customerMatch.conflict) — do we fall back to a conservative,
+  // NAME-ONLY signal on the booking CONTACT (mergedState.clientFullName,
+  // never a passenger — matchCustomerByName is only ever called with
+  // that field here). A name-only result is NEVER an automatic bind:
+  // it only ever produces a POSSIBLE_EXISTING_MATCH for human review,
+  // surfaced separately from the existing reservation-level
+  // possibleExistingMatch (a bare array, unchanged) as
+  // possibleExistingCustomerMatch, to avoid breaking that existing
+  // shape while still reusing the same POSSIBLE_EXISTING_MATCH outcome.
+  let possibleExistingCustomerMatch = null;
+  if (!customerMatch.matched) {
+    if (customerMatch.conflict) {
+      possibleExistingCustomerMatch = {
+        matchType: 'contact_conflict',
+        reason: customerMatch.reason,
+        candidates: customerMatch.candidates.map(toSafeCustomerSummary),
+      };
+    } else if (mergedState.clientFullName) {
+      const nameCandidates = await repo.findCustomersByName({ fullName: mergedState.clientFullName });
+      const nameMatch = matchCustomerByName({ fullName: mergedState.clientFullName, customers: nameCandidates });
+      if (nameMatch.matched) {
+        possibleExistingCustomerMatch = {
+          matchType: 'exact_normalized_name',
+          reason: nameMatch.reason,
+          candidates: nameMatch.candidates.map(toSafeCustomerSummary),
+        };
+      }
+    }
+  }
+
+  if (possibleExistingCustomerMatch) {
+    return {
+      externalBookingId,
+      outcome: OUTCOME.POSSIBLE_EXISTING_MATCH,
+      reasons: [possibleExistingCustomerMatch.reason],
+      eventHistory,
+      mergedState,
+      pastOrFuture,
+      tourMatch,
+      customerMatch,
+      possibleExistingMatch: null,
+      possibleExistingCustomerMatch,
+      reservationDiff: null,
+      passengerDiff: null,
+    };
+  }
+
   return {
     externalBookingId,
     outcome: OUTCOME.WOULD_CREATE,
@@ -253,6 +322,7 @@ async function buildBookingReport({ externalBookingId, events, civitatisSourceId
     tourMatch,
     customerMatch,
     possibleExistingMatch: null,
+    possibleExistingCustomerMatch: null,
     reservationDiff: null,
     passengerDiff: null,
     // Reported for visibility even though dry-run performs no write —
@@ -295,6 +365,7 @@ function buildStandaloneReport(parsedEvent) {
  *   getReservationGuestNames: (reservationId:string) => Promise<string[]>,
  *   findCandidateLegacyReservations: (args:{tourId:string}) => Promise<Array>,
  *   findCustomersByContact: (args:{email,phone}) => Promise<Array>,
+ *   findCustomersByName: (args:{fullName:string}) => Promise<Array>,
  * }} repo
  * @param {Date} [now]
  */
@@ -363,6 +434,7 @@ module.exports = {
   mergeChronologicalState,
   computeReservationDiff,
   computePassengerDiff,
+  toSafeCustomerSummary,
   OUTCOME,
   RESERVATION_DIFF_FIELDS,
 };

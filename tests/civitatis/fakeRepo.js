@@ -9,6 +9,8 @@
  */
 'use strict';
 
+const { normalizeFullNameForComparison } = require('../../api/civitatis/matching');
+
 function createFakeRepo({ source, tourChannels = [], reservations = [], reservationGuests = {}, customers = [] } = {}) {
   return {
     async getCivitatisSource() {
@@ -32,6 +34,11 @@ function createFakeRepo({ source, tourChannels = [], reservations = [], reservat
         (email && c.email && c.email.toLowerCase() === String(email).toLowerCase())
         || (phone && c.phone === phone)
       );
+    },
+    async findCustomersByName({ fullName }) {
+      const key = normalizeFullNameForComparison(fullName);
+      if (!key) return [];
+      return customers.filter(c => normalizeFullNameForComparison(c.full_name) === key);
     },
   };
 }
