@@ -52,3 +52,29 @@ test('rejects non-GET/POST methods', async () => {
   await handler(req, res);
   assert.equal(res.statusCode, 405);
 });
+
+test('debugMime=1 with no Gmail credentials configured responds 503 with a clear configuration error, and never touches Supabase', async () => {
+  delete process.env.GMAIL_CLIENT_ID;
+  delete process.env.GMAIL_CLIENT_SECRET;
+  delete process.env.GMAIL_REFRESH_TOKEN;
+  delete process.env.SUPABASE_URL;
+  delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  const handler = require('../../api/ingest-civitatis');
+  const req = { method: 'GET', query: { debugMime: '1' } };
+  const res = makeRes();
+  await handler(req, res);
+
+  assert.equal(res.statusCode, 503);
+  assert.equal(res.body.stage, 'gmail_configuration');
+});
+
+test('mode=write is still rejected with 400 even when debugMime=1 is also passed', async () => {
+  const handler = require('../../api/ingest-civitatis');
+  const req = { method: 'GET', query: { mode: 'write', debugMime: '1' } };
+  const res = makeRes();
+  await handler(req, res);
+
+  assert.equal(res.statusCode, 400);
+  assert.ok(res.body.error.includes('not supported'));
+});

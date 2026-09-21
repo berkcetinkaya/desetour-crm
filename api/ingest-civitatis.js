@@ -28,6 +28,16 @@
  * follow-up request to continue the backfill — a single invocation
  * intentionally processes a bounded page of messages so it can complete
  * well within the function's maxDuration.
+ *
+ * SAFE MIME DEBUG MODE:
+ *   GET /api/ingest-civitatis?debugMime=1&maxMessages=10
+ * Returns structural-only MIME diagnostics (mimeType tree, part
+ * filenames, whether body.data is present, decoded body character
+ * lengths, which body was selected and why) for the fetched page of
+ * messages, instead of running the parser/dry-run pipeline. Never
+ * returns body text, customer names, phone numbers, email addresses,
+ * passenger names, financial values, or any credential. Requires only
+ * Gmail configuration — does not touch Supabase at all.
  * ─────────────────────────────────────────────────────────────────────────
  */
 'use strict';
@@ -60,6 +70,29 @@ module.exports = async function handler(req, res) {
   if (!Number.isFinite(maxMessages) || maxMessages < 1) maxMessages = DEFAULT_MAX_MESSAGES;
   maxMessages = Math.min(maxMessages, HARD_MAX_MESSAGES);
   const pageToken = (req.query && req.query.pageToken) || undefined;
+
+  const debugMimeRaw = (req.query && req.query.debugMime) || (req.body && req.body.debugMime);
+  const debugMime = debugMimeRaw === '1' || debugMimeRaw === 'true' || debugMimeRaw === true;
+
+  if (debugMime) {
+    try {
+      const page = await gmailClient.fetchMessagePageDiagnostics(gmailClient.buildCivitatisSearchQuery(), {
+        pageToken,
+        maxResults: maxMessages,
+      });
+      return res.status(200).json({
+        mode: 'debugMime',
+        messages: page.diagnostics,
+        pagination: { requestedMaxMessages: maxMessages, nextPageToken: page.nextPageToken || null },
+      });
+    } catch (err) {
+      if (err instanceof gmailClient.ConfigurationError) {
+        return res.status(503).json({ error: err.message, stage: 'gmail_configuration' });
+      }
+      console.error('[ingest-civitatis] debugMime Gmail fetch error:', err.message);
+      return res.status(502).json({ error: 'Failed to fetch messages from Gmail. See function logs for details.', stage: 'gmail_fetch' });
+    }
+  }
 
   let messages;
   let nextPageToken;

@@ -141,3 +141,30 @@ test('empty message body on an otherwise-valid subject is a parse_error, not nee
   assert.equal(r.ok, false);
   assert.equal(r.status, 'parse_error');
 });
+
+// People/guest-count without a price suffix on the same line
+test('parses a bare "People: N Adulti" value with no price text attached', () => {
+  const { extractGuestCounts } = require('../../api/civitatis/parser');
+  assert.deepEqual(extractGuestCounts('2 Adulti'), { adultCount: 2, childCount: null });
+  assert.deepEqual(extractGuestCounts('3 Adultos'), { adultCount: 3, childCount: null });
+  assert.deepEqual(extractGuestCounts('2 Adulti, 1 Bambini'), { adultCount: 2, childCount: 1 });
+});
+
+// Retail / Net price parsing
+test('parses Retail price and Net price money lines, comma as thousands separator', () => {
+  const { parseMoneyLine } = require('../../api/civitatis/parser');
+  assert.deepEqual(parseMoneyLine('4,800 TL'), { amount: 4800, currency: 'TL' });
+  assert.deepEqual(parseMoneyLine('3,600 TL'), { amount: 3600, currency: 'TL' });
+});
+
+// People field vs. passenger-section count discrepancy
+test('flags a People/passenger-count mismatch for review instead of silently trusting either signal', () => {
+  const mismatched = {
+    ...F.italianNewBooking,
+    body: F.italianNewBooking.body.replace('2 Adulti x € 43.02', '3 Adulti'),
+  };
+  const r = parseCivitatisEmail(mismatched);
+  assert.equal(r.ok, false);
+  assert.equal(r.status, 'needs_review');
+  assert.ok(r.reasons.some(m => m.includes('does not match the "People:" field guest count')));
+});

@@ -64,28 +64,67 @@ function compactLines(body) {
     .filter(l => l.length > 0);
 }
 
+/**
+ * Finds a label's value, tolerating BOTH real Civitatis layouts:
+ *   "Reservation number:"      (label alone, value on the next line —
+ *   "41534177"                  the plain-text export's usual shape)
+ * and:
+ *   "Reservation number: 41534177"   (label + value on one line — how a
+ *                                      single HTML table cell containing
+ *                                      both often converts)
+ * Never invents a value: if the label is found but no value follows
+ * (either nothing on the same line, or the next line is itself another
+ * known label / absent), returns null rather than guessing.
+ */
 function findLabelValue(lines, label) {
-  const idx = lines.indexOf(label);
+  const idx = lines.findIndex(l => l === label || (l.startsWith(label) && l.length > label.length));
   if (idx === -1) return null;
-  const next = lines[idx + 1];
-  if (next === undefined || isKnownLabelLine(next)) return null;
-  return next;
+  const line = lines[idx];
+  if (line === label) {
+    const next = lines[idx + 1];
+    if (next === undefined || isKnownLabelLine(next)) return null;
+    return next;
+  }
+  const inline = line.slice(label.length).trim();
+  return inline.length > 0 ? inline : null;
 }
 
+const FULL_NAME_LABEL_BARE = /^Full name:?$/i;
+const FULL_NAME_LABEL_LINE = /^Full name:?\s*(.*)$/i;
+
 /** Passenger blocks: "Passenger information N:" then either a "Full name"
- * sub-label followed by the name, or (tolerated variant) the name
- * directly. Returned in the order encountered, sort_order is 0-based
- * position among passengers found — never re-derived from the Civitatis
- * "N" itself, which is display numbering, not guaranteed to start at 1
- * or be contiguous. */
+ * sub-label (with or without a trailing colon, and with the name either
+ * on the same line or the next line — both real layouts are observed
+ * depending on plain-text vs. HTML-table-derived extraction) followed by
+ * the name, or (tolerated variant) the name directly with no "Full name"
+ * sub-label at all. Returned in the order encountered, sort_order is
+ * 0-based position among passengers found — never re-derived from the
+ * Civitatis "N" itself, which is display numbering, not guaranteed to
+ * start at 1 or be contiguous. Supports any number of repeated
+ * "Passenger information N:" sections. */
 function extractPassengers(lines) {
   const passengers = [];
   for (let i = 0; i < lines.length; i++) {
     if (!PASSENGER_LABEL.test(lines[i])) continue;
     let cursor = i + 1;
-    if (cursor < lines.length && /^full name$/i.test(lines[cursor])) cursor++;
+    if (cursor < lines.length) {
+      const m = FULL_NAME_LABEL_LINE.exec(lines[cursor]);
+      if (m) {
+        const inline = m[1].trim();
+        if (inline) {
+          passengers.push({ fullName: inline, sortOrder: passengers.length });
+          continue;
+        }
+        cursor++; // "Full name:" alone -> the value is on the next line
+      }
+    }
     const nameLine = lines[cursor];
-    if (nameLine !== undefined && !isKnownLabelLine(nameLine) && !PASSENGER_LABEL.test(nameLine)) {
+    if (
+      nameLine !== undefined
+      && !isKnownLabelLine(nameLine)
+      && !PASSENGER_LABEL.test(nameLine)
+      && !FULL_NAME_LABEL_BARE.test(nameLine)
+    ) {
       passengers.push({ fullName: nameLine, sortOrder: passengers.length });
     }
   }
@@ -101,27 +140,40 @@ function extractPassengers(lines) {
  * them here they are the only safe, non-fuzzy signal available for
  * matching the booking contact against an existing CRM customer (see
  * matching.js), so they are worth recognizing if present. */
+const CLIENT_SUB_LABEL_LINE = /^(Name|Surname|Email|Phone):?\s*(.*)$/i;
+const CLIENT_SUB_LABEL_BARE = /^(Name|Surname|Email|Phone):?\s*$/i;
+const CLIENT_SUB_LABEL_KEY = { name: 'name', surname: 'surname', email: 'email', phone: 'phone' };
+
 function extractClientDetails(lines) {
   const idx = lines.indexOf(LABELS.CLIENT_DETAILS);
-  if (idx === -1) return { name: null, surname: null, email: null, phone: null };
-  let name = null;
-  let surname = null;
-  let email = null;
-  let phone = null;
-  for (let i = idx + 1; i < Math.min(idx + 7, lines.length); i++) {
+  const result = { name: null, surname: null, email: null, phone: null };
+  if (idx === -1) return result;
+  const end = Math.min(idx + 12, lines.length);
+  let i = idx + 1;
+  while (i < end) {
     const line = lines[i];
     if (isKnownLabelLine(line)) break;
-    const nameMatch = /^Name:\s*(.+)$/i.exec(line);
-    const surnameMatch = /^Surname:\s*(.+)$/i.exec(line);
-    const emailMatch = /^Email:\s*(.+)$/i.exec(line);
-    const phoneMatch = /^Phone:\s*(.+)$/i.exec(line);
-    if (nameMatch) name = nameMatch[1].trim();
-    else if (surnameMatch) surname = surnameMatch[1].trim();
-    else if (emailMatch) email = emailMatch[1].trim();
-    else if (phoneMatch) phone = phoneMatch[1].trim();
-    else break;
+    const m = CLIENT_SUB_LABEL_LINE.exec(line);
+    if (!m) break;
+    const key = CLIENT_SUB_LABEL_KEY[m[1].toLowerCase()];
+    const inline = m[2].trim();
+    if (inline) {
+      result[key] = inline;
+      i += 1;
+    } else {
+      // "Name:" (or Surname/Email/Phone) alone on its own line -> the
+      // value is on the next line, as long as that next line isn't
+      // itself another bare sub-label or a top-level field boundary.
+      const next = lines[i + 1];
+      if (next !== undefined && !isKnownLabelLine(next) && !CLIENT_SUB_LABEL_BARE.test(next)) {
+        result[key] = next.trim();
+        i += 2;
+      } else {
+        i += 1;
+      }
+    }
   }
-  return { name, surname, email, phone };
+  return result;
 }
 
 /** "Modified information" / "Phone" block (modification emails only):
@@ -133,7 +185,7 @@ function extractModifiedPhones(lines) {
   const idx = lines.findIndex(l => MODIFIED_INFO_LABEL.test(l));
   if (idx === -1) return [];
   let cursor = idx + 1;
-  if (cursor >= lines.length || !/^phone$/i.test(lines[cursor])) return [];
+  if (cursor >= lines.length || !/^phone:?$/i.test(lines[cursor])) return [];
   cursor++;
   const phones = [];
   while (cursor < lines.length && /^\+?\d[\d\s-]{4,}$/.test(lines[cursor])) {
@@ -272,6 +324,13 @@ function parseCivitatisEmail(message) {
   const totalGuestCount = adultCount === null ? null : adultCount + (childCount || 0);
 
   const passengers = extractPassengers(lines);
+  // The "People:" field is the authoritative guest count — it is never
+  // derived from how many "Passenger information N:" sections happened
+  // to parse. If the two disagree, that is surfaced for manual review
+  // rather than silently trusting (or "correcting" toward) either one.
+  if (totalGuestCount !== null && passengers.length > 0 && passengers.length !== totalGuestCount) {
+    reasons.push(`passenger count (${passengers.length}) does not match the "People:" field guest count (${totalGuestCount})`);
+  }
 
   const retail = parseMoneyLine(retailRaw);
   if (retail.amount === null) reasons.push('missing or unparseable "Retail price:" field');
