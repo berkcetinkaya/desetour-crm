@@ -400,8 +400,12 @@ ROLLBACK;
 
 -- ══════════════════════════════════════════════════════════════════════════
 -- TEST 8 — an out-of-order (stale) event never regresses already-applied
--- newer data, but still gets its own audit row (idempotency under reordered
--- retries / backfill — test plan item #21, ordering half)
+-- newer data AND has ZERO business-state side effects — no customer
+-- created/changed, no reservation field changed, no passengers replaced —
+-- beyond its own email_ingestions audit row (V3: test plan items "stale
+-- event does not create customer", "stale event does not modify customer",
+-- "stale event does not update reservation", "stale event does not replace
+-- passengers", "stale event returns explicit stale result")
 -- ══════════════════════════════════════════════════════════════════════════
 BEGIN;
 DO $$
@@ -409,28 +413,41 @@ DECLARE
   v_source_id UUID; v_tour_id UUID;
   r1 JSONB; r2 JSONB;
   v_res RECORD;
+  v_cust_count_before INT; v_cust_count_after INT;
+  v_guest_count_before INT; v_guest_count_after INT;
 BEGIN
   SELECT id INTO v_source_id FROM public.sources WHERE slug ILIKE 'civitatis%' LIMIT 1;
   INSERT INTO public.tours (name, is_active) VALUES ('TEST8 Tour', TRUE) RETURNING id INTO v_tour_id;
 
-  -- Apply the NEWER (modification) event FIRST...
+  -- Apply the NEWER (modification) event FIRST, with two named passengers.
   r1 := public.ingest_civitatis_booking(
     'gmail-test8-mod', 'thread-test8', NOW(), 'Booking A90000008 modified: Test Tour', 'body', 'modified',
     v_source_id, '90000008', v_tour_id, 'Español', CURRENT_DATE + 40, '14:00', 5, 0,
-    9000, 'TL', 12000, 'TL', NULL, 'Test Contact Eight', NULL, NULL, '[]'::jsonb
+    9000, 'TL', 12000, 'TL', NULL, 'Test Contact Eight', NULL, NULL,
+    '[{"fullName":"REAL PASSENGER ONE","sortOrder":0},{"fullName":"REAL PASSENGER TWO","sortOrder":1}]'::jsonb
   );
+  IF r1->>'result' <> 'created' THEN RAISE EXCEPTION 'TEST 8: FAILED — first (out-of-order-newer) call should create'; END IF;
+
+  SELECT COUNT(*) INTO v_cust_count_before FROM public.customers;
+  SELECT COUNT(*) INTO v_guest_count_before FROM public.reservation_guests WHERE reservation_id = (r1->>'reservation_id')::uuid;
+
   -- ...then the OLDER (new_booking) event arrives late (e.g. a backfill
-  -- re-run, or genuinely out-of-order Gmail delivery).
+  -- re-run, or genuinely out-of-order Gmail delivery), with DIFFERENT
+  -- (wrong, stale) field values, a different contact name, and a
+  -- different (single, stale) passenger — none of which must ever be
+  -- applied.
   r2 := public.ingest_civitatis_booking(
     'gmail-test8-new', 'thread-test8', NOW() - INTERVAL '2 days', 'New booking A90000008: Test Tour', 'body', 'new_booking',
     v_source_id, '90000008', v_tour_id, 'İtalyanca', CURRENT_DATE + 30, '09:00', 2, 0,
-    3600, 'TL', 4800, 'TL', NULL, 'Test Contact Eight', NULL, NULL, '[]'::jsonb
+    3600, 'TL', 4800, 'TL', NULL, 'A DIFFERENT STALE CONTACT NAME', NULL, NULL,
+    '[{"fullName":"STALE PASSENGER SHOULD NOT APPEAR","sortOrder":0}]'::jsonb
   );
 
-  IF r1->>'result' <> 'created' THEN RAISE EXCEPTION 'TEST 8: FAILED — first (out-of-order-newer) call should create'; END IF;
-  IF r2->>'result' <> 'updated' THEN RAISE EXCEPTION 'TEST 8: FAILED — second (stale older) call should still resolve, got %', r2->>'result'; END IF;
-  IF (r2->>'stale')::boolean IS DISTINCT FROM TRUE THEN
-    RAISE EXCEPTION 'TEST 8: FAILED — second call should be flagged stale=true';
+  IF r2->>'result' <> 'stale_ignored' THEN
+    RAISE EXCEPTION 'TEST 8: FAILED — second (stale older) call expected result=stale_ignored, got %', r2->>'result';
+  END IF;
+  IF (r2->>'reservation_id')::uuid <> (r1->>'reservation_id')::uuid THEN
+    RAISE EXCEPTION 'TEST 8: FAILED — stale_ignored result did not resolve to the correct existing reservation';
   END IF;
 
   SELECT * INTO v_res FROM public.reservations WHERE id = (r1->>'reservation_id')::uuid;
@@ -441,9 +458,35 @@ BEGIN
     RAISE EXCEPTION 'TEST 8: FAILED — the stale older event regressed pax_adult back to its own (wrong) value';
   END IF;
 
-  -- Both Gmail messages still each have their own permanent audit row:
+  -- Zero new customers created by the stale event, and the reservation's
+  -- customer_id is completely untouched by it:
+  SELECT COUNT(*) INTO v_cust_count_after FROM public.customers;
+  IF v_cust_count_after <> v_cust_count_before THEN
+    RAISE EXCEPTION 'TEST 8: FAILED — a stale event created a customer row (before=%, after=%)', v_cust_count_before, v_cust_count_after;
+  END IF;
+  IF EXISTS (SELECT 1 FROM public.customers WHERE full_name = 'A DIFFERENT STALE CONTACT NAME') THEN
+    RAISE EXCEPTION 'TEST 8: FAILED — a stale event''s contact name leaked into a new customer row';
+  END IF;
+
+  -- Passengers completely untouched by the stale event:
+  SELECT COUNT(*) INTO v_guest_count_after FROM public.reservation_guests WHERE reservation_id = v_res.id;
+  IF v_guest_count_after <> v_guest_count_before THEN
+    RAISE EXCEPTION 'TEST 8: FAILED — a stale event changed the passenger count (before=%, after=%)', v_guest_count_before, v_guest_count_after;
+  END IF;
+  IF EXISTS (SELECT 1 FROM public.reservation_guests WHERE reservation_id = v_res.id AND full_name = 'STALE PASSENGER SHOULD NOT APPEAR') THEN
+    RAISE EXCEPTION 'TEST 8: FAILED — a stale event''s passenger payload was applied';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM public.reservation_guests WHERE reservation_id = v_res.id AND full_name = 'REAL PASSENGER ONE') THEN
+    RAISE EXCEPTION 'TEST 8: FAILED — the real (newer) passenger list was lost';
+  END IF;
+
+  -- Both Gmail messages still each have their own permanent audit row,
+  -- and the stale one is 'processed' (understood correctly, not a failure):
   IF (SELECT COUNT(*) FROM public.email_ingestions WHERE source_id=v_source_id AND external_booking_id='90000008') <> 2 THEN
     RAISE EXCEPTION 'TEST 8: FAILED — expected 2 separate email_ingestions rows';
+  END IF;
+  IF (SELECT processing_status FROM public.email_ingestions WHERE gmail_message_id='gmail-test8-new') <> 'processed' THEN
+    RAISE EXCEPTION 'TEST 8: FAILED — the stale event''s own email_ingestions row should be processing_status=processed';
   END IF;
 
   RAISE NOTICE 'TEST 8: PASSED';
@@ -452,8 +495,328 @@ ROLLBACK;
 
 
 -- ══════════════════════════════════════════════════════════════════════════
--- TEST 9 — concurrent duplicate attempts remain idempotent under real
--- concurrency (test plan item #21, concurrency half).
+-- TEST 10 — an invalid/missing event_type writes NO business state (V3
+-- item "invalid event type writes no business state")
+-- ══════════════════════════════════════════════════════════════════════════
+BEGIN;
+DO $$
+DECLARE
+  v_source_id UUID; v_tour_id UUID;
+  r1 JSONB; r2 JSONB;
+BEGIN
+  SELECT id INTO v_source_id FROM public.sources WHERE slug ILIKE 'civitatis%' LIMIT 1;
+  INSERT INTO public.tours (name, is_active) VALUES ('TEST10 Tour', TRUE) RETURNING id INTO v_tour_id;
+
+  -- NULL event_type:
+  r1 := public.ingest_civitatis_booking(
+    'gmail-test10-null', 'thread-test10', NOW(), 'New booking A90000010: Test Tour', 'body', NULL,
+    v_source_id, '90000010', v_tour_id, 'İtalyanca', CURRENT_DATE + 30, '09:00', 2, 0,
+    3600, 'TL', 4800, 'TL', NULL, 'Test Contact Ten', NULL, NULL, '[]'::jsonb
+  );
+  IF r1->>'result' <> 'manual_review_required' THEN
+    RAISE EXCEPTION 'TEST 10: FAILED — NULL event_type expected manual_review_required, got %', r1->>'result';
+  END IF;
+
+  -- Garbage/arbitrary event_type:
+  r2 := public.ingest_civitatis_booking(
+    'gmail-test10-bogus', 'thread-test10b', NOW(), 'New booking A90000011: Test Tour', 'body', 'cancelled_or_whatever',
+    v_source_id, '90000011', v_tour_id, 'İtalyanca', CURRENT_DATE + 30, '09:00', 2, 0,
+    3600, 'TL', 4800, 'TL', NULL, 'Test Contact Eleven', NULL, NULL, '[]'::jsonb
+  );
+  IF r2->>'result' <> 'manual_review_required' THEN
+    RAISE EXCEPTION 'TEST 10: FAILED — bogus event_type expected manual_review_required, got %', r2->>'result';
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM public.reservations WHERE source_id=v_source_id AND external_booking_id IN ('90000010','90000011')) THEN
+    RAISE EXCEPTION 'TEST 10: FAILED — a reservation was written despite an invalid event_type';
+  END IF;
+  IF EXISTS (SELECT 1 FROM public.customers WHERE full_name IN ('Test Contact Ten','Test Contact Eleven')) THEN
+    RAISE EXCEPTION 'TEST 10: FAILED — a customer was written despite an invalid event_type';
+  END IF;
+
+  -- Each still gets its own permanent, honest audit row (event_type
+  -- recorded as 'unknown' since neither was a valid label):
+  IF (SELECT processing_status FROM public.email_ingestions WHERE gmail_message_id='gmail-test10-null') <> 'needs_review' THEN
+    RAISE EXCEPTION 'TEST 10: FAILED — expected needs_review audit status for NULL event_type';
+  END IF;
+  IF (SELECT event_type FROM public.email_ingestions WHERE gmail_message_id='gmail-test10-bogus') <> 'unknown' THEN
+    RAISE EXCEPTION 'TEST 10: FAILED — a bogus event_type should be recorded as unknown in the audit row, never accepted verbatim';
+  END IF;
+
+  RAISE NOTICE 'TEST 10: PASSED';
+END $$;
+ROLLBACK;
+
+
+-- ══════════════════════════════════════════════════════════════════════════
+-- TEST 11 — a 'modified' event with NO existing reservation is never
+-- silently treated as a new booking (V3 item "modified-first event creates
+-- no reservation")
+-- ══════════════════════════════════════════════════════════════════════════
+BEGIN;
+DO $$
+DECLARE
+  v_source_id UUID; v_tour_id UUID;
+  r1 JSONB;
+BEGIN
+  SELECT id INTO v_source_id FROM public.sources WHERE slug ILIKE 'civitatis%' LIMIT 1;
+  INSERT INTO public.tours (name, is_active) VALUES ('TEST11 Tour', TRUE) RETURNING id INTO v_tour_id;
+
+  r1 := public.ingest_civitatis_booking(
+    'gmail-test11-mod-only', 'thread-test11', NOW(), 'Booking A90000012 modified: Test Tour', 'body', 'modified',
+    v_source_id, '90000012', v_tour_id, 'İtalyanca', CURRENT_DATE + 30, '09:00', 2, 0,
+    3600, 'TL', 4800, 'TL', NULL, 'Test Contact Twelve', NULL, NULL,
+    '[{"fullName":"SHOULD NOT PERSIST","sortOrder":0}]'::jsonb
+  );
+
+  IF r1->>'result' <> 'manual_review_required' THEN
+    RAISE EXCEPTION 'TEST 11: FAILED — modified-first with no existing reservation expected manual_review_required, got %', r1->>'result';
+  END IF;
+  IF EXISTS (SELECT 1 FROM public.reservations WHERE source_id=v_source_id AND external_booking_id='90000012') THEN
+    RAISE EXCEPTION 'TEST 11: FAILED — a reservation was created from a modified-only event chain';
+  END IF;
+  IF EXISTS (SELECT 1 FROM public.customers WHERE full_name = 'Test Contact Twelve') THEN
+    RAISE EXCEPTION 'TEST 11: FAILED — a customer was created from a modified-only event chain';
+  END IF;
+  IF EXISTS (SELECT 1 FROM public.reservation_guests WHERE full_name = 'SHOULD NOT PERSIST') THEN
+    RAISE EXCEPTION 'TEST 11: FAILED — a passenger row was created from a modified-only event chain';
+  END IF;
+
+  RAISE NOTICE 'TEST 11: PASSED';
+END $$;
+ROLLBACK;
+
+
+-- ══════════════════════════════════════════════════════════════════════════
+-- TEST 12 — a modification NEVER creates a second customer and NEVER
+-- changes reservation.customer_id, even when p_customer_id differs or is
+-- NULL, even when the modification carries new contact info (V3 items
+-- "modification never creates a second customer", "modification never
+-- changes reservation.customer_id", "modification contact data does not
+-- mutate customer")
+-- ══════════════════════════════════════════════════════════════════════════
+BEGIN;
+DO $$
+DECLARE
+  v_source_id UUID; v_tour_id UUID;
+  r1 JSONB; r2 JSONB;
+  v_cust_count_before INT; v_cust_count_after INT;
+  v_original_customer RECORD;
+BEGIN
+  SELECT id INTO v_source_id FROM public.sources WHERE slug ILIKE 'civitatis%' LIMIT 1;
+  INSERT INTO public.tours (name, is_active) VALUES ('TEST12 Tour', TRUE) RETURNING id INTO v_tour_id;
+
+  r1 := public.ingest_civitatis_booking(
+    'gmail-test12-new', 'thread-test12', NOW() - INTERVAL '1 day', 'New booking A90000013: Test Tour', 'body', 'new_booking',
+    v_source_id, '90000013', v_tour_id, 'İtalyanca', CURRENT_DATE + 30, '09:00', 2, 0,
+    3600, 'TL', 4800, 'TL', NULL, 'Original Contact Thirteen', NULL, NULL, '[]'::jsonb
+  );
+  SELECT * INTO v_original_customer FROM public.customers WHERE id = (r1->>'customer_id')::uuid;
+  SELECT COUNT(*) INTO v_cust_count_before FROM public.customers;
+
+  -- Modification: p_customer_id is NULL (this event's own matching found
+  -- nothing) and it carries a phone number that appears for the first
+  -- time — a real Civitatis pattern (phone only shown on the
+  -- modification email). Also pass an explicit but DIFFERENT customer_id
+  -- to prove it is never used to redirect the reservation either.
+  r2 := public.ingest_civitatis_booking(
+    'gmail-test12-mod', 'thread-test12', NOW(), 'Booking A90000013 modified: Test Tour', 'body', 'modified',
+    v_source_id, '90000013', v_tour_id, 'İtalyanca', CURRENT_DATE + 30, '09:00', 2, 0,
+    3600, 'TL', 4800, 'TL', NULL, 'A Totally Different Name', '999@example.com', '5559998888', '[]'::jsonb
+  );
+
+  IF r2->>'result' <> 'updated' THEN RAISE EXCEPTION 'TEST 12: FAILED — expected updated, got %', r2->>'result'; END IF;
+  IF (r2->>'customer_id')::uuid <> v_original_customer.id THEN
+    RAISE EXCEPTION 'TEST 12: FAILED — reservation.customer_id changed on a modification';
+  END IF;
+
+  SELECT COUNT(*) INTO v_cust_count_after FROM public.customers;
+  IF v_cust_count_after <> v_cust_count_before THEN
+    RAISE EXCEPTION 'TEST 12: FAILED — a modification created a second customer (before=%, after=%)', v_cust_count_before, v_cust_count_after;
+  END IF;
+
+  -- The original customer's own profile fields must be untouched — a
+  -- modification's contact info is NOT applied to the existing customer:
+  IF (SELECT phone FROM public.customers WHERE id = v_original_customer.id) IS DISTINCT FROM v_original_customer.phone THEN
+    RAISE EXCEPTION 'TEST 12: FAILED — the existing customer''s phone was mutated by a modification email';
+  END IF;
+  IF (SELECT email FROM public.customers WHERE id = v_original_customer.id) IS DISTINCT FROM v_original_customer.email THEN
+    RAISE EXCEPTION 'TEST 12: FAILED — the existing customer''s email was mutated by a modification email';
+  END IF;
+  IF (SELECT full_name FROM public.customers WHERE id = v_original_customer.id) <> 'Original Contact Thirteen' THEN
+    RAISE EXCEPTION 'TEST 12: FAILED — the existing customer''s full_name was mutated by a modification email';
+  END IF;
+  IF EXISTS (SELECT 1 FROM public.customers WHERE full_name = 'A Totally Different Name') THEN
+    RAISE EXCEPTION 'TEST 12: FAILED — the modification''s contact name leaked into a new customer row';
+  END IF;
+
+  RAISE NOTICE 'TEST 12: PASSED';
+END $$;
+ROLLBACK;
+
+
+-- ══════════════════════════════════════════════════════════════════════════
+-- TEST 13 — missing financial data (total_amount/currency/retail_amount/
+-- retail_currency) never defaults to 0/EUR; missing check_in/check_in_time/
+-- tour_language/pax_adult are equally rejected (V3 item "missing financial
+-- data does not default to 0/EUR")
+-- ══════════════════════════════════════════════════════════════════════════
+BEGIN;
+DO $$
+DECLARE
+  v_source_id UUID; v_tour_id UUID;
+  r JSONB;
+BEGIN
+  SELECT id INTO v_source_id FROM public.sources WHERE slug ILIKE 'civitatis%' LIMIT 1;
+  INSERT INTO public.tours (name, is_active) VALUES ('TEST13 Tour', TRUE) RETURNING id INTO v_tour_id;
+
+  -- Missing total_amount (Civitatis Net price):
+  r := public.ingest_civitatis_booking(
+    'gmail-test13-a', 'thread-test13a', NOW(), 'New booking A90000014: Test Tour', 'body', 'new_booking',
+    v_source_id, '90000014', v_tour_id, 'İtalyanca', CURRENT_DATE + 30, '09:00', 2, 0,
+    NULL, 'TL', 4800, 'TL', NULL, 'Test Contact Fourteen', NULL, NULL, '[]'::jsonb
+  );
+  IF r->>'result' <> 'manual_review_required' THEN RAISE EXCEPTION 'TEST 13a: FAILED — missing total_amount should be manual_review_required, got %', r->>'result'; END IF;
+  IF NOT (r->'missing_fields' @> '["total_amount (Civitatis Net price)"]'::jsonb) THEN
+    RAISE EXCEPTION 'TEST 13a: FAILED — missing_fields did not name total_amount';
+  END IF;
+
+  -- Missing currency:
+  r := public.ingest_civitatis_booking(
+    'gmail-test13-b', 'thread-test13b', NOW(), 'New booking A90000015: Test Tour', 'body', 'new_booking',
+    v_source_id, '90000015', v_tour_id, 'İtalyanca', CURRENT_DATE + 30, '09:00', 2, 0,
+    3600, NULL, 4800, 'TL', NULL, 'Test Contact Fifteen', NULL, NULL, '[]'::jsonb
+  );
+  IF r->>'result' <> 'manual_review_required' THEN RAISE EXCEPTION 'TEST 13b: FAILED — missing currency should be manual_review_required, got %', r->>'result'; END IF;
+
+  -- Missing retail_amount:
+  r := public.ingest_civitatis_booking(
+    'gmail-test13-c', 'thread-test13c', NOW(), 'New booking A90000016: Test Tour', 'body', 'new_booking',
+    v_source_id, '90000016', v_tour_id, 'İtalyanca', CURRENT_DATE + 30, '09:00', 2, 0,
+    3600, 'TL', NULL, 'TL', NULL, 'Test Contact Sixteen', NULL, NULL, '[]'::jsonb
+  );
+  IF r->>'result' <> 'manual_review_required' THEN RAISE EXCEPTION 'TEST 13c: FAILED — missing retail_amount should be manual_review_required, got %', r->>'result'; END IF;
+
+  -- Missing pax_adult:
+  r := public.ingest_civitatis_booking(
+    'gmail-test13-d', 'thread-test13d', NOW(), 'New booking A90000017: Test Tour', 'body', 'new_booking',
+    v_source_id, '90000017', v_tour_id, 'İtalyanca', CURRENT_DATE + 30, '09:00', NULL, 0,
+    3600, 'TL', 4800, 'TL', NULL, 'Test Contact Seventeen', NULL, NULL, '[]'::jsonb
+  );
+  IF r->>'result' <> 'manual_review_required' THEN RAISE EXCEPTION 'TEST 13d: FAILED — missing pax_adult should be manual_review_required, got %', r->>'result'; END IF;
+
+  -- Missing tour_language:
+  r := public.ingest_civitatis_booking(
+    'gmail-test13-e', 'thread-test13e', NOW(), 'New booking A90000018: Test Tour', 'body', 'new_booking',
+    v_source_id, '90000018', v_tour_id, NULL, CURRENT_DATE + 30, '09:00', 2, 0,
+    3600, 'TL', 4800, 'TL', NULL, 'Test Contact Eighteen', NULL, NULL, '[]'::jsonb
+  );
+  IF r->>'result' <> 'manual_review_required' THEN RAISE EXCEPTION 'TEST 13e: FAILED — missing tour_language should be manual_review_required, got %', r->>'result'; END IF;
+
+  -- Confirm NONE of the above five wrote a reservation with a fabricated
+  -- default (0, 'EUR', 1, etc.) — no reservation should exist at all:
+  IF EXISTS (
+    SELECT 1 FROM public.reservations
+     WHERE source_id = v_source_id
+       AND external_booking_id IN ('90000014','90000015','90000016','90000017','90000018')
+  ) THEN
+    RAISE EXCEPTION 'TEST 13: FAILED — a reservation was written with fabricated/default values despite missing required data';
+  END IF;
+
+  -- pax_child, by contrast, legitimately defaults to 0 (parser contract,
+  -- not fabrication) and must NOT block a write on its own:
+  r := public.ingest_civitatis_booking(
+    'gmail-test13-f', 'thread-test13f', NOW(), 'New booking A90000019: Test Tour', 'body', 'new_booking',
+    v_source_id, '90000019', v_tour_id, 'İtalyanca', CURRENT_DATE + 30, '09:00', 2, NULL,
+    3600, 'TL', 4800, 'TL', NULL, 'Test Contact Nineteen', NULL, NULL, '[]'::jsonb
+  );
+  IF r->>'result' <> 'created' THEN RAISE EXCEPTION 'TEST 13f: FAILED — a NULL pax_child should NOT block a write (should default to 0), got %', r->>'result'; END IF;
+  IF (SELECT pax_child FROM public.reservations WHERE id = (r->>'reservation_id')::uuid) <> 0 THEN
+    RAISE EXCEPTION 'TEST 13f: FAILED — NULL pax_child should have been written as 0';
+  END IF;
+
+  RAISE NOTICE 'TEST 13: PASSED';
+END $$;
+ROLLBACK;
+
+
+-- ══════════════════════════════════════════════════════════════════════════
+-- TEST 14 — a modification with a missing/empty passenger payload NEVER
+-- erases a valid existing passenger list (V3 item "missing passenger
+-- payload cannot erase existing guests")
+-- ══════════════════════════════════════════════════════════════════════════
+BEGIN;
+DO $$
+DECLARE
+  v_source_id UUID; v_tour_id UUID;
+  r1 JSONB; r2 JSONB; r3 JSONB;
+  v_guest_count INT;
+BEGIN
+  SELECT id INTO v_source_id FROM public.sources WHERE slug ILIKE 'civitatis%' LIMIT 1;
+  INSERT INTO public.tours (name, is_active) VALUES ('TEST14 Tour', TRUE) RETURNING id INTO v_tour_id;
+
+  r1 := public.ingest_civitatis_booking(
+    'gmail-test14-new', 'thread-test14', NOW() - INTERVAL '1 day', 'New booking A90000020: Test Tour', 'body', 'new_booking',
+    v_source_id, '90000020', v_tour_id, 'İtalyanca', CURRENT_DATE + 30, '09:00', 2, 0,
+    3600, 'TL', 4800, 'TL', NULL, 'Test Contact Twenty', NULL, NULL,
+    '[{"fullName":"REAL GUEST A","sortOrder":0},{"fullName":"REAL GUEST B","sortOrder":1}]'::jsonb
+  );
+  IF r1->>'result' <> 'created' THEN RAISE EXCEPTION 'TEST 14: FAILED — setup create failed'; END IF;
+
+  -- Modification with a genuinely EMPTY passengers array:
+  r2 := public.ingest_civitatis_booking(
+    'gmail-test14-mod-empty', 'thread-test14', NOW(), 'Booking A90000020 modified: Test Tour', 'body', 'modified',
+    v_source_id, '90000020', v_tour_id, 'İtalyanca', CURRENT_DATE + 31, '10:00', 2, 0,
+    3600, 'TL', 4800, 'TL', NULL, 'Test Contact Twenty', NULL, NULL, '[]'::jsonb
+  );
+  IF r2->>'result' <> 'updated' THEN RAISE EXCEPTION 'TEST 14: FAILED — expected updated for the empty-passengers modification, got %', r2->>'result'; END IF;
+  IF (r2->>'passengers_replaced')::boolean IS DISTINCT FROM FALSE THEN
+    RAISE EXCEPTION 'TEST 14: FAILED — passengers_replaced should be false for an empty passenger payload';
+  END IF;
+
+  SELECT COUNT(*) INTO v_guest_count FROM public.reservation_guests WHERE reservation_id = (r1->>'reservation_id')::uuid;
+  IF v_guest_count <> 2 THEN
+    RAISE EXCEPTION 'TEST 14: FAILED — the real passenger list was erased by an empty-passengers modification (found % rows)', v_guest_count;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM public.reservation_guests WHERE reservation_id = (r1->>'reservation_id')::uuid AND full_name = 'REAL GUEST A') THEN
+    RAISE EXCEPTION 'TEST 14: FAILED — REAL GUEST A is missing after an empty-passengers modification';
+  END IF;
+
+  -- Modification with NULL passengers entirely:
+  r3 := public.ingest_civitatis_booking(
+    'gmail-test14-mod-null', 'thread-test14', NOW() + INTERVAL '1 hour', 'Booking A90000020 modified: Test Tour', 'body', 'modified',
+    v_source_id, '90000020', v_tour_id, 'İtalyanca', CURRENT_DATE + 32, '11:00', 2, 0,
+    3600, 'TL', 4800, 'TL', NULL, 'Test Contact Twenty', NULL, NULL, NULL
+  );
+  IF r3->>'result' <> 'updated' THEN RAISE EXCEPTION 'TEST 14: FAILED — expected updated for the NULL-passengers modification, got %', r3->>'result'; END IF;
+
+  SELECT COUNT(*) INTO v_guest_count FROM public.reservation_guests WHERE reservation_id = (r1->>'reservation_id')::uuid;
+  IF v_guest_count <> 2 THEN
+    RAISE EXCEPTION 'TEST 14: FAILED — the real passenger list was erased by a NULL-passengers modification (found % rows)', v_guest_count;
+  END IF;
+
+  -- A modification WITH a real (non-empty) passenger list still replaces
+  -- correctly (confirms the guard doesn't over-protect):
+  PERFORM public.ingest_civitatis_booking(
+    'gmail-test14-mod-real', 'thread-test14', NOW() + INTERVAL '2 hours', 'Booking A90000020 modified: Test Tour', 'body', 'modified',
+    v_source_id, '90000020', v_tour_id, 'İtalyanca', CURRENT_DATE + 33, '12:00', 3, 0,
+    3600, 'TL', 4800, 'TL', NULL, 'Test Contact Twenty', NULL, NULL,
+    '[{"fullName":"REPLACED GUEST","sortOrder":0}]'::jsonb
+  );
+  SELECT COUNT(*) INTO v_guest_count FROM public.reservation_guests WHERE reservation_id = (r1->>'reservation_id')::uuid;
+  IF v_guest_count <> 1 THEN
+    RAISE EXCEPTION 'TEST 14: FAILED — a modification WITH real passengers should still replace the list (found % rows, expected 1)', v_guest_count;
+  END IF;
+
+  RAISE NOTICE 'TEST 14: PASSED';
+END $$;
+ROLLBACK;
+
+
+-- ══════════════════════════════════════════════════════════════════════════
+-- TEST 15 — concurrent duplicate attempts remain idempotent under real
+-- concurrency (test plan item #21, concurrency half; also covers "same-
+-- booking concurrency remains intact" for V3's restructured control flow).
 -- THIS TEST CANNOT RUN INSIDE A SINGLE SQL SCRIPT/SESSION — advisory locks
 -- and true concurrent transactions require two separate database sessions
 -- racing each other. Documented here as an exact manual procedure instead:
@@ -463,24 +826,29 @@ ROLLBACK;
 --   2. In session A, run:
 --        BEGIN;
 --        SELECT public.ingest_civitatis_booking(
---          'gmail-test9-a', 'thread-test9', NOW(),
---          'New booking A90000009: Test Tour', 'body', 'new_booking',
---          '<a real civitatis source_id>', '90000009', '<a real tour_id>',
+--          'gmail-test15-a', 'thread-test15', NOW(),
+--          'New booking A90000021: Test Tour', 'body', 'new_booking',
+--          '<a real civitatis source_id>', '90000021', '<a real tour_id>',
 --          'İtalyanca', CURRENT_DATE + 30, '09:00', 2, 0, 3600, 'TL', 4800, 'TL',
 --          NULL, 'Concurrent Test Contact', NULL, NULL, '[]'::jsonb
 --        );
 --      but do NOT COMMIT yet — leave the transaction open.
 --   3. In session B, run the SAME call with a DIFFERENT gmail_message_id
---      ('gmail-test9-b') but the SAME external_booking_id ('90000009').
+--      ('gmail-test15-b') but the SAME external_booking_id ('90000021').
 --      Session B should BLOCK (visibly hang) at the
---      pg_advisory_xact_lock call inside the function — this in itself
---      confirms the lock is serializing the two sessions.
+--      pg_advisory_xact_lock call inside the function (V3: still the
+--      first statement inside the nested transactional block, executed
+--      before the reservation lookup) — this in itself confirms the lock
+--      is serializing the two sessions.
 --   4. COMMIT session A. Session B should then unblock, see the
 --      reservation A already created, and return result: "updated" (or
 --      "created" only if it somehow ran first — either way, never a
---      SECOND reservation).
+--      SECOND reservation, and never a second customer either — see
+--      TEST 12's single-session confirmation of the same customer-
+--      identity guarantee this restructuring exists to provide).
 --   5. Verify: SELECT COUNT(*) FROM reservations WHERE external_booking_id
---      = '90000009'; must be exactly 1.
+--      = '90000021'; must be exactly 1. SELECT COUNT(*) FROM customers
+--      WHERE full_name = 'Concurrent Test Contact'; must be exactly 1.
 --   6. Clean up: DELETE the test rows created (reservations cascades to
 --      reservation_guests; delete the customers/email_ingestions/
 --      activity_logs rows manually, or run inside a wrapping transaction
@@ -490,9 +858,9 @@ ROLLBACK;
 
 
 -- ══════════════════════════════════════════════════════════════════════════
--- CROSS-REFERENCE — where each of the 21 requested test-plan items is
--- actually covered:
---   #1  new customer created (exactly one)         -> TEST 7 above
+-- CROSS-REFERENCE — where each requested test-plan item is actually
+-- covered (original 21 items, plus the V3 safety-revision items):
+--   #1  new customer created (exactly one)         -> TEST 7
 --   #2  exactly one reservation created             -> TEST 1, TEST 7
 --   #3  passenger rows created exactly once         -> TEST 2 (initial + replace)
 --   #4  retry same Gmail message harmless           -> TEST 1
@@ -502,7 +870,7 @@ ROLLBACK;
 --   #8  modification preserves guide_id             -> TEST 3
 --   #9  modification preserves internal notes       -> TEST 3
 --   #10 modification does not create payment rows   -> TEST 3
---   #11 passenger list replacement is atomic         -> TEST 2
+--   #11 passenger list replacement is atomic         -> TEST 2, TEST 14
 --   #12 exactly one auto_ingested activity           -> TEST 1, TEST 2
 --   #13 modification creates no new activity          -> TEST 2
 --   #14 retry does not duplicate activity              -> TEST 1
@@ -512,8 +880,9 @@ ROLLBACK;
 --       itself has no way to distinguish this case since it never
 --       receives the booking in the first place; that is intentional.
 --   #16 NEEDS_REVIEW never writes                       -> writeAdapter.test.js
---       (gating) AND TEST 5 above (RPC's own defense in depth for a
---       missing tour_id specifically)
+--       (gating) AND TEST 5 (RPC's own defense in depth for a missing
+--       tour_id specifically) AND TEST 13 (missing financial/date/guest-
+--       count fields)
 --   #17 PARSE_ERROR never writes                        -> writeAdapter.test.js
 --       (a parse_error event never has a usable externalBookingId/tourId,
 --       so it is never grouped into a plannable, eligible booking)
@@ -521,9 +890,29 @@ ROLLBACK;
 --   #19 unresolved safe booking creates customer          -> TEST 7
 --   #20 transaction failure rolls everything back          -> TEST 4
 --   #21 concurrent duplicate attempts remain idempotent     -> TEST 1
---       (same-message case, provable in one session) + TEST 9's documented
---       manual two-session procedure (same-booking-different-message case,
---       genuinely requires two concurrent sessions to prove)
+--       (same-message case, provable in one session) + TEST 15's
+--       documented manual two-session procedure (same-booking-different-
+--       message case, genuinely requires two concurrent sessions to prove)
+--
+--   V3 SAFETY-REVISION ITEMS:
+--   stale event does not create customer               -> TEST 8
+--   stale event does not modify customer                -> TEST 8
+--   stale event does not update reservation               -> TEST 8
+--   stale event does not replace passengers                 -> TEST 8
+--   stale event returns explicit stale result                 -> TEST 8
+--   missing financial data does not default to 0/EUR            -> TEST 13
+--   invalid event type writes no business state                   -> TEST 10
+--   modified-first event creates no reservation                      -> TEST 11
+--   modification never creates a second customer                       -> TEST 12
+--   modification never changes reservation.customer_id                    -> TEST 12
+--   modification contact data does not mutate customer                      -> TEST 12
+--   missing passenger payload cannot erase existing guests                     -> TEST 14
+--   transaction failure behavior remains intact                                   -> TEST 4 (unchanged from V2)
+--   service_role-only execution remains intact                                       -> unchanged REVOKE/GRANT
+--       block in the migration itself — re-run the verification queries at
+--       the bottom of supabase_migration_civitatis_write.sql after applying
+--   same-message retry remains intact                                                    -> TEST 1 (unchanged from V2)
+--   same-booking concurrency remains intact                                                  -> TEST 15
 -- ══════════════════════════════════════════════════════════════════════════
 
 -- ── END OF MANUAL TEST PLAN ─────────────────────────────────────────────────
