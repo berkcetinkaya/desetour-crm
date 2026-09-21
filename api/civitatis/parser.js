@@ -22,32 +22,68 @@ const { detectCivitatisEvent } = require('./eventDetector');
 const { parseCivitatisDate, parseCivitatisTime } = require('./dateParser');
 const { mapCivitatisLanguage } = require('./languageMap');
 
-// ── Label constants (exact text as observed in real Civitatis emails) ──────
-const LABELS = {
-  ACTIVITY: 'Activity:',
-  RESERVATION_NUMBER: 'Reservation number:',
-  CITY: 'City:',
-  LANGUAGE: 'Language:',
-  INTERNAL_CODE: 'Internal code:',
-  DATE: 'Date:',
-  HOUR: 'Hour:',
-  DURATION: 'Duration:',
-  PEOPLE: 'People:',
-  RETAIL_PRICE: 'Retail price:',
-  NET_PRICE: 'Net price:',
-  CLIENT_DETAILS: 'Client details:',
+// ── Label names (canonical text, no trailing colon, real Civitatis emails
+// observed) ─────────────────────────────────────────────────────────────
+// The real Gmail plain-text export uses a MIXED format: some labels are
+// followed by a colon with their value on the SAME line
+// ("RESERVATION NUMBER: 41659924"), others are a bare label line — with
+// or without a trailing colon — whose value is the next non-empty line
+// ("PEOPLE" / "RETAIL PRICE" / "NET PRICE"), and casing varies (all-caps
+// in real messages, Title Case in earlier examples used for this
+// project). Every label below is matched against all of those shapes,
+// case-insensitively, via buildLabelMatchers()/findLabelValue() — never
+// a fuzzy match against arbitrary text, only these explicitly known
+// label names.
+const LABEL_NAMES = {
+  ACTIVITY: 'Activity',
+  RESERVATION_NUMBER: 'Reservation number',
+  CITY: 'City',
+  LANGUAGE: 'Language',
+  INTERNAL_CODE: 'Internal code',
+  DATE: 'Date',
+  HOUR: 'Hour',
+  DURATION: 'Duration',
+  PEOPLE: 'People',
+  RETAIL_PRICE: 'Retail price',
+  NET_PRICE: 'Net price',
 };
-const SIMPLE_LABELS = [
-  LABELS.ACTIVITY, LABELS.RESERVATION_NUMBER, LABELS.CITY, LABELS.LANGUAGE,
-  LABELS.INTERNAL_CODE, LABELS.DATE, LABELS.HOUR, LABELS.DURATION,
-  LABELS.PEOPLE, LABELS.RETAIL_PRICE, LABELS.NET_PRICE,
-];
-const PASSENGER_LABEL = /^Passenger information (\d+):$/i;
+const SIMPLE_LABEL_LIST = Object.values(LABEL_NAMES);
+const CLIENT_DETAILS_LABEL = 'Client details';
+
+function escapeRegExp(text) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** Builds the two regexes used to recognize one label in any of its real
+ * shapes: `bare` matches the label alone, with or without a trailing
+ * colon and nothing else on the line ("PEOPLE" / "People:") — signaling
+ * the value is the next line; `sameLine` matches the label followed by a
+ * colon and the value on the same line ("Reservation number: 41629692")
+ * and captures that value. Colon is REQUIRED for a same-line match so a
+ * bare label line is never misread as if it carried an (absent) inline
+ * value. `start` is used only for boundary detection (is this some OTHER
+ * known label's line, in either shape) inside the block-scoped
+ * extractors below. */
+function buildLabelMatchers(label) {
+  const escaped = escapeRegExp(label);
+  return {
+    bare: new RegExp(`^${escaped}\\s*:?$`, 'i'),
+    sameLine: new RegExp(`^${escaped}\\s*:\\s*(.+)$`, 'i'),
+    start: new RegExp(`^${escaped}\\s*:?`, 'i'),
+  };
+}
+
+const LABEL_MATCHERS = new Map(SIMPLE_LABEL_LIST.map(name => [name, buildLabelMatchers(name)]));
+const CLIENT_DETAILS_MATCHERS = buildLabelMatchers(CLIENT_DETAILS_LABEL);
+
+const PASSENGER_LABEL = /^Passenger information (\d+):?$/i;
 const MODIFIED_INFO_LABEL = /^Modified information:?$/i;
 
 function isKnownLabelLine(line) {
-  return SIMPLE_LABELS.includes(line)
-    || line === LABELS.CLIENT_DETAILS
+  for (const label of SIMPLE_LABEL_LIST) {
+    if (LABEL_MATCHERS.get(label).start.test(line)) return true;
+  }
+  return CLIENT_DETAILS_MATCHERS.start.test(line)
     || PASSENGER_LABEL.test(line)
     || MODIFIED_INFO_LABEL.test(line);
 }
@@ -88,28 +124,32 @@ function compactLines(body) {
 }
 
 /**
- * Finds a label's value, tolerating BOTH real Civitatis layouts:
- *   "Reservation number:"      (label alone, value on the next line —
- *   "41534177"                  the plain-text export's usual shape)
- * and:
- *   "Reservation number: 41534177"   (label + value on one line — how a
- *                                      single HTML table cell containing
- *                                      both often converts)
+ * Finds a label's value, tolerating all three real Civitatis layouts,
+ * case-insensitively:
+ *   "RESERVATION NUMBER: 41659924"   (label + value, same line)
+ *   "PEOPLE" / "4 Adultos ..."       (bare label, no colon at all, value
+ *                                      on the next non-empty line)
+ *   "Reservation number:" / "value"  (label with a trailing colon alone,
+ *                                      value on the next non-empty line)
+ * `label` is the canonical name from LABEL_NAMES (no colon) — only
+ * these explicitly known labels are ever matched, never arbitrary text.
  * Never invents a value: if the label is found but no value follows
- * (either nothing on the same line, or the next line is itself another
- * known label / absent), returns null rather than guessing.
+ * (nothing after the colon on the same line, or the next line is itself
+ * another known label / absent), returns null rather than guessing.
  */
 function findLabelValue(lines, label) {
-  const idx = lines.findIndex(l => l === label || (l.startsWith(label) && l.length > label.length));
-  if (idx === -1) return null;
-  const line = lines[idx];
-  if (line === label) {
-    const next = lines[idx + 1];
-    if (next === undefined || isKnownLabelLine(next)) return null;
-    return next;
+  const matchers = LABEL_MATCHERS.get(label);
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const sameLineMatch = matchers.sameLine.exec(line);
+    if (sameLineMatch) return sameLineMatch[1].trim();
+    if (matchers.bare.test(line)) {
+      const next = lines[i + 1];
+      if (next !== undefined && !isKnownLabelLine(next)) return next;
+      return null;
+    }
   }
-  const inline = line.slice(label.length).trim();
-  return inline.length > 0 ? inline : null;
+  return null;
 }
 
 const FULL_NAME_LABEL_BARE = /^Full name:?$/i;
@@ -154,21 +194,30 @@ function extractPassengers(lines) {
   return passengers;
 }
 
-/** "Client details:" block: Name: X / Surname: Y, order-tolerant, scanned
- * only within the few lines immediately following the label so it never
- * accidentally consumes an unrelated later field. Email:/Phone: are
- * tolerated as optional additional lines in the same block — none of the
- * real examples supplied for this integration show them, so they are
- * never required or invented, but if a real Civitatis email does include
- * them here they are the only safe, non-fuzzy signal available for
- * matching the booking contact against an existing CRM customer (see
- * matching.js), so they are worth recognizing if present. */
+/** "Client details" / "CLIENT DETAILS" block: Name: X / Surname: Y,
+ * order-tolerant, scanned only within the few lines immediately
+ * following the label so it never accidentally consumes an unrelated
+ * later field. Email:/Phone: are tolerated as optional additional
+ * lines in the same block — if a real Civitatis email includes them
+ * here they are the only safe, non-fuzzy signal available for matching
+ * the booking contact against an existing CRM customer (see
+ * matching.js), so they are worth recognizing if present.
+ *
+ * Real messages append a literal "(Contact details)" marker to some
+ * values (observed on Surname) — Civitatis presentation text, not part
+ * of the actual value, so it is stripped from whichever sub-field
+ * carries it. */
 const CLIENT_SUB_LABEL_LINE = /^(Name|Surname|Email|Phone):?\s*(.*)$/i;
 const CLIENT_SUB_LABEL_BARE = /^(Name|Surname|Email|Phone):?\s*$/i;
 const CLIENT_SUB_LABEL_KEY = { name: 'name', surname: 'surname', email: 'email', phone: 'phone' };
+const CONTACT_DETAILS_MARKER_RE = /\s*\(contact details\)\s*$/i;
+
+function stripContactDetailsMarker(value) {
+  return value == null ? value : value.replace(CONTACT_DETAILS_MARKER_RE, '').trim();
+}
 
 function extractClientDetails(lines) {
-  const idx = lines.indexOf(LABELS.CLIENT_DETAILS);
+  const idx = lines.findIndex(l => CLIENT_DETAILS_MATCHERS.bare.test(l));
   const result = { name: null, surname: null, email: null, phone: null };
   if (idx === -1) return result;
   const end = Math.min(idx + 12, lines.length);
@@ -181,7 +230,7 @@ function extractClientDetails(lines) {
     const key = CLIENT_SUB_LABEL_KEY[m[1].toLowerCase()];
     const inline = m[2].trim();
     if (inline) {
-      result[key] = inline;
+      result[key] = stripContactDetailsMarker(inline);
       i += 1;
     } else {
       // "Name:" (or Surname/Email/Phone) alone on its own line -> the
@@ -189,7 +238,7 @@ function extractClientDetails(lines) {
       // itself another bare sub-label or a top-level field boundary.
       const next = lines[i + 1];
       if (next !== undefined && !isKnownLabelLine(next) && !CLIENT_SUB_LABEL_BARE.test(next)) {
-        result[key] = next.trim();
+        result[key] = stripContactDetailsMarker(next.trim());
         i += 2;
       } else {
         i += 1;
@@ -199,19 +248,28 @@ function extractClientDetails(lines) {
   return result;
 }
 
+const PHONE_SUB_LABEL_LINE = /^phone:?\s*(.*)$/i;
+const PHONE_SHAPE_RE = /^\+?\d[\d\s-]{4,}$/;
+
 /** "Modified information" / "Phone" block (modification emails only):
- * captures any consecutive phone-shaped lines following a "Phone"
- * sub-label as a raw list — this migration's parser output only needs
- * "phones if present", not which entry is old vs. new, which Civitatis
- * does not label explicitly. */
+ * captures phone-shaped values as a raw list, tolerating all three real
+ * shapes — "PHONE" then next-line value(s), "PHONE:" then next-line
+ * value(s), and "PHONE: value" inline — this migration's parser output
+ * only needs "phones if present", not which entry is old vs. new, which
+ * Civitatis does not label explicitly. Never invents a phone number:
+ * if no "Phone" sub-label is found at all, returns an empty list. */
 function extractModifiedPhones(lines) {
   const idx = lines.findIndex(l => MODIFIED_INFO_LABEL.test(l));
   if (idx === -1) return [];
   let cursor = idx + 1;
-  if (cursor >= lines.length || !/^phone:?$/i.test(lines[cursor])) return [];
-  cursor++;
+  if (cursor >= lines.length) return [];
+  const m = PHONE_SUB_LABEL_LINE.exec(lines[cursor]);
+  if (!m) return [];
   const phones = [];
-  while (cursor < lines.length && /^\+?\d[\d\s-]{4,}$/.test(lines[cursor])) {
+  const inline = m[1].trim();
+  cursor++;
+  if (inline && PHONE_SHAPE_RE.test(inline)) phones.push(inline);
+  while (cursor < lines.length && PHONE_SHAPE_RE.test(lines[cursor])) {
     phones.push(lines[cursor].trim());
     cursor++;
   }
@@ -299,7 +357,7 @@ function parseCivitatisEmail(message) {
   // function — an unrecognized subject never reaches this point (it was
   // already routed to needs_review/ignored above), so this fallback can
   // never fire for an unknown subject shape.
-  const bodyReservationNumber = findLabelValue(lines, LABELS.RESERVATION_NUMBER);
+  const bodyReservationNumber = findLabelValue(lines, LABEL_NAMES.RESERVATION_NUMBER);
   const subjectReservationNumber = detection.externalBookingIdFromSubject;
   let externalBookingId = null;
   let reservationNumberSource = null;
@@ -315,16 +373,16 @@ function parseCivitatisEmail(message) {
     reservationNumberSource = 'body';
   }
 
-  const activityName = findLabelValue(lines, LABELS.ACTIVITY);
-  const city = findLabelValue(lines, LABELS.CITY);
-  const languageRaw = findLabelValue(lines, LABELS.LANGUAGE);
-  const internalCode = findLabelValue(lines, LABELS.INTERNAL_CODE);
-  const dateRaw = findLabelValue(lines, LABELS.DATE);
-  const hourRaw = findLabelValue(lines, LABELS.HOUR);
-  const durationRaw = findLabelValue(lines, LABELS.DURATION);
-  const peopleRaw = findLabelValue(lines, LABELS.PEOPLE);
-  const retailRaw = findLabelValue(lines, LABELS.RETAIL_PRICE);
-  const netRaw = findLabelValue(lines, LABELS.NET_PRICE);
+  const activityName = findLabelValue(lines, LABEL_NAMES.ACTIVITY);
+  const city = findLabelValue(lines, LABEL_NAMES.CITY);
+  const languageRaw = findLabelValue(lines, LABEL_NAMES.LANGUAGE);
+  const internalCode = findLabelValue(lines, LABEL_NAMES.INTERNAL_CODE);
+  const dateRaw = findLabelValue(lines, LABEL_NAMES.DATE);
+  const hourRaw = findLabelValue(lines, LABEL_NAMES.HOUR);
+  const durationRaw = findLabelValue(lines, LABEL_NAMES.DURATION);
+  const peopleRaw = findLabelValue(lines, LABEL_NAMES.PEOPLE);
+  const retailRaw = findLabelValue(lines, LABEL_NAMES.RETAIL_PRICE);
+  const netRaw = findLabelValue(lines, LABEL_NAMES.NET_PRICE);
 
   if (!internalCode) reasons.push('missing "Internal code:" field — cannot match a DeseTour tour');
 

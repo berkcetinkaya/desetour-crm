@@ -302,6 +302,230 @@ const duplicateOfItalianNewBooking = {
   receivedAt: '2026-06-01T10:00:01.000Z', // re-fetched a moment later
 };
 
+// ─────────────────────────────────────────────────────────────────────────
+// REAL-FORMAT fixtures — modeled on the actual sanitized ?debugParser=1
+// output from the real Civitatis mailbox (all-caps "LABEL: value" for
+// some fields, bare "LABEL" / next-line value for others, no colon on
+// "CLIENT DETAILS", a "(Contact details)" marker on Surname, and a
+// two-line "PEOPLE" value where the second line is price-only). These
+// are the fixtures the parser must handle correctly — the earlier
+// Title-Case "Label:\nvalue" fixtures above remain valid too, since the
+// parser must support both.
+// ─────────────────────────────────────────────────────────────────────────
+
+// 10. Spanish new booking, real mixed-case/mixed-colon structure.
+const spanishRealFormatBooking = {
+  from: FROM_CIVITATIS,
+  subject: 'New booking A41659924: Tour por el Gran Bazar',
+  gmailMessageId: 'msg-es-real-new-001',
+  gmailThreadId: 'thread-41659924',
+  receivedAt: '2026-06-01T10:00:00.000Z',
+  body: `
+ACTIVITY: Tour por el Gran Bazar - Tour en español
+
+RESERVATION NUMBER: 41659924
+
+CITY: Estambul
+
+LANGUAGE: Español
+
+INTERNAL CODE: Grand Bazaar Experience
+
+DATE: Tuesday, september 29, 2026
+
+HOUR: 9:00 (9:00 am)
+
+PEOPLE
+4 Adultos x US$ 49.20
+US$ 196.80 (9,600 TL )
+
+PASSENGER INFORMATION 1:
+
+Full name
+BALUTT, ADRIANA MARIA
+
+PASSENGER INFORMATION 2:
+
+Full name
+TOME, ROSANA
+
+PASSENGER INFORMATION 3:
+
+Full name
+BENSEÑOR, MARIA ISABEL
+
+PASSENGER INFORMATION 4:
+
+Full name
+PEREZ, JUAN CARLOS
+
+RETAIL PRICE
+9,600 TL
+
+NET PRICE
+7,200 TL
+
+CLIENT DETAILS
+
+NAME: Adriana Maria
+
+SURNAME: Balutt (Contact details)
+`,
+};
+
+// 11. Italian new booking, real mixed-case/mixed-colon structure. Same
+// external booking ID as fixture 12 (the modification below), for the
+// chronological new+modified merge test.
+const italianRealFormatBooking = {
+  from: FROM_CIVITATIS,
+  subject: 'New booking A41629692: Tour del Grande Bazar',
+  gmailMessageId: 'msg-it-real-new-001',
+  gmailThreadId: 'thread-41629692-real',
+  receivedAt: '2026-06-01T10:00:00.000Z',
+  body: `
+ACTIVITY: Tour del Grande Bazar - Tour in italiano
+
+RESERVATION NUMBER: 41629692
+
+CITY: Istanbul
+
+LANGUAGE: Italiano
+
+INTERNAL CODE: Grand Bazaar Experience
+
+DATE: Monday, november 2, 2026
+
+HOUR: 9:00 (9:00 am)
+
+PEOPLE
+2 Adulti x € 43.02
+€ 86.04 (4,800 TL )
+
+PASSENGER INFORMATION 1:
+
+Full name
+ROMANO JUS
+
+PASSENGER INFORMATION 2:
+
+Full name
+GRAZIELLA MINETTO
+
+RETAIL PRICE
+4,800 TL
+
+NET PRICE
+3,600 TL
+
+CLIENT DETAILS
+
+NAME: No Stop Viaggi Di Fam Srl
+
+SURNAME: Neri Francesca (Contact details)
+`,
+};
+
+// 12. Modification of fixture 11's booking, real mixed structure, with
+// Duration and a Modified information / Phone block.
+const italianRealFormatModification = {
+  from: FROM_CIVITATIS,
+  subject: 'Booking A41629692 modified: Tour del Grande Bazar',
+  gmailMessageId: 'msg-it-real-mod-001',
+  gmailThreadId: 'thread-41629692-real',
+  receivedAt: '2026-06-05T10:00:00.000Z',
+  body: `
+ACTIVITY: Tour del Grande Bazar - Tour in italiano
+
+RESERVATION NUMBER: 41629692
+
+CITY: Istanbul
+
+LANGUAGE: Italiano
+
+INTERNAL CODE: Grand Bazaar Experience
+
+DATE: Monday, november 2, 2026
+
+HOUR: 9:00 (9:00 am)
+
+DURATION: 4 hours
+
+PEOPLE
+2 Adulti x € 43.02
+€ 86.04 (4,800 TL )
+
+PASSENGER INFORMATION 1:
+
+Full name
+ROMANO JUS
+
+PASSENGER INFORMATION 2:
+
+Full name
+GRAZIELLA MINETTO
+
+RETAIL PRICE
+4,800 TL
+
+NET PRICE
+3,600 TL
+
+CLIENT DETAILS
+
+NAME: No Stop Viaggi Di Fam Srl
+
+SURNAME: Neri Francesca (Contact details)
+
+MODIFIED INFORMATION
+
+PHONE
+
+3714261643
+`,
+};
+
+// 13. Real-format Retail/Net price with an extra non-price line
+// ("(2x2400TRY)") immediately following the Retail price value, which
+// must NOT affect the parsed amount.
+const realFormatRetailWithExtraLine = {
+  from: FROM_CIVITATIS,
+  subject: 'New booking A41777001: Tour del Grande Bazar',
+  gmailMessageId: 'msg-retail-extra-001',
+  gmailThreadId: 'thread-41777001',
+  receivedAt: '2026-06-01T10:00:00.000Z',
+  body: `
+ACTIVITY: Tour del Grande Bazar - Tour in italiano
+
+RESERVATION NUMBER: 41777001
+
+CITY: Istanbul
+
+LANGUAGE: Italiano
+
+INTERNAL CODE: Grand Bazaar Experience
+
+DATE: Monday, november 2, 2026
+
+HOUR: 9:00 (9:00 am)
+
+PEOPLE
+2 Adulti
+
+RETAIL PRICE
+4800.00 TL
+(2x2400TRY)
+
+NET PRICE
+3600 TL
+
+CLIENT DETAILS
+
+NAME: Someone
+
+SURNAME: Example
+`,
+};
+
 module.exports = {
   FROM_CIVITATIS,
   FROM_OTHER,
@@ -314,4 +538,8 @@ module.exports = {
   missingInternalCode,
   unknownLanguage,
   duplicateOfItalianNewBooking,
+  spanishRealFormatBooking,
+  italianRealFormatBooking,
+  italianRealFormatModification,
+  realFormatRetailWithExtraLine,
 };
