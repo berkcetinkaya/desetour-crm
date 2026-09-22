@@ -8,15 +8,96 @@
 --          supabase_migration_tour_channels.sql,
 --          supabase_migration_civitatis_ingestion.sql
 --          (all already applied to production, per the audit below)
--- Version: V4 — externally reviewed twice (V2, V3), safety issues
---          raised both times, revised both times. STILL NOT APPROVED
---          FOR EXECUTION.
+-- Version: V5 — a narrowly scoped revision adding safe, concurrency-
+--          controlled retry for a Gmail message whose PREVIOUS ingestion
+--          attempt ended in processing_status='failed'. STILL NOT
+--          APPROVED FOR EXECUTION.
 --
--- STATUS: This migration has NOT been executed against any database.
+-- STATUS: V4 (everything in this file except the V5 CHANGELOG section
+-- and Step 1 below) was manually applied to production and verified
+-- (security_definer=true, search_path=public, owner=postgres, EXECUTE
+-- restricted to postgres/service_role only — no anon/authenticated/
+-- PUBLIC). This V5 revision has NOT been executed against any database.
 -- It exists so it can be read, reviewed, and (once approved) applied
--- manually. Nothing in this repository currently calls the function it
--- creates — see api/civitatis/writeAdapter.js, which is fully written
--- and tested but not wired into any reachable HTTP endpoint or cron.
+-- manually — CREATE OR REPLACE FUNCTION is safe to re-run directly over
+-- the already-applied V4. Nothing in this repository currently calls
+-- the function it creates — see api/civitatis/writeAdapter.js, which is
+-- fully written and tested but not wired into any reachable HTTP
+-- endpoint or cron; writeAdapter.js itself is UNCHANGED by V5.
+--
+-- V5 CHANGELOG (what changed since the applied V4, and why)
+-- ─────────────────────────────────────────────────────────────
+--   9. A 'failed' GMAIL MESSAGE MAY NOW BE SAFELY RETRIED UNDER THE SAME
+--      gmail_message_id — 'processed'/'received'/'needs_review' STILL
+--      NEVER RETRY. V4's Step 1 idempotency guard was a plain
+--      INSERT ... ON CONFLICT (gmail_message_id) DO NOTHING: ANY
+--      existing row — regardless of its processing_status — made a
+--      re-invocation return 'already_processed' and attempt nothing
+--      further. That is correct forever for 'processed' (a genuinely
+--      finished outcome — including the successful-but-deliberately-
+--      inert stale_ignored/booking_already_exists cases, which also
+--      persist processing_status='processed') and correct forever for
+--      'needs_review' (a data-quality case requiring a SEPARATE,
+--      explicit/manual review mechanism — out of scope here — not
+--      silent automatic reprocessing; this matters concretely for cases
+--      like the known Juan Armas Puente POSSIBLE_EXISTING_MATCH booking,
+--      which must never re-enter automatic write attempts merely
+--      because the scheduler sees the same Gmail message again). But it
+--      also made a genuinely TRANSIENT failure (a dropped connection, a
+--      momentary constraint violation, any error caught by the Step 8
+--      EXCEPTION handler and recorded as processing_status='failed')
+--      PERMANENTLY unretryable under that Gmail message id — a real
+--      production reliability gap. V5 changes ONLY Step 1's conflict
+--      resolution to the following explicit four-state machine:
+--        processed     -> terminal;                 always already_processed
+--        received      -> in progress / abandoned;   always already_processed (never a second concurrent attempt)
+--        needs_review  -> terminal for AUTOMATIC use; always already_processed (processing_status='needs_review' in the payload; a future separate manual-retry mechanism is explicitly out of scope here)
+--        failed        -> retryable;                 ATOMICALLY reclaimed: the SAME row transitions failed -> received and Step 2 onward runs exactly as a fresh attempt would
+--      The reclaim is a single INSERT ... ON CONFLICT (gmail_message_id)
+--      DO UPDATE ... WHERE email_ingestions.processing_status = 'failed'
+--      statement — a plain SQL UPSERT, not an application-side SELECT
+--      followed by an UPDATE. Postgres resolves the conflict by taking
+--      the SAME row-level lock two concurrent conflicting INSERTs for
+--      the same gmail_message_id already had to serialize on even in
+--      V4 (see the existing RACE-CONDITION note below): the first
+--      caller to reach the conflict wins the claim, flips the row to
+--      'received' (clearing error_reason/processed_at), and proceeds;
+--      the second caller blocks on that row lock until the first
+--      transaction commits, at which point the row's processing_status
+--      is no longer 'failed' (it is now whatever the first attempt's
+--      OWN outcome left it as), so the second caller's WHERE clause no
+--      longer matches, its UPSERT updates zero rows, and it correctly
+--      falls through to already_processed with the first attempt's real
+--      outcome — exactly one of two concurrent retries can ever proceed
+--      into business writes for the same failed row, enforced entirely
+--      by Postgres's own row-locking, not by any application-level
+--      coordination. The SAME email_ingestions row and id are reused —
+--      no second audit row is ever created for the same Gmail message,
+--      on a retry or otherwise. Because the existing nested
+--      BEGIN...EXCEPTION block (Step 8, unchanged) already rolls back
+--      every customer/reservation/guest/activity write attempted since
+--      the block began whenever the ORIGINAL failed attempt raised its
+--      error, a reclaimed row always resumes from a clean business
+--      state: Step 4's reservation lookup (also unchanged) genuinely
+--      finds nothing for a booking whose only prior attempt failed, so
+--      a retried new_booking event takes the same CREATE branch a fresh
+--      attempt would, with no partial customer/reservation left behind
+--      to conflict with or duplicate. If the retry itself fails again,
+--      the SAME unchanged EXCEPTION handler runs, writing a fresh
+--      error_reason to the SAME row and returning it to
+--      processing_status='failed' — nothing about that handler needed
+--      to change for this to be correct, since it already keys off
+--      v_ingestion_id, which is now simply "the row Step 1 either
+--      inserted or reclaimed" instead of always "the row Step 1
+--      inserted".
+--      Explicitly UNCHANGED by V5: the V4 event/reservation-state matrix
+--      (Step 6, all five branches, byte-for-byte identical), customer
+--      matching/creation behavior, passenger-list replacement guard,
+--      financial field mapping, the function's parameter signature, the
+--      REVOKE/GRANT service_role-only access control, and every other
+--      guarantee described below. api/civitatis/writeAdapter.js, the
+--      parser, the matching rules, and the application-layer ordering
+--      logic are not part of this file and are not touched by it.
 --
 -- V4 CHANGELOG (what changed since the reviewed V3, and why)
 -- ─────────────────────────────────────────────────────────────
@@ -225,12 +306,29 @@
 --
 -- IDEMPOTENCY CONTRACT
 -- ─────────────────────────────────────────────────────────────
---   • Re-invoking with the SAME gmail_message_id is a guaranteed no-op:
---     the function's first statement is an INSERT ... ON CONFLICT
---     (gmail_message_id) DO NOTHING into email_ingestions. If no row
---     was inserted (conflict), the function returns
---     {"result":"already_processed"} immediately — no customer,
---     reservation, guest, or activity write is even attempted.
+--   • Re-invoking with the SAME gmail_message_id when that message's
+--     existing email_ingestions row has processing_status IN
+--     ('processed','received','needs_review') is a guaranteed no-op:
+--     the function returns {"result":"already_processed", ...,
+--     "processing_status": <whichever of those three it actually is>}
+--     immediately — no customer, reservation, guest, or activity write
+--     is even attempted. 'received' covers a genuinely-in-progress or
+--     abandoned-mid-flight attempt — never a second concurrent one.
+--     'needs_review' is deliberately terminal for AUTOMATIC processing
+--     (see V5 changelog point 9) — a separate, explicit/manual review
+--     mechanism is the only intended way to act on it further, and is
+--     out of scope for this function.
+--   • Re-invoking with the SAME gmail_message_id when that message's
+--     existing row has processing_status = 'failed' (V5) is the ONE
+--     case that is NOT a no-op: it is atomically reclaimed — the SAME
+--     row transitions failed -> received (error_reason and processed_at
+--     cleared; gmail_thread_id/raw_subject/raw_body_snapshot/
+--     received_at/event_type are left exactly as originally recorded,
+--     since a retry is the SAME email, not a different one) — and
+--     Step 2 onward runs exactly as it would for a brand-new message,
+--     reusing the same email_ingestions.id throughout. See V5 changelog
+--     point 9 for the exact concurrency mechanism (a single
+--     conditional UPSERT, not an application-side SELECT-then-UPDATE).
 --   • Re-invoking for the SAME (source_id, external_booking_id) from a
 --     DIFFERENT gmail_message_id (e.g. New booking + a later Booking
 --     modified — two distinct real Gmail messages) is NOT deduplicated
@@ -340,11 +438,35 @@
 --
 -- RACE-CONDITION / CONCURRENCY NOTES
 -- ─────────────────────────────────────────────────────────────
---   • Two concurrent calls with the SAME gmail_message_id: the second
---     one's INSERT ... ON CONFLICT DO NOTHING simply finds no row to
---     insert (Postgres's own UNIQUE constraint enforcement, not
+--   • Two concurrent calls with the SAME gmail_message_id, where NEITHER
+--     is a retry-eligible 'failed' row (i.e. the existing row is
+--     'processed', 'received', or 'needs_review'): the second one's
+--     conditional UPSERT finds no row it is allowed to touch (Postgres's
+--     own UNIQUE constraint + WHERE-clause re-evaluation, not
 --     application logic) and returns already_processed — no matter how
---     the two calls interleave.
+--     the two calls interleave. Unchanged from V4's plain DO NOTHING
+--     for this case.
+--   • Two concurrent RETRY attempts for the SAME 'failed' gmail_message_id
+--     (V5): both issue the same conditional
+--     INSERT ... ON CONFLICT DO UPDATE ... WHERE processing_status='failed'
+--     statement. Postgres serializes them on the row-level lock the
+--     conflicting unique-index entry requires: the first to arrive
+--     performs the UPDATE (WHERE matches, since the row is still
+--     'failed') and proceeds into Step 2 onward within its own
+--     transaction; the second BLOCKS on that same row lock until the
+--     first caller's entire function call COMMITs (or rolls back). Once
+--     unblocked, the second caller's WHERE clause is re-evaluated
+--     against the row's now-current state — which the first caller has,
+--     by then, moved to 'processed', 'needs_review', or 'failed' again
+--     (never still 'failed' from the STALE claim, and never 'received',
+--     since Step 2 onward of a completed call always ends in one of
+--     those three) — so the second caller's UPDATE matches zero rows,
+--     RETURNING gives nothing, and it correctly falls through to
+--     already_processed reporting the first caller's real, final
+--     outcome. Exactly one of the two concurrent retries can ever reach
+--     Step 2 (business processing) for that row — enforced entirely by
+--     Postgres's own MVCC/row-locking for a conflicting UPSERT, with no
+--     application-side coordination required or relied upon.
 --   • Two concurrent calls for the SAME (source_id, external_booking_id)
 --     from different gmail_message_ids: pg_advisory_xact_lock blocks
 --     the second call until the first COMMITs (or rolls back), so the
@@ -382,9 +504,9 @@
 -- Supabase Dashboard → SQL Editor → paste and run this file, after
 -- confirming supabase_migration_civitatis_ingestion.sql is already
 -- applied (it is, per the task history — commit 879d7a5). Safe to
--- re-run in full, and safe to run directly over an already-applied V2:
+-- re-run in full, and safe to run directly over the already-applied V4:
 -- CREATE OR REPLACE FUNCTION and the REVOKE/GRANT statements are all
--- idempotent, and the function signature is unchanged from V2.
+-- idempotent, and the function signature is unchanged from V2/V4.
 -- ============================================================
 
 
@@ -439,12 +561,36 @@ DECLARE
   v_passengers_replaced                 BOOLEAN := FALSE;
   v_error_text                            TEXT;
 BEGIN
-  -- ── Step 1: Gmail-message-level idempotency (the primary guard) ────────
-  -- Atomic at the database level, not an application-side "SELECT then
-  -- INSERT". Records the event_type LABEL as given (even if invalid —
-  -- COALESCEd to 'unknown' only for this audit row) so there is always a
-  -- permanent record of what was received; validity is enforced in Step 2
-  -- BEFORE any business write.
+  -- ── Step 1: Gmail-message-level idempotency, WITH safe retry for a
+  -- PREVIOUSLY-FAILED attempt at the SAME message (V5) ───────────────────
+  -- Atomic at the database level via a single conditional UPSERT, not an
+  -- application-side "SELECT then UPDATE" — see V5 changelog point 9 for
+  -- the full concurrency argument. Records the event_type LABEL as given
+  -- (even if invalid — COALESCEd to 'unknown' only for this audit row) so
+  -- there is always a permanent record of what was received; validity is
+  -- enforced in Step 2 BEFORE any business write.
+  --
+  -- Three possible outcomes of this single statement:
+  --   (a) no existing row for this gmail_message_id -> plain INSERT
+  --       succeeds, RETURNING gives the new id -> fresh attempt.
+  --   (b) existing row's processing_status = 'failed' -> the ON CONFLICT
+  --       DO UPDATE's WHERE clause matches -> the SAME row is atomically
+  --       reclaimed (flipped to 'received', stale failure metadata
+  --       cleared), RETURNING gives the SAME id -> retry attempt,
+  --       Step 2 onward proceeds exactly as for a fresh attempt.
+  --   (c) existing row's processing_status IN
+  --       ('processed','received','needs_review') -> the WHERE clause
+  --       does not match -> zero rows are inserted or updated ->
+  --       RETURNING gives no row -> v_ingestion_id stays NULL -> falls
+  --       through to the already_processed report below, exactly as V4.
+  -- Note that (b) is also how two CONCURRENT retries of the same failed
+  -- row are safely serialized: Postgres takes a row-level lock on the
+  -- conflicting unique-index entry for the duration of this statement;
+  -- the second concurrent caller blocks until the first's whole
+  -- transaction (this entire function call) commits, then re-evaluates
+  -- the WHERE clause against the now-current row — which the first
+  -- caller has, by then, moved OFF 'failed' — so at most one caller's
+  -- UPSERT can ever match and proceed into business writes.
   INSERT INTO public.email_ingestions (
     gmail_message_id, gmail_thread_id, external_booking_id, source_id,
     event_type, processing_status, raw_subject, raw_body_snapshot, received_at
@@ -454,10 +600,26 @@ BEGIN
     'received', p_raw_subject, p_raw_body_snapshot,
     COALESCE(p_received_at, NOW())
   )
-  ON CONFLICT (gmail_message_id) DO NOTHING
+  ON CONFLICT (gmail_message_id) DO UPDATE
+    SET processing_status = 'received',
+        error_reason      = NULL,
+        processed_at      = NULL
+    -- Deliberately NOT reset on a retry: gmail_thread_id, external_booking_id,
+    -- source_id, event_type, raw_subject, raw_body_snapshot, received_at —
+    -- a retry is the SAME Gmail message, not a new one; its original
+    -- identity and raw audit content are preserved unless a concrete
+    -- reason to refresh them arises (none does here).
+    WHERE public.email_ingestions.processing_status = 'failed'
   RETURNING id INTO v_ingestion_id;
 
   IF v_ingestion_id IS NULL THEN
+    -- Outcome (c) above: an existing row that is 'processed', 'received',
+    -- or 'needs_review'. All three are terminal for THIS (automatic)
+    -- call path — 'needs_review' in particular is intentionally never
+    -- auto-retried (see V5 changelog point 9); its processing_status is
+    -- still reported here so a caller/operator can see it needs a
+    -- SEPARATE, explicit/manual review mechanism (out of scope for this
+    -- function) rather than assuming it is simply done.
     SELECT id, processing_status, reservation_id
       INTO v_ingestion_id, v_existing_status, v_existing_res_id
       FROM public.email_ingestions
@@ -838,7 +1000,15 @@ COMMENT ON FUNCTION public.ingest_civitatis_booking IS
   'distinctly (stale_ignored / manual_review_required / '
   'booking_already_exists). Any unexpected error rolls back all '
   'business writes for that call while still recording a '
-  '''failed'' audit row. SECURITY DEFINER; callable only by '
+  '''failed'' audit row on the SAME email_ingestions row/id. '
+  'Re-invoking with a gmail_message_id whose prior attempt is '
+  '''processed'', ''received'', or ''needs_review'' is always a no-op '
+  '(already_processed); ''needs_review'' is intentionally never '
+  'auto-retried. Re-invoking one whose prior attempt is ''failed'' '
+  'atomically reclaims that SAME row (failed -> received) via a single '
+  'conditional UPSERT and reprocesses it as a fresh attempt — two '
+  'concurrent retries of the same failed row can never both reach '
+  'business writes (V5). SECURITY DEFINER; callable only by '
   'service_role — see this migration file''s header for the full '
   'contract. Never call directly from browser code.';
 

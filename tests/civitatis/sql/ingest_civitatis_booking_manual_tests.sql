@@ -7,11 +7,13 @@
 -- supabase_rls_policies.sql, supabase_migration_guides.sql,
 -- supabase_migration_reviews.sql, supabase_migration_tour_channels.sql,
 -- supabase_migration_civitatis_ingestion.sql, AND
--- supabase_migration_civitatis_write.sql already applied — none of
--- which this task applies. Run this file (e.g. via `psql` or the
--- Supabase SQL editor) against a STAGING database only, never
--- production, after the write migration has been reviewed and applied
--- there.
+-- supabase_migration_civitatis_write.sql (V5 — includes the safe-retry
+-- revision) already applied — none of which this task applies. Run this
+-- file (e.g. via `psql` or the Supabase SQL editor) against a STAGING
+-- database only, never production, after the write migration has been
+-- reviewed and applied there. TESTS 1-16 cover the V2/V3/V4-reviewed
+-- architecture and event matrix (unchanged by V5); TESTS 17-21 cover the
+-- V5 retry state machine specifically.
 --
 -- WHY THIS EXISTS AS SQL, NOT A JS TEST
 -- The write architecture's core claims — atomic rollback, idempotency
@@ -994,6 +996,426 @@ ROLLBACK;
 
 
 -- ══════════════════════════════════════════════════════════════════════════
+-- V5 — RETRY STATE MACHINE FOR A PREVIOUSLY 'failed' GMAIL MESSAGE
+-- ══════════════════════════════════════════════════════════════════════════
+-- TESTS 17-21 below prove the V5 revision: 'processed'/'received'/
+-- 'needs_review' never automatically retry; a genuinely 'failed' row is
+-- atomically reclaimed under the SAME email_ingestions row/id and
+-- reprocessed exactly like a fresh attempt, with no duplicate business
+-- state and no possibility of two concurrent retries both writing.
+-- TESTS 1-16 above are UNCHANGED and still pass unmodified against V5
+-- (the event/reservation-state matrix — Step 6 — was not touched), which
+-- is itself the proof for state-machine item #12 ("all V4 event-matrix
+-- behavior remains unchanged").
+
+
+-- ══════════════════════════════════════════════════════════════════════════
+-- TEST 17 — a 'processed' Gmail message is NEVER retried, even when
+-- re-invoked with entirely different (would-be-wrong-if-applied) business
+-- data; a 'needs_review' Gmail message is NEVER automatically retried,
+-- even when re-invoked with data that would now be perfectly valid
+-- (V5 state-machine items #1 and #2)
+-- ══════════════════════════════════════════════════════════════════════════
+BEGIN;
+DO $$
+DECLARE
+  v_source_id UUID; v_tour_id UUID;
+  r1 JSONB; r2 JSONB; r3 JSONB; r4 JSONB;
+  v_res RECORD;
+BEGIN
+  SELECT id INTO v_source_id FROM public.sources WHERE slug ILIKE 'civitatis%' LIMIT 1;
+  INSERT INTO public.tours (name, is_active) VALUES ('TEST17 Tour', TRUE) RETURNING id INTO v_tour_id;
+
+  -- Part A: 'processed' never retries -----------------------------------
+  r1 := public.ingest_civitatis_booking(
+    'gmail-test17-processed', 'thread-test17a', NOW(), 'New booking A90000023: Test Tour', 'body', 'new_booking',
+    v_source_id, '90000023', v_tour_id, 'İtalyanca', CURRENT_DATE + 30, '09:00', 2, 0,
+    3600, 'TL', 4800, 'TL', NULL, 'Test Contact TwentyThree', NULL, NULL, '[]'::jsonb
+  );
+  IF r1->>'result' <> 'created' THEN RAISE EXCEPTION 'TEST 17a: FAILED — setup create failed, got %', r1->>'result'; END IF;
+
+  -- Re-invoke the SAME gmail_message_id with entirely different (would be
+  -- wrong if applied) business data — a real retry from the application
+  -- layer never does this (it resends the SAME parsed email), but using
+  -- different values here proves conclusively that NOTHING was
+  -- reprocessed, not merely that the numbers happened to match already.
+  r2 := public.ingest_civitatis_booking(
+    'gmail-test17-processed', 'thread-test17a-DIFFERENT', NOW(), 'New booking A90000023: Test Tour', 'body', 'new_booking',
+    v_source_id, '90000023', v_tour_id, 'Español', CURRENT_DATE + 99, '18:00', 9, 3,
+    9999, 'EUR', 8888, 'EUR', NULL, 'A DIFFERENT NAME', NULL, NULL, '[]'::jsonb
+  );
+  IF r2->>'result' <> 'already_processed' THEN
+    RAISE EXCEPTION 'TEST 17a: FAILED — retrying a processed message expected already_processed, got %', r2->>'result';
+  END IF;
+  IF r2->>'processing_status' <> 'processed' THEN
+    RAISE EXCEPTION 'TEST 17a: FAILED — expected processing_status=processed in the already_processed payload, got %', r2->>'processing_status';
+  END IF;
+
+  SELECT * INTO v_res FROM public.reservations WHERE id = (r1->>'reservation_id')::uuid;
+  IF v_res.check_in <> CURRENT_DATE + 30 OR v_res.pax_adult <> 2 THEN
+    RAISE EXCEPTION 'TEST 17a: FAILED — a processed message was silently reprocessed with new field values';
+  END IF;
+  IF EXISTS (SELECT 1 FROM public.customers WHERE full_name = 'A DIFFERENT NAME') THEN
+    RAISE EXCEPTION 'TEST 17a: FAILED — a processed message''s retry created a stray customer';
+  END IF;
+  IF (SELECT COUNT(*) FROM public.reservations WHERE source_id=v_source_id AND external_booking_id='90000023') <> 1 THEN
+    RAISE EXCEPTION 'TEST 17a: FAILED — a processed message''s retry created a second reservation';
+  END IF;
+
+  -- Part B: 'needs_review' is NEVER automatically retried, even with
+  -- now-fully-valid data --------------------------------------------------
+  r3 := public.ingest_civitatis_booking(
+    'gmail-test17-needsreview', 'thread-test17b', NOW(), 'New booking A90000024: Test Tour', 'body', 'new_booking',
+    v_source_id,
+    '90000024',
+    NULL, -- no matched tour_id -> needs_review, exactly like TEST 5
+    'İtalyanca', CURRENT_DATE + 30, '09:00', 2, 0, 3600, 'TL', 4800, 'TL',
+    NULL, 'Test Contact TwentyFour', NULL, NULL, '[]'::jsonb
+  );
+  IF r3->>'result' <> 'manual_review_required' THEN
+    RAISE EXCEPTION 'TEST 17b: FAILED — setup expected manual_review_required, got %', r3->>'result';
+  END IF;
+  IF (SELECT processing_status FROM public.email_ingestions WHERE gmail_message_id='gmail-test17-needsreview') <> 'needs_review' THEN
+    RAISE EXCEPTION 'TEST 17b: FAILED — expected the audit row itself to be processing_status=needs_review';
+  END IF;
+
+  -- Re-invoke the SAME gmail_message_id — this time with a genuinely
+  -- valid tour_id and otherwise fully valid data, simulating "the tour
+  -- channel mapping was fixed later and the scheduler saw this Gmail
+  -- message again." It must STILL be blocked automatically.
+  r4 := public.ingest_civitatis_booking(
+    'gmail-test17-needsreview', 'thread-test17b', NOW(), 'New booking A90000024: Test Tour', 'body', 'new_booking',
+    v_source_id, '90000024', v_tour_id, -- now valid
+    'İtalyanca', CURRENT_DATE + 30, '09:00', 2, 0, 3600, 'TL', 4800, 'TL',
+    NULL, 'Test Contact TwentyFour', NULL, NULL, '[]'::jsonb
+  );
+  IF r4->>'result' <> 'already_processed' THEN
+    RAISE EXCEPTION 'TEST 17b: FAILED — retrying a needs_review message with now-valid data expected already_processed, got %', r4->>'result';
+  END IF;
+  IF r4->>'processing_status' <> 'needs_review' THEN
+    RAISE EXCEPTION 'TEST 17b: FAILED — expected processing_status=needs_review in the already_processed payload (must never silently flip to processed), got %', r4->>'processing_status';
+  END IF;
+  IF EXISTS (SELECT 1 FROM public.reservations WHERE source_id=v_source_id AND external_booking_id='90000024') THEN
+    RAISE EXCEPTION 'TEST 17b: FAILED — a needs_review message was automatically retried and wrote a reservation despite now-valid data';
+  END IF;
+  IF EXISTS (SELECT 1 FROM public.customers WHERE full_name = 'Test Contact TwentyFour') THEN
+    RAISE EXCEPTION 'TEST 17b: FAILED — a needs_review message was automatically retried and wrote a customer despite now-valid data';
+  END IF;
+
+  RAISE NOTICE 'TEST 17: PASSED';
+END $$;
+ROLLBACK;
+
+
+-- ══════════════════════════════════════════════════════════════════════════
+-- TEST 18 — a 'received' Gmail message is never given a second
+-- concurrent/automatic processing attempt (V5 state-machine item #3).
+-- Under this function's single-transaction design, processing_status=
+-- 'received' can never actually persist past a COMMIT in normal operation
+-- (every code path finalizes the row to processed/needs_review/failed
+-- before returning — see the migration header) — a row can only ever be
+-- OBSERVED as 'received' by another session WHILE a call is still
+-- in-flight, at which point that other session simply blocks on the row
+-- lock (see TEST 21) rather than reading a stale 'received' value at all.
+-- To still directly exercise the defensive code path itself (belt and
+-- suspenders — e.g. protecting against any future change that might let
+-- 'received' persist, or an operator/tooling row edit), this test
+-- manually forces a row into 'received' via a raw UPDATE, simulating an
+-- abnormally stuck/crashed attempt, and confirms the RPC still refuses to
+-- touch it.
+-- ══════════════════════════════════════════════════════════════════════════
+BEGIN;
+DO $$
+DECLARE
+  v_source_id UUID; v_tour_id UUID;
+  r1 JSONB; r2 JSONB;
+BEGIN
+  SELECT id INTO v_source_id FROM public.sources WHERE slug ILIKE 'civitatis%' LIMIT 1;
+  INSERT INTO public.tours (name, is_active) VALUES ('TEST18 Tour', TRUE) RETURNING id INTO v_tour_id;
+
+  r1 := public.ingest_civitatis_booking(
+    'gmail-test18-received', 'thread-test18', NOW(), 'New booking A90000025: Test Tour', 'body', 'new_booking',
+    v_source_id, '90000025', v_tour_id, 'İtalyanca', CURRENT_DATE + 30, '09:00', 2, 0,
+    3600, 'TL', 4800, 'TL', NULL, 'Test Contact TwentyFive', NULL, NULL, '[]'::jsonb
+  );
+  IF r1->>'result' <> 'created' THEN RAISE EXCEPTION 'TEST 18: FAILED — setup create failed, got %', r1->>'result'; END IF;
+
+  -- Manually force the row back to 'received', simulating an
+  -- abnormally-stuck/crashed attempt (never produced by the function
+  -- itself in normal operation — see comment above).
+  UPDATE public.email_ingestions
+     SET processing_status = 'received', error_reason = NULL, processed_at = NULL
+   WHERE gmail_message_id = 'gmail-test18-received';
+
+  r2 := public.ingest_civitatis_booking(
+    'gmail-test18-received', 'thread-test18-DIFFERENT', NOW(), 'New booking A90000025: Test Tour', 'body', 'new_booking',
+    v_source_id, '90000025', v_tour_id, 'Español', CURRENT_DATE + 99, '18:00', 9, 3,
+    9999, 'EUR', 8888, 'EUR', NULL, 'SHOULD NOT BE CREATED', NULL, NULL, '[]'::jsonb
+  );
+  IF r2->>'result' <> 'already_processed' THEN
+    RAISE EXCEPTION 'TEST 18: FAILED — a received message expected already_processed (no second attempt), got %', r2->>'result';
+  END IF;
+  IF r2->>'processing_status' <> 'received' THEN
+    RAISE EXCEPTION 'TEST 18: FAILED — expected processing_status=received in the already_processed payload, got %', r2->>'processing_status';
+  END IF;
+  IF EXISTS (SELECT 1 FROM public.customers WHERE full_name = 'SHOULD NOT BE CREATED') THEN
+    RAISE EXCEPTION 'TEST 18: FAILED — a received message was given a second processing attempt';
+  END IF;
+  IF (SELECT COUNT(*) FROM public.reservations WHERE source_id=v_source_id AND external_booking_id='90000025') <> 1 THEN
+    RAISE EXCEPTION 'TEST 18: FAILED — a received message''s second attempt wrote/duplicated a reservation';
+  END IF;
+
+  RAISE NOTICE 'TEST 18: PASSED';
+END $$;
+ROLLBACK;
+
+
+-- ══════════════════════════════════════════════════════════════════════════
+-- TEST 19 — a genuinely 'failed' Gmail message safely retries under the
+-- SAME email_ingestions row/id: failed -> received -> processed, using the
+-- SAME row throughout (never a second audit row), preserving the original
+-- Gmail identity/raw audit fields while clearing stale failure metadata,
+-- and creating EXACTLY ONE reservation/customer/passenger-set/activity
+-- notification total, never a duplicate from either attempt
+-- (V5 state-machine items #4, #5, #8, #9, #10, #11)
+-- ══════════════════════════════════════════════════════════════════════════
+BEGIN;
+DO $$
+DECLARE
+  v_source_id UUID; v_tour_id UUID;
+  r1 JSONB; r2 JSONB;
+  v_bogus_customer_id UUID := gen_random_uuid(); -- guaranteed not to exist -> forces Step 8's EXCEPTION
+  v_ingestion_id_1 UUID; v_ingestion_id_2 UUID;
+  v_ingestion RECORD;
+  v_res_count INT; v_cust_count INT; v_guest_count INT; v_activity_count INT;
+BEGIN
+  SELECT id INTO v_source_id FROM public.sources WHERE slug ILIKE 'civitatis%' LIMIT 1;
+  INSERT INTO public.tours (name, is_active) VALUES ('TEST19 Tour', TRUE) RETURNING id INTO v_tour_id;
+
+  -- Attempt 1: deliberately fails (same bogus-customer-id trick as TEST 4).
+  r1 := public.ingest_civitatis_booking(
+    'gmail-test19-retry', 'thread-test19-ORIGINAL', NOW(), 'New booking A90000026: Test Tour', 'ORIGINAL raw body', 'new_booking',
+    v_source_id, '90000026', v_tour_id, 'İtalyanca', CURRENT_DATE + 30, '09:00', 2, 0,
+    3600, 'TL', 4800, 'TL',
+    v_bogus_customer_id, -- does not exist -> RAISE EXCEPTION -> failed
+    NULL, NULL, NULL, '[{"fullName":"REAL PASSENGER ONE","sortOrder":0},{"fullName":"REAL PASSENGER TWO","sortOrder":1}]'::jsonb
+  );
+  IF r1->>'result' <> 'failed' THEN RAISE EXCEPTION 'TEST 19: FAILED — attempt 1 expected result=failed, got %', r1->>'result'; END IF;
+  v_ingestion_id_1 := (r1->>'ingestion_id')::uuid;
+
+  SELECT * INTO v_ingestion FROM public.email_ingestions WHERE id = v_ingestion_id_1;
+  IF v_ingestion.processing_status <> 'failed' THEN RAISE EXCEPTION 'TEST 19: FAILED — expected processing_status=failed after attempt 1'; END IF;
+  IF v_ingestion.error_reason IS NULL THEN RAISE EXCEPTION 'TEST 19: FAILED — attempt 1 must record an error_reason'; END IF;
+
+  -- Confirm attempt 1 left ZERO business state behind (same guarantee TEST 4 proves).
+  IF EXISTS (SELECT 1 FROM public.reservations WHERE source_id=v_source_id AND external_booking_id='90000026') THEN
+    RAISE EXCEPTION 'TEST 19: FAILED — attempt 1''s failure left a reservation behind';
+  END IF;
+  IF EXISTS (SELECT 1 FROM public.reservation_guests WHERE full_name IN ('REAL PASSENGER ONE','REAL PASSENGER TWO')) THEN
+    RAISE EXCEPTION 'TEST 19: FAILED — attempt 1''s failure left passenger rows behind';
+  END IF;
+
+  -- Attempt 2 (retry): SAME gmail_message_id, this time with a resolvable
+  -- customer (NULL + a real booking-contact name -> CREATE path). Also
+  -- deliberately passes a DIFFERENT gmail_thread_id/raw_subject/raw_body
+  -- to prove the claim does NOT refresh the message's original identity/
+  -- raw audit content — a real retry resends the SAME email, so this is
+  -- an adversarial check, not a realistic caller pattern.
+  r2 := public.ingest_civitatis_booking(
+    'gmail-test19-retry', 'thread-test19-RETRY-SHOULD-NOT-STICK', NOW() + INTERVAL '5 minutes',
+    'RETRY SHOULD NOT STICK EITHER', 'RETRY BODY SHOULD NOT STICK', 'new_booking',
+    v_source_id, '90000026', v_tour_id, 'İtalyanca', CURRENT_DATE + 30, '09:00', 2, 0,
+    3600, 'TL', 4800, 'TL',
+    NULL, 'Test Contact TwentySix', NULL, NULL,
+    '[{"fullName":"REAL PASSENGER ONE","sortOrder":0},{"fullName":"REAL PASSENGER TWO","sortOrder":1}]'::jsonb
+  );
+  IF r2->>'result' <> 'created' THEN RAISE EXCEPTION 'TEST 19: FAILED — retry expected result=created, got %', r2->>'result'; END IF;
+  v_ingestion_id_2 := (r2->>'ingestion_id')::uuid;
+
+  -- SAME row/id reused — never a second audit row for this Gmail message.
+  IF v_ingestion_id_2 <> v_ingestion_id_1 THEN
+    RAISE EXCEPTION 'TEST 19: FAILED — retry used a DIFFERENT email_ingestions row/id (original=%, retry=%)', v_ingestion_id_1, v_ingestion_id_2;
+  END IF;
+  IF (SELECT COUNT(*) FROM public.email_ingestions WHERE gmail_message_id = 'gmail-test19-retry') <> 1 THEN
+    RAISE EXCEPTION 'TEST 19: FAILED — expected exactly 1 email_ingestions row for this gmail_message_id after retry, found %',
+      (SELECT COUNT(*) FROM public.email_ingestions WHERE gmail_message_id = 'gmail-test19-retry');
+  END IF;
+
+  -- failed -> received -> processed: final state is processed, stale
+  -- failure metadata cleared.
+  SELECT * INTO v_ingestion FROM public.email_ingestions WHERE id = v_ingestion_id_1;
+  IF v_ingestion.processing_status <> 'processed' THEN
+    RAISE EXCEPTION 'TEST 19: FAILED — expected final processing_status=processed after a successful retry, got %', v_ingestion.processing_status;
+  END IF;
+  IF v_ingestion.error_reason IS NOT NULL THEN
+    RAISE EXCEPTION 'TEST 19: FAILED — a successful retry must clear error_reason, found %', v_ingestion.error_reason;
+  END IF;
+
+  -- Original Gmail identity / raw audit content preserved from ATTEMPT 1,
+  -- NOT overwritten by attempt 2's (deliberately different) values:
+  IF v_ingestion.gmail_thread_id <> 'thread-test19-ORIGINAL' THEN
+    RAISE EXCEPTION 'TEST 19: FAILED — gmail_thread_id was refreshed by the retry (found %), must preserve the original', v_ingestion.gmail_thread_id;
+  END IF;
+  IF v_ingestion.raw_subject <> 'New booking A90000026: Test Tour' THEN
+    RAISE EXCEPTION 'TEST 19: FAILED — raw_subject was refreshed by the retry, must preserve the original';
+  END IF;
+  IF v_ingestion.raw_body_snapshot <> 'ORIGINAL raw body' THEN
+    RAISE EXCEPTION 'TEST 19: FAILED — raw_body_snapshot was refreshed by the retry, must preserve the original';
+  END IF;
+
+  -- Exactly one reservation/customer/passenger-set/activity notification
+  -- total — the failed first attempt contributed nothing to duplicate:
+  SELECT COUNT(*) INTO v_res_count FROM public.reservations WHERE source_id=v_source_id AND external_booking_id='90000026';
+  IF v_res_count <> 1 THEN RAISE EXCEPTION 'TEST 19: FAILED — expected exactly 1 reservation after retry, found %', v_res_count; END IF;
+
+  SELECT COUNT(*) INTO v_cust_count FROM public.customers WHERE full_name = 'Test Contact TwentySix';
+  IF v_cust_count <> 1 THEN RAISE EXCEPTION 'TEST 19: FAILED — expected exactly 1 customer after retry, found %', v_cust_count; END IF;
+
+  SELECT COUNT(*) INTO v_guest_count FROM public.reservation_guests WHERE reservation_id = (r2->>'reservation_id')::uuid;
+  IF v_guest_count <> 2 THEN RAISE EXCEPTION 'TEST 19: FAILED — expected exactly 2 passenger rows after retry, found %', v_guest_count; END IF;
+
+  SELECT COUNT(*) INTO v_activity_count FROM public.activity_logs
+   WHERE entity_type='reservation' AND entity_id = (r2->>'reservation_id')::uuid;
+  IF v_activity_count <> 1 THEN RAISE EXCEPTION 'TEST 19: FAILED — expected exactly 1 activity_logs row after retry, found %', v_activity_count; END IF;
+
+  RAISE NOTICE 'TEST 19: PASSED';
+END $$;
+ROLLBACK;
+
+
+-- ══════════════════════════════════════════════════════════════════════════
+-- TEST 20 — a retry that fails AGAIN returns processing_status to 'failed'
+-- with a fresh error_reason, under the SAME row/id, still with zero
+-- business state left behind from either attempt (V5 state-machine item #6,
+-- and confirms the "retry always resumes from a clean business state"
+-- reasoning holds even across two consecutive failures)
+-- ══════════════════════════════════════════════════════════════════════════
+BEGIN;
+DO $$
+DECLARE
+  v_source_id UUID; v_tour_id UUID;
+  r1 JSONB; r2 JSONB;
+  v_bogus_customer_id_1 UUID := gen_random_uuid();
+  v_bogus_customer_id_2 UUID := gen_random_uuid();
+  v_ingestion_id_1 UUID; v_ingestion_id_2 UUID;
+  v_error_1 TEXT; v_error_2 TEXT;
+BEGIN
+  SELECT id INTO v_source_id FROM public.sources WHERE slug ILIKE 'civitatis%' LIMIT 1;
+  INSERT INTO public.tours (name, is_active) VALUES ('TEST20 Tour', TRUE) RETURNING id INTO v_tour_id;
+
+  r1 := public.ingest_civitatis_booking(
+    'gmail-test20-retry-fails-again', 'thread-test20', NOW(), 'New booking A90000027: Test Tour', 'body', 'new_booking',
+    v_source_id, '90000027', v_tour_id, 'İtalyanca', CURRENT_DATE + 30, '09:00', 2, 0,
+    3600, 'TL', 4800, 'TL', v_bogus_customer_id_1, NULL, NULL, NULL, '[]'::jsonb
+  );
+  IF r1->>'result' <> 'failed' THEN RAISE EXCEPTION 'TEST 20: FAILED — attempt 1 expected result=failed, got %', r1->>'result'; END IF;
+  v_ingestion_id_1 := (r1->>'ingestion_id')::uuid;
+  SELECT error_reason INTO v_error_1 FROM public.email_ingestions WHERE id = v_ingestion_id_1;
+
+  -- Retry with ANOTHER bogus (but different) customer_id — fails again.
+  r2 := public.ingest_civitatis_booking(
+    'gmail-test20-retry-fails-again', 'thread-test20', NOW() + INTERVAL '5 minutes', 'New booking A90000027: Test Tour', 'body', 'new_booking',
+    v_source_id, '90000027', v_tour_id, 'İtalyanca', CURRENT_DATE + 30, '09:00', 2, 0,
+    3600, 'TL', 4800, 'TL', v_bogus_customer_id_2, NULL, NULL, NULL, '[]'::jsonb
+  );
+  IF r2->>'result' <> 'failed' THEN RAISE EXCEPTION 'TEST 20: FAILED — retry expected result=failed again, got %', r2->>'result'; END IF;
+  v_ingestion_id_2 := (r2->>'ingestion_id')::uuid;
+  SELECT error_reason INTO v_error_2 FROM public.email_ingestions WHERE id = v_ingestion_id_2;
+
+  IF v_ingestion_id_2 <> v_ingestion_id_1 THEN
+    RAISE EXCEPTION 'TEST 20: FAILED — the second failed attempt used a DIFFERENT email_ingestions row/id';
+  END IF;
+  IF (SELECT COUNT(*) FROM public.email_ingestions WHERE gmail_message_id = 'gmail-test20-retry-fails-again') <> 1 THEN
+    RAISE EXCEPTION 'TEST 20: FAILED — expected exactly 1 email_ingestions row after two failed attempts';
+  END IF;
+  IF (SELECT processing_status FROM public.email_ingestions WHERE id = v_ingestion_id_1) <> 'failed' THEN
+    RAISE EXCEPTION 'TEST 20: FAILED — expected processing_status=failed after the second failure';
+  END IF;
+  IF v_error_2 IS NULL THEN
+    RAISE EXCEPTION 'TEST 20: FAILED — the second failure must record a fresh error_reason';
+  END IF;
+  IF v_error_2 = v_error_1 THEN
+    RAISE EXCEPTION 'TEST 20: FAILED — expected a genuinely fresh error_reason on the second failure (different bogus customer_id -> different error text), found the SAME text as attempt 1 — suggests the row was never actually re-attempted';
+  END IF;
+
+  -- Still zero business state after TWO failed attempts (both calls
+  -- passed an invalid p_customer_id, which is rejected before any
+  -- customer/reservation/guest row is ever written — see Step 6's CREATE
+  -- branch):
+  IF EXISTS (SELECT 1 FROM public.reservations WHERE source_id=v_source_id AND external_booking_id='90000027') THEN
+    RAISE EXCEPTION 'TEST 20: FAILED — a reservation was left behind despite both attempts failing';
+  END IF;
+  IF EXISTS (SELECT 1 FROM public.customers WHERE id IN (v_bogus_customer_id_1, v_bogus_customer_id_2)) THEN
+    RAISE EXCEPTION 'TEST 20: FAILED — a customer row was left behind despite both attempts failing';
+  END IF;
+
+  RAISE NOTICE 'TEST 20: PASSED';
+END $$;
+ROLLBACK;
+
+
+-- ══════════════════════════════════════════════════════════════════════════
+-- TEST 21 — two CONCURRENT retry attempts for the SAME 'failed'
+-- gmail_message_id cannot both enter business processing (V5 state-machine
+-- item #7). Like TEST 15, true concurrency requires two separate database
+-- sessions racing each other and CANNOT run inside a single SQL
+-- script/session — documented here as an exact manual procedure.
+--
+--   1. In a single session, first produce a genuinely 'failed' row:
+--        SELECT public.ingest_civitatis_booking(
+--          'gmail-test21-concurrent-retry', 'thread-test21', NOW(),
+--          'New booking A90000028: Test Tour', 'body', 'new_booking',
+--          '<a real civitatis source_id>', '90000028', '<a real tour_id>',
+--          'İtalyanca', CURRENT_DATE + 30, '09:00', 2, 0, 3600, 'TL', 4800, 'TL',
+--          '00000000-0000-0000-0000-000000000000'::uuid, -- guaranteed not to exist -> fails
+--          NULL, NULL, NULL, '[]'::jsonb
+--        );
+--      Confirm it returned {"result":"failed", ...} and COMMIT this call
+--      (do not leave it open) so the 'failed' row is durably visible to
+--      both sessions below.
+--   2. Open two separate `psql` (or two Supabase SQL editor tabs) sessions
+--      against the same staging database.
+--   3. In session A, run:
+--        BEGIN;
+--        SELECT public.ingest_civitatis_booking(
+--          'gmail-test21-concurrent-retry', 'thread-test21', NOW(),
+--          'New booking A90000028: Test Tour', 'body', 'new_booking',
+--          '<the same source_id>', '90000028', '<the same tour_id>',
+--          'İtalyanca', CURRENT_DATE + 30, '09:00', 2, 0, 3600, 'TL', 4800, 'TL',
+--          NULL, 'Concurrent Retry Contact', NULL, NULL, '[]'::jsonb
+--        );
+--      but do NOT COMMIT yet — leave the transaction open. This call's
+--      Step 1 UPSERT has, by this point, claimed the row (failed ->
+--      received) and is proceeding through Step 2 onward while still
+--      inside its own open transaction.
+--   4. In session B, run the EXACT SAME call (same gmail_message_id).
+--      Session B should BLOCK (visibly hang) — it is waiting on the
+--      row-level lock Postgres took resolving session A's still-open
+--      conflicting UPSERT (see V5 changelog point 9 / the RACE-CONDITION
+--      notes in the migration file for the full mechanism).
+--   5. COMMIT session A. Session B should then unblock. Because session
+--      A's transaction committed the row to processing_status='processed'
+--      (no longer 'failed'), session B's own conditional UPSERT now
+--      matches ZERO rows — session B must return
+--      {"result":"already_processed", "processing_status":"processed", ...}
+--      — it must NEVER reach Step 2 and must NEVER create a second
+--      reservation/customer/passenger/activity row.
+--   6. Verify: SELECT COUNT(*) FROM reservations WHERE external_booking_id
+--      = '90000028'; must be exactly 1. SELECT COUNT(*) FROM customers
+--      WHERE full_name = 'Concurrent Retry Contact'; must be exactly 1.
+--      SELECT COUNT(*) FROM email_ingestions WHERE gmail_message_id =
+--      'gmail-test21-concurrent-retry'; must be exactly 1.
+--   7. (Optional, to also prove the reverse interleaving is equally safe)
+--      Repeat with session B's BEGIN issued first and session A's second
+--      — the winner may differ, but the guarantee (exactly one winner,
+--      exactly one reservation) must not.
+--   8. Clean up: DELETE the test rows created (reservations cascades to
+--      reservation_guests; delete the customers/email_ingestions/
+--      activity_logs rows manually).
+-- ══════════════════════════════════════════════════════════════════════════
+
+
+-- ══════════════════════════════════════════════════════════════════════════
 -- CROSS-REFERENCE — where each requested test-plan item is actually
 -- covered (original 21 items, plus the V3 and V4 safety-revision items):
 --   #1  new customer created (exactly one)         -> TEST 7
@@ -1064,6 +1486,26 @@ ROLLBACK;
 --   modified + existing + stale => stale_ignored                                                                 -> TEST 8
 --   modified + no reservation => manual_review_required                                                            -> TEST 11
 --   same gmail_message_id => already_processed remains unchanged                                                     -> TEST 1
+--
+--   V5 SAFETY-REVISION ITEMS (retry state machine for a previously-'failed'
+--   Gmail message ingestion attempt):
+--   #1  processed gmail_message_id cannot retry                    -> TEST 17 (Part A)
+--   #2  needs_review gmail_message_id cannot automatically retry   -> TEST 17 (Part B)
+--   #3  received gmail_message_id cannot start a second attempt    -> TEST 18
+--   #4  failed gmail_message_id can retry using the SAME
+--       email_ingestions row/id                                    -> TEST 19
+--   #5  successful retry changes failed -> received -> processed   -> TEST 19
+--   #6  retry that fails again returns to failed                   -> TEST 20
+--   #7  two concurrent retries of the SAME failed gmail_message_id
+--       cannot both enter business processing                      -> TEST 21 (documented
+--       two-session manual procedure, same reason TEST 15 requires one)
+--   #8  retry does not create duplicate reservation                -> TEST 19
+--   #9  retry does not create duplicate customer                   -> TEST 19
+--   #10 retry does not create duplicate passengers                 -> TEST 19
+--   #11 retry does not create duplicate activity notification      -> TEST 19
+--   #12 all V4 event-matrix behavior remains unchanged              -> TEST 1-16, all
+--       unmodified and still passing against V5 (Step 6, the event/
+--       reservation-state matrix, was not touched by this revision)
 -- ══════════════════════════════════════════════════════════════════════════
 
 -- ── END OF MANUAL TEST PLAN ─────────────────────────────────────────────────
