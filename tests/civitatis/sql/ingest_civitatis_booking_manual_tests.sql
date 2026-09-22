@@ -7,13 +7,14 @@
 -- supabase_rls_policies.sql, supabase_migration_guides.sql,
 -- supabase_migration_reviews.sql, supabase_migration_tour_channels.sql,
 -- supabase_migration_civitatis_ingestion.sql, AND
--- supabase_migration_civitatis_write.sql (V5 — includes the safe-retry
--- revision) already applied — none of which this task applies. Run this
+-- supabase_migration_civitatis_write.sql (V6 — the safe-retry revision,
+-- with V6's concurrency fix; V5 was superseded before ever being applied
+-- anywhere) already applied — none of which this task applies. Run this
 -- file (e.g. via `psql` or the Supabase SQL editor) against a STAGING
 -- database only, never production, after the write migration has been
 -- reviewed and applied there. TESTS 1-16 cover the V2/V3/V4-reviewed
--- architecture and event matrix (unchanged by V5); TESTS 17-21 cover the
--- V5 retry state machine specifically.
+-- architecture and event matrix (unchanged since); TESTS 17-21 cover the
+-- V5/V6 retry state machine and its concurrency guarantee specifically.
 --
 -- WHY THIS EXISTS AS SQL, NOT A JS TEST
 -- The write architecture's core claims — atomic rollback, idempotency
@@ -1115,8 +1116,10 @@ ROLLBACK;
 -- (every code path finalizes the row to processed/needs_review/failed
 -- before returning — see the migration header) — a row can only ever be
 -- OBSERVED as 'received' by another session WHILE a call is still
--- in-flight, at which point that other session simply blocks on the row
--- lock (see TEST 21) rather than reading a stale 'received' value at all.
+-- in-flight, at which point that other session's own attempt fails to
+-- acquire the V6 gmail_message_id advisory lock and returns immediately
+-- (see TEST 21) rather than blocking and later reading a stale
+-- 'received' value.
 -- To still directly exercise the defensive code path itself (belt and
 -- suspenders — e.g. protecting against any future change that might let
 -- 'received' persist, or an operator/tooling row edit), this test
@@ -1355,26 +1358,37 @@ ROLLBACK;
 
 
 -- ══════════════════════════════════════════════════════════════════════════
--- TEST 21 — two CONCURRENT retry attempts for the SAME 'failed'
--- gmail_message_id cannot both enter business processing (V5 state-machine
--- item #7). Like TEST 15, true concurrency requires two separate database
--- sessions racing each other and CANNOT run inside a single SQL
--- script/session — documented here as an exact manual procedure.
+-- TEST 21 (V6) — proves the EXACT gap an external review found in V5: a
+-- concurrent second caller (B) for a 'failed' row must NEVER become a
+-- second retry attempt merely because the first caller (A)'s own retry
+-- fails AGAIN and returns the row to 'failed' — but a genuinely LATER,
+-- separate caller (C), arriving after A has completely finished, must
+-- still be able to retry normally. Like TEST 15, true concurrency
+-- requires two separate database sessions and CANNOT run inside a single
+-- SQL script/session — documented here as an exact manual procedure.
+-- Because V6's fix is a NON-BLOCKING advisory lock (pg_try_advisory_xact_
+-- lock), session B does NOT need to be timed to interrupt session A
+-- mid-function — B's own call returns immediately regardless of whether
+-- A has returned yet, as long as A's ENCLOSING transaction (BEGIN...
+-- COMMIT) has not yet committed, since the V6 lock is "xact"-scoped: it
+-- is held for A's whole transaction, not just for the moment A's function
+-- call is executing. This is itself part of what this procedure proves —
+-- contrast step 4 below with the OLD (V5, buggy) TEST 21, which required
+-- session B to BLOCK/hang; V6's session B never blocks at all.
 --
---   1. In a single session, first produce a genuinely 'failed' row:
+--   1. In a single session, first produce a genuinely 'failed' row (this
+--      call commits on its own — no explicit BEGIN needed):
 --        SELECT public.ingest_civitatis_booking(
 --          'gmail-test21-concurrent-retry', 'thread-test21', NOW(),
 --          'New booking A90000028: Test Tour', 'body', 'new_booking',
 --          '<a real civitatis source_id>', '90000028', '<a real tour_id>',
 --          'İtalyanca', CURRENT_DATE + 30, '09:00', 2, 0, 3600, 'TL', 4800, 'TL',
---          '00000000-0000-0000-0000-000000000000'::uuid, -- guaranteed not to exist -> fails
+--          '00000000-0000-0000-0000-000000000001'::uuid, -- guaranteed not to exist -> fails
 --          NULL, NULL, NULL, '[]'::jsonb
 --        );
---      Confirm it returned {"result":"failed", ...} and COMMIT this call
---      (do not leave it open) so the 'failed' row is durably visible to
---      both sessions below.
+--      Confirm it returned {"result":"failed", ...}.
 --   2. Open two separate `psql` (or two Supabase SQL editor tabs) sessions
---      against the same staging database.
+--      against the same staging database — session A and session B.
 --   3. In session A, run:
 --        BEGIN;
 --        SELECT public.ingest_civitatis_booking(
@@ -1382,34 +1396,69 @@ ROLLBACK;
 --          'New booking A90000028: Test Tour', 'body', 'new_booking',
 --          '<the same source_id>', '90000028', '<the same tour_id>',
 --          'İtalyanca', CURRENT_DATE + 30, '09:00', 2, 0, 3600, 'TL', 4800, 'TL',
---          NULL, 'Concurrent Retry Contact', NULL, NULL, '[]'::jsonb
+--          '00000000-0000-0000-0000-000000000002'::uuid, -- ALSO does not exist -> A's OWN retry fails AGAIN
+--          NULL, NULL, NULL, '[]'::jsonb
 --        );
---      but do NOT COMMIT yet — leave the transaction open. This call's
---      Step 1 UPSERT has, by this point, claimed the row (failed ->
---      received) and is proceeding through Step 2 onward while still
---      inside its own open transaction.
---   4. In session B, run the EXACT SAME call (same gmail_message_id).
---      Session B should BLOCK (visibly hang) — it is waiting on the
---      row-level lock Postgres took resolving session A's still-open
---      conflicting UPSERT (see V5 changelog point 9 / the RACE-CONDITION
---      notes in the migration file for the full mechanism).
---   5. COMMIT session A. Session B should then unblock. Because session
---      A's transaction committed the row to processing_status='processed'
---      (no longer 'failed'), session B's own conditional UPSERT now
---      matches ZERO rows — session B must return
---      {"result":"already_processed", "processing_status":"processed", ...}
---      — it must NEVER reach Step 2 and must NEVER create a second
---      reservation/customer/passenger/activity row.
---   6. Verify: SELECT COUNT(*) FROM reservations WHERE external_booking_id
+--      This call completes (the function body always runs to completion
+--      and returns a value) and returns {"result":"failed", ...} — A's
+--      own retry genuinely failed a second time. Crucially, do NOT COMMIT
+--      or ROLLBACK session A yet — leave the surrounding transaction
+--      open. A still holds the gmail_message_id advisory lock, because
+--      pg_try_advisory_xact_lock is scoped to the whole transaction, not
+--      to the single statement/function call that acquired it.
+--   4. While session A's transaction is STILL OPEN (uncommitted), in
+--      session B, run the EXACT SAME call (same gmail_message_id, a
+--      THIRD distinct nonexistent customer_id so a successful outcome
+--      would be unambiguous, though it must never get the chance):
+--        SELECT public.ingest_civitatis_booking(
+--          'gmail-test21-concurrent-retry', 'thread-test21', NOW(),
+--          'New booking A90000028: Test Tour', 'body', 'new_booking',
+--          '<the same source_id>', '90000028', '<the same tour_id>',
+--          'İtalyanca', CURRENT_DATE + 30, '09:00', 2, 0, 3600, 'TL', 4800, 'TL',
+--          NULL, 'SHOULD NOT BE CREATED BY B', NULL, NULL, '[]'::jsonb
+--        );
+--      Session B must return IMMEDIATELY (no hang/block, unlike the old
+--      V5 procedure) with
+--      {"result":"already_processed", "processing_status":"failed", ...}
+--      — 'failed' because that is the LAST value session A's changes
+--      COMMITTED before this test started (step 1); session B's own read
+--      cannot see session A's still-uncommitted second-failure outcome
+--      under ordinary READ COMMITTED visibility (see V6 changelog point
+--      10's "MVCC precision" note) — this is the exact, intentional
+--      snapshot behavior being tested here, not a bug in the test.
+--      Session B must NEVER reach Step 2 and must NEVER create a
+--      customer/reservation/passenger/activity row.
+--   5. COMMIT session A (or just let its session end normally). The row
+--      is now durably processing_status='failed' (from A's own second
+--      failure).
+--   6. Verify session B created nothing: SELECT COUNT(*) FROM customers
+--      WHERE full_name = 'SHOULD NOT BE CREATED BY B'; must be 0.
+--      SELECT COUNT(*) FROM reservations WHERE external_booking_id =
+--      '90000028'; must still be 0 (neither the setup call, A, nor B
+--      ever succeeded yet).
+--   7. NOW, as a genuinely LATER, separate invocation (call it session C
+--      — reusing session B's connection is fine, since what matters is
+--      that it starts AFTER session A's transaction has ended, not which
+--      TCP connection it uses), retry the SAME message with a real,
+--      resolvable identity:
+--        SELECT public.ingest_civitatis_booking(
+--          'gmail-test21-concurrent-retry', 'thread-test21', NOW(),
+--          'New booking A90000028: Test Tour', 'body', 'new_booking',
+--          '<the same source_id>', '90000028', '<the same tour_id>',
+--          'İtalyanca', CURRENT_DATE + 30, '09:00', 2, 0, 3600, 'TL', 4800, 'TL',
+--          NULL, 'Concurrent Retry Contact (Session C)', NULL, NULL, '[]'::jsonb
+--        );
+--      This MUST succeed: {"result":"created", ...} — the lock is free
+--      once A's transaction ended, and C is not part of A/B's earlier
+--      concurrent wave, so it is allowed to retry the (still) failed row
+--      normally, per the required semantics.
+--   8. Verify: SELECT COUNT(*) FROM reservations WHERE external_booking_id
 --      = '90000028'; must be exactly 1. SELECT COUNT(*) FROM customers
---      WHERE full_name = 'Concurrent Retry Contact'; must be exactly 1.
---      SELECT COUNT(*) FROM email_ingestions WHERE gmail_message_id =
---      'gmail-test21-concurrent-retry'; must be exactly 1.
---   7. (Optional, to also prove the reverse interleaving is equally safe)
---      Repeat with session B's BEGIN issued first and session A's second
---      — the winner may differ, but the guarantee (exactly one winner,
---      exactly one reservation) must not.
---   8. Clean up: DELETE the test rows created (reservations cascades to
+--      WHERE full_name = 'Concurrent Retry Contact (Session C)'; must be
+--      exactly 1. SELECT COUNT(*) FROM email_ingestions WHERE
+--      gmail_message_id = 'gmail-test21-concurrent-retry'; must be
+--      exactly 1 (same row/id throughout steps 1, 3, 4, and 7).
+--   9. Clean up: DELETE the test rows created (reservations cascades to
 --      reservation_guests; delete the customers/email_ingestions/
 --      activity_logs rows manually).
 -- ══════════════════════════════════════════════════════════════════════════
@@ -1487,8 +1536,10 @@ ROLLBACK;
 --   modified + no reservation => manual_review_required                                                            -> TEST 11
 --   same gmail_message_id => already_processed remains unchanged                                                     -> TEST 1
 --
---   V5 SAFETY-REVISION ITEMS (retry state machine for a previously-'failed'
---   Gmail message ingestion attempt):
+--   V5/V6 SAFETY-REVISION ITEMS (retry state machine for a previously-
+--   'failed' Gmail message ingestion attempt, plus V6's fix for the
+--   concurrent-retry gap an external review found in V5 before it was
+--   ever applied):
 --   #1  processed gmail_message_id cannot retry                    -> TEST 17 (Part A)
 --   #2  needs_review gmail_message_id cannot automatically retry   -> TEST 17 (Part B)
 --   #3  received gmail_message_id cannot start a second attempt    -> TEST 18
@@ -1497,8 +1548,14 @@ ROLLBACK;
 --   #5  successful retry changes failed -> received -> processed   -> TEST 19
 --   #6  retry that fails again returns to failed                   -> TEST 20
 --   #7  two concurrent retries of the SAME failed gmail_message_id
---       cannot both enter business processing                      -> TEST 21 (documented
---       two-session manual procedure, same reason TEST 15 requires one)
+--       cannot both enter business processing — specifically: a
+--       concurrent loser must not become a second retry merely because
+--       the winner's OWN retry fails again and returns the row to
+--       'failed'; a genuinely later, separate invocation must still be
+--       able to retry it                                            -> TEST 21 (documented
+--       two-session manual procedure, same reason TEST 15 requires one
+--       — rewritten for V6 to exercise this exact interleaving, which
+--       the ORIGINAL V5-era version of this test did not cover)
 --   #8  retry does not create duplicate reservation                -> TEST 19
 --   #9  retry does not create duplicate customer                   -> TEST 19
 --   #10 retry does not create duplicate passengers                 -> TEST 19

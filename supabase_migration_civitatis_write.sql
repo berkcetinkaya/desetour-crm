@@ -8,24 +8,142 @@
 --          supabase_migration_tour_channels.sql,
 --          supabase_migration_civitatis_ingestion.sql
 --          (all already applied to production, per the audit below)
--- Version: V5 — a narrowly scoped revision adding safe, concurrency-
---          controlled retry for a Gmail message whose PREVIOUS ingestion
---          attempt ended in processing_status='failed'. STILL NOT
---          APPROVED FOR EXECUTION.
+-- Version: V6 — fixes a concrete concurrency flaw an external review
+--          found in V5's retry design (V5 was NEVER applied to any
+--          database). STILL NOT APPROVED FOR EXECUTION.
 --
--- STATUS: V4 (everything in this file except the V5 CHANGELOG section
--- and Step 1 below) was manually applied to production and verified
--- (security_definer=true, search_path=public, owner=postgres, EXECUTE
--- restricted to postgres/service_role only — no anon/authenticated/
--- PUBLIC). This V5 revision has NOT been executed against any database.
--- It exists so it can be read, reviewed, and (once approved) applied
--- manually — CREATE OR REPLACE FUNCTION is safe to re-run directly over
--- the already-applied V4. Nothing in this repository currently calls
--- the function it creates — see api/civitatis/writeAdapter.js, which is
+-- STATUS: V4 (everything in this file except the V5/V6 CHANGELOG
+-- sections and Step 1 below) was manually applied to production and
+-- verified (security_definer=true, search_path=public, owner=postgres,
+-- EXECUTE restricted to postgres/service_role only — no anon/
+-- authenticated/PUBLIC). V5 was written, reviewed, and found to have a
+-- concurrency bug BEFORE being applied anywhere — see V6 changelog point
+-- 10 below — so it was never executed against any database, staging or
+-- production. This V6 revision has ALSO not been executed against any
+-- database. It exists so it can be read, reviewed, and (once approved)
+-- applied manually — CREATE OR REPLACE FUNCTION is safe to re-run
+-- directly over the already-applied V4 (V5 does not need to have been
+-- applied first). Nothing in this repository currently calls the
+-- function it creates — see api/civitatis/writeAdapter.js, which is
 -- fully written and tested but not wired into any reachable HTTP
--- endpoint or cron; writeAdapter.js itself is UNCHANGED by V5.
+-- endpoint or cron; writeAdapter.js itself is UNCHANGED by V5 or V6.
 --
--- V5 CHANGELOG (what changed since the applied V4, and why)
+-- V6 CHANGELOG (what changed since the reviewed-but-unapplied V5, and why)
+-- ─────────────────────────────────────────────────────────────
+--   10. TWO CONCURRENT RETRIES OF THE SAME 'failed' ROW CAN NO LONGER
+--       BOTH REACH BUSINESS PROCESSING. V5's Step 1 claimed a 'failed'
+--       row via a single conditional UPSERT
+--       (ON CONFLICT (gmail_message_id) DO UPDATE ... WHERE
+--       processing_status = 'failed') and its own comments claimed this
+--       made "exactly one of two concurrent retries" reach Step 2. An
+--       external review found this claim FALSE for one specific
+--       interleaving: if retry A wins the claim (failed -> received) and
+--       retry B is concurrently blocked waiting on the SAME row's lock,
+--       and retry A's OWN business processing then fails AGAIN (a
+--       second, independent error) — A's exception handler correctly
+--       returns the row to processing_status='failed' and commits. B's
+--       blocked UPSERT then wakes up and re-evaluates its
+--       WHERE processing_status = 'failed' clause against this
+--       newly-committed state — which is 'failed' again — so B's clause
+--       MATCHES, and B ALSO claims the row and proceeds into business
+--       processing. Two callers from the SAME concurrent wave both
+--       became retry attempts, which V5's own stated contract explicitly
+--       ruled out. (Note this could never actually create a duplicate
+--       reservation/customer/passenger/activity row by itself — the
+--       booking-level advisory lock in Step 3, the composite UNIQUE
+--       constraint, and Step 4's FOR UPDATE lookup all remain fully
+--       correct and would still prevent that — but it directly violated
+--       the specific "at most one retry per failed row per concurrent
+--       wave" guarantee this revision exists to provide, and could cause
+--       a booking to be retried twice in immediate succession for no
+--       reason, doing real (if idempotent) work twice.)
+--
+--       V6 closes this by adding ONE non-blocking, gmail_message_id-
+--       scoped advisory lock — pg_try_advisory_xact_lock — acquired as
+--       the very first statement in the function, BEFORE Step 1's UPSERT
+--       is even attempted:
+--         IF NOT pg_try_advisory_xact_lock(
+--           hashtextextended('civitatis_ingest:gmail_message:' || p_gmail_message_id, 1)
+--         ) THEN ... return already_processed without touching the row ...
+--       Unlike V5's Step 1 UPSERT (which lets a second caller BLOCK on
+--       the row's own lock and then re-evaluate its WHERE clause against
+--       whatever got committed in the meantime — the exact mechanism the
+--       bug exploited), pg_try_advisory_xact_lock is NON-BLOCKING: a
+--       concurrent second caller either acquires this lock instantly (no
+--       other transaction currently holds it for this gmail_message_id)
+--       or fails INSTANTLY and returns immediately — it never waits for
+--       the first caller to finish, and therefore never gets a chance to
+--       re-evaluate anything against the first caller's eventual outcome
+--       at all. Being the "_xact_" variant, the lock is held for the
+--       ENTIRE remainder of the calling transaction (this whole function
+--       call) and released automatically at COMMIT or ROLLBACK — never
+--       explicitly unlocked — which is what actually closes the race:
+--       for as long as retry A's transaction is open (including through
+--       its own business processing and a possible second failure), NO
+--       other transaction can even ATTEMPT Step 1's UPSERT for the SAME
+--       gmail_message_id, so there is no second caller left to
+--       (re-)block on the row and observe A's final committed state.
+--       Only once A's transaction has fully ended does the lock become
+--       available again — at which point a genuinely LATER, separate
+--       invocation (never one from A's own concurrent wave, since any
+--       such caller already returned immediately with
+--       result:"already_processed" the moment it lost the lock) can
+--       acquire it and proceed through the UNCHANGED V5 Step 1 UPSERT
+--       logic exactly as before, correctly reclaiming the row if it is
+--       (still, or again) 'failed'.
+--
+--       Concurrent-loser response: reuses the EXISTING
+--       result:"already_processed" vocabulary (no new RPC result value
+--       introduced) with a processing_status snapshot — this branch does
+--       not, and structurally cannot, know what the current lock holder
+--       will eventually do (that transaction has not committed), so it
+--       reports the LAST COMMITTED processing_status for this
+--       gmail_message_id as of its own read (ordinary READ COMMITTED
+--       visibility — it never sees another transaction's uncommitted
+--       work), falling back to 'received' when no row is visible yet at
+--       all (meaning the current lock holder is itself still in the
+--       middle of a first-ever insert for this message, not yet
+--       committed). This is deliberately a snapshot, not a live status:
+--       it can under-report (e.g. show 'failed' while the current holder
+--       is, in fact, already successfully retrying it) but can never
+--       over-report or cause a second write — the caller's own next,
+--       independent invocation will see whatever is genuinely current by
+--       then.
+--
+--       Namespacing: this new lock uses a distinctly-prefixed key string
+--       ('civitatis_ingest:gmail_message:' || the message id) AND a
+--       different seed (1) than the existing Step 3 booking-level lock
+--       (which hashes 'source_id:external_booking_id' with seed 0) — the
+--       two are computed independently and can never be produced by the
+--       same input, so nothing about their construction could cause a
+--       collision in the way reusing the same string/seed would. (Both
+--       still ultimately occupy Postgres's one shared 64-bit
+--       session-level advisory-lock keyspace, as any single-bigint-
+--       argument advisory lock does — an already-accepted, unavoidable
+--       property of this class of Postgres lock, not something this
+--       function's own key construction can fully rule out on its own;
+--       see the existing "KNOWN, ACCEPTED LIMITATION" note further
+--       below, which this shares the same general caveat with.) The
+--       existing Step 3 booking-level advisory lock is completely
+--       UNCHANGED — this is a second, independent lock protecting a
+--       different, narrower thing (one specific Gmail message's claim
+--       lifecycle, not a whole booking's processing).
+--
+--       Explicitly UNCHANGED by V6: every line of V5's Step 1 UPSERT
+--       logic (still reached, unmodified, once the new lock is
+--       acquired), the V4 event/reservation-state matrix (Step 6),
+--       customer matching/creation behavior, passenger-list replacement
+--       guard, financial field mapping, the function's parameter
+--       signature, the REVOKE/GRANT service_role-only access control,
+--       and the existing Step 3 booking-level advisory lock.
+--       api/civitatis/writeAdapter.js, the parser, the matching rules,
+--       and the application-layer ordering logic are not part of this
+--       file and are not touched by it.
+--
+-- V5 CHANGELOG (what changed since the applied V4, and why — V5 itself
+-- was superseded by V6 above before ever being applied anywhere; kept
+-- here verbatim as the historical record of why the retry design exists
+-- at all)
 -- ─────────────────────────────────────────────────────────────
 --   9. A 'failed' GMAIL MESSAGE MAY NOW BE SAFELY RETRIED UNDER THE SAME
 --      gmail_message_id — 'processed'/'received'/'needs_review' STILL
@@ -71,7 +189,20 @@
 --      outcome — exactly one of two concurrent retries can ever proceed
 --      into business writes for the same failed row, enforced entirely
 --      by Postgres's own row-locking, not by any application-level
---      coordination. The SAME email_ingestions row and id are reused —
+--      coordination.
+--      *** CORRECTED BY V6 CHANGELOG POINT 10 ***: the preceding
+--      sentence is FALSE for one specific interleaving — if the first
+--      caller's OWN retry attempt itself fails again, its outcome is
+--      ALSO 'failed', so the second (blocked) caller's WHERE clause
+--      matches AGAIN once it wakes up, and it too proceeds into business
+--      processing. This was found by external review before V5 was ever
+--      applied anywhere and is fixed in V6 by a non-blocking
+--      gmail_message_id-scoped advisory lock acquired before this UPSERT
+--      is even attempted — see V6 changelog point 10 for the full
+--      corrected mechanism. This V5 section is otherwise kept verbatim
+--      as the historical record of why the retry design exists at all;
+--      do not rely on the sentence this note is attached to.
+--      The SAME email_ingestions row and id are reused —
 --      no second audit row is ever created for the same Gmail message,
 --      on a retry or otherwise. Because the existing nested
 --      BEGIN...EXCEPTION block (Step 8, unchanged) already rolls back
@@ -326,9 +457,17 @@
 --     received_at/event_type are left exactly as originally recorded,
 --     since a retry is the SAME email, not a different one) — and
 --     Step 2 onward runs exactly as it would for a brand-new message,
---     reusing the same email_ingestions.id throughout. See V5 changelog
---     point 9 for the exact concurrency mechanism (a single
---     conditional UPSERT, not an application-side SELECT-then-UPDATE).
+--     reusing the same email_ingestions.id throughout.
+--   • Before any of the above is even attempted, a non-blocking,
+--     gmail_message_id-scoped advisory lock (V6) gates the whole
+--     Step 1 claim: if another transaction currently owns processing for
+--     this EXACT Gmail message, this call returns immediately
+--     ("already_processed" with a last-committed processing_status
+--     snapshot) rather than waiting and re-deciding once that other
+--     transaction finishes — see V6 changelog point 10 for exactly why
+--     that distinction matters (it is what makes "at most one retry per
+--     failed row per concurrent wave" actually true, which V5's plain
+--     conditional UPSERT alone did not guarantee).
 --   • Re-invoking for the SAME (source_id, external_booking_id) from a
 --     DIFFERENT gmail_message_id (e.g. New booking + a later Booking
 --     modified — two distinct real Gmail messages) is NOT deduplicated
@@ -438,35 +577,63 @@
 --
 -- RACE-CONDITION / CONCURRENCY NOTES
 -- ─────────────────────────────────────────────────────────────
---   • Two concurrent calls with the SAME gmail_message_id, where NEITHER
---     is a retry-eligible 'failed' row (i.e. the existing row is
---     'processed', 'received', or 'needs_review'): the second one's
---     conditional UPSERT finds no row it is allowed to touch (Postgres's
---     own UNIQUE constraint + WHERE-clause re-evaluation, not
---     application logic) and returns already_processed — no matter how
---     the two calls interleave. Unchanged from V4's plain DO NOTHING
---     for this case.
---   • Two concurrent RETRY attempts for the SAME 'failed' gmail_message_id
---     (V5): both issue the same conditional
---     INSERT ... ON CONFLICT DO UPDATE ... WHERE processing_status='failed'
---     statement. Postgres serializes them on the row-level lock the
---     conflicting unique-index entry requires: the first to arrive
---     performs the UPDATE (WHERE matches, since the row is still
---     'failed') and proceeds into Step 2 onward within its own
---     transaction; the second BLOCKS on that same row lock until the
---     first caller's entire function call COMMITs (or rolls back). Once
---     unblocked, the second caller's WHERE clause is re-evaluated
---     against the row's now-current state — which the first caller has,
---     by then, moved to 'processed', 'needs_review', or 'failed' again
---     (never still 'failed' from the STALE claim, and never 'received',
---     since Step 2 onward of a completed call always ends in one of
---     those three) — so the second caller's UPDATE matches zero rows,
---     RETURNING gives nothing, and it correctly falls through to
---     already_processed reporting the first caller's real, final
---     outcome. Exactly one of the two concurrent retries can ever reach
---     Step 2 (business processing) for that row — enforced entirely by
---     Postgres's own MVCC/row-locking for a conflicting UPSERT, with no
---     application-side coordination required or relied upon.
+--   • Two concurrent calls with the SAME gmail_message_id, for ANY
+--     reason (a brand-new message being inserted twice, or a retry of a
+--     'failed' row) — V6: the very first statement in the function is a
+--     NON-BLOCKING, gmail_message_id-scoped
+--     pg_try_advisory_xact_lock(hashtextextended('civitatis_ingest:
+--     gmail_message:' || p_gmail_message_id, 1)). Exactly one concurrent
+--     caller acquires it; every other concurrent caller for the SAME
+--     gmail_message_id fails to acquire it IMMEDIATELY (no waiting) and
+--     returns immediately with result:"already_processed" and a
+--     processing_status snapshot of whatever was last COMMITTED for that
+--     message (or 'received', if no row is visible yet at all — see
+--     below) — it never touches Step 1's UPSERT, Step 2 onward, or the
+--     row itself in any way. Being the "_xact_" variant, the lock is
+--     held for the ENTIRE remainder of the winning caller's transaction
+--     (this whole function call, including its own business processing
+--     and a possible failure) and is released automatically at COMMIT or
+--     ROLLBACK — never explicitly unlocked. This means NO other caller
+--     can even attempt Step 1's UPSERT for this gmail_message_id while
+--     the current winner is still active, no matter what that winner's
+--     own eventual outcome turns out to be (created / updated / stale_
+--     ignored / manual_review_required / booking_already_exists /
+--     failed) — so a second caller can never block on the row, wake up
+--     once the winner commits, and re-decide against whatever the winner
+--     ended up leaving behind. Only once the winner's transaction has
+--     fully ended does the lock free up, letting a genuinely LATER,
+--     separate invocation acquire it and proceed normally — this is
+--     exactly how "at most one retry per failed row per concurrent wave,
+--     but a later independent caller may still retry it" is enforced.
+--     (V5 relied solely on the plain conditional UPSERT below for this,
+--     which an external review found insufficient for one interleaving —
+--     see V6 changelog point 10 and the *** CORRECTED BY V6 CHANGELOG
+--     POINT 10 *** note in the V5 changelog above for the exact bug.)
+--   • MVCC precision for the concurrent loser's reported
+--     processing_status: this branch never inspects the winning
+--     transaction's in-progress work (that is, by definition, not yet
+--     committed and therefore not visible under ordinary READ COMMITTED
+--     semantics) — it only ever reports the LAST COMMITTED state as of
+--     its own SELECT. That can be stale relative to what the winner is
+--     doing right now (e.g. it may report 'failed' even though the
+--     winner is, at that exact moment, successfully retrying it) — this
+--     is intentional and safe, since this branch's only job is "refuse
+--     to act, something else already owns this," never to describe the
+--     winner's live progress. A caller that needs the truly current
+--     state simply calls again later, after the winner's transaction has
+--     ended.
+--   • Once the gmail_message_id lock above is acquired, Step 1's own
+--     conditional UPSERT (unchanged from V5) still decides what happens
+--     for THIS (now-exclusive) attempt: a fresh gmail_message_id inserts
+--     normally; an existing 'processed'/'received'/'needs_review' row is
+--     never touched (already_processed); an existing 'failed' row is
+--     atomically reclaimed (failed -> received) and Step 2 onward
+--     proceeds exactly as a fresh attempt would. Because concurrent
+--     execution for this gmail_message_id is now impossible by
+--     construction (the lock above), this UPSERT's WHERE clause is only
+--     ever evaluated by one transaction at a time — it no longer needs
+--     to defend against a second, concurrently-blocked evaluator at all,
+--     which is exactly the gap V5 had.
 --   • Two concurrent calls for the SAME (source_id, external_booking_id)
 --     from different gmail_message_ids: pg_advisory_xact_lock blocks
 --     the second call until the first COMMITs (or rolls back), so the
@@ -504,9 +671,11 @@
 -- Supabase Dashboard → SQL Editor → paste and run this file, after
 -- confirming supabase_migration_civitatis_ingestion.sql is already
 -- applied (it is, per the task history — commit 879d7a5). Safe to
--- re-run in full, and safe to run directly over the already-applied V4:
--- CREATE OR REPLACE FUNCTION and the REVOKE/GRANT statements are all
--- idempotent, and the function signature is unchanged from V2/V4.
+-- re-run in full, and safe to run directly over the already-applied V4
+-- (V5 was never applied anywhere, so there is no V5 state to migrate
+-- from — this is a normal V4 -> V6 upgrade): CREATE OR REPLACE FUNCTION
+-- and the REVOKE/GRANT statements are all idempotent, and the function
+-- signature is unchanged from V2/V4/V5.
 -- ============================================================
 
 
@@ -561,14 +730,59 @@ DECLARE
   v_passengers_replaced                 BOOLEAN := FALSE;
   v_error_text                            TEXT;
 BEGIN
-  -- ── Step 1: Gmail-message-level idempotency, WITH safe retry for a
-  -- PREVIOUSLY-FAILED attempt at the SAME message (V5) ───────────────────
+  -- ── Step 0 (V6): non-blocking, gmail_message_id-scoped processing lock
+  -- — acquired BEFORE Step 1 is even attempted, and BEFORE the row is
+  -- touched in any way. Closes the exact race an external review found
+  -- in V5: without this, two concurrent retries of the SAME 'failed' row
+  -- could both reach business processing if the first one's own retry
+  -- failed again (see V6 changelog point 10, and the *** CORRECTED BY V6
+  -- CHANGELOG POINT 10 *** note in the V5 changelog above, for the full
+  -- interleaving V5 missed). Namespaced with a distinct string prefix AND
+  -- a different seed (1) than the existing Step 3 booking-level lock
+  -- (source_id:external_booking_id, seed 0) — the two locks are
+  -- independent and Step 3's lock is completely unchanged.
+  IF NOT pg_try_advisory_xact_lock(
+    hashtextextended('civitatis_ingest:gmail_message:' || p_gmail_message_id, 1)
+  ) THEN
+    -- Another transaction currently owns processing for this EXACT
+    -- Gmail message (a fresh first-ever insert, or a failed-row retry
+    -- claim, both from Step 1 below) — never wait for it to finish and
+    -- re-decide against its outcome (that is precisely what V5 got
+    -- wrong). Report the LAST COMMITTED state instead: this SELECT
+    -- cannot and does not see the current lock holder's own uncommitted
+    -- work (ordinary READ COMMITTED visibility), so it may under-report
+    -- (e.g. still show 'failed' while the holder is, right now,
+    -- successfully retrying it) — that is intentional and safe, since
+    -- this branch's only job is "refuse to act," never to describe the
+    -- holder's live progress. No row visible at all (NULL) means the
+    -- current holder is itself mid-way through a first-ever insert for
+    -- this message, not yet committed — reported as 'received', which is
+    -- exactly what that situation is. Reuses the existing
+    -- result:"already_processed" vocabulary; no new RPC result value.
+    SELECT id, processing_status, reservation_id
+      INTO v_ingestion_id, v_existing_status, v_existing_res_id
+      FROM public.email_ingestions
+     WHERE gmail_message_id = p_gmail_message_id;
+    RETURN jsonb_build_object(
+      'result', 'already_processed',
+      'ingestion_id', v_ingestion_id,
+      'processing_status', COALESCE(v_existing_status, 'received'),
+      'reservation_id', v_existing_res_id
+    );
+  END IF;
+
+  -- ── Step 1 (unchanged from V5): Gmail-message-level idempotency, WITH
+  -- safe retry for a PREVIOUSLY-FAILED attempt at the SAME message ──────
   -- Atomic at the database level via a single conditional UPSERT, not an
-  -- application-side "SELECT then UPDATE" — see V5 changelog point 9 for
-  -- the full concurrency argument. Records the event_type LABEL as given
-  -- (even if invalid — COALESCEd to 'unknown' only for this audit row) so
-  -- there is always a permanent record of what was received; validity is
-  -- enforced in Step 2 BEFORE any business write.
+  -- application-side "SELECT then UPDATE". Records the event_type LABEL
+  -- as given (even if invalid — COALESCEd to 'unknown' only for this
+  -- audit row) so there is always a permanent record of what was
+  -- received; validity is enforced in Step 2 BEFORE any business write.
+  -- Concurrent execution of THIS statement for the SAME gmail_message_id
+  -- is now impossible by construction — the Step 0 lock above guarantees
+  -- only one transaction at a time ever reaches here for a given
+  -- message — so, unlike in V5, this UPSERT no longer needs to (and
+  -- does not) defend against a second, concurrently-blocked evaluator.
   --
   -- Three possible outcomes of this single statement:
   --   (a) no existing row for this gmail_message_id -> plain INSERT
@@ -583,14 +797,6 @@ BEGIN
   --       does not match -> zero rows are inserted or updated ->
   --       RETURNING gives no row -> v_ingestion_id stays NULL -> falls
   --       through to the already_processed report below, exactly as V4.
-  -- Note that (b) is also how two CONCURRENT retries of the same failed
-  -- row are safely serialized: Postgres takes a row-level lock on the
-  -- conflicting unique-index entry for the duration of this statement;
-  -- the second concurrent caller blocks until the first's whole
-  -- transaction (this entire function call) commits, then re-evaluates
-  -- the WHERE clause against the now-current row — which the first
-  -- caller has, by then, moved OFF 'failed' — so at most one caller's
-  -- UPSERT can ever match and proceed into business writes.
   INSERT INTO public.email_ingestions (
     gmail_message_id, gmail_thread_id, external_booking_id, source_id,
     event_type, processing_status, raw_subject, raw_body_snapshot, received_at
@@ -1006,11 +1212,16 @@ COMMENT ON FUNCTION public.ingest_civitatis_booking IS
   '(already_processed); ''needs_review'' is intentionally never '
   'auto-retried. Re-invoking one whose prior attempt is ''failed'' '
   'atomically reclaims that SAME row (failed -> received) via a single '
-  'conditional UPSERT and reprocesses it as a fresh attempt — two '
-  'concurrent retries of the same failed row can never both reach '
-  'business writes (V5). SECURITY DEFINER; callable only by '
-  'service_role — see this migration file''s header for the full '
-  'contract. Never call directly from browser code.';
+  'conditional UPSERT and reprocesses it as a fresh attempt. A '
+  'non-blocking, gmail_message_id-scoped advisory lock, held for the '
+  'whole call, guarantees at most one concurrent caller can ever claim '
+  'or retry a given Gmail message at a time — a second, concurrent '
+  'caller returns already_processed immediately rather than waiting and '
+  're-deciding against the first caller''s eventual outcome (V6; fixes a '
+  'concurrency gap an external review found in V5 before it was ever '
+  'applied). SECURITY DEFINER; callable only by service_role — see this '
+  'migration file''s header for the full contract. Never call directly '
+  'from browser code.';
 
 
 -- ──────────────────────────────────────────────────────────────────────────
