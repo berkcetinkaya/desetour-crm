@@ -9,12 +9,21 @@
 -- supabase_migration_civitatis_ingestion.sql, AND
 -- supabase_migration_civitatis_write.sql (V6 — the safe-retry revision,
 -- with V6's concurrency fix; V5 was superseded before ever being applied
--- anywhere) already applied — none of which this task applies. Run this
--- file (e.g. via `psql` or the Supabase SQL editor) against a STAGING
--- database only, never production, after the write migration has been
--- reviewed and applied there. TESTS 1-16 cover the V2/V3/V4-reviewed
--- architecture and event matrix (unchanged since); TESTS 17-21 cover the
--- V5/V6 retry state machine and its concurrency guarantee specifically.
+-- anywhere — ALREADY APPLIED TO PRODUCTION), AND
+-- supabase_migration_civitatis_write_v7_passenger_completeness.sql (V7 —
+-- a NEW, separate migration file layered on top of the applied V6,
+-- adding the passenger-completeness guard; NOT yet applied anywhere)
+-- already applied — none of which this task applies. Run this file
+-- (e.g. via `psql` or the Supabase SQL editor) against a STAGING
+-- database only, never production, after V7 has been reviewed and
+-- applied there. TESTS 1-16 cover the V2/V3/V4-reviewed architecture and
+-- event matrix (unchanged since); TESTS 17-21 cover the V5/V6 retry
+-- state machine and its concurrency guarantee. Both groups' passenger
+-- payloads were adjusted (comments mark each change) so they still
+-- exercise their ORIGINAL intent now that V7's passenger-completeness
+-- guard runs earlier in the CREATE branch than any of their own
+-- previously-first checks — see TESTS 22-26 for the passenger-
+-- completeness guard itself, added for V7.
 --
 -- WHY THIS EXISTS AS SQL, NOT A JS TEST
 -- The write architecture's core claims — atomic rollback, idempotency
@@ -139,7 +148,7 @@ BEGIN
     'gmail-test2-new', 'thread-test2', NOW() - INTERVAL '1 day', 'New booking A90000002: Test Tour', 'body', 'new_booking',
     v_source_id, '90000002', v_tour_id, 'İtalyanca', CURRENT_DATE + 30, '09:00', 2, 0,
     3600, 'TL', 4800, 'TL', NULL, 'Test Contact Two', NULL, NULL,
-    '[{"fullName":"PASSENGER A","sortOrder":0}]'::jsonb
+    '[{"fullName":"PASSENGER A","sortOrder":0},{"fullName":"PASSENGER A2","sortOrder":1}]'::jsonb
   );
 
   r2 := public.ingest_civitatis_booking(
@@ -197,7 +206,8 @@ BEGIN
   r1 := public.ingest_civitatis_booking(
     'gmail-test3-new', 'thread-test3', NOW() - INTERVAL '1 day', 'New booking A90000003: Test Tour', 'body', 'new_booking',
     v_source_id, '90000003', v_tour_id, 'İtalyanca', CURRENT_DATE + 30, '09:00', 2, 0,
-    3600, 'TL', 4800, 'TL', NULL, 'Test Contact Three', NULL, NULL, '[]'::jsonb
+    3600, 'TL', 4800, 'TL', NULL, 'Test Contact Three', NULL, NULL,
+    '[{"fullName":"PASSENGER THREE A","sortOrder":0},{"fullName":"PASSENGER THREE B","sortOrder":1}]'::jsonb
   );
   v_customer_id := (r1->>'customer_id')::uuid;
 
@@ -273,7 +283,11 @@ BEGIN
     v_source_id, '90000004', v_tour_id, 'İtalyanca', CURRENT_DATE + 30, '09:00', 2, 0,
     3600, 'TL', 4800, 'TL',
     v_bogus_customer_id, -- a customer_id that does not exist -> RAISE EXCEPTION inside the function
-    NULL, NULL, NULL, '[{"fullName":"SHOULD NOT PERSIST","sortOrder":0}]'::jsonb
+    NULL, NULL, NULL,
+    -- Two matching passengers (pax_adult=2) so the V7 passenger-
+    -- completeness guard passes cleanly and execution actually reaches
+    -- the customer_id check this test means to exercise.
+    '[{"fullName":"SHOULD NOT PERSIST","sortOrder":0},{"fullName":"SHOULD NOT PERSIST TOO","sortOrder":1}]'::jsonb
   );
 
   IF r1->>'result' <> 'failed' THEN RAISE EXCEPTION 'TEST 4: FAILED — expected result=failed, got %', r1->>'result'; END IF;
@@ -351,7 +365,8 @@ BEGIN
     v_source_id, '90000006', v_tour_id, 'İtalyanca', CURRENT_DATE + 30, '09:00', 2, 0,
     3600, 'TL', 4800, 'TL',
     v_existing_customer_id, -- pre-resolved by the JS matching layer
-    'A Name The Email Body Happened To Show', 'six@example.com', NULL, '[]'::jsonb
+    'A Name The Email Body Happened To Show', 'six@example.com', NULL,
+    '[{"fullName":"PASSENGER SIX A","sortOrder":0},{"fullName":"PASSENGER SIX B","sortOrder":1}]'::jsonb
   );
 
   IF (r1->>'customer_id')::uuid <> v_existing_customer_id THEN
@@ -385,7 +400,8 @@ BEGIN
     v_source_id, '90000007', v_tour_id, 'İtalyanca', CURRENT_DATE + 30, '09:00', 2, 0,
     3600, 'TL', 4800, 'TL',
     NULL, -- no resolved customer -> create
-    'Brand New Contact Seven', NULL, NULL, '[]'::jsonb
+    'Brand New Contact Seven', NULL, NULL,
+    '[{"fullName":"PASSENGER SEVEN A","sortOrder":0},{"fullName":"PASSENGER SEVEN B","sortOrder":1}]'::jsonb
   );
   IF r1->>'result' <> 'created' THEN RAISE EXCEPTION 'TEST 7: FAILED — expected created, got %', r1->>'result'; END IF;
 
@@ -431,16 +447,20 @@ BEGIN
   r1 := public.ingest_civitatis_booking(
     'gmail-test8-new', 'thread-test8', NOW() - INTERVAL '1 day', 'New booking A90000008: Test Tour', 'body', 'new_booking',
     v_source_id, '90000008', v_tour_id, 'İtalyanca', CURRENT_DATE + 30, '09:00', 2, 0,
-    3600, 'TL', 4800, 'TL', NULL, 'Test Contact Eight', NULL, NULL, '[]'::jsonb
+    3600, 'TL', 4800, 'TL', NULL, 'Test Contact Eight', NULL, NULL,
+    '[{"fullName":"SETUP PASSENGER A","sortOrder":0},{"fullName":"SETUP PASSENGER B","sortOrder":1}]'::jsonb
   );
   IF r1->>'result' <> 'created' THEN RAISE EXCEPTION 'TEST 8: FAILED — new_booking with no existing reservation should create, got %', r1->>'result'; END IF;
 
-  -- Apply a NEWER modification with two named passengers.
+  -- Apply a NEWER modification with five named passengers, matching its
+  -- own pax_adult=5 (V7 requires an exact match for replacement to occur).
   PERFORM public.ingest_civitatis_booking(
     'gmail-test8-mod-new', 'thread-test8', NOW(), 'Booking A90000008 modified: Test Tour', 'body', 'modified',
     v_source_id, '90000008', v_tour_id, 'Español', CURRENT_DATE + 40, '14:00', 5, 0,
     9000, 'TL', 12000, 'TL', NULL, 'Test Contact Eight', NULL, NULL,
-    '[{"fullName":"REAL PASSENGER ONE","sortOrder":0},{"fullName":"REAL PASSENGER TWO","sortOrder":1}]'::jsonb
+    '[{"fullName":"REAL PASSENGER ONE","sortOrder":0},{"fullName":"REAL PASSENGER TWO","sortOrder":1},
+      {"fullName":"REAL PASSENGER THREE","sortOrder":2},{"fullName":"REAL PASSENGER FOUR","sortOrder":3},
+      {"fullName":"REAL PASSENGER FIVE","sortOrder":4}]'::jsonb
   );
 
   SELECT COUNT(*) INTO v_cust_count_before FROM public.customers;
@@ -624,7 +644,8 @@ BEGIN
   r1 := public.ingest_civitatis_booking(
     'gmail-test12-new', 'thread-test12', NOW() - INTERVAL '1 day', 'New booking A90000013: Test Tour', 'body', 'new_booking',
     v_source_id, '90000013', v_tour_id, 'İtalyanca', CURRENT_DATE + 30, '09:00', 2, 0,
-    3600, 'TL', 4800, 'TL', NULL, 'Original Contact Thirteen', NULL, NULL, '[]'::jsonb
+    3600, 'TL', 4800, 'TL', NULL, 'Original Contact Thirteen', NULL, NULL,
+    '[{"fullName":"PASSENGER THIRTEEN A","sortOrder":0},{"fullName":"PASSENGER THIRTEEN B","sortOrder":1}]'::jsonb
   );
   SELECT * INTO v_original_customer FROM public.customers WHERE id = (r1->>'customer_id')::uuid;
   SELECT COUNT(*) INTO v_cust_count_before FROM public.customers;
@@ -743,7 +764,9 @@ BEGIN
   r := public.ingest_civitatis_booking(
     'gmail-test13-f', 'thread-test13f', NOW(), 'New booking A90000019: Test Tour', 'body', 'new_booking',
     v_source_id, '90000019', v_tour_id, 'İtalyanca', CURRENT_DATE + 30, '09:00', 2, NULL,
-    3600, 'TL', 4800, 'TL', NULL, 'Test Contact Nineteen', NULL, NULL, '[]'::jsonb
+    3600, 'TL', 4800, 'TL', NULL, 'Test Contact Nineteen', NULL, NULL,
+    -- expected_passenger_count = pax_adult(2) + COALESCE(pax_child,0) = 2:
+    '[{"fullName":"PASSENGER NINETEEN A","sortOrder":0},{"fullName":"PASSENGER NINETEEN B","sortOrder":1}]'::jsonb
   );
   IF r->>'result' <> 'created' THEN RAISE EXCEPTION 'TEST 13f: FAILED — a NULL pax_child should NOT block a write (should default to 0), got %', r->>'result'; END IF;
   IF (SELECT pax_child FROM public.reservations WHERE id = (r->>'reservation_id')::uuid) <> 0 THEN
@@ -813,8 +836,11 @@ BEGIN
   -- A modification WITH a real (non-empty) passenger list still replaces
   -- correctly (confirms the guard doesn't over-protect):
   PERFORM public.ingest_civitatis_booking(
+    -- pax_adult changed to 1 (from an earlier draft's 3) so this call's
+    -- single passenger matches expected_passenger_count exactly under
+    -- V7's replacement guard.
     'gmail-test14-mod-real', 'thread-test14', NOW() + INTERVAL '2 hours', 'Booking A90000020 modified: Test Tour', 'body', 'modified',
-    v_source_id, '90000020', v_tour_id, 'İtalyanca', CURRENT_DATE + 33, '12:00', 3, 0,
+    v_source_id, '90000020', v_tour_id, 'İtalyanca', CURRENT_DATE + 33, '12:00', 1, 0,
     3600, 'TL', 4800, 'TL', NULL, 'Test Contact Twenty', NULL, NULL,
     '[{"fullName":"REPLACED GUEST","sortOrder":0}]'::jsonb
   );
@@ -845,7 +871,8 @@ ROLLBACK;
 --          'New booking A90000021: Test Tour', 'body', 'new_booking',
 --          '<a real civitatis source_id>', '90000021', '<a real tour_id>',
 --          'İtalyanca', CURRENT_DATE + 30, '09:00', 2, 0, 3600, 'TL', 4800, 'TL',
---          NULL, 'Concurrent Test Contact', NULL, NULL, '[]'::jsonb
+--          NULL, 'Concurrent Test Contact', NULL, NULL,
+--          '[{"fullName":"CONCURRENT PASSENGER A","sortOrder":0},{"fullName":"CONCURRENT PASSENGER B","sortOrder":1}]'::jsonb
 --        );
 --      but do NOT COMMIT yet — leave the transaction open.
 --   3. In session B, run the SAME call with a DIFFERENT gmail_message_id
@@ -902,7 +929,7 @@ BEGIN
     'gmail-test16-new-1', 'thread-test16', NOW() - INTERVAL '1 day', 'New booking A90000022: Test Tour', 'body', 'new_booking',
     v_source_id, '90000022', v_tour_id, 'İtalyanca', CURRENT_DATE + 30, '09:00', 2, 0,
     3600, 'TL', 4800, 'TL', NULL, 'Test Contact TwentyTwo', NULL, NULL,
-    '[{"fullName":"ORIGINAL PASSENGER","sortOrder":0}]'::jsonb
+    '[{"fullName":"ORIGINAL PASSENGER","sortOrder":0},{"fullName":"ORIGINAL PASSENGER TWO","sortOrder":1}]'::jsonb
   );
   IF r1->>'result' <> 'created' THEN RAISE EXCEPTION 'TEST 16: FAILED — first new_booking with no existing reservation should create, got %', r1->>'result'; END IF;
 
@@ -1031,7 +1058,8 @@ BEGIN
   r1 := public.ingest_civitatis_booking(
     'gmail-test17-processed', 'thread-test17a', NOW(), 'New booking A90000023: Test Tour', 'body', 'new_booking',
     v_source_id, '90000023', v_tour_id, 'İtalyanca', CURRENT_DATE + 30, '09:00', 2, 0,
-    3600, 'TL', 4800, 'TL', NULL, 'Test Contact TwentyThree', NULL, NULL, '[]'::jsonb
+    3600, 'TL', 4800, 'TL', NULL, 'Test Contact TwentyThree', NULL, NULL,
+    '[{"fullName":"PASSENGER TWENTYTHREE A","sortOrder":0},{"fullName":"PASSENGER TWENTYTHREE B","sortOrder":1}]'::jsonb
   );
   IF r1->>'result' <> 'created' THEN RAISE EXCEPTION 'TEST 17a: FAILED — setup create failed, got %', r1->>'result'; END IF;
 
@@ -1139,7 +1167,8 @@ BEGIN
   r1 := public.ingest_civitatis_booking(
     'gmail-test18-received', 'thread-test18', NOW(), 'New booking A90000025: Test Tour', 'body', 'new_booking',
     v_source_id, '90000025', v_tour_id, 'İtalyanca', CURRENT_DATE + 30, '09:00', 2, 0,
-    3600, 'TL', 4800, 'TL', NULL, 'Test Contact TwentyFive', NULL, NULL, '[]'::jsonb
+    3600, 'TL', 4800, 'TL', NULL, 'Test Contact TwentyFive', NULL, NULL,
+    '[{"fullName":"PASSENGER TWENTYFIVE A","sortOrder":0},{"fullName":"PASSENGER TWENTYFIVE B","sortOrder":1}]'::jsonb
   );
   IF r1->>'result' <> 'created' THEN RAISE EXCEPTION 'TEST 18: FAILED — setup create failed, got %', r1->>'result'; END IF;
 
@@ -1309,7 +1338,11 @@ BEGIN
   r1 := public.ingest_civitatis_booking(
     'gmail-test20-retry-fails-again', 'thread-test20', NOW(), 'New booking A90000027: Test Tour', 'body', 'new_booking',
     v_source_id, '90000027', v_tour_id, 'İtalyanca', CURRENT_DATE + 30, '09:00', 2, 0,
-    3600, 'TL', 4800, 'TL', v_bogus_customer_id_1, NULL, NULL, NULL, '[]'::jsonb
+    3600, 'TL', 4800, 'TL', v_bogus_customer_id_1, NULL, NULL, NULL,
+    -- Two matching passengers so the V7 passenger-completeness guard
+    -- passes and execution reaches the bogus-customer_id check both
+    -- attempts are actually meant to exercise.
+    '[{"fullName":"PASSENGER TWENTYSEVEN A","sortOrder":0},{"fullName":"PASSENGER TWENTYSEVEN B","sortOrder":1}]'::jsonb
   );
   IF r1->>'result' <> 'failed' THEN RAISE EXCEPTION 'TEST 20: FAILED — attempt 1 expected result=failed, got %', r1->>'result'; END IF;
   v_ingestion_id_1 := (r1->>'ingestion_id')::uuid;
@@ -1319,7 +1352,8 @@ BEGIN
   r2 := public.ingest_civitatis_booking(
     'gmail-test20-retry-fails-again', 'thread-test20', NOW() + INTERVAL '5 minutes', 'New booking A90000027: Test Tour', 'body', 'new_booking',
     v_source_id, '90000027', v_tour_id, 'İtalyanca', CURRENT_DATE + 30, '09:00', 2, 0,
-    3600, 'TL', 4800, 'TL', v_bogus_customer_id_2, NULL, NULL, NULL, '[]'::jsonb
+    3600, 'TL', 4800, 'TL', v_bogus_customer_id_2, NULL, NULL, NULL,
+    '[{"fullName":"PASSENGER TWENTYSEVEN A","sortOrder":0},{"fullName":"PASSENGER TWENTYSEVEN B","sortOrder":1}]'::jsonb
   );
   IF r2->>'result' <> 'failed' THEN RAISE EXCEPTION 'TEST 20: FAILED — retry expected result=failed again, got %', r2->>'result'; END IF;
   v_ingestion_id_2 := (r2->>'ingestion_id')::uuid;
@@ -1384,9 +1418,12 @@ ROLLBACK;
 --          '<a real civitatis source_id>', '90000028', '<a real tour_id>',
 --          'İtalyanca', CURRENT_DATE + 30, '09:00', 2, 0, 3600, 'TL', 4800, 'TL',
 --          '00000000-0000-0000-0000-000000000001'::uuid, -- guaranteed not to exist -> fails
---          NULL, NULL, NULL, '[]'::jsonb
+--          NULL, NULL, NULL,
+--          '[{"fullName":"CONCURRENT RETRY PASSENGER A","sortOrder":0},{"fullName":"CONCURRENT RETRY PASSENGER B","sortOrder":1}]'::jsonb
 --        );
---      Confirm it returned {"result":"failed", ...}.
+--      (Two matching passengers, so V7's passenger-completeness guard
+--      passes and execution reaches the bogus-customer_id check this
+--      step means to exercise.) Confirm it returned {"result":"failed", ...}.
 --   2. Open two separate `psql` (or two Supabase SQL editor tabs) sessions
 --      against the same staging database — session A and session B.
 --   3. In session A, run:
@@ -1397,7 +1434,8 @@ ROLLBACK;
 --          '<the same source_id>', '90000028', '<the same tour_id>',
 --          'İtalyanca', CURRENT_DATE + 30, '09:00', 2, 0, 3600, 'TL', 4800, 'TL',
 --          '00000000-0000-0000-0000-000000000002'::uuid, -- ALSO does not exist -> A's OWN retry fails AGAIN
---          NULL, NULL, NULL, '[]'::jsonb
+--          NULL, NULL, NULL,
+--          '[{"fullName":"CONCURRENT RETRY PASSENGER A","sortOrder":0},{"fullName":"CONCURRENT RETRY PASSENGER B","sortOrder":1}]'::jsonb
 --        );
 --      This call completes (the function body always runs to completion
 --      and returns a value) and returns {"result":"failed", ...} — A's
@@ -1415,7 +1453,8 @@ ROLLBACK;
 --          'New booking A90000028: Test Tour', 'body', 'new_booking',
 --          '<the same source_id>', '90000028', '<the same tour_id>',
 --          'İtalyanca', CURRENT_DATE + 30, '09:00', 2, 0, 3600, 'TL', 4800, 'TL',
---          NULL, 'SHOULD NOT BE CREATED BY B', NULL, NULL, '[]'::jsonb
+--          NULL, 'SHOULD NOT BE CREATED BY B', NULL, NULL,
+--          '[{"fullName":"SHOULD NOT PERSIST A","sortOrder":0},{"fullName":"SHOULD NOT PERSIST B","sortOrder":1}]'::jsonb
 --        );
 --      Session B must return IMMEDIATELY (no hang/block, unlike the old
 --      V5 procedure) with
@@ -1446,7 +1485,8 @@ ROLLBACK;
 --          'New booking A90000028: Test Tour', 'body', 'new_booking',
 --          '<the same source_id>', '90000028', '<the same tour_id>',
 --          'İtalyanca', CURRENT_DATE + 30, '09:00', 2, 0, 3600, 'TL', 4800, 'TL',
---          NULL, 'Concurrent Retry Contact (Session C)', NULL, NULL, '[]'::jsonb
+--          NULL, 'Concurrent Retry Contact (Session C)', NULL, NULL,
+--          '[{"fullName":"SESSION C PASSENGER A","sortOrder":0},{"fullName":"SESSION C PASSENGER B","sortOrder":1}]'::jsonb
 --        );
 --      This MUST succeed: {"result":"created", ...} — the lock is free
 --      once A's transaction ended, and C is not part of A/B's earlier
@@ -1462,6 +1502,357 @@ ROLLBACK;
 --      reservation_guests; delete the customers/email_ingestions/
 --      activity_logs rows manually).
 -- ══════════════════════════════════════════════════════════════════════════
+
+
+-- ══════════════════════════════════════════════════════════════════════════
+-- V7 — PASSENGER COMPLETENESS
+-- ══════════════════════════════════════════════════════════════════════════
+-- TESTS 22-26 below prove the V7 revision: CREATE requires an EXACT match
+-- between usable_passenger_count and expected_passenger_count
+-- (pax_adult + COALESCE(pax_child,0)) before ANY business state is
+-- written; MODIFICATION only replaces reservation_guests on an exact
+-- match, otherwise preserving the existing list untouched (extending
+-- V6's empty-only guard to any incomplete count); malformed sortOrder
+-- never crashes the RPC; passenger names are stored byte-for-byte as
+-- supplied; legitimate duplicate names are never deduplicated. TESTS
+-- 1-21 above (now adjusted, see file header) are the proof that the V4
+-- event matrix and the V5/V6 retry/concurrency guarantees remain intact
+-- under V7 (state-machine item #12).
+
+
+-- ══════════════════════════════════════════════════════════════════════════
+-- TEST 22 — CREATE passenger-completeness guard: exact match succeeds;
+-- zero, partial, or length-matching-but-blank-padded payloads are all
+-- rejected as manual_review_required with ZERO business state (no
+-- customer, no reservation, no reservation_number allocated, no
+-- passenger, no activity) — items #1-#4
+-- ══════════════════════════════════════════════════════════════════════════
+BEGIN;
+DO $$
+DECLARE
+  v_source_id UUID; v_tour_id UUID;
+  rA JSONB; rB JSONB; rC JSONB; rD JSONB;
+BEGIN
+  SELECT id INTO v_source_id FROM public.sources WHERE slug ILIKE 'civitatis%' LIMIT 1;
+  INSERT INTO public.tours (name, is_active) VALUES ('TEST22 Tour', TRUE) RETURNING id INTO v_tour_id;
+
+  -- Part A (item #1): expected=2, usable=2 -> succeeds normally.
+  rA := public.ingest_civitatis_booking(
+    'gmail-test22-a', 'thread-test22a', NOW(), 'New booking A90000029: Test Tour', 'body', 'new_booking',
+    v_source_id, '90000029', v_tour_id, 'İtalyanca', CURRENT_DATE + 30, '09:00', 2, 0,
+    3600, 'TL', 4800, 'TL', NULL, 'Test Contact TwentyNine', NULL, NULL,
+    '[{"fullName":"PASSENGER TWENTYNINE A","sortOrder":0},{"fullName":"PASSENGER TWENTYNINE B","sortOrder":1}]'::jsonb
+  );
+  IF rA->>'result' <> 'created' THEN
+    RAISE EXCEPTION 'TEST 22a: FAILED — expected=2/usable=2 should succeed, got %', rA->>'result';
+  END IF;
+
+  -- Part B (item #2): expected=2, usable=0 (empty array) -> manual_review_required, zero business state.
+  rB := public.ingest_civitatis_booking(
+    'gmail-test22-b', 'thread-test22b', NOW(), 'New booking A90000030: Test Tour', 'body', 'new_booking',
+    v_source_id, '90000030', v_tour_id, 'İtalyanca', CURRENT_DATE + 30, '09:00', 2, 0,
+    3600, 'TL', 4800, 'TL', NULL, 'Test Contact Thirty', NULL, NULL, '[]'::jsonb
+  );
+  IF rB->>'result' <> 'manual_review_required' THEN
+    RAISE EXCEPTION 'TEST 22b: FAILED — expected=2/usable=0 should be manual_review_required, got %', rB->>'result';
+  END IF;
+  IF (rB->>'expected_passenger_count')::int <> 2 OR (rB->>'usable_passenger_count')::int <> 0 THEN
+    RAISE EXCEPTION 'TEST 22b: FAILED — expected/usable counts missing or wrong in the response payload';
+  END IF;
+  IF (SELECT error_reason FROM public.email_ingestions WHERE gmail_message_id='gmail-test22-b') NOT ILIKE '%expected%2%usable%0%'
+     AND (SELECT error_reason FROM public.email_ingestions WHERE gmail_message_id='gmail-test22-b') IS NULL THEN
+    RAISE EXCEPTION 'TEST 22b: FAILED — error_reason must clearly describe expected vs usable passenger count';
+  END IF;
+  IF EXISTS (SELECT 1 FROM public.reservations WHERE source_id=v_source_id AND external_booking_id='90000030') THEN
+    RAISE EXCEPTION 'TEST 22b: FAILED — a reservation was created despite usable_passenger_count=0';
+  END IF;
+  IF EXISTS (SELECT 1 FROM public.customers WHERE full_name = 'Test Contact Thirty') THEN
+    RAISE EXCEPTION 'TEST 22b: FAILED — a customer was created BEFORE the passenger guard — must be validated first';
+  END IF;
+
+  -- Part C (item #3): expected=2, usable=1 (partial) -> manual_review_required, zero business state.
+  rC := public.ingest_civitatis_booking(
+    'gmail-test22-c', 'thread-test22c', NOW(), 'New booking A90000031: Test Tour', 'body', 'new_booking',
+    v_source_id, '90000031', v_tour_id, 'İtalyanca', CURRENT_DATE + 30, '09:00', 2, 0,
+    3600, 'TL', 4800, 'TL', NULL, 'Test Contact ThirtyOne', NULL, NULL,
+    '[{"fullName":"PASSENGER THIRTYONE A","sortOrder":0}]'::jsonb
+  );
+  IF rC->>'result' <> 'manual_review_required' THEN
+    RAISE EXCEPTION 'TEST 22c: FAILED — expected=2/usable=1 should be manual_review_required, got %', rC->>'result';
+  END IF;
+  IF (rC->>'usable_passenger_count')::int <> 1 THEN
+    RAISE EXCEPTION 'TEST 22c: FAILED — usable_passenger_count should be 1, got %', rC->>'usable_passenger_count';
+  END IF;
+  IF EXISTS (SELECT 1 FROM public.reservations WHERE source_id=v_source_id AND external_booking_id='90000031') THEN
+    RAISE EXCEPTION 'TEST 22c: FAILED — a reservation was created despite a partial passenger list';
+  END IF;
+  IF EXISTS (SELECT 1 FROM public.customers WHERE full_name = 'Test Contact ThirtyOne') THEN
+    RAISE EXCEPTION 'TEST 22c: FAILED — a customer was created despite a partial passenger list';
+  END IF;
+
+  -- Part D (item #4): array LENGTH is 2 (matches expected), but one entry
+  -- is blank after btrim -> usable=1, still manual_review_required. This
+  -- proves the guard never relies on JSON array length alone.
+  rD := public.ingest_civitatis_booking(
+    'gmail-test22-d', 'thread-test22d', NOW(), 'New booking A90000032: Test Tour', 'body', 'new_booking',
+    v_source_id, '90000032', v_tour_id, 'İtalyanca', CURRENT_DATE + 30, '09:00', 2, 0,
+    3600, 'TL', 4800, 'TL', NULL, 'Test Contact ThirtyTwo', NULL, NULL,
+    '[{"fullName":"PASSENGER THIRTYTWO A","sortOrder":0},{"fullName":"   ","sortOrder":1}]'::jsonb
+  );
+  IF rD->>'result' <> 'manual_review_required' THEN
+    RAISE EXCEPTION 'TEST 22d: FAILED — array length=2 with one blank-after-trim entry should be manual_review_required, got %', rD->>'result';
+  END IF;
+  IF (rD->>'usable_passenger_count')::int <> 1 THEN
+    RAISE EXCEPTION 'TEST 22d: FAILED — usable_passenger_count should be 1 (blank entry excluded), got %', rD->>'usable_passenger_count';
+  END IF;
+  IF EXISTS (SELECT 1 FROM public.reservations WHERE source_id=v_source_id AND external_booking_id='90000032') THEN
+    RAISE EXCEPTION 'TEST 22d: FAILED — a reservation was created despite a blank-padded passenger list';
+  END IF;
+
+  RAISE NOTICE 'TEST 22: PASSED';
+END $$;
+ROLLBACK;
+
+
+-- ══════════════════════════════════════════════════════════════════════════
+-- TEST 23 — legitimate duplicate passenger names are NEVER deduplicated:
+-- two entries sharing the exact same fullName still count as 2 usable
+-- entries and CREATE succeeds normally (item #5)
+-- ══════════════════════════════════════════════════════════════════════════
+BEGIN;
+DO $$
+DECLARE
+  v_source_id UUID; v_tour_id UUID;
+  r JSONB;
+  v_guest_count INT;
+BEGIN
+  SELECT id INTO v_source_id FROM public.sources WHERE slug ILIKE 'civitatis%' LIMIT 1;
+  INSERT INTO public.tours (name, is_active) VALUES ('TEST23 Tour', TRUE) RETURNING id INTO v_tour_id;
+
+  r := public.ingest_civitatis_booking(
+    'gmail-test23-dup', 'thread-test23', NOW(), 'New booking A90000033: Test Tour', 'body', 'new_booking',
+    v_source_id, '90000033', v_tour_id, 'İtalyanca', CURRENT_DATE + 30, '09:00', 2, 0,
+    3600, 'TL', 4800, 'TL', NULL, 'Test Contact ThirtyThree', NULL, NULL,
+    '[{"fullName":"JOHN SMITH","sortOrder":0},{"fullName":"JOHN SMITH","sortOrder":1}]'::jsonb
+  );
+  IF r->>'result' <> 'created' THEN
+    RAISE EXCEPTION 'TEST 23: FAILED — two identically-named passengers should still count as 2 usable and succeed, got %', r->>'result';
+  END IF;
+
+  SELECT COUNT(*) INTO v_guest_count FROM public.reservation_guests WHERE reservation_id = (r->>'reservation_id')::uuid;
+  IF v_guest_count <> 2 THEN
+    RAISE EXCEPTION 'TEST 23: FAILED — expected exactly 2 reservation_guests rows (never deduplicated), found %', v_guest_count;
+  END IF;
+  IF (SELECT COUNT(*) FROM public.reservation_guests WHERE reservation_id=(r->>'reservation_id')::uuid AND full_name='JOHN SMITH') <> 2 THEN
+    RAISE EXCEPTION 'TEST 23: FAILED — both duplicate-named entries should be persisted as separate rows';
+  END IF;
+
+  RAISE NOTICE 'TEST 23: PASSED';
+END $$;
+ROLLBACK;
+
+
+-- ══════════════════════════════════════════════════════════════════════════
+-- TEST 24 — MODIFICATION passenger-completeness guard: exact match
+-- replaces; anything less than an exact match (empty, partial, or
+-- length-matching-but-blank-padded) PRESERVES the existing passenger
+-- list untouched, still returns 'updated' for the other valid fields,
+-- and reports passengers_replaced=false — never routes the whole
+-- modification to manual review merely because passengers are
+-- incomplete (items #6-#9)
+-- ══════════════════════════════════════════════════════════════════════════
+BEGIN;
+DO $$
+DECLARE
+  v_source_id UUID; v_tour_id UUID;
+  r0 JSONB; rA JSONB; rB JSONB; rC JSONB; rD JSONB;
+  v_res_id UUID;
+  v_guest_count INT;
+BEGIN
+  SELECT id INTO v_source_id FROM public.sources WHERE slug ILIKE 'civitatis%' LIMIT 1;
+  INSERT INTO public.tours (name, is_active) VALUES ('TEST24 Tour', TRUE) RETURNING id INTO v_tour_id;
+
+  -- Setup: create with 2 real, distinct passengers.
+  r0 := public.ingest_civitatis_booking(
+    'gmail-test24-new', 'thread-test24', NOW() - INTERVAL '1 day', 'New booking A90000034: Test Tour', 'body', 'new_booking',
+    v_source_id, '90000034', v_tour_id, 'İtalyanca', CURRENT_DATE + 30, '09:00', 2, 0,
+    3600, 'TL', 4800, 'TL', NULL, 'Test Contact ThirtyFour', NULL, NULL,
+    '[{"fullName":"ORIGINAL GUEST A","sortOrder":0},{"fullName":"ORIGINAL GUEST B","sortOrder":1}]'::jsonb
+  );
+  IF r0->>'result' <> 'created' THEN RAISE EXCEPTION 'TEST 24: FAILED — setup create failed, got %', r0->>'result'; END IF;
+  v_res_id := (r0->>'reservation_id')::uuid;
+
+  -- Part A (item #6): expected=2, usable=2 -> replaces.
+  rA := public.ingest_civitatis_booking(
+    'gmail-test24-a', 'thread-test24', NOW(), 'Booking A90000034 modified: Test Tour', 'body', 'modified',
+    v_source_id, '90000034', v_tour_id, 'İtalyanca', CURRENT_DATE + 31, '10:00', 2, 0,
+    3600, 'TL', 4800, 'TL', NULL, 'Test Contact ThirtyFour', NULL, NULL,
+    '[{"fullName":"REPLACED GUEST A","sortOrder":0},{"fullName":"REPLACED GUEST B","sortOrder":1}]'::jsonb
+  );
+  IF rA->>'result' <> 'updated' THEN RAISE EXCEPTION 'TEST 24a: FAILED — expected updated, got %', rA->>'result'; END IF;
+  IF (rA->>'passengers_replaced')::boolean IS DISTINCT FROM TRUE THEN
+    RAISE EXCEPTION 'TEST 24a: FAILED — expected passengers_replaced=true for an exact-match payload';
+  END IF;
+  SELECT COUNT(*) INTO v_guest_count FROM public.reservation_guests WHERE reservation_id = v_res_id;
+  IF v_guest_count <> 2 THEN RAISE EXCEPTION 'TEST 24a: FAILED — expected 2 guests after exact-match replacement, found %', v_guest_count; END IF;
+  IF NOT EXISTS (SELECT 1 FROM public.reservation_guests WHERE reservation_id=v_res_id AND full_name='REPLACED GUEST A') THEN
+    RAISE EXCEPTION 'TEST 24a: FAILED — the new passenger list was not actually applied';
+  END IF;
+
+  -- Part B (item #7): expected=2, usable=0 (empty) -> preserves REPLACED GUEST A/B untouched.
+  rB := public.ingest_civitatis_booking(
+    'gmail-test24-b', 'thread-test24', NOW() + INTERVAL '1 hour', 'Booking A90000034 modified: Test Tour', 'body', 'modified',
+    v_source_id, '90000034', v_tour_id, 'Español', CURRENT_DATE + 32, '11:00', 2, 0,
+    3600, 'TL', 4800, 'TL', NULL, 'Test Contact ThirtyFour', NULL, NULL, '[]'::jsonb
+  );
+  IF rB->>'result' <> 'updated' THEN RAISE EXCEPTION 'TEST 24b: FAILED — expected updated even with empty passengers, got %', rB->>'result'; END IF;
+  IF (rB->>'passengers_replaced')::boolean IS DISTINCT FROM FALSE THEN
+    RAISE EXCEPTION 'TEST 24b: FAILED — expected passengers_replaced=false for an empty payload';
+  END IF;
+  -- The other valid field (tour_language) WAS still applied:
+  IF (SELECT tour_language FROM public.reservations WHERE id=v_res_id) <> 'Español' THEN
+    RAISE EXCEPTION 'TEST 24b: FAILED — tour_language should still have been updated despite the empty passenger payload';
+  END IF;
+  SELECT COUNT(*) INTO v_guest_count FROM public.reservation_guests WHERE reservation_id = v_res_id;
+  IF v_guest_count <> 2 THEN RAISE EXCEPTION 'TEST 24b: FAILED — the existing 2-guest list was not preserved, found %', v_guest_count; END IF;
+  IF NOT EXISTS (SELECT 1 FROM public.reservation_guests WHERE reservation_id=v_res_id AND full_name='REPLACED GUEST A') THEN
+    RAISE EXCEPTION 'TEST 24b: FAILED — the prior passenger list was lost despite the preserve-on-incomplete guard';
+  END IF;
+
+  -- Part C (item #8): expected=2, usable=1 (partial) -> preserves.
+  rC := public.ingest_civitatis_booking(
+    'gmail-test24-c', 'thread-test24', NOW() + INTERVAL '2 hours', 'Booking A90000034 modified: Test Tour', 'body', 'modified',
+    v_source_id, '90000034', v_tour_id, 'İtalyanca', CURRENT_DATE + 33, '12:00', 2, 0,
+    3600, 'TL', 4800, 'TL', NULL, 'Test Contact ThirtyFour', NULL, NULL,
+    '[{"fullName":"PARTIAL GUEST ONLY","sortOrder":0}]'::jsonb
+  );
+  IF rC->>'result' <> 'updated' THEN RAISE EXCEPTION 'TEST 24c: FAILED — expected updated with a partial passenger list, got %', rC->>'result'; END IF;
+  IF (rC->>'passengers_replaced')::boolean IS DISTINCT FROM FALSE THEN
+    RAISE EXCEPTION 'TEST 24c: FAILED — expected passengers_replaced=false for a partial (1 of 2) payload';
+  END IF;
+  SELECT COUNT(*) INTO v_guest_count FROM public.reservation_guests WHERE reservation_id = v_res_id;
+  IF v_guest_count <> 2 THEN RAISE EXCEPTION 'TEST 24c: FAILED — the existing 2-guest list was not preserved against a partial payload, found %', v_guest_count; END IF;
+  IF EXISTS (SELECT 1 FROM public.reservation_guests WHERE reservation_id=v_res_id AND full_name='PARTIAL GUEST ONLY') THEN
+    RAISE EXCEPTION 'TEST 24c: FAILED — the partial payload leaked into reservation_guests despite being rejected';
+  END IF;
+
+  -- Part D (item #9): array length=2 (matches expected) but one entry is
+  -- blank after btrim -> usable=1 -> preserves, exactly like Part C.
+  rD := public.ingest_civitatis_booking(
+    'gmail-test24-d', 'thread-test24', NOW() + INTERVAL '3 hours', 'Booking A90000034 modified: Test Tour', 'body', 'modified',
+    v_source_id, '90000034', v_tour_id, 'İtalyanca', CURRENT_DATE + 34, '13:00', 2, 0,
+    3600, 'TL', 4800, 'TL', NULL, 'Test Contact ThirtyFour', NULL, NULL,
+    '[{"fullName":"BLANK PAIR GUEST","sortOrder":0},{"fullName":"","sortOrder":1}]'::jsonb
+  );
+  IF rD->>'result' <> 'updated' THEN RAISE EXCEPTION 'TEST 24d: FAILED — expected updated, got %', rD->>'result'; END IF;
+  IF (rD->>'passengers_replaced')::boolean IS DISTINCT FROM FALSE THEN
+    RAISE EXCEPTION 'TEST 24d: FAILED — expected passengers_replaced=false for a length-2-but-one-blank payload';
+  END IF;
+  SELECT COUNT(*) INTO v_guest_count FROM public.reservation_guests WHERE reservation_id = v_res_id;
+  IF v_guest_count <> 2 THEN RAISE EXCEPTION 'TEST 24d: FAILED — the existing 2-guest list was not preserved, found %', v_guest_count; END IF;
+  IF EXISTS (SELECT 1 FROM public.reservation_guests WHERE reservation_id=v_res_id AND full_name='BLANK PAIR GUEST') THEN
+    RAISE EXCEPTION 'TEST 24d: FAILED — the blank-padded payload leaked into reservation_guests despite being rejected';
+  END IF;
+
+  RAISE NOTICE 'TEST 24: PASSED';
+END $$;
+ROLLBACK;
+
+
+-- ══════════════════════════════════════════════════════════════════════════
+-- TEST 25 — malformed or missing sortOrder never causes an unexpected RPC
+-- failure when the passenger name itself is otherwise valid; a genuinely
+-- non-numeric sortOrder safely defaults to 0 instead of raising a cast
+-- error (item #10)
+-- ══════════════════════════════════════════════════════════════════════════
+BEGIN;
+DO $$
+DECLARE
+  v_source_id UUID; v_tour_id UUID;
+  r JSONB;
+  v_res_id UUID;
+BEGIN
+  SELECT id INTO v_source_id FROM public.sources WHERE slug ILIKE 'civitatis%' LIMIT 1;
+  INSERT INTO public.tours (name, is_active) VALUES ('TEST25 Tour', TRUE) RETURNING id INTO v_tour_id;
+
+  -- One entry has a non-numeric sortOrder ("not-a-number"), one has
+  -- sortOrder entirely absent — both must safely default to sort_order=0
+  -- rather than raising a cast exception that would abort the whole call.
+  r := public.ingest_civitatis_booking(
+    'gmail-test25-sortorder', 'thread-test25', NOW(), 'New booking A90000035: Test Tour', 'body', 'new_booking',
+    v_source_id, '90000035', v_tour_id, 'İtalyanca', CURRENT_DATE + 30, '09:00', 2, 0,
+    3600, 'TL', 4800, 'TL', NULL, 'Test Contact ThirtyFive', NULL, NULL,
+    '[{"fullName":"MALFORMED SORTORDER GUEST","sortOrder":"not-a-number"},{"fullName":"MISSING SORTORDER GUEST"}]'::jsonb
+  );
+  IF r->>'result' <> 'created' THEN
+    RAISE EXCEPTION 'TEST 25: FAILED — malformed/missing sortOrder should not block an otherwise-valid create, got %', r->>'result';
+  END IF;
+  v_res_id := (r->>'reservation_id')::uuid;
+
+  IF (SELECT sort_order FROM public.reservation_guests WHERE reservation_id=v_res_id AND full_name='MALFORMED SORTORDER GUEST') <> 0 THEN
+    RAISE EXCEPTION 'TEST 25: FAILED — a non-numeric sortOrder should safely default to 0';
+  END IF;
+  IF (SELECT sort_order FROM public.reservation_guests WHERE reservation_id=v_res_id AND full_name='MISSING SORTORDER GUEST') <> 0 THEN
+    RAISE EXCEPTION 'TEST 25: FAILED — a missing sortOrder key should safely default to 0';
+  END IF;
+  IF (SELECT COUNT(*) FROM public.reservation_guests WHERE reservation_id=v_res_id) <> 2 THEN
+    RAISE EXCEPTION 'TEST 25: FAILED — both passengers should have been persisted despite the sortOrder issues';
+  END IF;
+
+  RAISE NOTICE 'TEST 25: PASSED';
+END $$;
+ROLLBACK;
+
+
+-- ══════════════════════════════════════════════════════════════════════════
+-- TEST 26 — passenger fullName is stored EXACTLY as supplied — never
+-- trimmed or otherwise normalized — on both CREATE and MODIFICATION
+-- (item #11)
+-- ══════════════════════════════════════════════════════════════════════════
+BEGIN;
+DO $$
+DECLARE
+  v_source_id UUID; v_tour_id UUID;
+  r0 JSONB; r1 JSONB;
+  v_res_id UUID;
+BEGIN
+  SELECT id INTO v_source_id FROM public.sources WHERE slug ILIKE 'civitatis%' LIMIT 1;
+  INSERT INTO public.tours (name, is_active) VALUES ('TEST26 Tour', TRUE) RETURNING id INTO v_tour_id;
+
+  -- A name with internal/edge whitespace and mixed case — btrim() is used
+  -- ONLY to decide whether an entry is "usable"; the STORED value must be
+  -- the raw string, untouched.
+  r0 := public.ingest_civitatis_booking(
+    'gmail-test26-new', 'thread-test26', NOW() - INTERVAL '1 day', 'New booking A90000036: Test Tour', 'body', 'new_booking',
+    v_source_id, '90000036', v_tour_id, 'İtalyanca', CURRENT_DATE + 30, '09:00', 2, 0,
+    3600, 'TL', 4800, 'TL', NULL, 'Test Contact ThirtySix', NULL, NULL,
+    '[{"fullName":"  Iñigo   Montoya  ","sortOrder":0},{"fullName":"mc DONALD-o''Brien","sortOrder":1}]'::jsonb
+  );
+  IF r0->>'result' <> 'created' THEN RAISE EXCEPTION 'TEST 26: FAILED — setup create failed, got %', r0->>'result'; END IF;
+  v_res_id := (r0->>'reservation_id')::uuid;
+
+  IF NOT EXISTS (SELECT 1 FROM public.reservation_guests WHERE reservation_id=v_res_id AND full_name = '  Iñigo   Montoya  ') THEN
+    RAISE EXCEPTION 'TEST 26: FAILED — CREATE-path passenger name was trimmed/normalized instead of stored exactly as supplied';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM public.reservation_guests WHERE reservation_id=v_res_id AND full_name = 'mc DONALD-o''Brien') THEN
+    RAISE EXCEPTION 'TEST 26: FAILED — CREATE-path passenger name casing/punctuation was altered instead of stored exactly as supplied';
+  END IF;
+
+  -- Same guarantee on the MODIFICATION replace path:
+  r1 := public.ingest_civitatis_booking(
+    'gmail-test26-mod', 'thread-test26', NOW(), 'Booking A90000036 modified: Test Tour', 'body', 'modified',
+    v_source_id, '90000036', v_tour_id, 'İtalyanca', CURRENT_DATE + 31, '10:00', 2, 0,
+    3600, 'TL', 4800, 'TL', NULL, 'Test Contact ThirtySix', NULL, NULL,
+    '[{"fullName":"  Replaced   Name  ","sortOrder":0},{"fullName":"Second Replaced","sortOrder":1}]'::jsonb
+  );
+  IF r1->>'result' <> 'updated' THEN RAISE EXCEPTION 'TEST 26: FAILED — modification setup failed, got %', r1->>'result'; END IF;
+  IF NOT EXISTS (SELECT 1 FROM public.reservation_guests WHERE reservation_id=v_res_id AND full_name = '  Replaced   Name  ') THEN
+    RAISE EXCEPTION 'TEST 26: FAILED — MODIFICATION-path passenger name was trimmed/normalized instead of stored exactly as supplied';
+  END IF;
+
+  RAISE NOTICE 'TEST 26: PASSED';
+END $$;
+ROLLBACK;
 
 
 -- ══════════════════════════════════════════════════════════════════════════
@@ -1563,6 +1954,32 @@ ROLLBACK;
 --   #12 all V4 event-matrix behavior remains unchanged              -> TEST 1-16, all
 --       unmodified and still passing against V5 (Step 6, the event/
 --       reservation-state matrix, was not touched by this revision)
+--
+--   V7 SAFETY-REVISION ITEMS (passenger-completeness guard):
+--   #1  CREATE expected=2 usable=2 succeeds                          -> TEST 22 (Part A)
+--   #2  CREATE expected=2 usable=0 -> manual_review_required,
+--       zero business state                                          -> TEST 22 (Part B)
+--   #3  CREATE expected=2 usable=1 -> manual_review_required,
+--       zero business state                                          -> TEST 22 (Part C)
+--   #4  CREATE array length=2 but one blank name ->
+--       manual_review_required                                       -> TEST 22 (Part D)
+--   #5  CREATE two identically-named passengers still counts as 2
+--       and succeeds (no deduplication)                               -> TEST 23
+--   #6  MODIFICATION expected=2 usable=2 replaces passengers          -> TEST 24 (Part A)
+--   #7  MODIFICATION expected=2 usable=0 preserves old passengers     -> TEST 24 (Part B)
+--   #8  MODIFICATION expected=2 usable=1 preserves old passengers     -> TEST 24 (Part C)
+--   #9  MODIFICATION array length=2 but one blank preserves old
+--       passengers                                                    -> TEST 24 (Part D)
+--   #10 malformed/missing sortOrder does not cause an unexpected
+--       RPC failure                                                   -> TEST 25
+--   #11 passenger names remain stored exactly as supplied             -> TEST 26
+--   #12 V4/V6 event matrix and retry/concurrency tests remain
+--       intact                                                        -> TESTS 1-21, all
+--       adjusted only where needed to keep exercising their ORIGINAL
+--       intent (adding matching passenger entries where a CREATE call
+--       needed them to clear the new earlier-running guard) — none of
+--       their own actual assertions were weakened or removed; see the
+--       file header for the adjustment note
 -- ══════════════════════════════════════════════════════════════════════════
 
 -- ── END OF MANUAL TEST PLAN ─────────────────────────────────────────────────
