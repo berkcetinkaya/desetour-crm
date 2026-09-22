@@ -8,14 +8,44 @@
 --          supabase_migration_tour_channels.sql,
 --          supabase_migration_civitatis_ingestion.sql
 --          (all already applied to production, per the audit below)
--- Version: V3 — externally reviewed once (V2), safety issues raised,
---          revised. STILL NOT APPROVED FOR EXECUTION.
+-- Version: V4 — externally reviewed twice (V2, V3), safety issues
+--          raised both times, revised both times. STILL NOT APPROVED
+--          FOR EXECUTION.
 --
 -- STATUS: This migration has NOT been executed against any database.
 -- It exists so it can be read, reviewed, and (once approved) applied
 -- manually. Nothing in this repository currently calls the function it
 -- creates — see api/civitatis/writeAdapter.js, which is fully written
 -- and tested but not wired into any reachable HTTP endpoint or cron.
+--
+-- V4 CHANGELOG (what changed since the reviewed V3, and why)
+-- ─────────────────────────────────────────────────────────────
+--   8. A SECOND 'new_booking' EVENT FOR AN ALREADY-EXISTING RESERVATION
+--      NO LONGER FALLS THROUGH TO THE UPDATE BRANCH. V3's branching
+--      only special-cased "reservation exists AND stale" (-> ignored)
+--      and otherwise treated "reservation exists AND not stale" as an
+--      update, regardless of p_event_type. Since the gmail_message_id
+--      uniqueness guard is keyed on the GMAIL message, not the
+--      Civitatis booking, a second, genuinely distinct Gmail message
+--      that Civitatis itself classified as "New booking A########:"
+--      (not "Booking A######## modified:") for a booking that already
+--      has a reservation would have been silently treated as a
+--      modification and allowed to change reservation fields — even
+--      though it is not a modification email at all. V4 makes the
+--      event-type check for this case explicit and unconditional: a
+--      reservation UPDATE now REQUIRES p_event_type = 'modified' AND an
+--      existing reservation AND the event not being stale — a
+--      'new_booking' event for an already-existing reservation is
+--      never eligible for the UPDATE branch, regardless of its
+--      received_at relative to anything else. It is handled as its own
+--      explicit branch, returning result:"booking_already_exists" with
+--      the SAME zero-business-state-side-effects guarantee a stale
+--      event already has: no customer created or changed, no
+--      reservation field changed, no passenger replaced, no activity
+--      created — only its own email_ingestions row is finalized
+--      (processing_status='processed', reservation_id resolved to the
+--      existing reservation, for auditability). See the fully explicit,
+--      exhaustive event/reservation-state branch in Step 6 below.
 --
 -- V3 CHANGELOG (what changed since the reviewed V2, and why)
 -- ─────────────────────────────────────────────────────────────
@@ -110,9 +140,12 @@
 -- the gmail_message_id idempotency guard, the (source_id,
 -- external_booking_id) uniqueness/advisory-lock idempotency guard, the
 -- exactly-once activity notification, the EXCEPTION-handler rollback
--- behavior, and the SECURITY DEFINER / REVOKE-then-GRANT-service_role-
--- only access control — is UNCHANGED from the already-reviewed V2
--- architecture; see below for the full restated contract.
+-- behavior, the SECURITY DEFINER / REVOKE-then-GRANT-service_role-only
+-- access control, the required-field validation from V3 point 2, the
+-- customer creation behavior from V3 point 4, and the passenger-
+-- replacement guard for valid non-stale modifications from V3 point 7
+-- — is UNCHANGED from the already-reviewed V2/V3 architecture; see
+-- below for the full restated contract.
 --
 -- SCOPE OF THIS MIGRATION
 -- ─────────────────────────────────────────────────────────────
@@ -166,11 +199,11 @@
 --   • email_ingestions.processing_status CHECK already allows exactly
 --     the vocabulary this function needs: received | processed |
 --     ignored | failed | needs_review. NOT widened by this migration.
---     ('stale_ignored' is a RETURN VALUE of the function, describing
---     the outcome to its caller — the email_ingestions row itself still
---     uses processing_status='processed' for that case, an existing,
---     already-allowed value; no new status string is written to the
---     database.)
+--     ('stale_ignored' and 'booking_already_exists' are RETURN VALUES
+--     of the function, describing the outcome to its caller — the
+--     email_ingestions row itself still uses processing_status=
+--     'processed' for both cases, an existing, already-allowed value;
+--     no new status string is written to the database.)
 --   • email_ingestions.event_type CHECK already allows exactly
 --     new_booking | modified | unknown. NOT widened by this migration.
 --   • customers.full_name is the only NOT NULL column on customers
@@ -208,10 +241,14 @@
 --     (source_id, external_booking_id) pair serializes concurrent
 --     processing of the same booking, and the reservation itself is
 --     located via reservations_source_id_external_booking_id_key: the
---     first message for a booking CREATES the reservation, every
---     subsequent one (found via that same unique pair) either UPDATES
---     the same row (if not stale) or is safely ignored (if stale) —
---     never a second INSERT.
+--     first message for a booking CREATES the reservation. Of every
+--     subsequent message for the same booking (found via that same
+--     unique pair): a 'modified' one either UPDATES the same row (if
+--     not stale) or is safely ignored (if stale); a SECOND
+--     'new_booking' message is safely ignored too (result:
+--     "booking_already_exists" — see V4 changelog point 8) — never a
+--     second INSERT, and never a 'new_booking' event applying an
+--     UPDATE.
 --   • A stale/out-of-order event (an older email, by received_at,
 --     arriving or being retried AFTER a newer one for the same booking
 --     has already been applied) is detected via the existing
@@ -261,6 +298,10 @@
 --     contact details is explicitly out of scope for this function.
 --   • Does not treat a 'modified' event with no existing reservation as
 --     a new booking — see V3 changelog point 5.
+--   • Does not treat a 'new_booking' event for an ALREADY-EXISTING
+--     reservation as a modification, ever, regardless of received_at
+--     ordering — see V4 changelog point 8. Only a 'modified' event can
+--     ever reach the UPDATE branch.
 --   • Does not erase an existing passenger list when a modification's
 --     own passenger payload is empty/missing — see V3 changelog point 7.
 --   • Does not become callable by browser code: EXECUTE is revoked
@@ -528,22 +569,44 @@ BEGIN
          AND received_at > COALESCE(p_received_at, NOW())
     ) INTO v_newer_exists;
 
-    -- ── Step 6: branch — stale / modified-with-no-reservation / create / update
-    IF v_reservation_id IS NOT NULL AND v_newer_exists THEN
-      -- STALE event for an existing reservation: zero side effects beyond
-      -- this event's own audit row (V3 changelog points 1 and 6). No
-      -- customer, reservation, guest, or activity write of any kind.
+    -- ── Step 6: branch — fully explicit, exhaustive event/reservation-
+    -- state matrix (V4 changelog point 8). Every branch condition names
+    -- BOTH p_event_type and the reservation-existence state explicitly
+    -- — a reservation UPDATE is reachable ONLY via the one branch that
+    -- requires p_event_type = 'modified' AND an existing reservation
+    -- AND NOT v_newer_exists, all three, together. A 'new_booking'
+    -- event can NEVER reach the UPDATE branch, regardless of
+    -- received_at ordering — see the explicit
+    -- "booking_already_exists" branch below, which handles a second,
+    -- genuinely distinct 'new_booking' Gmail message for a booking that
+    -- already has a reservation.
+    --
+    --   event_type=new_booking, no reservation          -> CREATE
+    --   event_type=modified,    reservation exists,
+    --                            not stale                -> UPDATE
+    --   event_type=modified,    reservation exists,
+    --                            stale                     -> stale_ignored
+    --   event_type=modified,    no reservation              -> manual_review_required
+    --   event_type=new_booking, reservation exists            -> booking_already_exists
+    IF v_reservation_id IS NOT NULL AND p_event_type = 'new_booking' THEN
+      -- A second, distinct Gmail message that Civitatis itself
+      -- classified as "New booking A########:" (not a modification) for
+      -- a booking that already has a reservation. This is NOT a
+      -- modification and must never be treated as one — zero business-
+      -- state side effects beyond this event's own audit row: no
+      -- customer created or changed, no reservation field changed, no
+      -- passenger replaced, no activity created (V4 changelog point 8).
       UPDATE public.email_ingestions
          SET processing_status = 'processed', reservation_id = v_reservation_id, processed_at = NOW()
        WHERE id = v_ingestion_id;
       RETURN jsonb_build_object(
-        'result', 'stale_ignored',
+        'result', 'booking_already_exists',
         'ingestion_id', v_ingestion_id,
         'reservation_id', v_reservation_id,
         'customer_id', v_customer_id
       );
 
-    ELSIF v_reservation_id IS NULL AND p_event_type <> 'new_booking' THEN
+    ELSIF v_reservation_id IS NULL AND p_event_type = 'modified' THEN
       -- A 'modified' event with NO existing reservation to modify (V3
       -- changelog point 5) — never silently treated as a new booking.
       UPDATE public.email_ingestions
@@ -557,9 +620,8 @@ BEGIN
         'reason', 'modification event with no existing reservation'
       );
 
-    ELSIF v_reservation_id IS NULL THEN
-      -- CREATE path (p_event_type = 'new_booking', confirmed by the
-      -- ELSIF above). Customer resolution/creation happens ONLY here
+    ELSIF v_reservation_id IS NULL AND p_event_type = 'new_booking' THEN
+      -- CREATE path. Customer resolution/creation happens ONLY here
       -- (V3 changelog point 4) — the update branch below never reaches
       -- this code.
       IF p_customer_id IS NOT NULL THEN
@@ -639,8 +701,26 @@ BEGIN
               -- satisfies explicitly keys on performed_by IS NULL
       );
 
-    ELSE
-      -- UPDATE path: v_reservation_id IS NOT NULL and NOT v_newer_exists.
+    ELSIF v_reservation_id IS NOT NULL AND p_event_type = 'modified' AND v_newer_exists THEN
+      -- STALE modification for an existing reservation: zero side
+      -- effects beyond this event's own audit row (V3 changelog points
+      -- 1 and 6). No customer, reservation, guest, or activity write of
+      -- any kind.
+      UPDATE public.email_ingestions
+         SET processing_status = 'processed', reservation_id = v_reservation_id, processed_at = NOW()
+       WHERE id = v_ingestion_id;
+      RETURN jsonb_build_object(
+        'result', 'stale_ignored',
+        'ingestion_id', v_ingestion_id,
+        'reservation_id', v_reservation_id,
+        'customer_id', v_customer_id
+      );
+
+    ELSIF v_reservation_id IS NOT NULL AND p_event_type = 'modified' AND NOT v_newer_exists THEN
+      -- UPDATE path: the ONLY branch that ever writes reservation
+      -- fields — reachable ONLY when p_event_type = 'modified' AND an
+      -- existing reservation was found AND the event is not stale, all
+      -- three required together (V4 changelog point 8).
       -- Customer identity is NEVER touched here (V3 changelog point 4):
       -- v_customer_id already holds the EXISTING reservation's
       -- customer_id from Step 4's lookup, read-only, for the return
@@ -694,6 +774,24 @@ BEGIN
       UPDATE public.email_ingestions
          SET processing_status = 'processed', reservation_id = v_reservation_id, processed_at = NOW()
        WHERE id = v_ingestion_id;
+
+    ELSE
+      -- Defensively unreachable: Step 2 already guarantees p_event_type
+      -- is exactly 'new_booking' or 'modified', and the five branches
+      -- above are an exhaustive case split over
+      -- {new_booking,modified} x {reservation exists?} x {stale?
+      -- — only meaningful for modified+exists}. Never silently write
+      -- business state if this is somehow reached anyway.
+      UPDATE public.email_ingestions
+         SET processing_status = 'needs_review',
+             error_reason = 'unexpected event_type/reservation-state combination',
+             processed_at = NOW()
+       WHERE id = v_ingestion_id;
+      RETURN jsonb_build_object(
+        'result', 'manual_review_required',
+        'ingestion_id', v_ingestion_id,
+        'reason', 'unexpected event_type/reservation-state combination'
+      );
     END IF;
 
     RETURN jsonb_build_object(
@@ -724,19 +822,22 @@ $$;
 
 COMMENT ON FUNCTION public.ingest_civitatis_booking IS
   'Atomically ingests one already-parsed, already-matched Civitatis '
-  'booking-notification email. On the CREATE path (new_booking, no '
-  'existing reservation): resolves/creates the booking-contact customer, '
-  'creates the reservation, inserts passengers, records the '
-  'email_ingestions audit row, and inserts exactly one activity_logs '
-  'notification. On the UPDATE path (an existing reservation found, '
-  'event not stale): updates ONLY the Civitatis-allowed reservation '
-  'fields and, if a usable passenger list was supplied, replaces '
-  'reservation_guests — never touches customer identity, never creates '
-  'a second activity row. A stale (out-of-order) event, a modification '
-  'with no existing reservation, or a call missing any required field '
-  'has ZERO business-state side effects and is reported distinctly '
-  '(stale_ignored / manual_review_required). Any unexpected error rolls '
-  'back all business writes for that call while still recording a '
+  'booking-notification email. On the CREATE path (event_type= '
+  'new_booking, no existing reservation): resolves/creates the '
+  'booking-contact customer, creates the reservation, inserts '
+  'passengers, records the email_ingestions audit row, and inserts '
+  'exactly one activity_logs notification. On the UPDATE path '
+  '(event_type=modified, an existing reservation found, event not '
+  'stale — ALL THREE required together): updates ONLY the '
+  'Civitatis-allowed reservation fields and, if a usable passenger list '
+  'was supplied, replaces reservation_guests — never touches customer '
+  'identity, never creates a second activity row. A stale modification, '
+  'a modification with no existing reservation, a second new_booking '
+  'event for an already-existing reservation, or a call missing any '
+  'required field has ZERO business-state side effects and is reported '
+  'distinctly (stale_ignored / manual_review_required / '
+  'booking_already_exists). Any unexpected error rolls back all '
+  'business writes for that call while still recording a '
   '''failed'' audit row. SECURITY DEFINER; callable only by '
   'service_role — see this migration file''s header for the full '
   'contract. Never call directly from browser code.';
