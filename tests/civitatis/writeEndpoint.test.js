@@ -274,6 +274,70 @@ test('a "failed" RPC result stops that booking chain, even with write mode activ
   assert.equal(outcome.results[0].calls[0].error, 'simulated');
 });
 
+// ── V9 diagnostic fields (stage/diagnostics) are surfaced when present ────
+// Regression for the second real A41629692 smoke test: a 'failed' RPC
+// result from a V9-or-later database carries new 'stage'/'diagnostics'
+// keys naming exactly which internal processing stage raised and
+// Postgres's own GET STACKED DIAGNOSTICS fields for that exception —
+// decorateCallResult must pass them through untouched so the next real
+// retry's diagnosis is actually visible in the endpoint's response, not
+// silently dropped.
+test('a "failed" RPC result carrying V9 stage/diagnostics fields surfaces them in the endpoint response, unmodified', async () => {
+  const repo = createFakeRepo(baseRepoOptions());
+  const rpcCaller = makeSpyRpcCaller([
+    {
+      result: 'failed',
+      ingestion_id: 'ing-fb7bd246',
+      error: 'stage=reference_number_allocation; error=there is no unique or exclusion constraint matching the ON CONFLICT specification; sqlstate=42P10; constraint=-; table=-; column=-; detail=-; hint=-',
+      stage: 'reference_number_allocation',
+      diagnostics: {
+        sqlstate: '42P10',
+        constraint_name: null,
+        table_name: null,
+        column_name: null,
+        detail: null,
+        hint: null,
+        context: 'PL/pgSQL function public.next_ref_number(text,text,text) line 51 at SQL statement',
+      },
+    },
+  ]);
+  const outcome = await handler.runCivitatisWriteOrchestration({
+    messages: [F.italianNewBooking],
+    repo,
+    externalBookingId: null,
+    writeModeActive: true,
+    rpcCaller,
+  });
+  const call = outcome.results[0].calls[0];
+  assert.equal(call.decision, 'failed');
+  assert.equal(call.stage, 'reference_number_allocation');
+  assert.equal(call.diagnostics.sqlstate, '42P10');
+  assert.equal(call.diagnostics.context, 'PL/pgSQL function public.next_ref_number(text,text,text) line 51 at SQL statement');
+  // Never the raw request payload, never a passenger name, never a
+  // customer contact field — diagnostics is SQL error metadata only.
+  assert.equal(JSON.stringify(call.diagnostics).includes('passenger'), false);
+});
+
+// stage/diagnostics must be null, never throw, against a pre-V9-shaped
+// RPC response (e.g. still-applied V8, or any other result value) — the
+// decorator must not assume these keys exist.
+test('stage/diagnostics are null (not thrown) for an RPC result that predates V9 or is not "failed"', async () => {
+  const repo = createFakeRepo(baseRepoOptions());
+  const rpcCaller = makeSpyRpcCaller([
+    { result: 'created', ingestion_id: 'ing-1', reservation_id: 'res-1' },
+  ]);
+  const outcome = await handler.runCivitatisWriteOrchestration({
+    messages: [F.italianNewBooking],
+    repo,
+    externalBookingId: null,
+    writeModeActive: true,
+    rpcCaller,
+  });
+  const call = outcome.results[0].calls[0];
+  assert.equal(call.stage, null);
+  assert.equal(call.diagnostics, null);
+});
+
 // ── new booking then modification ordering remains deterministic ─────────
 test('new_booking is always sent to the RPC before its later modification, even when fed newest-first', async () => {
   const repo = createFakeRepo(baseRepoOptions());

@@ -1921,6 +1921,72 @@ ROLLBACK;
 
 
 -- ══════════════════════════════════════════════════════════════════════════
+-- TEST 28 (V9 — NOT YET APPLICABLE: requires
+-- supabase_migration_civitatis_write_v9_diagnostic_stage_instrumentation.sql
+-- to be applied first; V8 alone does not set 'stage'/'diagnostics' on a
+-- failure) — a deterministic, always-reproducible CREATE-path exception
+-- (a provided p_customer_id that does not exist in public.customers,
+-- which the CREATE branch's own RAISE EXCEPTION already raises,
+-- unchanged since V2) must be caught by the nested EXCEPTION handler
+-- with the diagnostic stage correctly recorded as 'customer_resolution'
+-- — proving the V9 instrumentation mechanism itself works, independent
+-- of and without needing to reproduce the exact live "no unique or
+-- exclusion constraint" bug this instrumentation exists to help
+-- diagnose (that bug's precise trigger condition has not yet been
+-- identified from a live schema anomaly this test suite cannot
+-- reproduce safely).
+-- ══════════════════════════════════════════════════════════════════════════
+BEGIN;
+DO $$
+DECLARE
+  v_source_id UUID; v_tour_id UUID;
+  r0 JSONB;
+  v_bogus_customer_id UUID := gen_random_uuid();  -- guaranteed not to exist
+BEGIN
+  SELECT id INTO v_source_id FROM public.sources WHERE slug ILIKE 'civitatis%' LIMIT 1;
+  INSERT INTO public.tours (name, is_active) VALUES ('TEST28 Tour', TRUE) RETURNING id INTO v_tour_id;
+
+  r0 := public.ingest_civitatis_booking(
+    'gmail-test28-stage', 'thread-test28', NOW(), 'New booking A90000038: Test Tour', 'body', 'new_booking',
+    v_source_id, '90000038', v_tour_id, 'İtalyanca', CURRENT_DATE + 30, '09:00', 2, 0,
+    3600, 'TL', 4800, 'TL', v_bogus_customer_id, NULL, NULL, NULL,
+    '[{"fullName":"A A","sortOrder":0},{"fullName":"B B","sortOrder":1}]'::jsonb
+  );
+
+  IF r0->>'result' <> 'failed' THEN
+    RAISE EXCEPTION 'TEST 28: FAILED — expected result=failed for a nonexistent p_customer_id, got result=%', r0->>'result';
+  END IF;
+  IF r0->>'stage' <> 'customer_resolution' THEN
+    RAISE EXCEPTION 'TEST 28: FAILED — expected stage=customer_resolution, got stage=%, error=%', r0->>'stage', r0->>'error';
+  END IF;
+  IF (r0->'diagnostics'->>'sqlstate') IS DISTINCT FROM 'P0001' THEN
+    RAISE EXCEPTION 'TEST 28: FAILED — expected diagnostics.sqlstate=P0001 (default RAISE EXCEPTION SQLSTATE), got %', r0->'diagnostics'->>'sqlstate';
+  END IF;
+  IF (r0->>'error') !~ ('does not exist') THEN
+    RAISE EXCEPTION 'TEST 28: FAILED — original SQLERRM text was not preserved verbatim in error_reason/error: %', r0->>'error';
+  END IF;
+  -- The SAME diagnostic fields must also be persisted on the
+  -- email_ingestions row itself, not only in the returned JSON:
+  IF NOT EXISTS (
+    SELECT 1 FROM public.email_ingestions
+     WHERE gmail_message_id = 'gmail-test28-stage'
+       AND processing_status = 'failed'
+       AND error_reason LIKE 'stage=customer_resolution;%'
+  ) THEN
+    RAISE EXCEPTION 'TEST 28: FAILED — email_ingestions.error_reason did not record stage=customer_resolution';
+  END IF;
+  -- Zero business-state side effects, exactly as every other caught
+  -- exception already guarantees (V2 onward, unchanged by V9):
+  IF EXISTS (SELECT 1 FROM public.reservations WHERE source_id = v_source_id AND external_booking_id = '90000038') THEN
+    RAISE EXCEPTION 'TEST 28: FAILED — a reservation was created despite the caught exception';
+  END IF;
+
+  RAISE NOTICE 'TEST 28: PASSED';
+END $$;
+ROLLBACK;
+
+
+-- ══════════════════════════════════════════════════════════════════════════
 -- CROSS-REFERENCE — where each requested test-plan item is actually
 -- covered (original 21 items, plus the V3 and V4 safety-revision items):
 --   #1  new customer created (exactly one)         -> TEST 7
@@ -2078,7 +2144,31 @@ ROLLBACK;
 --   (CONTRACT TEST 2) for the catalog-level structural check that
 --   catches this exact class of bug, and
 --   supabase_migration_ref_number_counters_v2_unique_constraint_guard.sql
---   for the fix (NOT executed).
+--   for the fix — RETRACTED: live catalog evidence
+--   (ref_number_counters_pkey) proved this specific diagnosis wrong;
+--   that migration file must NOT be applied. The exact failing
+--   statement remains unidentified as of TEST 28 below.
+--
+--   V9 DIAGNOSTIC INSTRUMENTATION ITEM (stage tracking + GET STACKED
+--   DIAGNOSTICS — added after the "no unique or exclusion constraint"
+--   root cause survived full repository AND live-catalog investigation
+--   without being pinned to an exact statement):
+--   #1  a caught exception records which internal processing stage was
+--       last entered (customer_resolution/customer_insert/tour_lookup/
+--       reference_number_allocation/reservation_insert/passenger_
+--       insert/ingestion_mark_processed/activity_log_insert/and the
+--       other branches' stages), in BOTH email_ingestions.error_reason
+--       and the returned JSON's 'stage' key                             -> TEST 28
+--   #2  GET STACKED DIAGNOSTICS fields (sqlstate/constraint/table/
+--       column/detail/hint/a bounded context) are captured without
+--       raising and without ever containing application data            -> TEST 28
+--   #3  the original SQLERRM is preserved verbatim, never replaced or
+--       summarized                                                      -> TEST 28
+--   #4  every V8/V7/V6/V5/V4/V3 guarantee remains intact                -> TESTS 1-27,
+--       all unmodified and still passing under V9 (only local-variable
+--       assignments and the EXCEPTION handler's own diagnostics capture
+--       were added; no branch condition, lock, or write statement was
+--       touched)
 -- ══════════════════════════════════════════════════════════════════════════
 
 -- ── END OF MANUAL TEST PLAN ─────────────────────────────────────────────────

@@ -137,8 +137,14 @@ function buildEventTypeMap(plan) {
  * this endpoint promises: externalBookingId (added by the caller),
  * gmailMessageId, eventType, decision, rpcResult, reservationId,
  * ingestionId, processingStatus, stoppedEarly (added by the caller),
- * error — never the raw request payload, never a passenger name, never
- * a customer contact field. */
+ * error, stage, diagnostics — never the raw request payload, never a
+ * passenger name, never a customer contact field. stage/diagnostics
+ * (V9) are SQL error metadata only (a processing-stage label, a
+ * SQLSTATE code, constraint/table/column identifiers, a bounded
+ * PL/pgSQL call-stack excerpt) — never application data — and are only
+ * ever present on a 'failed' RPC result from a V9-or-later database;
+ * they are simply absent (null) against V8 or any non-'failed' result,
+ * since older/other RPC responses never carry these keys. */
 function decorateCallResult(call, eventType) {
   const rpcResult = (call && call.rpcResult) || {};
   const resultValue = rpcResult.result;
@@ -151,6 +157,8 @@ function decorateCallResult(call, eventType) {
     ingestionId: rpcResult.ingestion_id || null,
     processingStatus: rpcResult.processing_status || null,
     error: rpcResult.error || null,
+    stage: rpcResult.stage || null,
+    diagnostics: rpcResult.diagnostics || null,
   };
 }
 
