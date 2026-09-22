@@ -91,7 +91,21 @@ function buildRpcPayload({ parsedEvent, rawBody, civitatisSourceId, tourId, cust
     p_customer_full_name: parsedEvent.clientFullName,
     p_customer_email: parsedEvent.clientEmail,
     p_customer_phone: (parsedEvent.phones && parsedEvent.phones[0]) || null,
-    p_passengers: JSON.stringify(parsedEvent.passengers || []),
+    // A native JS array/object here — NEVER a pre-stringified JSON
+    // string. supabase.rpc(fn, args) hands the WHOLE args object to
+    // @supabase/postgrest-js's PostgrestBuilder, which itself calls
+    // JSON.stringify(this.body) exactly ONCE to build the HTTP request
+    // body. Pre-serializing this field with JSON.stringify(...) here
+    // would double-encode it: PostgREST would receive a JSON STRING
+    // (whose text merely looks like an array) under p_passengers, cast
+    // it to a JSONB SCALAR, and public.ingest_civitatis_booking's
+    // jsonb_array_elements(p_passengers) calls would throw "cannot
+    // extract elements from a scalar" — exactly the real production
+    // failure this comment documents (gmailMessageId
+    // 1a0aedc69a2ef905 / booking A41629692's first controlled write
+    // attempt). See tests/civitatis/writeAdapter.test.js's REGRESSION
+    // test for the reproduction.
+    p_passengers: parsedEvent.passengers || [],
   };
 }
 

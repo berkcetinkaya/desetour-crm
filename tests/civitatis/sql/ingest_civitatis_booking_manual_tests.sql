@@ -1856,6 +1856,71 @@ ROLLBACK;
 
 
 -- ══════════════════════════════════════════════════════════════════════════
+-- TEST 27 (V8 — NOT YET APPLICABLE: requires
+-- supabase_migration_civitatis_write_v8_passenger_array_type_guard.sql
+-- to be applied first; V7 alone does NOT pass this test) — a non-NULL
+-- p_passengers that is a JSONB SCALAR (not an array) must fail closed
+-- via manual_review_required with zero business-state side effects,
+-- never an unhandled "cannot extract elements from a scalar" exception.
+-- This reproduces, at the SQL layer, the exact real production failure
+-- from booking A41629692's first controlled write attempt
+-- (gmail_message_id 1a0aedc69a2ef905): the application layer
+-- double-JSON-encoded p_passengers, so what PostgreSQL actually received
+-- was a JSONB scalar STRING whose text merely looked like an array —
+-- '"[{\"fullName\":\"ROMANO JUS\",\"sortOrder\":0}]"'::jsonb below
+-- reproduces exactly that shape (a jsonb STRING, confirmed by
+-- jsonb_typeof() = 'string', not 'array').
+-- ══════════════════════════════════════════════════════════════════════════
+BEGIN;
+DO $$
+DECLARE
+  v_source_id UUID; v_tour_id UUID;
+  r0 JSONB;
+BEGIN
+  SELECT id INTO v_source_id FROM public.sources WHERE slug ILIKE 'civitatis%' LIMIT 1;
+  INSERT INTO public.tours (name, is_active) VALUES ('TEST27 Tour', TRUE) RETURNING id INTO v_tour_id;
+
+  -- A double-encoded JSON string, exactly the shape
+  -- api/_civitatis/writeAdapter.js's buildRpcPayload used to produce
+  -- before its fix (JSON.stringify(...) applied to an already-array
+  -- value, then serialized a second time when handed to
+  -- supabase.rpc(...)). At the SQL boundary this arrives as a JSONB
+  -- SCALAR of type 'string' — jsonb_typeof() confirms this, distinct
+  -- from a genuine JSONB array.
+  r0 := public.ingest_civitatis_booking(
+    'gmail-test27-scalar', 'thread-test27', NOW(), 'New booking A90000037: Test Tour', 'body', 'new_booking',
+    v_source_id, '90000037', v_tour_id, 'İtalyanca', CURRENT_DATE + 30, '09:00', 2, 0,
+    3600, 'TL', 4800, 'TL', NULL, 'Test Contact ThirtySeven', NULL, NULL,
+    '"[{\"fullName\":\"ROMANO JUS\",\"sortOrder\":0},{\"fullName\":\"GRAZIELLA MINETTO\",\"sortOrder\":1}]"'::jsonb
+  );
+
+  IF r0->>'result' <> 'manual_review_required' THEN
+    RAISE EXCEPTION 'TEST 27: FAILED — expected manual_review_required for a scalar p_passengers, got result=%, error=%', r0->>'result', r0->>'error';
+  END IF;
+  IF NOT (r0->'missing_fields' @> '["passengers (must be a JSON array when provided)"]'::jsonb) THEN
+    RAISE EXCEPTION 'TEST 27: FAILED — missing_fields did not name the passengers type problem: %', r0->'missing_fields';
+  END IF;
+  -- Zero business-state side effects: no reservation, no customer, no
+  -- reservation_guests, no activity_logs row for this booking.
+  IF EXISTS (SELECT 1 FROM public.reservations WHERE source_id = v_source_id AND external_booking_id = '90000037') THEN
+    RAISE EXCEPTION 'TEST 27: FAILED — a reservation was created despite the malformed p_passengers';
+  END IF;
+  IF EXISTS (SELECT 1 FROM public.customers WHERE full_name = 'Test Contact ThirtySeven') THEN
+    RAISE EXCEPTION 'TEST 27: FAILED — a customer was created despite the malformed p_passengers';
+  END IF;
+  -- The email_ingestions row from Step 1 survives and is honestly
+  -- recorded as needs_review — never lost, unlike the unhandled-
+  -- exception behavior this migration replaces.
+  IF NOT EXISTS (SELECT 1 FROM public.email_ingestions WHERE gmail_message_id = 'gmail-test27-scalar' AND processing_status = 'needs_review') THEN
+    RAISE EXCEPTION 'TEST 27: FAILED — email_ingestions row was not cleanly recorded as needs_review';
+  END IF;
+
+  RAISE NOTICE 'TEST 27: PASSED';
+END $$;
+ROLLBACK;
+
+
+-- ══════════════════════════════════════════════════════════════════════════
 -- CROSS-REFERENCE — where each requested test-plan item is actually
 -- covered (original 21 items, plus the V3 and V4 safety-revision items):
 --   #1  new customer created (exactly one)         -> TEST 7
@@ -1980,6 +2045,27 @@ ROLLBACK;
 --       needed them to clear the new earlier-running guard) — none of
 --       their own actual assertions were weakened or removed; see the
 --       file header for the adjustment note
+--
+--   V8 SAFETY-REVISION ITEM (p_passengers type guard — fixes the real
+--   production failure on booking A41629692's first controlled write
+--   attempt; see
+--   supabase_migration_civitatis_write_v8_passenger_array_type_guard.sql
+--   for the full incident writeup):
+--   #1  non-NULL, non-array p_passengers (a JSONB scalar, e.g. the
+--       double-encoded JSON string the real production bug produced)
+--       fails closed via manual_review_required, zero business-state
+--       side effects, BEFORE Step 2b's jsonb_array_elements call is ever
+--       reached                                                          -> TEST 27
+--       (NOT YET APPLICABLE until V8 is applied — V7 alone raises an
+--       unhandled "cannot extract elements from a scalar" exception for
+--       this exact input instead)
+--   #2  a legitimate NULL p_passengers remains accepted, unchanged        -> TEST 8,
+--       TEST 24 (Part B) (both already exercise NULL/empty p_passengers
+--       and continue to pass unmodified under V8)
+--   #3  every V7/V6/V5/V4/V3 guarantee remains intact                     -> TESTS 1-26,
+--       all unmodified and still passing under V8 (only ONE new
+--       pre-flight check was added; no existing branch, lock, or query
+--       was touched)
 -- ══════════════════════════════════════════════════════════════════════════
 
 -- ── END OF MANUAL TEST PLAN ─────────────────────────────────────────────────

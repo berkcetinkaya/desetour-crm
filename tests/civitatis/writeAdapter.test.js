@@ -70,8 +70,57 @@ test('buildRpcPayload maps a parsed event to the exact RPC parameter names, pres
   assert.equal(payload.p_retail_amount, 4800); // Civitatis Retail price, separate
   assert.equal(payload.p_customer_id, null);
   assert.equal(payload.p_customer_full_name, 'No Stop Viaggi Di Fam Srl Neri Francesca');
-  const passengers = JSON.parse(payload.p_passengers);
-  assert.deepEqual(passengers, [
+  // p_passengers must be a native array — never a pre-stringified JSON
+  // string (see the REGRESSION test below for why).
+  assert.ok(Array.isArray(payload.p_passengers));
+  assert.deepEqual(payload.p_passengers, [
+    { fullName: 'ROMANO JUS', sortOrder: 0 },
+    { fullName: 'GRAZIELLA MINETTO', sortOrder: 1 },
+  ]);
+});
+
+// REGRESSION — reproduces the exact real-world production failure from
+// booking A41629692's first controlled write attempt (gmailMessageId
+// 1a0aedc69a2ef905): the RPC call failed with Postgres error "cannot
+// extract elements from a scalar". Root cause: buildRpcPayload used to
+// build p_passengers via JSON.stringify(parsedEvent.passengers || [])
+// — a JS string. @supabase/postgrest-js's PostgrestBuilder hands the
+// WHOLE args object to JSON.stringify(this.body) exactly ONCE to build
+// the actual HTTP request body (see
+// node_modules/@supabase/postgrest-js/src/PostgrestBuilder.ts). A
+// string field there is therefore JSON-encoded a SECOND time — what
+// actually reaches PostgREST under "p_passengers" is a JSON STRING
+// (whose text merely looks like an array), which PostgREST casts to a
+// JSONB SCALAR, not a JSONB array — exactly what
+// jsonb_array_elements(p_passengers) cannot iterate. This fixture
+// (F.italianRealFormatBooking) mirrors the real A41629692 email's exact
+// content (same reservation number, same passenger names, same tour) in
+// sanitized/fixture form. This test fails under the old
+// JSON.stringify(...) implementation and passes under the fix.
+test('REGRESSION (A41629692 production failure): p_passengers survives the actual HTTP wire round-trip as a JSON array, never a double-encoded string', () => {
+  const parsedEvent = parseCivitatisEmail(F.italianRealFormatBooking);
+  const payload = buildRpcPayload({
+    parsedEvent, rawBody: F.italianRealFormatBooking.body,
+    civitatisSourceId: 'src-civitatis', tourId: 'tour-grand-bazaar', customerId: null,
+  });
+
+  assert.ok(
+    Array.isArray(payload.p_passengers),
+    'p_passengers must be a native array on the payload object, not a pre-stringified JSON string'
+  );
+
+  // Simulate the exact wire round-trip @supabase/postgrest-js performs
+  // for a real supabase.rpc(...) call: ONE JSON.stringify() of the
+  // whole args object to build the request body, then parse it back the
+  // way PostgREST reads the request body. This is the exact mechanism
+  // that turned a pre-stringified p_passengers into a JSONB scalar in
+  // production.
+  const wireBody = JSON.parse(JSON.stringify(payload));
+  assert.ok(
+    Array.isArray(wireBody.p_passengers),
+    'p_passengers must still be a JSON array after the single wire-level JSON.stringify a real supabase.rpc() call performs'
+  );
+  assert.deepEqual(wireBody.p_passengers, [
     { fullName: 'ROMANO JUS', sortOrder: 0 },
     { fullName: 'GRAZIELLA MINETTO', sortOrder: 1 },
   ]);
