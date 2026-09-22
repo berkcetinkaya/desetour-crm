@@ -267,3 +267,161 @@ test('planCivitatisIngestion and executeCivitatisIngestionPlan never call any Su
   const plan = await planCivitatisIngestion({ messages: [F.italianNewBooking], repo });
   assert.equal(plan.ok, true);
 });
+
+// ── FINAL APPLICATION LAYER AUDIT (pre-write-enablement) ────────────────
+// The tests below were added specifically to prove the audit's ordering
+// (4/5) and RPC-result fail-closed (7) guarantees, and to pin down
+// expected behavior for the 5 known real Civitatis booking IDs (8) using
+// the newly-added F.juanArmasPuenteBooking / F.sampleSafeCreateBooking
+// fixtures alongside the already-existing real-format fixtures.
+
+// AUDIT 4/5: Gmail does not guarantee chronological order (in practice it
+// is typically newest-first) — feeding a 3-event chain in strict
+// newest-first order must still produce calls in ascending receivedAt
+// order, new_booking first.
+test('a 3-event chain fed to planCivitatisIngestion in strict newest-first Gmail order is reordered to chronological (new_booking first)', async () => {
+  const repo = createFakeRepo(baseRepoOptions());
+  const secondModification = {
+    ...F.italianModification,
+    gmailMessageId: 'msg-it-mod-002',
+    receivedAt: '2026-06-10T10:00:00.000Z',
+  };
+  // Deliberately supplied newest-first, exactly as Gmail's own listing
+  // order typically returns messages.
+  const plan = await planCivitatisIngestion({
+    messages: [secondModification, F.italianModification, F.italianNewBooking],
+    repo,
+  });
+  assert.equal(plan.plans.length, 1);
+  assert.equal(plan.plans[0].eligible, true);
+  const ids = plan.plans[0].calls.map(c => c.p_gmail_message_id);
+  assert.deepEqual(ids, ['msg-it-new-001', 'msg-it-mod-001', 'msg-it-mod-002']);
+  assert.equal(plan.plans[0].calls[0].p_event_type, 'new_booking');
+});
+
+// AUDIT 4: equal receivedAt timestamps must fall back to a deterministic,
+// stable tie-breaker (gmailMessageId) so repeated runs over the same
+// input — regardless of the order the messages happen to arrive in —
+// always produce the exact same RPC call order.
+test('two events with an identical receivedAt are ordered deterministically by gmailMessageId, independent of input order', async () => {
+  const repo = createFakeRepo(baseRepoOptions());
+  const sameInstant = '2026-06-01T10:00:00.000Z';
+  const eventA = { ...F.italianNewBooking, gmailMessageId: 'msg-aaa', receivedAt: sameInstant };
+  const eventB = { ...F.italianModification, gmailMessageId: 'msg-bbb', receivedAt: sameInstant };
+
+  const planForward = await planCivitatisIngestion({ messages: [eventA, eventB], repo });
+  const planReversed = await planCivitatisIngestion({ messages: [eventB, eventA], repo });
+
+  const idsForward = planForward.plans[0].calls.map(c => c.p_gmail_message_id);
+  const idsReversed = planReversed.plans[0].calls.map(c => c.p_gmail_message_id);
+  assert.deepEqual(idsForward, ['msg-aaa', 'msg-bbb']); // 'msg-aaa' < 'msg-bbb'
+  assert.deepEqual(idsReversed, ['msg-aaa', 'msg-bbb']); // same regardless of input order
+});
+
+// AUDIT 7: a completely unrecognized RPC result value must stop
+// processing the rest of that booking's chain, exactly like 'failed'
+// does — it must never be silently treated as safe-to-continue.
+test('executeCivitatisIngestionPlan stops a booking\'s remaining calls on an unrecognized RPC result value (fails closed)', async () => {
+  const repo = createFakeRepo(baseRepoOptions());
+  const plan = await planCivitatisIngestion({ messages: [F.italianNewBooking, F.italianModification], repo });
+  const rpcCaller = makeFakeRpcCaller([{ result: 'some_future_result_this_code_does_not_know_about' }, { result: 'updated' }]);
+  const results = await executeCivitatisIngestionPlan(plan, rpcCaller);
+  assert.equal(rpcCaller.calls.length, 1); // never sent the second (modification) call
+  assert.equal(results[0].calls.length, 1);
+  assert.equal(results[0].calls[0].unknownResult, true);
+  assert.equal(results[0].stoppedEarly, true);
+});
+
+// AUDIT 7: 'failed' itself must still be reported as unambiguously not
+// an unknown result (it IS known, it is just terminal for this chain).
+test('executeCivitatisIngestionPlan marks a known "failed" result as known (not unknownResult), while still stopping', async () => {
+  const repo = createFakeRepo(baseRepoOptions());
+  const plan = await planCivitatisIngestion({ messages: [F.italianNewBooking], repo });
+  const rpcCaller = makeFakeRpcCaller([{ result: 'failed', error: 'simulated' }]);
+  const results = await executeCivitatisIngestionPlan(plan, rpcCaller);
+  assert.equal(results[0].calls[0].unknownResult, false);
+  assert.equal(results[0].stoppedEarly, true);
+});
+
+// AUDIT 7: every other known RPC result value must be accepted and
+// recorded without being confused for a failure or an unknown result.
+for (const knownResult of ['stale_ignored', 'booking_already_exists', 'manual_review_required', 'already_processed']) {
+  test(`executeCivitatisIngestionPlan records a known "${knownResult}" result without treating it as unknown or as a failure`, async () => {
+    const repo = createFakeRepo(baseRepoOptions());
+    const plan = await planCivitatisIngestion({ messages: [F.italianNewBooking], repo });
+    const rpcCaller = makeFakeRpcCaller([{ result: knownResult }]);
+    const results = await executeCivitatisIngestionPlan(plan, rpcCaller);
+    assert.equal(results[0].calls[0].unknownResult, false);
+    assert.equal(results[0].calls[0].rpcResult.result, knownResult);
+  });
+}
+
+// AUDIT 3/8: the real A41629692 sequence — a genuine new_booking followed
+// later by a genuine "Booking modified" email for the SAME reservation
+// number, using the real mixed-label-format fixtures — must always reach
+// the RPC as create-then-update, NEVER modified-first, even when the
+// caller happens to fetch/batch them in reverse order.
+test('the real A41629692 new+modified sequence executes as create-then-update, never modified-first, however the input is ordered', async () => {
+  const repo = createFakeRepo(baseRepoOptions());
+  const plan = await planCivitatisIngestion({
+    messages: [F.italianRealFormatModification, F.italianRealFormatBooking], // fed newest-first
+    repo,
+  });
+  assert.equal(plan.plans.length, 1);
+  assert.equal(plan.plans[0].externalBookingId, '41629692');
+  const rpcCaller = makeFakeRpcCaller([{ result: 'created' }, { result: 'updated' }]);
+  const results = await executeCivitatisIngestionPlan(plan, rpcCaller);
+  assert.equal(rpcCaller.calls.length, 2);
+  assert.equal(rpcCaller.calls[0].p_event_type, 'new_booking');
+  assert.equal(rpcCaller.calls[0].p_gmail_message_id, 'msg-it-real-new-001');
+  assert.equal(rpcCaller.calls[1].p_event_type, 'modified');
+  assert.equal(rpcCaller.calls[1].p_gmail_message_id, 'msg-it-real-mod-001');
+  assert.equal(results[0].calls[0].rpcResult.result, 'created');
+  assert.equal(results[0].calls[1].rpcResult.result, 'updated');
+  assert.equal(results[0].stoppedEarly, false);
+});
+
+// AUDIT 8: consolidated expectation for all 5 known real booking IDs,
+// mixed into a single shuffled batch exactly as a real Gmail fetch might
+// return them. Expected automatic writes = 4 reservations: A41629692's
+// two emails collapse into ONE eligible plan (create+update), A41576789/
+// A41534177/A41659924 are each a safe standalone create, and A41474069
+// (booking-contact name "Juan Armas Puente", matching an existing
+// customer's exact normalized name) is never eligible.
+test('the 5 known real Civitatis bookings, mixed together, plan exactly 4 eligible reservations and leave A41474069 for manual review', async () => {
+  const repo = createFakeRepo(baseRepoOptions({
+    customers: [{ id: 'cust-juan', full_name: 'Juan Armas Puente', email: null, phone: null }],
+  }));
+  const messages = [
+    F.italianRealFormatModification, // A41629692 (modification, deliberately before its own new_booking)
+    F.spanishRealFormatBooking,      // A41659924
+    F.juanArmasPuenteBooking,        // A41474069
+    F.italianRealFormatBooking,      // A41629692 (new_booking)
+    F.sampleSafeCreateBooking,       // A41534177
+    F.spanishNewBooking,             // A41576789
+  ];
+  const plan = await planCivitatisIngestion({ messages, repo });
+  assert.equal(plan.plans.length, 5); // 5 distinct booking IDs
+
+  const byId = Object.fromEntries(plan.plans.map(p => [p.externalBookingId, p]));
+
+  assert.equal(byId['41629692'].eligible, true);
+  assert.equal(byId['41629692'].calls.length, 2); // one reservation, two RPC calls
+  assert.equal(byId['41629692'].calls[0].p_event_type, 'new_booking');
+  assert.equal(byId['41629692'].calls[1].p_event_type, 'modified');
+
+  assert.equal(byId['41576789'].eligible, true);
+  assert.equal(byId['41576789'].calls.length, 1);
+
+  assert.equal(byId['41534177'].eligible, true);
+  assert.equal(byId['41534177'].calls.length, 1);
+
+  assert.equal(byId['41659924'].eligible, true);
+  assert.equal(byId['41659924'].calls.length, 1);
+
+  assert.equal(byId['41474069'].eligible, false);
+  assert.ok(byId['41474069'].reason.includes('POSSIBLE_EXISTING_MATCH'));
+
+  const eligibleCount = plan.plans.filter(p => p.eligible).length;
+  assert.equal(eligibleCount, 4); // total automatic reservations
+});

@@ -526,6 +526,115 @@ SURNAME: Example
 `,
 };
 
+// 14. Real booking A41474069 — new booking whose booking-contact name is
+// "Juan Armas Puente", used by the write-adapter audit to prove this
+// specific real booking ID is treated as POSSIBLE_EXISTING_MATCH (never
+// auto-written) whenever an existing customer's exact-normalized name
+// already matches, exactly like the generic normalizeFullNameForComparison/
+// matchCustomerByName unit tests already prove for that name in the
+// abstract.
+const juanArmasPuenteBooking = {
+  from: FROM_CIVITATIS,
+  subject: 'New booking A41474069: Tour por el Gran Bazar',
+  gmailMessageId: 'msg-es-new-41474069',
+  gmailThreadId: 'thread-41474069',
+  receivedAt: '2026-04-01T10:00:00.000Z',
+  body: `
+Activity:
+Tour por el Gran Bazar - Tour en español
+
+Reservation number:
+41474069
+
+City:
+Istanbul
+
+Language:
+Español
+
+Internal code:
+Grand Bazaar Experience
+
+Date:
+Saturday, october 10, 2026
+
+Hour:
+9:00
+
+People:
+2 Adultos
+
+Passenger information 1:
+Juan Armas Puente
+
+Passenger information 2:
+Maria Lopez
+
+Retail price:
+4,800 TL
+
+Net price:
+3,600 TL
+
+Client details:
+Name: Juan
+Surname: Armas Puente
+`,
+};
+
+// 15. Real booking A41534177 — a plain, uncontested new booking used by
+// the write-adapter audit as one of the "safe create" real booking IDs.
+const sampleSafeCreateBooking = {
+  from: FROM_CIVITATIS,
+  subject: 'New booking A41534177: Tour del Grande Bazar',
+  gmailMessageId: 'msg-it-new-41534177',
+  gmailThreadId: 'thread-41534177',
+  receivedAt: '2026-03-01T10:00:00.000Z',
+  body: `
+Activity:
+Tour del Grande Bazar - Tour in italiano
+
+Reservation number:
+41534177
+
+City:
+Istanbul
+
+Language:
+Italiano
+
+Internal code:
+Grand Bazaar Experience
+
+Date:
+Friday, october 2, 2026
+
+Hour:
+9:00 (9:00 am)
+
+People:
+2 Adulti x € 43.02
+
+Passenger information 1:
+Full name
+MARCO ROSSI
+
+Passenger information 2:
+Full name
+LUCA BIANCHI
+
+Retail price:
+4,800 TL
+
+Net price:
+3,600 TL
+
+Client details:
+Name: Marco
+Surname: Rossi
+`,
+};
+
 module.exports = {
   FROM_CIVITATIS,
   FROM_OTHER,
@@ -542,4 +651,6 @@ module.exports = {
   italianRealFormatBooking,
   italianRealFormatModification,
   realFormatRetailWithExtraLine,
+  juanArmasPuenteBooking,
+  sampleSafeCreateBooking,
 };

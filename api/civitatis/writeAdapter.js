@@ -46,6 +46,21 @@ const { parseCivitatisEmail } = require('./parser');
 const { mergeChronologicalState } = require('./dryRun');
 const { matchTourChannel, matchCustomer, matchCustomerByName, findPossibleExistingReservation } = require('./matching');
 
+// The complete, exhaustive vocabulary of result values
+// public.ingest_civitatis_booking(...) (V4) can return. Any value NOT in
+// this set is treated as an unknown/unexpected result and fails closed —
+// see executeCivitatisIngestionPlan below — rather than being assumed
+// safe to continue past.
+const KNOWN_RPC_RESULTS = new Set([
+  'created',
+  'updated',
+  'stale_ignored',
+  'booking_already_exists',
+  'manual_review_required',
+  'already_processed',
+  'failed',
+]);
+
 /**
  * Builds the exact parameter object public.ingest_civitatis_booking(...)
  * expects for ONE parsed Civitatis event (one Gmail message).
@@ -130,7 +145,22 @@ async function planCivitatisIngestion({ messages, repo }) {
 
   const plans = [];
   for (const [externalBookingId, items] of groups) {
-    items.sort((a, b) => new Date(a.parsed.receivedAt) - new Date(b.parsed.receivedAt));
+    // Gmail's own listing order is NOT guaranteed chronological (in
+    // practice it is typically newest-first) — every event within a
+    // booking's chain is re-sorted here by receivedAt ASCENDING
+    // regardless of the order `messages` arrived in, so a New booking
+    // email is always sent to the RPC before its later Booking modified
+    // email, however the caller fetched/batched them. Ties (identical
+    // receivedAt) fall back to gmailMessageId — a stable, always-present
+    // string — purely so repeated runs over the same input produce the
+    // exact same order; it carries no chronological meaning of its own.
+    items.sort((a, b) => {
+      const byTime = new Date(a.parsed.receivedAt) - new Date(b.parsed.receivedAt);
+      if (byTime !== 0) return byTime;
+      const idA = String(a.parsed.gmailMessageId || '');
+      const idB = String(b.parsed.gmailMessageId || '');
+      return idA < idB ? -1 : idA > idB ? 1 : 0;
+    });
 
     const failed = items.filter(it => !it.parsed.ok);
     if (failed.length > 0) {
@@ -217,11 +247,13 @@ async function planCivitatisIngestion({ messages, repo }) {
  * wrapper exists anywhere reachable in this codebase yet.
  *
  * Stops processing a booking's remaining calls (but continues to the
- * next booking) the first time a call returns result:'failed' — a
- * failed event's transaction already rolled back cleanly inside the RPC
- * (see the migration's EXCEPTION handler), so nothing partial was left
- * behind, but applying a LATER event for the same booking on top of a
- * failed earlier one risks skipping real intermediate state.
+ * next booking) the first time a call returns result:'failed', or a
+ * result value outside KNOWN_RPC_RESULTS. A failed event's transaction
+ * already rolled back cleanly inside the RPC (see the migration's
+ * EXCEPTION handler), so nothing partial was left behind, but applying a
+ * LATER event for the same booking on top of a failed OR unrecognized
+ * earlier result risks skipping real intermediate state — an unknown
+ * result is never assumed safe to continue past (fail closed).
  *
  * @param {{ok:true, plans:Array}} plan - from planCivitatisIngestion
  * @param {(payload:object) => Promise<object>} rpcCaller
@@ -241,12 +273,18 @@ async function executeCivitatisIngestionPlan(plan, rpcCaller) {
       continue;
     }
     const callResults = [];
+    let stoppedEarly = false;
     for (const payload of entry.calls) {
       const rpcResult = await rpcCaller(payload);
-      callResults.push({ gmailMessageId: payload.p_gmail_message_id, rpcResult });
-      if (rpcResult && rpcResult.result === 'failed') break;
+      const resultValue = rpcResult && rpcResult.result;
+      const isKnown = KNOWN_RPC_RESULTS.has(resultValue);
+      callResults.push({ gmailMessageId: payload.p_gmail_message_id, rpcResult, unknownResult: !isKnown });
+      if (!isKnown || resultValue === 'failed') {
+        stoppedEarly = true;
+        break;
+      }
     }
-    results.push({ externalBookingId: entry.externalBookingId, skipped: false, calls: callResults });
+    results.push({ externalBookingId: entry.externalBookingId, skipped: false, calls: callResults, stoppedEarly });
   }
   return results;
 }
