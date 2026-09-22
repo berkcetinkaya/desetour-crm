@@ -11,6 +11,10 @@
     "api/ingest-civitatis.js": {
       "maxDuration": 60,
       "memory": 512
+    },
+    "api/ingest-civitatis-write.js": {
+      "maxDuration": 60,
+      "memory": 512
     }
   },
   "rewrites": [
