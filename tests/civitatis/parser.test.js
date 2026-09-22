@@ -2,7 +2,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { parseCivitatisEmail } = require('../../api/civitatis/parser');
+const { parseCivitatisEmail } = require('../../api/_civitatis/parser');
 const F = require('./fixtures');
 
 // 1. Italian new booking
@@ -144,7 +144,7 @@ test('empty message body on an otherwise-valid subject is a parse_error, not nee
 
 // People/guest-count without a price suffix on the same line
 test('parses a bare "People: N Adulti" value with no price text attached', () => {
-  const { extractGuestCounts } = require('../../api/civitatis/parser');
+  const { extractGuestCounts } = require('../../api/_civitatis/parser');
   assert.deepEqual(extractGuestCounts('2 Adulti'), { adultCount: 2, childCount: null });
   assert.deepEqual(extractGuestCounts('3 Adultos'), { adultCount: 3, childCount: null });
   assert.deepEqual(extractGuestCounts('2 Adulti, 1 Bambini'), { adultCount: 2, childCount: 1 });
@@ -152,7 +152,7 @@ test('parses a bare "People: N Adulti" value with no price text attached', () =>
 
 // Retail / Net price parsing
 test('parses Retail price and Net price money lines, comma as thousands separator', () => {
-  const { parseMoneyLine } = require('../../api/civitatis/parser');
+  const { parseMoneyLine } = require('../../api/_civitatis/parser');
   assert.deepEqual(parseMoneyLine('4,800 TL'), { amount: 4800, currency: 'TL' });
   assert.deepEqual(parseMoneyLine('3,600 TL'), { amount: 3600, currency: 'TL' });
 });

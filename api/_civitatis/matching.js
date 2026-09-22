@@ -1,9 +1,9 @@
 /**
- * api/civitatis/matching.js
+ * api/_civitatis/matching.js
  * ─────────────────────────────────────────────────────────────────────────
  * Pure matching logic — tour, customer, and legacy-reservation matching —
  * operating entirely on plain data already fetched by the caller (see
- * api/civitatis/supabaseAdmin.js for the actual Supabase reads). Nothing
+ * api/_civitatis/supabaseAdmin.js for the actual Supabase reads). Nothing
  * in this file talks to Supabase, so every rule here is directly testable
  * with fixture arrays, exactly like the parser.
  *

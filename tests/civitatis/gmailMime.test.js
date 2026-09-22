@@ -2,8 +2,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const gmailClient = require('../../api/civitatis/gmailClient');
-const { parseCivitatisEmail } = require('../../api/civitatis/parser');
+const gmailClient = require('../../api/_civitatis/gmailClient');
+const { parseCivitatisEmail } = require('../../api/_civitatis/parser');
 
 // No network access, no real Gmail mailbox, no Supabase connection
 // anywhere in this file — only synthetic Gmail API payload shapes built

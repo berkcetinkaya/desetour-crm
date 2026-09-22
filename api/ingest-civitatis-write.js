@@ -8,7 +8,7 @@
  * (which remains dry-run-only, completely unchanged, and still has no
  * write code path anywhere in it or anything it calls). This file is the
  * ONLY reachable HTTP endpoint that can ever invoke
- * api/civitatis/writeAdapter.js's executeCivitatisIngestionPlan, which is
+ * api/_civitatis/writeAdapter.js's executeCivitatisIngestionPlan, which is
  * in turn the ONLY place that can ever call the
  * public.ingest_civitatis_booking(...) RPC.
  *
@@ -30,16 +30,16 @@
  *
  * WRITE MODE, WHEN BOTH GATES ARE SATISFIED, uses ONLY:
  *   - the already-existing Supabase service_role client
- *     (api/civitatis/supabaseAdmin.js's getServiceRoleClient) — the
+ *     (api/_civitatis/supabaseAdmin.js's getServiceRoleClient) — the
  *     SAME client the read-only dry-run repo already uses, never a new
  *     credential path;
  *   - the already-installed public.ingest_civitatis_booking(...) RPC
  *     (V7, already applied to production) via a single
  *     supabase.rpc('ingest_civitatis_booking', payload) call per Gmail
- *     message, exactly as api/civitatis/writeAdapter.js's
+ *     message, exactly as api/_civitatis/writeAdapter.js's
  *     executeCivitatisIngestionPlan already expects to drive it;
  *   - the already-existing, unmodified eligibility gating in
- *     api/civitatis/writeAdapter.js's planCivitatisIngestion. This file
+ *     api/_civitatis/writeAdapter.js's planCivitatisIngestion. This file
  *     adds ZERO new eligibility rules, ZERO new parsing rules, and ZERO
  *     new customer-matching rules — POSSIBLE_EXISTING_MATCH,
  *     NEEDS_REVIEW, PARSE_ERROR, and IGNORED bookings are exactly as
@@ -50,7 +50,7 @@
  *
  * SINGLE-BOOKING MANUAL MODE (?externalBookingId=...): when supplied,
  * ONLY Gmail messages whose PARSED external booking id (via the
- * unmodified api/civitatis/parser.js — called here purely as a filter,
+ * unmodified api/_civitatis/parser.js — called here purely as a filter,
  * never re-implemented) matches EXACTLY are ever handed to
  * planCivitatisIngestion. Every other message fetched in the same page
  * is dropped before planning even starts, so no other booking can ever
@@ -72,10 +72,10 @@
  */
 'use strict';
 
-const gmailClient = require('./civitatis/gmailClient');
-const { createSupabaseCivitatisRepo, getServiceRoleClient, ConfigurationError } = require('./civitatis/supabaseAdmin');
-const { planCivitatisIngestion, executeCivitatisIngestionPlan } = require('./civitatis/writeAdapter');
-const { parseCivitatisEmail } = require('./civitatis/parser');
+const gmailClient = require('./_civitatis/gmailClient');
+const { createSupabaseCivitatisRepo, getServiceRoleClient, ConfigurationError } = require('./_civitatis/supabaseAdmin');
+const { planCivitatisIngestion, executeCivitatisIngestionPlan } = require('./_civitatis/writeAdapter');
+const { parseCivitatisEmail } = require('./_civitatis/parser');
 
 const DEFAULT_MAX_MESSAGES = 25;
 const HARD_MAX_MESSAGES = 100; // same bound as /api/ingest-civitatis, for the same reason (function time budget)

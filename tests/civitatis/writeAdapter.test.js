@@ -2,8 +2,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { buildRpcPayload, planCivitatisIngestion, executeCivitatisIngestionPlan } = require('../../api/civitatis/writeAdapter');
-const { parseCivitatisEmail } = require('../../api/civitatis/parser');
+const { buildRpcPayload, planCivitatisIngestion, executeCivitatisIngestionPlan } = require('../../api/_civitatis/writeAdapter');
+const { parseCivitatisEmail } = require('../../api/_civitatis/parser');
 const { createFakeRepo } = require('./fakeRepo');
 const F = require('./fixtures');
 

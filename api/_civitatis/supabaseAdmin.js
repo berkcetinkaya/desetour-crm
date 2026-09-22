@@ -1,9 +1,9 @@
 /**
- * api/civitatis/supabaseAdmin.js
+ * api/_civitatis/supabaseAdmin.js
  * ─────────────────────────────────────────────────────────────────────────
  * The ONLY module in this integration that talks to Supabase with
  * elevated privilege. Implements the read-only `repo` interface
- * api/civitatis/dryRun.js expects, backed by the Supabase service_role
+ * api/_civitatis/dryRun.js expects, backed by the Supabase service_role
  * key — which bypasses RLS by design (see "SERVICE ROLE BYPASS" in
  * supabase_rls_policies.sql) and therefore must NEVER be reachable from
  * browser code. It is read only in this module by construction: every
@@ -158,7 +158,7 @@ async function findCustomersByContact({ email, phone }) {
 }
 
 /** Conservative name-only candidate lookup for the booking CONTACT (never
- * a passenger — see api/civitatis/dryRun.js, which only ever calls this
+ * a passenger — see api/_civitatis/dryRun.js, which only ever calls this
  * with mergedState.clientFullName). Narrowed server-side with a
  * case-insensitive exact-string `ilike` (no `%`/`_` wildcards, so this is
  * NOT database-side fuzzy matching — it is a plain case-insensitive
@@ -180,7 +180,7 @@ async function findCustomersByName({ fullName }) {
   return data || [];
 }
 
-/** The full read-only repo object shape api/civitatis/dryRun.js expects. */
+/** The full read-only repo object shape api/_civitatis/dryRun.js expects. */
 function createSupabaseCivitatisRepo() {
   return {
     getCivitatisSource,

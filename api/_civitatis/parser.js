@@ -1,12 +1,12 @@
 /**
- * api/civitatis/parser.js
+ * api/_civitatis/parser.js
  * ─────────────────────────────────────────────────────────────────────────
  * The deterministic Civitatis reservation-email parser. No AI/LLM calls,
  * no network access, no Supabase access — a pure function from
  * { from, subject, body, gmailMessageId, gmailThreadId, receivedAt } to a
  * normalized structured object (or a needs_review/parse_error result).
  * Fully testable without Gmail: callers hand it plain strings already
- * extracted from a Gmail message by api/civitatis/gmailClient.js.
+ * extracted from a Gmail message by api/_civitatis/gmailClient.js.
  *
  * Civitatis's plain-text body is a sequence of "Label:" lines each
  * followed by its value on the next non-blank line(s) — see the field-

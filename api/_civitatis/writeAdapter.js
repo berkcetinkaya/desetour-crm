@@ -1,10 +1,10 @@
 /**
- * api/civitatis/writeAdapter.js
+ * api/_civitatis/writeAdapter.js
  * ─────────────────────────────────────────────────────────────────────────
  * PREPARATION ONLY — NOT WIRED INTO ANY REACHABLE ENDPOINT OR CRON.
  *
  * This module is the future production-write counterpart to
- * api/civitatis/dryRun.js: instead of building a read-only report, it
+ * api/_civitatis/dryRun.js: instead of building a read-only report, it
  * plans (and, only when explicitly given a real `rpcCaller`, executes)
  * calls to the public.ingest_civitatis_booking(...) transactional RPC
  * defined in supabase_migration_civitatis_write.sql — a migration that
@@ -113,7 +113,7 @@ function buildRpcPayload({ parsedEvent, rawBody, civitatisSourceId, tourId, cust
  *     the booking CONTACT's own fields — never a passenger)
  *
  * Read-only: only ever calls the `repo`'s existing read methods (the
- * same repo interface api/civitatis/supabaseAdmin.js already implements
+ * same repo interface api/_civitatis/supabaseAdmin.js already implements
  * for the dry-run endpoint). Never calls anything write-shaped.
  *
  * @param {{messages: Array, repo: object}} args

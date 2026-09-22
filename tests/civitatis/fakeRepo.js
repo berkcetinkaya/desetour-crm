@@ -4,12 +4,12 @@
  * An in-memory implementation of the `repo` interface runCivitatisDryRun
  * expects, backed by plain fixture arrays instead of Supabase. Used only
  * by tests — never touches a network or a real database. Mirrors the
- * read-only shape api/civitatis/supabaseAdmin.js implements for real.
+ * read-only shape api/_civitatis/supabaseAdmin.js implements for real.
  * ─────────────────────────────────────────────────────────────────────────
  */
 'use strict';
 
-const { normalizeFullNameForComparison } = require('../../api/civitatis/matching');
+const { normalizeFullNameForComparison } = require('../../api/_civitatis/matching');
 
 function createFakeRepo({ source, tourChannels = [], reservations = [], reservationGuests = {}, customers = [] } = {}) {
   return {

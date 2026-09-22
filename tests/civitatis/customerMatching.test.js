@@ -6,8 +6,8 @@ const {
   matchCustomer,
   matchCustomerByName,
   normalizeFullNameForComparison,
-} = require('../../api/civitatis/matching');
-const { runCivitatisDryRun, OUTCOME } = require('../../api/civitatis/dryRun');
+} = require('../../api/_civitatis/matching');
+const { runCivitatisDryRun, OUTCOME } = require('../../api/_civitatis/dryRun');
 const { createFakeRepo } = require('./fakeRepo');
 const F = require('./fixtures');
 
@@ -78,7 +78,7 @@ ${clientLines.join('\n')}
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// Unit tests: api/civitatis/matching.js
+// Unit tests: api/_civitatis/matching.js
 // ═══════════════════════════════════════════════════════════════════════
 
 // 1. Exact email match remains automatic
@@ -239,7 +239,7 @@ test('matchCustomerByName: no candidate shares the normalized name -> not matche
 });
 
 // ═══════════════════════════════════════════════════════════════════════
-// Integration tests: api/civitatis/dryRun.js (via fakeRepo)
+// Integration tests: api/_civitatis/dryRun.js (via fakeRepo)
 // ═══════════════════════════════════════════════════════════════════════
 
 // 3/4/5/6. no email/phone + exactly one exact normalized full-name

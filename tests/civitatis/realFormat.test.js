@@ -2,8 +2,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { parseCivitatisEmail, extractGuestCounts, parseMoneyLine } = require('../../api/civitatis/parser');
-const { mergeChronologicalState, computeReservationDiff } = require('../../api/civitatis/dryRun');
+const { parseCivitatisEmail, extractGuestCounts, parseMoneyLine } = require('../../api/_civitatis/parser');
+const { mergeChronologicalState, computeReservationDiff } = require('../../api/_civitatis/dryRun');
 const F = require('./fixtures');
 
 // No network access, no real Gmail mailbox, no Supabase connection —
@@ -311,7 +311,7 @@ test('a body/subject reservation-number MISMATCH in real-format text is still ne
 });
 
 test('tour internal code from real-format text is available for exact tour_channels matching (matching.js untouched)', () => {
-  const { matchTourChannel } = require('../../api/civitatis/matching');
+  const { matchTourChannel } = require('../../api/_civitatis/matching');
   const r = parseCivitatisEmail(F.italianRealFormatBooking);
   const tourChannels = [{
     id: 'tc-1', source_id: 'civitatis-source-1', external_product_id: 'Grand Bazaar Experience',
@@ -323,7 +323,7 @@ test('tour internal code from real-format text is available for exact tour_chann
 });
 
 test('an unmapped internal code in real-format text yields NEEDS_REVIEW with an explicit tour-mapping reason (no fuzzy matching)', () => {
-  const { matchTourChannel } = require('../../api/civitatis/matching');
+  const { matchTourChannel } = require('../../api/_civitatis/matching');
   const r = parseCivitatisEmail(F.italianRealFormatBooking);
   const tourChannels = [{ id: 'tour-2', external_product_id: 'Some Other Tour', source_id: 'civitatis-source-1' }];
   const match = matchTourChannel({ internalCode: r.internalCode, civitatisSourceId: 'civitatis-source-1', tourChannels });

@@ -1,5 +1,5 @@
 /**
- * api/civitatis/gmailClient.js
+ * api/_civitatis/gmailClient.js
  * ─────────────────────────────────────────────────────────────────────────
  * Minimal Gmail REST API client for reservation@desetour.com, used only
  * server-side (Vercel function / future scheduled job). Deliberately
@@ -399,7 +399,7 @@ function buildMimeStructureDiagnostics(node) {
 
 /**
  * Fetches one full message and normalizes it into the plain object shape
- * api/civitatis/parser.js expects — this is the sole place Gmail-specific
+ * api/_civitatis/parser.js expects — this is the sole place Gmail-specific
  * structure (headers array, multipart payload, base64url body) is
  * translated into that shape, keeping the parser itself Gmail-agnostic.
  *
@@ -488,7 +488,7 @@ async function fetchMessagePageDiagnostics(query, { pageToken, maxResults = 25 }
  * normalized message (including its selected body text) and its
  * selection diagnostics for each message — used only by the
  * ?debugParser=1 endpoint mode, which reduces `message.body` to a
- * sanitized line list (api/civitatis/parserDiagnostics.js) before it
+ * sanitized line list (api/_civitatis/parserDiagnostics.js) before it
  * ever leaves the server; this function itself does not redact
  * anything, so callers must never return `message.body` verbatim.
  */
@@ -524,7 +524,7 @@ async function fetchAllMatchingMessages(query) {
 /**
  * The Gmail search query used for both backfill and (later) live
  * ingestion: scoped to the sender only. Subject-pattern / event-type
- * validation happens afterward in api/civitatis/eventDetector.js on
+ * validation happens afterward in api/_civitatis/eventDetector.js on
  * every fetched message — this query is an efficiency narrowing (avoid
  * fetching mail from unrelated senders at all), never the security
  * boundary itself, per "do not treat the civitatis.com domain generally

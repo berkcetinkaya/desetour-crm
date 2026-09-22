@@ -4,8 +4,8 @@
  * Dese Tour Operations Center — Civitatis email ingestion
  *
  * THIS PHASE: DRY RUN ONLY. There is no write code path anywhere in this
- * function or anything it calls — api/civitatis/dryRun.js and
- * api/civitatis/supabaseAdmin.js only ever SELECT. No production
+ * function or anything it calls — api/_civitatis/dryRun.js and
+ * api/_civitatis/supabaseAdmin.js only ever SELECT. No production
  * customer, reservation, reservation_guests, activity_logs, or
  * email_ingestions row is created, updated, or deleted by this endpoint
  * in this phase, regardless of what query parameters are supplied. It is
@@ -46,7 +46,7 @@
  * `parserRelevantLines` array (line number + text) built from ONLY the
  * lines that look relevant to the parser's known booking fields (plus
  * one line of context on each side) — see
- * api/civitatis/parserDiagnostics.js. Never returns the full message
+ * api/_civitatis/parserDiagnostics.js. Never returns the full message
  * body, HTML, OAuth/credential data, email addresses, or URLs (the
  * latter two are redacted). Requires only Gmail configuration — does
  * not touch Supabase at all.
@@ -54,10 +54,10 @@
  */
 'use strict';
 
-const gmailClient = require('./civitatis/gmailClient');
-const { createSupabaseCivitatisRepo } = require('./civitatis/supabaseAdmin');
-const { runCivitatisDryRun } = require('./civitatis/dryRun');
-const { buildParserRelevantLines, redactSensitiveText } = require('./civitatis/parserDiagnostics');
+const gmailClient = require('./_civitatis/gmailClient');
+const { createSupabaseCivitatisRepo } = require('./_civitatis/supabaseAdmin');
+const { runCivitatisDryRun } = require('./_civitatis/dryRun');
+const { buildParserRelevantLines, redactSensitiveText } = require('./_civitatis/parserDiagnostics');
 
 const DEFAULT_MAX_MESSAGES = 25;
 const HARD_MAX_MESSAGES = 100; // upper bound regardless of what a caller requests, to stay inside the function's time budget

@@ -1,11 +1,11 @@
 /**
- * api/civitatis/parserDiagnostics.js
+ * api/_civitatis/parserDiagnostics.js
  * ─────────────────────────────────────────────────────────────────────────
  * Powers the safe ?debugParser=1 diagnostic mode on /api/ingest-civitatis.
  * Takes the already-extracted, already-selected body text for one message
- * (produced by api/civitatis/gmailClient.js — never raw HTML, never a
+ * (produced by api/_civitatis/gmailClient.js — never raw HTML, never a
  * full MIME payload) and reduces it to a small, sanitized set of lines
- * relevant to diagnosing the deterministic parser (api/civitatis/
+ * relevant to diagnosing the deterministic parser (api/_civitatis/
  * parser.js) against real Civitatis formatting, without exposing the
  * full message body.
  *
@@ -18,7 +18,7 @@
 
 // Case-insensitive substring keywords identifying a line as relevant to
 // diagnosing the parser's field extraction. Deliberately broader than
-// the parser's own exact label constants (api/civitatis/parser.js), so
+// the parser's own exact label constants (api/_civitatis/parser.js), so
 // this still surfaces a line even if the real formatting doesn't match
 // the parser's current assumptions — which is exactly the case this
 // diagnostic mode exists to investigate.

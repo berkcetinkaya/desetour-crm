@@ -2,7 +2,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { buildParserRelevantLines, redactSensitiveText } = require('../../api/civitatis/parserDiagnostics');
+const { buildParserRelevantLines, redactSensitiveText } = require('../../api/_civitatis/parserDiagnostics');
 
 test('redacts email addresses and URLs, leaving other text untouched', () => {
   const text = 'Contact us at reservations@civitatis.com or visit https://civitatis.com/help now';

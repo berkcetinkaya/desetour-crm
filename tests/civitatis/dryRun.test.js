@@ -2,7 +2,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { runCivitatisDryRun, OUTCOME } = require('../../api/civitatis/dryRun');
+const { runCivitatisDryRun, OUTCOME } = require('../../api/_civitatis/dryRun');
 const { createFakeRepo } = require('./fakeRepo');
 const F = require('./fixtures');
 

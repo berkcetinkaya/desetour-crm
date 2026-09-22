@@ -1,5 +1,5 @@
 /**
- * api/civitatis/eventDetector.js
+ * api/_civitatis/eventDetector.js
  * ─────────────────────────────────────────────────────────────────────────
  * The gate before any body parsing happens. Decides, from sender + subject
  * alone, whether a message is:
