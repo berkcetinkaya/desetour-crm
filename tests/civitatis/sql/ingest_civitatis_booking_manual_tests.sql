@@ -2169,6 +2169,21 @@ ROLLBACK;
 --       assignments and the EXCEPTION handler's own diagnostics capture
 --       were added; no branch condition, lock, or write statement was
 --       touched)
+--
+--   RESOLUTION (proven via the V9 instrumentation above): the "no
+--   unique or exclusion constraint" failure was next_ref_number(...)'s
+--   own ON CONFLICT (prefix, table_name, year) arbiter resolving its
+--   bare prefix/table_name entries as the function's own identically-
+--   named PARAMETERS (via #variable_conflict use_variable) rather than
+--   the ref_number_counters columns — NOT a missing index (the earlier
+--   "SECOND REAL SMOKE TEST FINDING" note above, and the migration it
+--   pointed to, were WRONG and have been retracted/removed). See
+--   supabase_migration_ref_number_counters_v3_on_conflict_arbiter_fix.sql
+--   for the proven root cause and fix (not part of this function's own
+--   SQL — next_ref_number is a separate dependency this function calls,
+--   untouched by that migration file's V6-V9 own lineage), and
+--   tests/civitatis/sql/next_ref_number_on_conflict_ambiguity_manual_tests.sql
+--   for the regression test.
 -- ══════════════════════════════════════════════════════════════════════════
 
 -- ── END OF MANUAL TEST PLAN ─────────────────────────────────────────────────

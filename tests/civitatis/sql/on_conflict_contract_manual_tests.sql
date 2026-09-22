@@ -13,22 +13,42 @@
 -- ─────────────────────────────────────────────────────────────
 -- The second real controlled write smoke test for booking A41629692
 -- (gmail_message_id 1a0aedc69a2ef905) failed with "there is no unique
--- or exclusion constraint matching the ON CONFLICT specification" —
--- root cause: public.ref_number_counters was missing a unique index
--- over (prefix, table_name, year), the exact column set
--- public.next_ref_number(...)'s ON CONFLICT clause requires, even
--- though the migration FILE that creates the table declares a matching
--- PRIMARY KEY (CREATE TABLE IF NOT EXISTS silently no-ops the whole
--- table body, constraints included, if a table by that name already
--- existed — see supabase_migration_ref_number_counters_v2_unique_
--- constraint_guard.sql for the full incident writeup and fix). Every
--- existing manual SQL test for ingest_civitatis_booking and
--- next_ref_number exercises them by actually CALLING the function
--- inside a transaction that is always rolled back — none of them ever
--- asked Postgres's own catalog "does the constraint this ON CONFLICT
--- clause needs actually exist right now", which is the one question
--- that would have caught this class of schema-drift bug before a real
--- write attempt did.
+-- or exclusion constraint matching the ON CONFLICT specification".
+--
+-- *** RETRACTION: this file's ORIGINAL diagnosis — that
+-- public.ref_number_counters was missing its unique index over
+-- (prefix, table_name, year) — was PROVEN WRONG by live Supabase
+-- catalog evidence: ref_number_counters_pkey, a genuine non-partial
+-- unique btree index over exactly those three columns, has existed all
+-- along. supabase_migration_ref_number_counters_v2_unique_constraint_
+-- guard.sql (the migration that diagnosis proposed) was NEVER applied
+-- and has been REMOVED from this repository. The REAL root cause,
+-- proven via V9 diagnostic instrumentation and an isolated PostgreSQL
+-- reproduction, was next_ref_number(...)'s own
+-- #variable_conflict use_variable pragma silently resolving its ON
+-- CONFLICT (prefix, table_name, year) arbiter's bare column names as
+-- PL/pgSQL PARAMETERS (identically named) rather than table columns —
+-- a PL/pgSQL variable-shadowing bug, not a schema-drift/missing-index
+-- bug. See
+-- supabase_migration_ref_number_counters_v3_on_conflict_arbiter_fix.sql
+-- for the full incident writeup and the actual fix (ON CONFLICT ON
+-- CONSTRAINT ref_number_counters_pkey), and
+-- tests/civitatis/sql/next_ref_number_on_conflict_ambiguity_manual_tests.sql
+-- for the reproduction. ***
+--
+-- CONTRACT TEST 2 below (does a matching unique index exist?) remains a
+-- valid, independently useful check — a genuinely missing/mismatched
+-- index is still a real class of bug this file can catch — but it is
+-- NOT, and was never, sufficient on its own: an index can exist and
+-- STILL fail ON CONFLICT inference if the SQL referencing it resolves
+-- the wrong identifiers, exactly as happened here. Every existing
+-- manual SQL test for ingest_civitatis_booking and next_ref_number
+-- exercises them by actually CALLING the function inside a transaction
+-- that is always rolled back — none of them, including this file,
+-- catches a PL/pgSQL variable-shadowing bug like this one without
+-- actually invoking the function and observing the SQLSTATE, which is
+-- exactly what next_ref_number_on_conflict_ambiguity_manual_tests.sql
+-- (Part A) now does in isolation.
 --
 -- WHAT THIS FILE CHECKS
 -- ─────────────────────────────────────────────────────────────
@@ -118,10 +138,10 @@ BEGIN
   ) INTO v_found;
 
   IF NOT v_found THEN
-    RAISE EXCEPTION 'ON CONFLICT CONTRACT TEST 2: FAILED — public.ref_number_counters has no non-partial unique index on exactly (prefix, table_name, year). public.next_ref_number(...)''s "INSERT ... ON CONFLICT (prefix, table_name, year) DO UPDATE" would fail with "there is no unique or exclusion constraint matching the ON CONFLICT specification" for EVERY prefix (reservations, leads, quotes, payments, guide_payments) — not Civitatis-only. Apply supabase_migration_ref_number_counters_v2_unique_constraint_guard.sql.';
+    RAISE EXCEPTION 'ON CONFLICT CONTRACT TEST 2: FAILED — public.ref_number_counters has no non-partial unique index on exactly (prefix, table_name, year). NOTE: this specific check was NOT the real A41629692 failure (that index has always existed) — a passing TEST 2 does not by itself prove next_ref_number''s ON CONFLICT works; see next_ref_number_on_conflict_ambiguity_manual_tests.sql for the check that actually caught the real bug (a PL/pgSQL parameter/column name collision, not a missing index).';
   END IF;
 
-  RAISE NOTICE 'ON CONFLICT CONTRACT TEST 2: PASSED — ref_number_counters(prefix, table_name, year) unique index exists';
+  RAISE NOTICE 'ON CONFLICT CONTRACT TEST 2: PASSED — ref_number_counters(prefix, table_name, year) unique index exists (this alone does NOT prove next_ref_number''s ON CONFLICT can infer it — see next_ref_number_on_conflict_ambiguity_manual_tests.sql)';
 END $$;
 
 
@@ -132,11 +152,20 @@ END $$;
 --       proving Step 1's UPSERT succeeded) — included here so this file
 --       is a complete, standalone contract check, not because it was
 --       ever observed broken.
---   TEST 2 (ref_number_counters(prefix,table_name,year)) -> the exact
---       real production failure on booking A41629692; see
---       supabase_migration_ref_number_counters_v2_unique_constraint_guard.sql
---       for the fix (NOT executed by this test file or by anything in
---       this repository — apply it manually after reviewing).
+--   TEST 2 (ref_number_counters(prefix,table_name,year) index exists) ->
+--       PASSES both before and after the real fix — this file's own
+--       original diagnosis (missing index) was WRONG, disproven by live
+--       catalog evidence; the index existed all along. The REAL A41629692
+--       failure was a PL/pgSQL variable-shadowing bug in next_ref_number's
+--       ON CONFLICT clause itself (#variable_conflict use_variable
+--       resolving the arbiter's bare prefix/table_name column names as
+--       the function's own same-named PARAMETERS), which an
+--       index-existence check can never catch by construction — see
+--       supabase_migration_ref_number_counters_v3_on_conflict_arbiter_fix.sql
+--       for the proven root cause and the actual fix (ON CONFLICT ON
+--       CONSTRAINT ref_number_counters_pkey), and
+--       next_ref_number_on_conflict_ambiguity_manual_tests.sql for the
+--       regression test that actually reproduces and proves it.
 -- ══════════════════════════════════════════════════════════════════════════
 
 -- ── END OF MANUAL TEST PLAN ─────────────────────────────────────────────────
