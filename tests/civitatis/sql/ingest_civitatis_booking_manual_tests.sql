@@ -2066,6 +2066,19 @@ ROLLBACK;
 --       all unmodified and still passing under V8 (only ONE new
 --       pre-flight check was added; no existing branch, lock, or query
 --       was touched)
+--
+--   SECOND REAL SMOKE TEST FINDING (ref_number_counters missing its
+--   ON CONFLICT (prefix, table_name, year) backing unique index — a
+--   schema-drift bug OUTSIDE this function's own SQL, in the SEPARATE
+--   public.next_ref_number(...) dependency it calls from the CREATE
+--   branch): not exercisable from THIS file (this file never mocks or
+--   stubs next_ref_number — every TEST above that reaches the CREATE
+--   branch calls the real one) — see the new standalone
+--   tests/civitatis/sql/on_conflict_contract_manual_tests.sql
+--   (CONTRACT TEST 2) for the catalog-level structural check that
+--   catches this exact class of bug, and
+--   supabase_migration_ref_number_counters_v2_unique_constraint_guard.sql
+--   for the fix (NOT executed).
 -- ══════════════════════════════════════════════════════════════════════════
 
 -- ── END OF MANUAL TEST PLAN ─────────────────────────────────────────────────
