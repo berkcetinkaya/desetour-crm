@@ -13369,15 +13369,21 @@ async function loadStaffData(userId) {
   return { data: data || null, error: error || null };
 }
 
+// TESTABLE:_withTimeout:start
 // A hung Supabase call (paused project, unreachable network, bad API key)
 // must not leave the app stuck in authLoading forever. Race any session
 // check against a deterministic timeout so the auth flow always finishes.
+// The losing side's timer is always cleared once the race settles (whether
+// `promise` won or the timeout did) — otherwise every FAST, successful call
+// still leaves a dangling `ms`-long timer behind for no reason.
 function _withTimeout(promise, ms, label) {
-  return Promise.race([
-    promise,
-    new Promise((_, reject) => setTimeout(() => reject(new Error(`${label || 'İşlem'} zaman aşımına uğradı (${ms}ms)`)), ms)),
-  ]);
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label || 'İşlem'} zaman aşımına uğradı (${ms}ms)`)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
+// TESTABLE:_withTimeout:end
 
 // Module-level auth cache — survives re-renders and page navigation
 let _authCache = null;
@@ -13385,34 +13391,47 @@ let _authListeners = [];
 function _notifyAuthListeners() { _authListeners.forEach(fn => fn(_authCache)); }
 
 // Monotonic token for every in-flight staff-profile resolution. A resolution
-// started before a newer one (e.g. init() racing the first onAuthStateChange
-// event, or two background refreshes overlapping) is discarded when it
-// finally settles, instead of being allowed to overwrite whatever the most
-// recently *started* resolution already produced.
+// started before a newer one (e.g. two overlapping auth events during
+// bootstrap, or a background refresh overlapping a manual retry) is
+// discarded when it finally settles, instead of being allowed to overwrite
+// whatever the most recently *started* resolution already produced.
 let _authReqSeq = 0;
 
-// Applies a resolved { session, staff, staffQueryError } patch to the shared
-// auth cache, guarding against the exact failure this was built to fix: a
-// transient refresh failure silently erasing an already-verified identity.
-//   - A stale/out-of-order resolution (reqId no longer the latest) is
-//     dropped entirely.
+// TESTABLE:_computeAuthResolution:start
+// Pure decision function: given the reqId this resolution was started
+// under, the sequence number of the most-recently-STARTED resolution
+// (latestReqId), the freshly resolved patch, and the previous cache/user,
+// decides what the auth cache should become next. Returns null when this
+// resolution is stale and must be discarded untouched — deterministic
+// conflict resolution so two resolutions started close together (e.g. a
+// duplicate auth event firing during bootstrap) can never race each other
+// into an inconsistent state; only the latest-started one is ever allowed
+// to win, regardless of which one happens to SETTLE first.
 //   - A resolution that merely FAILED (staffQueryError set) for the SAME
 //     user who already had a verified staff profile never overwrites that
 //     profile — the failure is recorded separately (staffRefreshError) so
-//     it can be surfaced without gating the whole app off.
+//     it can be surfaced without gating the whole app off. This is what
+//     stops a transient timeout from erasing an already-verified identity.
 //   - Anything else (a genuine result, a different/new user, first-ever
-//     resolution) replaces the cache outright, same as before.
-function _applyAuthResolution(reqId, patch, prevCache, prevUserId) {
-  if (reqId !== _authReqSeq) return false;
+//     resolution) replaces the cache outright.
+function _computeAuthResolution(reqId, latestReqId, patch, prevCache, prevUserId) {
+  if (reqId !== latestReqId) return null;
   const newUserId = patch.session?.user?.id || null;
   if (patch.staffQueryError && newUserId === prevUserId && prevCache?.staff) {
-    _authCache = { ...prevCache, session: patch.session, staffRefreshError: patch.staffQueryError };
-  } else {
-    _authCache = { ...patch, staffRefreshError: null };
+    return { ...prevCache, session: patch.session, staffRefreshError: patch.staffQueryError };
   }
+  return { ...patch, staffRefreshError: null };
+}
+// TESTABLE:_computeAuthResolution:end
+
+function _applyAuthResolution(reqId, patch, prevCache, prevUserId) {
+  const next = _computeAuthResolution(reqId, _authReqSeq, patch, prevCache, prevUserId);
+  if (next === null) return false;
+  _authCache = next;
   return true;
 }
 
+// TESTABLE:_resolveStaffState:start
 // Resolves { session, staff, staffQueryError, staffInactive } for a given
 // Supabase auth session. Genuinely different outcomes are kept apart so
 // AuthGuard can show the right screen for each, and so no state is ever
@@ -13426,10 +13445,14 @@ function _applyAuthResolution(reqId, patch, prevCache, prevUserId) {
 //   - staff null, staffInactive true → a row exists and is linked, but
 //     is_active is false. This must never be treated as "missing" (which
 //     invites the wrong troubleshooting) or silently granted a role.
-async function _resolveStaffState(s) {
+// `loadFn` defaults to the real loadStaffData (module-level, talks to
+// Supabase) but is overridable so this whole decision tree — including the
+// 12000ms timeout race — can be exercised deterministically in tests
+// without a real network call or a real 12-second wait.
+async function _resolveStaffState(s, loadFn = loadStaffData) {
   if (!s?.user) return { session:s, staff:null, authLoading:false, staffQueryError:null, staffInactive:false };
   try {
-    const { data, error } = await _withTimeout(loadStaffData(s.user.id), 12000, 'Personel profili');
+    const { data, error } = await _withTimeout(loadFn(s.user.id), 12000, 'Personel profili');
     if (error) {
       console.error('[Auth] staff_users query returned an error (session kept):', error);
       return { session:s, staff:null, authLoading:false, staffQueryError: error.message || String(error), staffInactive:false };
@@ -13443,6 +13466,7 @@ async function _resolveStaffState(s) {
     return { session:s, staff:null, authLoading:false, staffQueryError: e.message, staffInactive:false };
   }
 }
+// TESTABLE:_resolveStaffState:end
 
 function useAuth() {
   const [authState, setAuthState] = useState(() => _authCache || {
@@ -13505,47 +13529,49 @@ function useAuth() {
       return () => { _authListeners = _authListeners.filter(l => l !== listener); };
     }
 
-    async function init() {
-      // Step 1: determine whether a session exists at all. Only a failure
-      // *here* means we genuinely can't tell if the user is logged in, so
-      // only this step is allowed to fail closed to the login screen.
-      let s = null;
-      try {
-        const { data } = await _withTimeout(sb.auth.getSession(), 12000, 'Oturum kontrolü');
-        s = data?.session || null;
-      } catch(e) {
-        console.error('[Auth] getSession() failed:', e);
-        const newState = { session:null, staff:null, authLoading:false, authError:e.message };
-        _authCache = newState;
-        setAuthState(newState);
-        _notifyAuthListeners();
-        return;
-      }
-      // Step 2: the session check above succeeded (session may legitimately
-      // be null, i.e. genuinely signed out). A failure fetching the staff
-      // profile below is a separate concern — it must NOT wipe out a valid
-      // session. Keep `s` as-is either way; only `staff`/`staffQueryError`
-      // reflect this step's outcome. staffQueryError is kept SEPARATE from
-      // authError (session-check failures, shown on the login screen) so a
-      // failed staff_users query never gets silently reinterpreted as "no
-      // profile exists" — AuthGuard shows a distinct screen for each.
-      const prevCache = _authCache;
-      const prevUserId = prevCache?.session?.user?.id || null;
-      const reqId = ++_authReqSeq;
-      const patch = await _resolveStaffState(s);
-      if (!_applyAuthResolution(reqId, patch, prevCache, prevUserId)) return;
-      setAuthState(_authCache);
+    // Bootstrap is driven SOLELY by onAuthStateChange — including its very
+    // first callback, which supabase-js always fires once immediately after
+    // subscribing (event INITIAL_SESSION) with whatever session is already
+    // persisted in storage, without needing a fresh network round-trip.
+    // This used to ALSO call sb.auth.getSession() directly here, which
+    // started a SECOND, fully independent staff_users lookup racing the one
+    // triggered by that first onAuthStateChange event — two real Postgres
+    // queries fired concurrently on every single page load, competing for
+    // the same connection/bandwidth budget right when the browser is also
+    // loading the rest of the app (React/Supabase bundles, fonts, the hero
+    // image, …). That contention was pushing the slower of the two queries
+    // over the 12s timeout often enough in production to show "Personel
+    // Profili Sorgulanamadı" for a valid, already-authenticated session —
+    // which then cleared itself once ANY later auth event (a manual retry,
+    // a background token refresh, a full reload with warmer connections)
+    // completed a lookup without that contention. There is now exactly one
+    // call site that can ever start a staff_users lookup during bootstrap,
+    // so getSession() and onAuthStateChange can no longer race each other.
+    //
+    // Safety net: if the SDK somehow never fires that first callback at all
+    // (corrupted storage, a hung client), the app must not be stuck showing
+    // "Yükleniyor…" forever — force-resolve to the login screen with an
+    // error after the same 12000ms budget every other auth step uses.
+    let bootstrapped = false;
+    const bootTimer = setTimeout(() => {
+      if (bootstrapped) return;
+      bootstrapped = true;
+      const newState = { session:null, staff:null, authLoading:false, authError:'Oturum kontrolü zaman aşımına uğradı (12000ms)' };
+      _authCache = newState;
+      setAuthState(newState);
       _notifyAuthListeners();
-    }
-    init();
+    }, 12000);
 
     const { data:{ subscription } } = sb.auth.onAuthStateChange(async (ev, s) => {
+      bootstrapped = true;
+      clearTimeout(bootTimer);
+
       const prevCache  = _authCache;
       const prevUserId = prevCache?.session?.user?.id || null;
       const newUserId  = s?.user?.id || null;
 
       // TOKEN_REFRESHED (and a duplicate INITIAL_SESSION firing right after
-      // init() already resolved it) mean the same already-authenticated
+      // the first one already resolved) mean the same already-authenticated
       // user just received a new JWT — nothing about their staff_users row
       // changed as a side effect of that, so there is nothing to re-query.
       // Re-running the staff_users lookup on every background refresh is
@@ -13570,18 +13596,20 @@ function useAuth() {
         _notifyAuthListeners();
       }
 
-      // Same principle as init(): `s` (null or a session) comes straight
-      // from the auth event itself — a staff_users lookup failure must not
-      // override it with `null`, or a transient DB hiccup during an active
-      // session (e.g. right after some unrelated insert) would look like a
-      // logout. _applyAuthResolution additionally protects an already
-      // -verified same-user profile from being erased by this failure.
+      // `s` (null or a session) comes straight from the auth event itself —
+      // a staff_users lookup failure must not override it with `null`, or a
+      // transient DB hiccup during an active session (e.g. right after some
+      // unrelated insert) would look like a logout. _applyAuthResolution
+      // additionally protects an already-verified same-user profile from
+      // being erased by this failure, and discards this resolution outright
+      // if a newer one has started since (see _computeAuthResolution).
       const patch = await _resolveStaffState(s);
       if (!_applyAuthResolution(reqId, patch, prevCache, prevUserId)) return;
       setAuthState(_authCache);
       _notifyAuthListeners();
     });
     return () => {
+      clearTimeout(bootTimer);
       subscription?.unsubscribe?.();
       _authListeners = _authListeners.filter(l => l !== listener);
     };
