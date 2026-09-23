@@ -24,21 +24,52 @@
 'use strict';
 
 /**
- * Matches a Civitatis "Internal code" to a DeseTour tour via
- * tour_channels.external_product_id, scoped to the Civitatis source_id.
- * Exact string match only — no trimming beyond what the parser already
- * did, no case-folding, no fuzzy/partial matching. Ambiguous data (more
- * than one tour_channels row claiming the same code for the same source,
- * which should never happen given tour_channels' own UNIQUE(tour_id,
- * source_id) constraint but could in principle arise from two different
- * tours both being mis-tagged with the same code) is treated as "no safe
- * match" rather than picked arbitrarily.
+ * Matches a Civitatis "Internal code" (+ optionally the booking's
+ * normalized language) to a DeseTour tour via tour_channels, scoped to
+ * the Civitatis source_id. Exact string match only, on both
+ * external_product_id and booking_language — no trimming beyond what
+ * the parser already did, no case-folding, no fuzzy/partial matching,
+ * never a tour-name comparison.
+ *
+ * The SAME external_product_id can map to DIFFERENT tours depending on
+ * booking language (e.g. Civitatis sells "Grand Bazaar Experience" in
+ * both Italian and Spanish, each of which must resolve to its own
+ * dedicated internal tour) — see tour_channels.booking_language
+ * (supabase_migration_tour_channels_v2_booking_language.sql). Precedence,
+ * evaluated only among rows already filtered to this exact
+ * external_product_id + source_id:
+ *   1. Any tour_channels row explicitly scoped to this booking's
+ *      language (booking_language === bookingLanguage) — an EXACT match
+ *      on both fields. Exactly one such row -> matched. More than one
+ *      -> ambiguous configuration, fail closed (never picked
+ *      arbitrarily).
+ *   2. Only when this product has NO language-specific row at all
+ *      (nothing anywhere has ever set booking_language for it) -> fall
+ *      back to a single generic row (booking_language IS NULL) exactly
+ *      as before this precedence existed — this is what keeps every
+ *      pre-existing one-product-one-tour mapping working unchanged, with
+ *      zero backfill.
+ *   3. Once ANY language-specific row exists for this product, a
+ *      generic row for the same product is NEVER used as a fallback for
+ *      a language that has no explicit row of its own — that would
+ *      silently misattribute exactly the booking this feature exists to
+ *      route correctly. That case fails closed (needs_review) instead.
+ * A booking with no bookingLanguage available (should not occur in
+ * practice — the parser already routes a missing/unrecognized language
+ * to needs_review before this is ever called) is treated the same as
+ * "no language-specific row can be selected for it": safe only via the
+ * generic fallback in (2), fails closed if any language-specific row
+ * exists for the product.
  *
  * @param {string|null} internalCode
  * @param {string} civitatisSourceId
- * @param {Array<{id,tour_id,source_id,external_product_id,tour:{id,name}}>} tourChannels
+ * @param {string|null} [bookingLanguage] - canonical language name (e.g.
+ *   "İtalyanca"), the same vocabulary reservations.tour_language and
+ *   tour_channels.booking_language both use — typically the parser's own
+ *   mergedState.tourLanguage. Never a raw Civitatis string, never a code.
+ * @param {Array<{id,tour_id,source_id,external_product_id,booking_language,tour:{id,name}}>} tourChannels
  */
-function matchTourChannel({ internalCode, civitatisSourceId, tourChannels }) {
+function matchTourChannel({ internalCode, civitatisSourceId, bookingLanguage, tourChannels }) {
   if (!internalCode) {
     return { matched: false, method: 'exact_external_product_id', tour: null, tourChannelId: null, reason: 'no Internal code parsed from the email' };
   }
@@ -51,13 +82,46 @@ function matchTourChannel({ internalCode, civitatisSourceId, tourChannels }) {
       reason: `no tour_channels row has external_product_id exactly "${internalCode}" for the Civitatis source — an operator must set this on the correct tour's Civitatis sales-channel row (or a new one) before this booking can be created`,
     };
   }
-  if (candidates.length > 1) {
+
+  const languageSpecific = candidates.filter(tc => tc.booking_language);
+  const generic = candidates.filter(tc => !tc.booking_language);
+
+  if (languageSpecific.length > 0) {
+    // This product has at least one explicit per-language mapping
+    // configured — from here on it is never safe to resolve it
+    // generically, for ANY language, including one that has no
+    // language-specific row of its own: see precedence rule 3 above.
+    if (!bookingLanguage) {
+      return {
+        matched: false, method: 'exact_external_product_id_and_language', tour: null, tourChannelId: null,
+        reason: `tour_channels has language-specific mapping(s) for external_product_id "${internalCode}" but no booking language was available on this reservation to select one — needs manual resolution`,
+      };
+    }
+    const exact = languageSpecific.filter(tc => tc.booking_language === bookingLanguage);
+    if (exact.length === 0) {
+      return {
+        matched: false, method: 'exact_external_product_id_and_language', tour: null, tourChannelId: null,
+        reason: `no tour_channels row maps external_product_id "${internalCode}" + booking_language "${bookingLanguage}" — language-specific mapping(s) exist for this product but not for this language, and a generic mapping is never used once language-specific mappings exist for it; an operator must add the missing language-specific mapping before this booking can be created`,
+      };
+    }
+    if (exact.length > 1) {
+      return {
+        matched: false, method: 'exact_external_product_id_and_language', tour: null, tourChannelId: null,
+        reason: `${exact.length} tour_channels rows share external_product_id "${internalCode}" and booking_language "${bookingLanguage}" for the Civitatis source — ambiguous, needs manual resolution`,
+      };
+    }
+    return { matched: true, method: 'exact_external_product_id_and_language', tour: exact[0].tour || null, tourChannelId: exact[0].id };
+  }
+
+  // No language-specific row exists for this product at all — identical
+  // to this function's behavior before booking_language existed.
+  if (generic.length > 1) {
     return {
       matched: false, method: 'exact_external_product_id', tour: null, tourChannelId: null,
-      reason: `${candidates.length} tour_channels rows share external_product_id "${internalCode}" for the Civitatis source — ambiguous, needs manual resolution`,
+      reason: `${generic.length} tour_channels rows share external_product_id "${internalCode}" for the Civitatis source — ambiguous, needs manual resolution`,
     };
   }
-  return { matched: true, method: 'exact_external_product_id', tour: candidates[0].tour || null, tourChannelId: candidates[0].id };
+  return { matched: true, method: 'exact_external_product_id', tour: generic[0].tour || null, tourChannelId: generic[0].id };
 }
 
 /**

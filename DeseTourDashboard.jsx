@@ -14901,7 +14901,7 @@ function TourTypeChips({ value, onChange }) {
 function TourChannelRows({ channels, setChannels, sources, srcLoading }) {
   function updateRow(i, patch) { setChannels(prev => prev.map((c,j) => j===i ? {...c, ...patch} : c)); }
   function removeRow(i) { setChannels(prev => prev.filter((_,j)=>j!==i)); }
-  function addRow() { setChannels(prev => [...prev, { sourceId:"", externalProductId:"", price:"", currency:"EUR", isActive:true, listingUrl:"" }]); }
+  function addRow() { setChannels(prev => [...prev, { sourceId:"", externalProductId:"", price:"", currency:"EUR", isActive:true, listingUrl:"", bookingLanguage:"" }]); }
 
   if (!srcLoading && (sources||[]).length === 0) {
     return (
@@ -14956,6 +14956,14 @@ function TourChannelRows({ channels, setChannels, sources, srcLoading }) {
                 <div style={{fontSize:10.5, fontWeight:600, color:C.textFaint, textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:5, fontFamily:"'DM Sans',sans-serif"}}>Listing URL</div>
                 <FText value={c.listingUrl} onChange={v=>updateRow(i,{listingUrl:v})} placeholder="https://…"/>
               </div>
+            </div>
+            <div style={{marginBottom:6}}>
+              <div style={{fontSize:10.5, fontWeight:600, color:C.textFaint, textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:5, fontFamily:"'DM Sans',sans-serif"}}>Rezervasyon Dili</div>
+              <FSelect value={c.bookingLanguage||""} onChange={v=>updateRow(i,{bookingLanguage:v})}
+                options={[["","— Genel (tüm diller) —"], ...LANGUAGE_OPTIONS.map(l=>[l,l])]}/>
+            </div>
+            <div style={{fontSize:11, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginBottom:10, fontStyle:"italic"}}>
+              Aynı External Product ID birden fazla dilde satılıyorsa, gelen rezervasyonun dili burada seçilen tura otomatik eşleştirilir. Boş bırakılırsa bu satır genel (dil bağımsız) eşleştirme olarak kullanılır.
             </div>
             <label style={{display:"flex", alignItems:"center", gap:8, cursor:"pointer"}}>
               <SToggle on={c.isActive!==false} onChange={v=>updateRow(i,{isActive:v})}/>
@@ -15408,6 +15416,11 @@ function mapTourChannelFromDB(c) {
     isActive: c.is_active !== false,
     listingUrl: c.listing_url || '',
     notes: c.notes || '',
+    // Empty = generic mapping (matches this external product regardless
+    // of booking language) — see supabase_migration_tour_channels_v2_
+    // booking_language.sql / matchTourChannel. Canonical language NAME,
+    // same vocabulary as everywhere else (LANGUAGE_OPTIONS), never a code.
+    bookingLanguage: c.booking_language || '',
   };
 }
 
@@ -15497,6 +15510,8 @@ async function _syncTourChannels(sb, tourId, channels) {
       is_active: c.isActive !== false,
       listing_url: c.listingUrl || null,
       notes: c.notes || null,
+      // NULL = generic mapping — see mapTourChannelFromDB above.
+      booking_language: c.bookingLanguage || null,
     };
   });
   const { error: insErr } = await sb.from('tour_channels').insert(rows);

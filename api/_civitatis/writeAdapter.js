@@ -185,7 +185,14 @@ async function planCivitatisIngestion({ messages, repo }) {
     const events = items.map(it => it.parsed);
     const mergedState = mergeChronologicalState(events);
 
-    const tourMatch = matchTourChannel({ internalCode: mergedState.internalCode, civitatisSourceId: civitatisSource.id, tourChannels });
+    const tourMatch = matchTourChannel({
+      internalCode: mergedState.internalCode,
+      civitatisSourceId: civitatisSource.id,
+      // Same canonical language name dryRun.js passes — see matching.js
+      // for the full product+language precedence rule.
+      bookingLanguage: mergedState.tourLanguage,
+      tourChannels,
+    });
     if (!tourMatch.matched) {
       plans.push({ externalBookingId, eligible: false, reason: tourMatch.reason });
       continue;

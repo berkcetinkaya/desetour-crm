@@ -97,7 +97,7 @@ async function getCivitatisSource() {
 async function getTourChannelsForSource(sourceId) {
   const sb = getServiceRoleClient();
   const { data, error } = await sb.from('tour_channels')
-    .select('id,tour_id,source_id,external_product_id,is_active,tour:tours(id,name)')
+    .select('id,tour_id,source_id,external_product_id,booking_language,is_active,tour:tours(id,name)')
     .eq('source_id', sourceId);
   if (error) throw new Error(`Supabase error reading tour_channels: ${error.message}`);
   return data || [];

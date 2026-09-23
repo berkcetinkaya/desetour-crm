@@ -174,6 +174,11 @@ async function buildBookingReport({ externalBookingId, events, civitatisSourceId
   const tourMatch = matchTourChannel({
     internalCode: mergedState.internalCode,
     civitatisSourceId,
+    // The parser's own canonical language name (e.g. "İtalyanca") — the
+    // exact same value that would be written to reservations.tour_language
+    // — never re-derived or re-normalized here. See matching.js for the
+    // full product+language precedence rule.
+    bookingLanguage: mergedState.tourLanguage,
     tourChannels,
   });
 
