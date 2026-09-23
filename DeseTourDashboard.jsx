@@ -2016,8 +2016,86 @@ function SidebarInner({ currentBase, onNavItem, liveBadges }) {
           </svg>
           Çıkış Yap
         </button>
+        <SidebarVersionInfo padded={false}/>
       </div>
     </>
+  );
+}
+
+// TESTABLE:formatBuildTimestampTR:start
+// Formats the BUILD-time timestamp baked into window.__DESETOUR_BUILD__
+// (by build.js, once, at build time — see build-version.js) as
+// "23 Eylül 2026 · 14:52", always in Europe/Istanbul local time regardless
+// of the viewer's own timezone. Deliberately takes the fixed ISO string as
+// input rather than calling new Date() itself — there is no "current time"
+// involved here at all, so refreshing the CRM tomorrow can never make this
+// show tomorrow's date; it only ever reflects when the shown build was
+// produced.
+function formatBuildTimestampTR(isoString) {
+  if (!isoString) return '';
+  const d = new Date(isoString);
+  if (isNaN(d.getTime())) return '';
+  const datePart = d.toLocaleDateString('tr-TR', { day:'2-digit', month:'long', year:'numeric', timeZone:'Europe/Istanbul' });
+  const timePart = d.toLocaleTimeString('tr-TR', { hour:'2-digit', minute:'2-digit', timeZone:'Europe/Istanbul' });
+  return `${datePart} · ${timePart}`;
+}
+// TESTABLE:formatBuildTimestampTR:end
+
+// Small, unobtrusive operational metadata near the sidebar's logged-in-user
+// area — never a card, badge, modal, nav item, or dashboard KPI. Reads
+// window.__DESETOUR_BUILD__, which build.js regenerates on every build
+// (never hand-edited, never computed at runtime) — see build-version.js.
+// Rendered by both the desktop sidebar and the mobile drawer (SidebarInner)
+// so it's visible wherever "the left sidebar" actually is for that viewport.
+function SidebarVersionInfo({ padded = true }) {
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef(null);
+  const meta = (typeof window !== 'undefined' && window.__DESETOUR_BUILD__) || {};
+
+  useEffect(() => {
+    function onMouseDown(e) {
+      if (containerRef.current && !containerRef.current.contains(e.target)) setOpen(false);
+    }
+    document.addEventListener("mousedown", onMouseDown);
+    return () => document.removeEventListener("mousedown", onMouseDown);
+  }, []);
+
+  const versionLabel = meta.version ? `v${meta.version}` : 'v—';
+  const updatedLabel = formatBuildTimestampTR(meta.buildTimestamp);
+
+  return (
+    <div ref={containerRef} style={{position:"relative", padding: padded ? "0 16px 10px" : "8px 0 0"}}>
+      <button onClick={()=>setOpen(o=>!o)} title="Sürüm bilgisi" style={{
+        display:"block", width:"100%", textAlign:"left",
+        border:"none", background:"transparent", cursor:"pointer", padding:0,
+      }}>
+        <div style={{fontSize:10, color:"rgba(248,245,238,0.38)", fontFamily:"'DM Sans',sans-serif"}}>
+          DeseTour CRM · {versionLabel}
+        </div>
+        {updatedLabel && (
+          <div style={{fontSize:9.5, color:"rgba(248,245,238,0.26)", fontFamily:"'DM Sans',sans-serif", marginTop:1}}>
+            Son güncelleme: {updatedLabel}
+          </div>
+        )}
+      </button>
+      {open && (
+        <div style={{
+          position:"absolute", bottom:"calc(100% + 8px)", left:16, width:216,
+          background:C.white, border:`1px solid ${C.border}`, borderRadius:T.radiusSm,
+          boxShadow:"0 12px 32px rgba(13,27,62,0.22)", padding:"11px 13px", zIndex:200,
+        }}>
+          <div style={{fontSize:11.5, color:C.textMid, fontFamily:"'DM Sans',sans-serif", marginBottom:5}}>
+            <span style={{color:C.textFaint}}>Sürüm:</span> <b style={{color:C.text}}>{versionLabel}</b>
+          </div>
+          <div style={{fontSize:11.5, color:C.textMid, fontFamily:"'DM Sans',sans-serif", marginBottom:5}}>
+            <span style={{color:C.textFaint}}>Son güncelleme:</span> <b style={{color:C.text}}>{updatedLabel || "—"}</b>
+          </div>
+          <div style={{fontSize:11.5, color:C.textMid, fontFamily:"'DM Sans',sans-serif"}}>
+            <span style={{color:C.textFaint}}>Commit:</span> <b style={{color:C.text, fontFamily:"'DM Mono',monospace"}}>{meta.commitShaShort || "—"}</b>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -2187,6 +2265,7 @@ function Sidebar({ currentBase, collapsed, onToggle, mobileOpen, onMobileClose }
           {!collapsed && <span style={{fontSize:13, fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap"}}>Çıkış Yap</span>}
         </button>
       </div>
+      {!collapsed && <SidebarVersionInfo/>}
       {!collapsed && (
         <div style={{padding:"10px 16px 16px", textAlign:"center", borderTop:"1px solid rgba(255,255,255,0.06)"}}>
           <div style={{
