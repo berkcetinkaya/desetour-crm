@@ -635,6 +635,44 @@ Surname: Rossi
 `,
 };
 
+// 16. Real booking A41748096 — the production live-missing-booking
+// incident this fixture was added for. Structurally different from
+// every fixture above in TWO ways real Civitatis mail has been observed
+// to use: passenger lines as the shorter "Passenger N: NAME" (name
+// inline, no "Full name" sub-label at all) rather than "Passenger
+// information N:" + a separate value line, and the booking contact as a
+// headerless top-level "Client name:" / "Surname:" pair rather than a
+// "Client details:" block with nested "Name:"/"Surname:" sub-labels.
+// Before the fix these two differences made extractClientDetails return
+// no name/surname at all, which alone was enough to route the whole
+// email to needs_review (see parser.js's "missing Client details"
+// check) — silently and permanently, since a needs_review verdict at
+// the planning stage never reaches the RPC and therefore never writes
+// an email_ingestions row, so the SAME message would be re-fetched and
+// re-rejected on every subsequent scheduled run without ever being
+// created or reported as a known failure.
+const italianA41748096Booking = {
+  from: '"Civitatis.com" <notificaciones@civitatis.com>',
+  subject: 'New booking A41748096: Tour del Grande Bazar',
+  gmailMessageId: 'msg-it-new-41748096',
+  gmailThreadId: 'thread-41748096',
+  receivedAt: '2026-09-23T13:47:00.000Z',
+  body: `Activity: Tour del Grande Bazar - Tour in italiano
+Reservation number: 41748096
+City: Istanbul
+Language: Italiano
+Internal code: Grand Bazaar Experience
+Date: Thursday, October 1, 2026
+Hour: 9:00
+People: 2 Adults
+Passenger 1: GIANGUGLIELMO DALMONTE
+Passenger 2: COLETTE FICCHI
+Retail price: 4,800 TL
+Net price: 3,600 TL
+Client name: Gianguglielmo
+Surname: Dalmonte`,
+};
+
 module.exports = {
   FROM_CIVITATIS,
   FROM_OTHER,
@@ -653,4 +691,5 @@ module.exports = {
   realFormatRetailWithExtraLine,
   juanArmasPuenteBooking,
   sampleSafeCreateBooking,
+  italianA41748096Booking,
 };

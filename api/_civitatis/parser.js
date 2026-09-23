@@ -76,7 +76,13 @@ function buildLabelMatchers(label) {
 const LABEL_MATCHERS = new Map(SIMPLE_LABEL_LIST.map(name => [name, buildLabelMatchers(name)]));
 const CLIENT_DETAILS_MATCHERS = buildLabelMatchers(CLIENT_DETAILS_LABEL);
 
-const PASSENGER_LABEL = /^Passenger information (\d+):?$/i;
+// "information" is optional: real Civitatis emails have been observed
+// both as "Passenger information N:" (value on a following "Full name"
+// sub-label or bare next line — see extractPassengers) and as a
+// shorter "Passenger N: value" form with the name given directly on
+// the same line. Group 2 captures whatever (if anything) follows the
+// colon on that same line — empty when the value is on a later line.
+const PASSENGER_LABEL_LINE = /^Passenger(?: information)? (\d+):?\s*(.*)$/i;
 const MODIFIED_INFO_LABEL = /^Modified information:?$/i;
 
 function isKnownLabelLine(line) {
@@ -84,7 +90,8 @@ function isKnownLabelLine(line) {
     if (LABEL_MATCHERS.get(label).start.test(line)) return true;
   }
   return CLIENT_DETAILS_MATCHERS.start.test(line)
-    || PASSENGER_LABEL.test(line)
+    || CLIENT_NAME_LABEL_LINE.test(line)
+    || PASSENGER_LABEL_LINE.test(line)
     || MODIFIED_INFO_LABEL.test(line);
 }
 
@@ -155,20 +162,29 @@ function findLabelValue(lines, label) {
 const FULL_NAME_LABEL_BARE = /^Full name:?$/i;
 const FULL_NAME_LABEL_LINE = /^Full name:?\s*(.*)$/i;
 
-/** Passenger blocks: "Passenger information N:" then either a "Full name"
- * sub-label (with or without a trailing colon, and with the name either
- * on the same line or the next line — both real layouts are observed
- * depending on plain-text vs. HTML-table-derived extraction) followed by
- * the name, or (tolerated variant) the name directly with no "Full name"
- * sub-label at all. Returned in the order encountered, sort_order is
- * 0-based position among passengers found — never re-derived from the
- * Civitatis "N" itself, which is display numbering, not guaranteed to
- * start at 1 or be contiguous. Supports any number of repeated
- * "Passenger information N:" sections. */
+/** Passenger blocks: "Passenger information N:" (or the shorter
+ * "Passenger N:") then either the name directly on the SAME line
+ * ("Passenger 1: JOHN DOE" — a real-world variant with no "Full name"
+ * sub-label at all), or a "Full name" sub-label (with or without a
+ * trailing colon, and with the name either on the same line or the next
+ * line — both real layouts are observed depending on plain-text vs.
+ * HTML-table-derived extraction) followed by the name, or (tolerated
+ * variant) the name directly on the line following the bare passenger
+ * label with no "Full name" sub-label. Returned in the order
+ * encountered, sort_order is 0-based position among passengers found —
+ * never re-derived from the Civitatis "N" itself, which is display
+ * numbering, not guaranteed to start at 1 or be contiguous. Supports any
+ * number of repeated "Passenger [information] N:" sections. */
 function extractPassengers(lines) {
   const passengers = [];
   for (let i = 0; i < lines.length; i++) {
-    if (!PASSENGER_LABEL.test(lines[i])) continue;
+    const passengerMatch = PASSENGER_LABEL_LINE.exec(lines[i]);
+    if (!passengerMatch) continue;
+    const inlineName = passengerMatch[2].trim();
+    if (inlineName && !FULL_NAME_LABEL_BARE.test(inlineName)) {
+      passengers.push({ fullName: inlineName, sortOrder: passengers.length });
+      continue;
+    }
     let cursor = i + 1;
     if (cursor < lines.length) {
       const m = FULL_NAME_LABEL_LINE.exec(lines[cursor]);
@@ -185,7 +201,7 @@ function extractPassengers(lines) {
     if (
       nameLine !== undefined
       && !isKnownLabelLine(nameLine)
-      && !PASSENGER_LABEL.test(nameLine)
+      && !PASSENGER_LABEL_LINE.test(nameLine)
       && !FULL_NAME_LABEL_BARE.test(nameLine)
     ) {
       passengers.push({ fullName: nameLine, sortOrder: passengers.length });
@@ -211,17 +227,29 @@ const CLIENT_SUB_LABEL_LINE = /^(Name|Surname|Email|Phone):?\s*(.*)$/i;
 const CLIENT_SUB_LABEL_BARE = /^(Name|Surname|Email|Phone):?\s*$/i;
 const CLIENT_SUB_LABEL_KEY = { name: 'name', surname: 'surname', email: 'email', phone: 'phone' };
 const CONTACT_DETAILS_MARKER_RE = /\s*\(contact details\)\s*$/i;
+// Real-world variant with no "Client details:" block header at all: the
+// contact's given name arrives as its own top-level "Client name:" line
+// instead of a "Name:" sub-label nested under that header. Surname/
+// Email/Phone, when present, still follow as their own top-level
+// "Label: value" lines, scanned the same way as the block form below.
+const CLIENT_NAME_LABEL_LINE = /^Client name:?\s*(.*)$/i;
 
 function stripContactDetailsMarker(value) {
   return value == null ? value : value.replace(CONTACT_DETAILS_MARKER_RE, '').trim();
 }
 
-function extractClientDetails(lines) {
-  const idx = lines.findIndex(l => CLIENT_DETAILS_MATCHERS.bare.test(l));
-  const result = { name: null, surname: null, email: null, phone: null };
-  if (idx === -1) return result;
-  const end = Math.min(idx + 12, lines.length);
-  let i = idx + 1;
+/** Scans up to 12 lines starting at `startIdx` for Name/Surname/Email/
+ * Phone sub-labels (order-tolerant, same-line or next-line value),
+ * writing into `result` — shared by both the "Client details:" block
+ * shape and the headerless "Client name:" shape below. Never overwrites
+ * a field `result` already carries (relevant only for the headerless
+ * path, where `name` is already set from "Client name:" itself before
+ * this runs). Stops at the first line that either fails to match a
+ * sub-label or is itself a top-level field boundary — never scans past
+ * the contact block into unrelated content. */
+function scanClientSubFields(lines, startIdx, result) {
+  const end = Math.min(startIdx + 12, lines.length);
+  let i = startIdx;
   while (i < end) {
     const line = lines[i];
     if (isKnownLabelLine(line)) break;
@@ -230,7 +258,7 @@ function extractClientDetails(lines) {
     const key = CLIENT_SUB_LABEL_KEY[m[1].toLowerCase()];
     const inline = m[2].trim();
     if (inline) {
-      result[key] = stripContactDetailsMarker(inline);
+      if (result[key] == null) result[key] = stripContactDetailsMarker(inline);
       i += 1;
     } else {
       // "Name:" (or Surname/Email/Phone) alone on its own line -> the
@@ -238,11 +266,39 @@ function extractClientDetails(lines) {
       // itself another bare sub-label or a top-level field boundary.
       const next = lines[i + 1];
       if (next !== undefined && !isKnownLabelLine(next) && !CLIENT_SUB_LABEL_BARE.test(next)) {
-        result[key] = stripContactDetailsMarker(next.trim());
+        if (result[key] == null) result[key] = stripContactDetailsMarker(next.trim());
         i += 2;
       } else {
         i += 1;
       }
+    }
+  }
+}
+
+function extractClientDetails(lines) {
+  const result = { name: null, surname: null, email: null, phone: null };
+
+  const detailsIdx = lines.findIndex(l => CLIENT_DETAILS_MATCHERS.bare.test(l));
+  if (detailsIdx !== -1) {
+    scanClientSubFields(lines, detailsIdx + 1, result);
+    return result;
+  }
+
+  // No "Client details:" header found — try the headerless "Client
+  // name:" variant instead. Exact label text only, same-line or
+  // next-line value, never inferred from surrounding prose.
+  const clientNameIdx = lines.findIndex(l => CLIENT_NAME_LABEL_LINE.test(l));
+  if (clientNameIdx === -1) return result;
+  const m = CLIENT_NAME_LABEL_LINE.exec(lines[clientNameIdx]);
+  const inline = m[1].trim();
+  if (inline) {
+    result.name = stripContactDetailsMarker(inline);
+    scanClientSubFields(lines, clientNameIdx + 1, result);
+  } else {
+    const next = lines[clientNameIdx + 1];
+    if (next !== undefined && !isKnownLabelLine(next)) {
+      result.name = stripContactDetailsMarker(next.trim());
+      scanClientSubFields(lines, clientNameIdx + 2, result);
     }
   }
   return result;
