@@ -63,6 +63,77 @@ test('parseRequestedWrite only treats the literal string/boolean "true" as an op
   assert.equal(handler.parseRequestedWrite('false'), false);
 });
 
+// ── isManualWriteAuthorized: the new write=true shared-secret gate ──────
+test('isManualWriteAuthorized requires an exact match against a configured, non-empty secret', () => {
+  assert.equal(handler.isManualWriteAuthorized({ configuredSecret: 's3cr3t', providedSecret: 's3cr3t' }), true);
+  assert.equal(handler.isManualWriteAuthorized({ configuredSecret: 's3cr3t', providedSecret: 'wrong' }), false);
+  assert.equal(handler.isManualWriteAuthorized({ configuredSecret: 's3cr3t', providedSecret: undefined }), false);
+  assert.equal(handler.isManualWriteAuthorized({ configuredSecret: undefined, providedSecret: undefined }), false); // fails closed
+  assert.equal(handler.isManualWriteAuthorized({ configuredSecret: undefined, providedSecret: 'anything' }), false); // fails closed even if a header happens to be sent
+  assert.equal(handler.isManualWriteAuthorized({ configuredSecret: '', providedSecret: '' }), false); // an empty configured secret is never "configured"
+  assert.equal(handler.isManualWriteAuthorized({ configuredSecret: 's3cr3t', providedSecret: ['s3cr3t'] }), false); // must be a string, not e.g. a duplicated-header array
+});
+
+// ── HTTP-level write auth gate — real handler(req,res), no network/creds
+// ever reached for the rejection paths (mirrors tests/civitatis/
+// ingestEndpoint.test.js's convention of calling the real exported
+// handler with a minimal req/res mock and relying on the sandbox's own
+// genuine lack of Gmail/Supabase credentials for the "auth passed, then
+// hit a config error" case). ───────────────────────────────────────────
+function makeRes() {
+  const res = {
+    statusCode: null,
+    body: null,
+    status(code) { this.statusCode = code; return this; },
+    json(payload) { this.body = payload; return this; },
+  };
+  return res;
+}
+
+test('a plain dry-run request (no write=true) needs no secret and is unaffected by the new gate', async () => {
+  delete process.env.CIVITATIS_MANUAL_WRITE_SECRET;
+  delete process.env.GMAIL_CLIENT_ID;
+  const req = { method: 'GET', query: {}, headers: {} };
+  const res = makeRes();
+  await handler(req, res);
+  // Reaches the same pre-existing Gmail-configuration failure the manual
+  // endpoint always had for a credential-less environment — never a 401.
+  assert.equal(res.statusCode, 503);
+  assert.equal(res.body.stage, 'gmail_configuration');
+});
+
+test('a write=true request is rejected 401 before any Gmail/Supabase call when no secret is configured', async () => {
+  delete process.env.CIVITATIS_MANUAL_WRITE_SECRET;
+  const req = { method: 'GET', query: { write: 'true' }, headers: {} };
+  const res = makeRes();
+  await handler(req, res);
+  assert.equal(res.statusCode, 401);
+  assert.equal(res.body.stage, 'manual_write_auth');
+});
+
+test('a write=true request is rejected 401 when the provided secret header does not match', async () => {
+  process.env.CIVITATIS_MANUAL_WRITE_SECRET = 'the-real-secret';
+  const req = { method: 'GET', query: { write: 'true' }, headers: { 'x-civitatis-write-secret': 'guessed-wrong' } };
+  const res = makeRes();
+  await handler(req, res);
+  assert.equal(res.statusCode, 401);
+  delete process.env.CIVITATIS_MANUAL_WRITE_SECRET;
+});
+
+test('a write=true request with the correct secret header passes the auth gate (reaches the same Gmail-configuration stage a dry run does)', async () => {
+  process.env.CIVITATIS_MANUAL_WRITE_SECRET = 'the-real-secret';
+  const req = { method: 'GET', query: { write: 'true' }, headers: { 'x-civitatis-write-secret': 'the-real-secret' } };
+  const res = makeRes();
+  await handler(req, res);
+  // Proves the 401 gate is not what's blocking here — it's the sandbox's
+  // genuine lack of Gmail credentials, exactly like every other real
+  // handler() test in this suite.
+  assert.notEqual(res.statusCode, 401);
+  assert.equal(res.statusCode, 503);
+  assert.equal(res.body.stage, 'gmail_configuration');
+  delete process.env.CIVITATIS_MANUAL_WRITE_SECRET;
+});
+
 // ── filterMessagesByExternalBookingId ───────────────────────────────────
 test('filterMessagesByExternalBookingId keeps only messages parsing to the exact requested booking id', () => {
   const filtered = handler.filterMessagesByExternalBookingId(

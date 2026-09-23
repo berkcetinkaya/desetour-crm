@@ -66,8 +66,31 @@
  * its own), or any credential. See buildDryRunResults/buildWriteResults/
  * decorateCallResult below for the exact reported fields.
  *
- * NOT wired to cron: no vercel.json crons entry exists for this or any
- * other function. Manual invocation only, in this phase.
+ * MANUAL WRITE REQUESTS NOW REQUIRE A SHARED SECRET (see
+ * isManualWriteAuthorized below): a request with write=true is rejected
+ * with 401, BEFORE any Gmail/Supabase call is even attempted, unless it
+ * also carries a `x-civitatis-write-secret` header matching the
+ * server-side CIVITATIS_MANUAL_WRITE_SECRET environment variable. This
+ * closes the gap CIVITATIS_WRITE_ENABLED + write=true alone left open:
+ * on any deployment where the env flag is on, ANY caller who merely
+ * discovered the URL and appended ?write=true could previously trigger a
+ * real write with no authentication at all. Dry-run (no write=true, the
+ * default) is completely unaffected — still open for diagnostics with no
+ * secret required, exactly as before. Fails closed: an unset
+ * CIVITATIS_MANUAL_WRITE_SECRET means NO write=true request can ever
+ * succeed here, regardless of what header is supplied.
+ *
+ * AUTOMATIC SCHEDULING lives in the separate sibling file
+ * api/cron-ingest-civitatis-write.js, invoked on a schedule by Vercel
+ * Cron (see vercel.json's `crons` entry) and authenticated by Vercel's
+ * own supported cron mechanism (the Authorization: Bearer $CRON_SECRET
+ * header Vercel attaches automatically) — a completely separate secret
+ * and code path from the manual one above. That file duplicates NONE of
+ * this one's ingestion logic: it imports and calls
+ * runCivitatisWriteOrchestration, buildRealRpcCaller, isWriteModeActive,
+ * and the two message-count constants directly from this file (see the
+ * exports at the bottom). This file itself still has no crons entry of
+ * its own and remains manual-invocation-only.
  * ─────────────────────────────────────────────────────────────────────────
  */
 'use strict';
@@ -98,6 +121,18 @@ function isWriteModeActive({ writeEnvValue, requestedWrite }) {
  * missing/absent/anything-else value is never treated as an opt-in. */
 function parseRequestedWrite(rawValue) {
   return rawValue === 'true' || rawValue === true;
+}
+
+/**
+ * Manual write-request authorization gate — checked ONLY when
+ * requestedWrite is true (dry-run requests never call this and need no
+ * secret). Pure/injectable, same style as isWriteModeActive, so it is
+ * directly unit-testable without setting real process.env or crafting a
+ * real HTTP request. Fails closed: no configuredSecret means this can
+ * never return true, however it is called.
+ */
+function isManualWriteAuthorized({ configuredSecret, providedSecret }) {
+  return !!configuredSecret && typeof providedSecret === 'string' && providedSecret === configuredSecret;
 }
 
 /**
@@ -272,6 +307,25 @@ async function handler(req, res) {
 
   const writeEnvValue = process.env.CIVITATIS_WRITE_ENABLED;
   const requestedWrite = parseRequestedWrite(q.write);
+
+  // Fail fast, before any Gmail/Supabase call: a write=true request with
+  // no valid secret is rejected outright, not silently downgraded to a
+  // dry run (which could mask a caller's own mistaken assumption that a
+  // real write happened). Dry-run requests (requestedWrite === false)
+  // never reach this check at all — no behavior change for diagnostics.
+  if (requestedWrite) {
+    const authorized = isManualWriteAuthorized({
+      configuredSecret: process.env.CIVITATIS_MANUAL_WRITE_SECRET,
+      providedSecret: req.headers['x-civitatis-write-secret'],
+    });
+    if (!authorized) {
+      return res.status(401).json({
+        error: 'Unauthorized: a write=true request requires a valid x-civitatis-write-secret header.',
+        stage: 'manual_write_auth',
+      });
+    }
+  }
+
   const writeModeActive = isWriteModeActive({ writeEnvValue, requestedWrite });
 
   let messages;
@@ -354,11 +408,17 @@ async function handler(req, res) {
 // or Supabase network calls.
 handler.isWriteModeActive = isWriteModeActive;
 handler.parseRequestedWrite = parseRequestedWrite;
+handler.isManualWriteAuthorized = isManualWriteAuthorized;
 handler.filterMessagesByExternalBookingId = filterMessagesByExternalBookingId;
 handler.buildEventTypeMap = buildEventTypeMap;
 handler.decorateCallResult = decorateCallResult;
 handler.buildDryRunResults = buildDryRunResults;
 handler.buildWriteResults = buildWriteResults;
 handler.runCivitatisWriteOrchestration = runCivitatisWriteOrchestration;
+// Reused as-is by api/cron-ingest-civitatis-write.js so the scheduled
+// entry point duplicates none of this ingestion/RPC logic.
+handler.buildRealRpcCaller = buildRealRpcCaller;
+handler.DEFAULT_MAX_MESSAGES = DEFAULT_MAX_MESSAGES;
+handler.HARD_MAX_MESSAGES = HARD_MAX_MESSAGES;
 
 module.exports = handler;

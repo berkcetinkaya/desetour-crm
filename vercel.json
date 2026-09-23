@@ -15,8 +15,18 @@
     "api/ingest-civitatis-write.js": {
       "maxDuration": 60,
       "memory": 512
+    },
+    "api/cron-ingest-civitatis-write.js": {
+      "maxDuration": 60,
+      "memory": 512
     }
   },
+  "crons": [
+    {
+      "path": "/api/cron-ingest-civitatis-write",
+      "schedule": "0 6 * * *"
+    }
+  ],
   "rewrites": [
     { "source": "/(.*)", "destination": "/index.html" }
   ]
