@@ -1,0 +1,106 @@
+# Civitatis Scheduled Ingestion
+# ─────────────────────────────────────────────────────────────────────────
+# Calls the already-protected, already-tested
+# api/cron-ingest-civitatis-write.js endpoint on a schedule, so DeseTour
+# staff never have to open its URL by hand. This workflow contains NO
+# ingestion logic of its own — its entire job is one authenticated HTTP
+# request; every actual decision (Gmail discovery window, eligibility,
+# matching, the transactional write) lives in the endpoint itself and the
+# code it calls, none of which this file duplicates or can influence.
+#
+# IMPORTANT — this workflow is INERT until it is merged to the
+# repository's default branch: GitHub only evaluates a `schedule:`
+# trigger against whatever workflow file currently exists on the default
+# branch, never on a feature branch's own copy. Pushing this file to a
+# non-default branch (as this change does) starts no real scheduled
+# execution by itself. `workflow_dispatch` (below) is the one exception —
+# it CAN be run manually from any branch that has this file, by anyone
+# with write access to the repository, once the required secrets exist —
+# see item 8/9 of the delivering report for the exact activation
+# sequence this is meant to be used for.
+#
+# SECRETS: CIVITATIS_SCHEDULER_SECRET (below) is a GitHub Actions
+# encrypted secret — never printed, never committed, and GitHub
+# automatically redacts its value from any log output that would
+# otherwise echo it. The same value must separately be set as the
+# CIVITATIS_SCHEDULER_SECRET environment variable on the Vercel
+# deployment this workflow targets — see api/cron-ingest-civitatis-write.js's
+# isAuthorizedSchedulerRequest, which is what actually checks it.
+# CIVITATIS_CRON_URL (a repository VARIABLE, not a secret — it is a
+# plain HTTPS endpoint URL with no embedded credential of any kind; the
+# authorization boundary is the header above, never the URL's own
+# secrecy, matching this project's established design throughout its
+# Civitatis write-path work) must be set to the deployed production
+# endpoint's full URL, e.g.
+# https://<your-production-domain>/api/cron-ingest-civitatis-write —
+# neither secret nor variable is set by this change; see the deliverable
+# report's activation section.
+# ─────────────────────────────────────────────────────────────────────────
+name: Civitatis Scheduled Ingestion
+
+on:
+  schedule:
+    # Every 15 minutes. GitHub documents scheduled workflows as
+    # best-effort and occasionally delayed under high platform load —
+    # any such delay still lands comfortably inside the bounded overlap
+    # window api/cron-ingest-civitatis-write.js's Gmail discovery uses,
+    # so a late run never causes a missed booking, only a slightly later
+    # one.
+    - cron: '*/15 * * * *'
+  # Lets a human trigger this exact workflow on demand from the GitHub
+  # Actions UI (or `gh workflow run`) — used for controlled, deliberate
+  # production verification after activation, never for routine
+  # operation (the schedule above already covers that).
+  workflow_dispatch: {}
+
+# Least privilege: this workflow only ever makes one outbound HTTPS
+# request — it never needs to read or write anything in this repository
+# itself, so its GITHUB_TOKEN is granted no permissions at all.
+permissions: {}
+
+# Prevents two runs from ever calling the ingestion endpoint at the same
+# time: a new run started while a previous one is still executing
+# (e.g. the endpoint running slow, or a manual workflow_dispatch
+# overlapping the schedule) queues behind it rather than firing
+# concurrently. cancel-in-progress is deliberately false — the already-
+# running HTTP call to Vercel is not something this workflow can or
+# should interrupt mid-flight; queuing the next run is what avoids
+# overlap, not cancelling work already underway.
+concurrency:
+  group: civitatis-scheduled-ingestion
+  cancel-in-progress: false
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Call the protected Civitatis ingestion endpoint
+        env:
+          # Mapped to plain shell env vars rather than interpolated
+          # directly into the run: script — GitHub's own recommended
+          # pattern for using a secret inside a shell step.
+          SCHEDULER_SECRET: ${{ secrets.CIVITATIS_SCHEDULER_SECRET }}
+          INGEST_URL: ${{ vars.CIVITATIS_CRON_URL }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${INGEST_URL}" ]; then
+            echo "::error::CIVITATIS_CRON_URL repository variable is not set — see the activation instructions."
+            exit 1
+          fi
+
+          http_status=$(curl -sS -o response.json -w '%{http_code}' \
+            --max-time 90 \
+            -X GET \
+            -H "Authorization: Bearer ${SCHEDULER_SECRET}" \
+            "${INGEST_URL}")
+
+          echo "HTTP status: ${http_status}"
+          echo "Response body:"
+          cat response.json
+
+          if [ "${http_status}" -lt 200 ] || [ "${http_status}" -ge 300 ]; then
+            echo "::error::Civitatis ingestion endpoint returned a non-2xx status (${http_status})"
+            exit 1
+          fi

@@ -534,6 +534,70 @@ function buildCivitatisSearchQuery() {
   return 'from:(notificaciones@civitatis.com)';
 }
 
+/**
+ * The SAME query as buildCivitatisSearchQuery(), narrowed with Gmail's
+ * documented `after:` search operator (Gmail Help: "Search for messages
+ * sent during a certain time period" — after:/before: accept either a
+ * YYYY/MM/DD date or a Unix timestamp in seconds; the Unix-timestamp
+ * form is used here deliberately, since the YYYY/MM/DD form is only
+ * day-granularity and cannot express the sub-day bounded window a
+ * 15-minute scheduled run needs). `after:` is part of Gmail's documented
+ * end-user/API search syntax — unlike message LIST ORDERING (see
+ * fetchAllMessagesWithinCeiling below), this is a real, supported
+ * contract, not an empirically-observed default.
+ */
+function buildCivitatisSearchQueryWithWindow(sinceUnixSeconds) {
+  return `${buildCivitatisSearchQuery()} after:${sinceUnixSeconds}`;
+}
+
+/**
+ * Fetches EVERY message matching `query`, following nextPageToken across
+ * as many pages as needed, until either Gmail reports no further page or
+ * the running total reaches maxTotal — whichever comes first. This
+ * exists specifically because Gmail's users.messages.list has NO
+ * documented ordering guarantee (no orderBy param exists on this
+ * endpoint, and Google's own API reference does not assert a
+ * newest-first — or any other stable — order for search results; the
+ * widely-observed newest-first behavior matches Gmail's own UI and has
+ * held in this project's own real-world testing, but it is NOT a
+ * contractual guarantee). A caller that only ever fetched page 1 was
+ * therefore silently trusting an undocumented assumption — this function
+ * removes that dependency entirely by walking every page within the
+ * caller-supplied query's bound (see api/cron-ingest-civitatis-write.js
+ * for how the query itself is scoped to a bounded time window, which is
+ * what makes exhaustively paging it safe and finite).
+ *
+ * maxTotal is a SOFT ceiling: once the running total reaches or exceeds
+ * it, no further page is requested — but a page already in flight (or
+ * just completed) is never discarded, since throwing away
+ * already-fetched messages just to hit an exact count would waste the
+ * API calls already spent and could discard a message for no reason.
+ * `truncated` is true exactly when the loop stopped because a
+ * nextPageToken still existed (i.e. Gmail reported more results than
+ * were actually fetched) — false when every matching message within the
+ * query was genuinely exhausted, even if the final count happens to meet
+ * or exceed maxTotal.
+ *
+ * fetchPageFn defaults to this module's own fetchMessagePage but is
+ * injectable so tests can drive a fake multi-page sequence (including a
+ * ceiling-truncation scenario) without any real Gmail network access —
+ * the same dependency-injection pattern api/_civitatis/writeAdapter.js's
+ * executeCivitatisIngestionPlan already uses for rpcCaller.
+ */
+async function fetchAllMessagesWithinCeiling(query, { maxTotal, fetchPageFn = fetchMessagePage } = {}) {
+  const messages = [];
+  let pageToken;
+  let pagesFetched = 0;
+  do {
+    const page = await fetchPageFn(query, { pageToken, maxResults: 100 });
+    messages.push(...(page.messages || []));
+    pagesFetched += 1;
+    pageToken = page.nextPageToken || null;
+  } while (pageToken && messages.length < maxTotal);
+  const truncated = !!pageToken;
+  return { messages, pagesFetched, truncated };
+}
+
 module.exports = {
   getAccessToken,
   listMessageIds,
@@ -542,7 +606,9 @@ module.exports = {
   fetchMessagePageDiagnostics,
   fetchMessagePageFull,
   fetchAllMatchingMessages,
+  fetchAllMessagesWithinCeiling,
   buildCivitatisSearchQuery,
+  buildCivitatisSearchQueryWithWindow,
   extractPlainTextBody,
   selectMessageBody,
   collectBodyCandidates,

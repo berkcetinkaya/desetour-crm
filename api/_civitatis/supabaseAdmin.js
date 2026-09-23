@@ -180,6 +180,31 @@ async function findCustomersByName({ fullName }) {
   return data || [];
 }
 
+/**
+ * The most recent Gmail-message timestamp (email_ingestions.received_at)
+ * this system has ever recorded, across every processing_status — used
+ * ONLY by api/cron-ingest-civitatis-write.js to compute a bounded
+ * search-window watermark; never used by planCivitatisIngestion/
+ * dryRun.js's own eligibility, matching, or write decisions. Any row's
+ * existence means that exact Gmail message was already fetched and
+ * recorded (Step 1 of ingest_civitatis_booking always claims a row on
+ * first sight, regardless of eventual outcome), so this intentionally
+ * carries no processing_status filter. Returns null when the table is
+ * empty (first-ever scheduled run) — never a fabricated default; the
+ * caller is responsible for falling back to a bounded default window in
+ * that case, not this function.
+ */
+async function getLatestEmailIngestionReceivedAt() {
+  const sb = getServiceRoleClient();
+  const { data, error } = await sb.from('email_ingestions')
+    .select('received_at')
+    .order('received_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw new Error(`Supabase error reading latest email_ingestions.received_at: ${error.message}`);
+  return data ? data.received_at : null;
+}
+
 /** The full read-only repo object shape api/_civitatis/dryRun.js expects. */
 function createSupabaseCivitatisRepo() {
   return {
@@ -190,7 +215,14 @@ function createSupabaseCivitatisRepo() {
     findCandidateLegacyReservations,
     findCustomersByContact,
     findCustomersByName,
+    getLatestEmailIngestionReceivedAt,
   };
 }
 
-module.exports = { createSupabaseCivitatisRepo, getServiceRoleClient, ConfigurationError, CIVITATIS_SOURCE_SLUG };
+module.exports = {
+  createSupabaseCivitatisRepo,
+  getServiceRoleClient,
+  getLatestEmailIngestionReceivedAt,
+  ConfigurationError,
+  CIVITATIS_SOURCE_SLUG,
+};
