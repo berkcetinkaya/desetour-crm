@@ -6,6 +6,13 @@
   <meta name="description" content="Dese Tour Operasyon Merkezi — CRM"/>
   <title>Dese Tour Operasyon Merkezi</title>
 
+  <!-- Favicon — cropped from the existing dese-logo-mark.png brand asset
+       (the "D" glyph, a plain crop with no redrawing/recoloring), never a
+       generated or external image. -->
+  <link rel="icon" type="image/x-icon" href="/favicon.ico"/>
+  <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png"/>
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png"/>
+
   <!--
   ══════════════════════════════════════════════════════════════════════
   DESE TOUR OPERATIONS CENTER — index.html
@@ -73,6 +80,73 @@
       to   { opacity: 1; transform: translateY(0); }
     }
     .fade { animation: fadeInUp 0.18s ease; }
+
+    /* Dashboard hero shell height — the hero-photo box's crop ratio is its
+       width (72% of this shell) divided by this height. The shell's height
+       used to come from an inline minHeight:296 that never grew with the
+       viewport, so on a wide screen the box got much wider without getting
+       any taller, forcing object-fit:cover to zoom in far past the source
+       photo's own ~2.5:1 ratio to fill it — cropping most of the image's
+       height away. Growing the shell at the same breakpoints already used
+       below keeps the crop close to that native ratio at every width
+       instead of only at the narrowest one. */
+    .hero-shell { min-height: 320px; }
+    @media (min-width: 1440px) {
+      .hero-shell { min-height: 340px; }
+    }
+    @media (min-width: 1920px) {
+      .hero-shell { min-height: 430px; }
+    }
+
+    /* Dashboard hero photo — now a real <img> (object-fit) confined to the
+       hero's right ~72% instead of a full-bleed background, so cover crops
+       much closer to the source photo's own aspect ratio: most of its
+       height shows, keeping the Bosphorus/skyline panorama wide and the
+       Galata Tower at its natural size rather than blown up to fill a
+       short, ultra-wide sliver. object-position keeps the tower comfortably
+       in frame without clipping its spire or the rooftops below it. */
+    .hero-photo { object-position: center 40%; }
+    @media (min-width: 1440px) {
+      .hero-photo { object-position: center 38%; }
+    }
+    @media (min-width: 1920px) {
+      .hero-photo { object-position: center 36%; }
+    }
+
+    /* Left-to-right fade so the photo emerges from the hero's white
+       background instead of a hard seam. The photo <img> itself starts at
+       28% from the left (100% - 72% width), so the solid-white zone here
+       extends a little past that before fading in, and is fully
+       transparent well before the photo's right edge so the tower/
+       architecture read crisp with no white cast over them. */
+    .hero-fade {
+      background: linear-gradient(to right,
+        #FFFFFF 0%, #FFFFFF 34%,
+        rgba(255,255,255,0.7) 45%,
+        rgba(255,255,255,0.3) 56%,
+        rgba(255,255,255,0.05) 63%,
+        rgba(255,255,255,0) 68%);
+    }
+    @media (min-width: 1440px) {
+      .hero-fade {
+        background: linear-gradient(to right,
+          #FFFFFF 0%, #FFFFFF 30%,
+          rgba(255,255,255,0.65) 41%,
+          rgba(255,255,255,0.28) 51%,
+          rgba(255,255,255,0.04) 58%,
+          rgba(255,255,255,0) 63%);
+      }
+    }
+    @media (min-width: 1920px) {
+      .hero-fade {
+        background: linear-gradient(to right,
+          #FFFFFF 0%, #FFFFFF 26%,
+          rgba(255,255,255,0.6) 37%,
+          rgba(255,255,255,0.25) 47%,
+          rgba(255,255,255,0.04) 53%,
+          rgba(255,255,255,0) 58%);
+      }
+    }
   </style>
 </head>
 <body>
@@ -151,7 +225,7 @@
 
 
   <!-- App (pre-transpiled JSX — no Babel needed in browser) -->
-  <script src="app.js?v=a53dfe06e3"></script>
+  <script src="app.js?v=47ace0cd07"></script>
 
   <!-- Hide boot screen once React renders -->
   <script>

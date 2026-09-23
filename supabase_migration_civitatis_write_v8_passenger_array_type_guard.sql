@@ -1,0 +1,1567 @@
+-- ============================================================
+-- DESE TOUR OPERATIONS CENTER
+-- Migration: Civitatis Email Ingestion — Transactional Write RPC
+-- ============================================================
+-- File:    supabase_migration_civitatis_write_v8_passenger_array_type_guard.sql
+-- Depends: supabase_schema.sql, supabase_rls_policies.sql,
+--          supabase_migration_guides.sql, supabase_migration_reviews.sql,
+--          supabase_migration_tour_channels.sql,
+--          supabase_migration_civitatis_ingestion.sql,
+--          supabase_migration_civitatis_write.sql (V6 — ALREADY APPLIED
+--          TO PRODUCTION),
+--          supabase_migration_civitatis_write_v7_passenger_completeness.sql
+--          (V7 — ALREADY APPLIED TO PRODUCTION, per operator confirmation
+--          after the first real controlled write smoke test for booking
+--          A41629692; verified: security_definer=true, search_path=
+--          public, owner=postgres, EXECUTE restricted to postgres/
+--          service_role only — no anon/authenticated/PUBLIC)
+--
+-- Version: V8 — a NEW, separate migration file layered on top of the
+--          already-applied V7, adding exactly ONE new pre-flight
+--          validation: p_passengers, when non-NULL, must be a genuine
+--          JSONB ARRAY. STILL NOT APPROVED FOR EXECUTION. This file does
+--          NOT rewrite or pretend V7 is unapplied —
+--          supabase_migration_civitatis_write_v7_passenger_completeness.sql
+--          (the V7 file) is left completely untouched and remains the
+--          accurate historical record of what is live in production
+--          today; this file's CREATE OR REPLACE FUNCTION is what
+--          advances it to V8 once reviewed and applied.
+--
+-- WHY THIS MIGRATION EXISTS
+-- ─────────────────────────────────────────────────────────────
+-- The first real controlled write smoke test for booking A41629692
+-- (gmail_message_id 1a0aedc69a2ef905, event_type new_booking) failed
+-- with the raw Postgres error "cannot extract elements from a scalar".
+-- Root cause (application layer, NOT this function's own logic):
+-- api/_civitatis/writeAdapter.js's buildRpcPayload pre-serialized
+-- p_passengers via JSON.stringify(...) before handing the whole payload
+-- object to supabase.rpc(...) — but @supabase/postgrest-js's
+-- PostgrestBuilder itself calls JSON.stringify(this.body) exactly ONCE
+-- on the entire args object to build the actual HTTP request body. This
+-- double-encoded p_passengers: what PostgREST actually received under
+-- that key was a JSON STRING (whose text merely LOOKED like an array),
+-- which it cast to a JSONB SCALAR, not a JSONB array. V7's Step 2b
+-- (SELECT COUNT(*) FROM jsonb_array_elements(COALESCE(p_passengers,
+-- '[]'::jsonb)) ...) — which sits OUTSIDE this function's nested
+-- BEGIN...EXCEPTION WHEN OTHERS block — then raised this exact
+-- unhandled Postgres exception, aborting the WHOLE call (including
+-- Step 1's email_ingestions insert; see the transactional-cleanliness
+-- note below).
+--
+-- The actual fix for THIS bug is a JS-layer, one-line change:
+-- api/_civitatis/writeAdapter.js's buildRpcPayload now passes
+-- parsedEvent.passengers directly (a native array) instead of
+-- JSON.stringify(parsedEvent.passengers || []) — committed alongside
+-- this migration file, with a new regression test
+-- (tests/civitatis/writeAdapter.test.js) that reproduces the exact
+-- double-encoding failure using the real A41629692 booking's fixture
+-- shape and fails under the old implementation.
+--
+-- THIS MIGRATION IS DELIBERATE DEFENSE IN DEPTH, NOT THE FIX ITSELF —
+-- added because: (a) writeAdapter.js is explicitly documented as "the
+-- only intended caller" of this RPC, not the only POSSIBLE one — a
+-- future caller (a script, a manual Supabase Dashboard RPC call, a
+-- different application layer) could reintroduce the exact same
+-- shape-mismatch bug; (b) per explicit instruction, the contract must
+-- "remain strict and fail closed" — this migration does NOT wrap
+-- jsonb_array_elements in a broad EXCEPTION handler (that would hide
+-- genuine bugs and, worse, still leave the failure INSIDE the same
+-- unprotected pre-flight region unless carefully scoped); instead it
+-- adds ONE explicit, narrow, non-throwing type check
+-- (jsonb_typeof(p_passengers) = 'array') to Step 2's EXISTING clean
+-- required-field validation block, so a malformed p_passengers now
+-- fails via the SAME already-audited, zero-business-state-side-effects
+-- manual_review_required path every other required-field problem
+-- already uses — a clean, auditable email_ingestions row instead of an
+-- unhandled exception that aborts Step 1's own insert. jsonb_typeof()
+-- never raises for any well-formed, non-NULL JSONB value (it simply
+-- returns 'object'|'array'|'string'|'number'|'boolean'|'null' — the
+-- JSON null literal, distinct from SQL NULL), so this check itself
+-- cannot introduce a new failure mode.
+--
+-- p_passengers remaining legitimately NULL is UNCHANGED and still
+-- accepted: V3's own established contract (see V3 changelog point 7,
+-- below) is that an absent/NULL passenger payload is valid on the
+-- MODIFICATION path (it means "do not touch existing passengers"), and
+-- V7's CREATE-path completeness guard (Step 2b/the CREATE branch guard,
+-- both unchanged below) already independently rejects a NULL/empty
+-- p_passengers on CREATE via its own usable-count-mismatch check. This
+-- migration's new check ONLY rejects a NON-NULL p_passengers that is
+-- not a JSONB array (e.g. the double-encoded JSONB scalar STRING this
+-- bug produced, or any other non-array JSONB value such as a number,
+-- boolean, or object) — never a legitimate NULL.
+--
+-- STATUS: V7 (the entire function body below, MINUS the one new
+-- p_passengers type check this file adds — see V8 CHANGELOG) is what is
+-- currently live in production, per operator confirmation. This V8 file
+-- has NOT been executed against any database. It exists so it can be
+-- read, reviewed, and (once approved) applied manually — CREATE OR
+-- REPLACE FUNCTION is safe to re-run directly over the already-applied
+-- V7. Nothing in this repository currently calls the function through a
+-- reachable HTTP endpoint with CIVITATIS_WRITE_ENABLED=true by default —
+-- see api/ingest-civitatis-write.js, which requires an explicit env var
+-- AND an explicit request flag to write at all.
+--
+-- V8 CHANGELOG (what changed since the applied V7, and why — see "WHY
+-- THIS MIGRATION EXISTS" above for the full incident writeup)
+-- ─────────────────────────────────────────────────────────────
+--   12. p_passengers, WHEN NON-NULL, MUST BE A JSONB ARRAY. Step 2's
+--       existing required-field validation block now also runs:
+--         IF p_passengers IS NOT NULL AND jsonb_typeof(p_passengers) <> 'array' THEN
+--           v_missing_fields := array_append(v_missing_fields, 'passengers (must be a JSON array when provided)');
+--         END IF;
+--       exactly like every other Step 2 check, feeding the SAME
+--       v_missing_fields array and the SAME
+--       IF array_length(v_missing_fields, 1) > 0 THEN ... RETURN
+--       manual_review_required ...; END IF; block immediately below it
+--       — so a malformed p_passengers now fails BEFORE Step 2b's
+--       jsonb_array_elements call is ever reached, via the exact same
+--       audited, zero-business-state-side-effects path (email_ingestions
+--       set to needs_review with a clear error_reason, nothing else
+--       written) every other missing/malformed required field already
+--       uses. This is deliberately NOT a broad EXCEPTION handler around
+--       jsonb_array_elements — it is a narrow, explicit, non-throwing
+--       pre-flight check on the exact input jsonb_array_elements
+--       requires, placed strictly before any array-iteration is
+--       attempted, which is what "the contract should remain strict and
+--       fail closed" requires: the failure becomes visible and
+--       auditable (a needs_review row with an explicit reason) rather
+--       than silently swallowed or vaguely reported.
+--
+--       Explicitly UNCHANGED by V8: every V7 guarantee (CREATE/
+--       MODIFICATION passenger-completeness counts, sortOrder
+--       hardening), the V6 Gmail-message-scoped
+--       pg_try_advisory_xact_lock (Step 0), the V5/V6 failed-retry state
+--       machine (Step 1), the V4 event/reservation-state matrix (Step
+--       6's five branches), the Step 3 booking-level advisory lock,
+--       customer matching/creation behavior, financial field mapping,
+--       the function's parameter signature, and the REVOKE/GRANT
+--       service_role-only access control. api/_civitatis/writeAdapter.js
+--       is not part of this SQL file and is not touched by it — its own
+--       fix (no longer pre-stringifying p_passengers) is a separate,
+--       already-committed application-layer change; this migration is
+--       defense in depth, not a substitute for that fix.
+--
+-- V7 CHANGELOG (what changed since the applied V6, and why)
+-- ─────────────────────────────────────────────────────────────
+--   11. PASSENGER COMPLETENESS IS NOW ENFORCED, NOT MERELY PROTECTED
+--       AGAINST ERASURE. V6 (and V3 before it) only ever guarded against
+--       a modification's EMPTY passenger payload erasing a real,
+--       previously-recorded passenger list — it never verified that a
+--       NON-empty payload was actually COMPLETE. A data-integrity audit
+--       found two concrete gaps: (a) CREATE could persist a reservation
+--       for e.g. 2 adults with zero (or, in principle, some other wrong
+--       number of) named passengers, since an empty p_passengers array
+--       was always accepted; (b) MODIFICATION's V6 guard
+--       (v_has_valid_passengers) only checked "at least one usable
+--       entry", so a payload with FEWER usable entries than the
+--       reservation's actual pax_adult+pax_child could still replace a
+--       complete existing list with an incomplete one.
+--
+--       V7 defines, once, right after Step 2's field validation:
+--         expected_passenger_count := p_pax_adult + COALESCE(p_pax_child, 0)
+--         usable_passenger_count   := COUNT of p_passengers entries whose
+--           fullName, after btrim(), is neither NULL nor '' — the EXACT
+--           SAME rule the reservation_guests INSERT already used to
+--           decide what actually gets persisted (never just JSON array
+--           length — a blank-after-trim entry, or one missing fullName
+--           entirely, never counts as usable, even though it still
+--           occupies a slot in the array).
+--
+--       CREATE (event_type=new_booking, no existing reservation):
+--       usable_passenger_count MUST equal expected_passenger_count
+--       BEFORE any customer/reservation/guest/activity write is even
+--       attempted — checked as the very FIRST statement inside the
+--       CREATE branch, strictly before customer resolution/creation and
+--       strictly before a reservation number is ever allocated. A
+--       mismatch (in either direction, and specifically including the
+--       zero-passenger case V6 always accepted) routes to the SAME
+--       zero-business-state-side-effects shape every other CREATE-path
+--       incompleteness case already uses: email_ingestions set to
+--       needs_review with a clear error_reason naming both counts,
+--       result:"manual_review_required", nothing else written.
+--
+--       MODIFICATION (event_type=modified, existing reservation, not
+--       stale): reservation_guests is replaced ONLY when
+--       usable_passenger_count = expected_passenger_count AND
+--       expected_passenger_count > 0 — strictly tighter than V6's
+--       "at least one usable entry". Any lesser case — empty, partial,
+--       or a JSON array whose LENGTH happens to match but contains a
+--       blank/missing-fullName entry — leaves the existing
+--       reservation_guests rows for that reservation completely
+--       untouched (passengers_replaced stays false), while every OTHER
+--       independently-valid Civitatis-controlled reservation field
+--       above is still applied and the call still returns "updated".
+--       This is a deliberate choice, not a default: routing the WHOLE
+--       modification to manual review over an incomplete passenger
+--       section alone would block a legitimate date/time/price change
+--       for an unrelated reason, and would work against this project's
+--       own stated preference for preserving correct existing data over
+--       aggressively applying incomplete incoming data. It is a direct,
+--       minimal widening of the exact asymmetry V6/V3 already
+--       established for the empty-payload case — not a new design
+--       principle.
+--
+--       SORTORDER HARDENING: the passenger-insert SELECT's
+--       (g->>'sortOrder')::int cast (both CREATE and MODIFICATION
+--       paths) could previously raise a genuine Postgres cast exception
+--       for any non-numeric sortOrder value, aborting the ENTIRE call
+--       (falling through to the outer EXCEPTION handler and reporting
+--       'failed') even when the passenger's own fullName was perfectly
+--       valid. V7 replaces the unguarded cast with
+--       CASE WHEN g->>'sortOrder' ~ '^-?\d+$' THEN (g->>'sortOrder')::int
+--       ELSE 0 END — a malformed or missing sortOrder now safely
+--       defaults to 0 (identical to COALESCE's old behavior for a
+--       genuinely absent key) instead of ever raising.
+--
+--       Passenger fullName storage is UNCHANGED: the INSERT still
+--       stores (g->>'fullName') verbatim, untrimmed — btrim() is used
+--       ONLY to decide usability/completeness, exactly as V6 already
+--       established for its own guard. Legitimate duplicate names
+--       (two passengers sharing a fullName) are never deduplicated —
+--       COUNT(*), not COUNT(DISTINCT fullName).
+--
+--       Explicitly UNCHANGED by V7: the V6 Gmail-message-scoped
+--       pg_try_advisory_xact_lock (Step 0) and its whole concurrency
+--       argument, the V5/V6 failed-retry state machine (Step 1), the
+--       V4 event/reservation-state matrix (Step 6's five branches — the
+--       IF/ELSIF structure itself is untouched; only the CREATE and
+--       non-stale-MODIFICATION branches gained an additional guard at
+--       their start), the Step 3 booking-level advisory lock, customer
+--       matching/creation behavior outside of the new guard's early
+--       return, financial field mapping, the function's parameter
+--       signature, and the REVOKE/GRANT service_role-only access
+--       control. api/civitatis/writeAdapter.js, the parser, the
+--       matching rules, and the application-layer ordering logic are
+--       not part of this file and are not touched by it.
+--
+-- Everything below this point, except the two guards and the sortOrder
+-- expression noted above, is IDENTICAL to the already-applied V6 —
+-- including its own full V2-V6 changelog history, kept verbatim as the
+-- accurate historical record of why this architecture looks the way it
+-- does.
+--
+-- V6 CHANGELOG (what changed since the reviewed-but-unapplied V5, and why)
+-- ─────────────────────────────────────────────────────────────
+--   10. TWO CONCURRENT RETRIES OF THE SAME 'failed' ROW CAN NO LONGER
+--       BOTH REACH BUSINESS PROCESSING. V5's Step 1 claimed a 'failed'
+--       row via a single conditional UPSERT
+--       (ON CONFLICT (gmail_message_id) DO UPDATE ... WHERE
+--       processing_status = 'failed') and its own comments claimed this
+--       made "exactly one of two concurrent retries" reach Step 2. An
+--       external review found this claim FALSE for one specific
+--       interleaving: if retry A wins the claim (failed -> received) and
+--       retry B is concurrently blocked waiting on the SAME row's lock,
+--       and retry A's OWN business processing then fails AGAIN (a
+--       second, independent error) — A's exception handler correctly
+--       returns the row to processing_status='failed' and commits. B's
+--       blocked UPSERT then wakes up and re-evaluates its
+--       WHERE processing_status = 'failed' clause against this
+--       newly-committed state — which is 'failed' again — so B's clause
+--       MATCHES, and B ALSO claims the row and proceeds into business
+--       processing. Two callers from the SAME concurrent wave both
+--       became retry attempts, which V5's own stated contract explicitly
+--       ruled out. (Note this could never actually create a duplicate
+--       reservation/customer/passenger/activity row by itself — the
+--       booking-level advisory lock in Step 3, the composite UNIQUE
+--       constraint, and Step 4's FOR UPDATE lookup all remain fully
+--       correct and would still prevent that — but it directly violated
+--       the specific "at most one retry per failed row per concurrent
+--       wave" guarantee this revision exists to provide, and could cause
+--       a booking to be retried twice in immediate succession for no
+--       reason, doing real (if idempotent) work twice.)
+--
+--       V6 closes this by adding ONE non-blocking, gmail_message_id-
+--       scoped advisory lock — pg_try_advisory_xact_lock — acquired as
+--       the very first statement in the function, BEFORE Step 1's UPSERT
+--       is even attempted:
+--         IF NOT pg_try_advisory_xact_lock(
+--           hashtextextended('civitatis_ingest:gmail_message:' || p_gmail_message_id, 1)
+--         ) THEN ... return already_processed without touching the row ...
+--       Unlike V5's Step 1 UPSERT (which lets a second caller BLOCK on
+--       the row's own lock and then re-evaluate its WHERE clause against
+--       whatever got committed in the meantime — the exact mechanism the
+--       bug exploited), pg_try_advisory_xact_lock is NON-BLOCKING: a
+--       concurrent second caller either acquires this lock instantly (no
+--       other transaction currently holds it for this gmail_message_id)
+--       or fails INSTANTLY and returns immediately — it never waits for
+--       the first caller to finish, and therefore never gets a chance to
+--       re-evaluate anything against the first caller's eventual outcome
+--       at all. Being the "_xact_" variant, the lock is held for the
+--       ENTIRE remainder of the calling transaction (this whole function
+--       call) and released automatically at COMMIT or ROLLBACK — never
+--       explicitly unlocked — which is what actually closes the race:
+--       for as long as retry A's transaction is open (including through
+--       its own business processing and a possible second failure), NO
+--       other transaction can even ATTEMPT Step 1's UPSERT for the SAME
+--       gmail_message_id, so there is no second caller left to
+--       (re-)block on the row and observe A's final committed state.
+--       Only once A's transaction has fully ended does the lock become
+--       available again — at which point a genuinely LATER, separate
+--       invocation (never one from A's own concurrent wave, since any
+--       such caller already returned immediately with
+--       result:"already_processed" the moment it lost the lock) can
+--       acquire it and proceed through the UNCHANGED V5 Step 1 UPSERT
+--       logic exactly as before, correctly reclaiming the row if it is
+--       (still, or again) 'failed'.
+--
+--       Concurrent-loser response: reuses the EXISTING
+--       result:"already_processed" vocabulary (no new RPC result value
+--       introduced) with a processing_status snapshot — this branch does
+--       not, and structurally cannot, know what the current lock holder
+--       will eventually do (that transaction has not committed), so it
+--       reports the LAST COMMITTED processing_status for this
+--       gmail_message_id as of its own read (ordinary READ COMMITTED
+--       visibility — it never sees another transaction's uncommitted
+--       work), falling back to 'received' when no row is visible yet at
+--       all (meaning the current lock holder is itself still in the
+--       middle of a first-ever insert for this message, not yet
+--       committed). This is deliberately a snapshot, not a live status:
+--       it can under-report (e.g. show 'failed' while the current holder
+--       is, in fact, already successfully retrying it) but can never
+--       over-report or cause a second write — the caller's own next,
+--       independent invocation will see whatever is genuinely current by
+--       then.
+--
+--       Namespacing: this new lock uses a distinctly-prefixed key string
+--       ('civitatis_ingest:gmail_message:' || the message id) AND a
+--       different seed (1) than the existing Step 3 booking-level lock
+--       (which hashes 'source_id:external_booking_id' with seed 0) — the
+--       two are computed independently and can never be produced by the
+--       same input, so nothing about their construction could cause a
+--       collision in the way reusing the same string/seed would. (Both
+--       still ultimately occupy Postgres's one shared 64-bit
+--       session-level advisory-lock keyspace, as any single-bigint-
+--       argument advisory lock does — an already-accepted, unavoidable
+--       property of this class of Postgres lock, not something this
+--       function's own key construction can fully rule out on its own;
+--       see the existing "KNOWN, ACCEPTED LIMITATION" note further
+--       below, which this shares the same general caveat with.) The
+--       existing Step 3 booking-level advisory lock is completely
+--       UNCHANGED — this is a second, independent lock protecting a
+--       different, narrower thing (one specific Gmail message's claim
+--       lifecycle, not a whole booking's processing).
+--
+--       Explicitly UNCHANGED by V6: every line of V5's Step 1 UPSERT
+--       logic (still reached, unmodified, once the new lock is
+--       acquired), the V4 event/reservation-state matrix (Step 6),
+--       customer matching/creation behavior, passenger-list replacement
+--       guard, financial field mapping, the function's parameter
+--       signature, the REVOKE/GRANT service_role-only access control,
+--       and the existing Step 3 booking-level advisory lock.
+--       api/civitatis/writeAdapter.js, the parser, the matching rules,
+--       and the application-layer ordering logic are not part of this
+--       file and are not touched by it.
+--
+-- V5 CHANGELOG (what changed since the applied V4, and why — V5 itself
+-- was superseded by V6 above before ever being applied anywhere; kept
+-- here verbatim as the historical record of why the retry design exists
+-- at all)
+-- ─────────────────────────────────────────────────────────────
+--   9. A 'failed' GMAIL MESSAGE MAY NOW BE SAFELY RETRIED UNDER THE SAME
+--      gmail_message_id — 'processed'/'received'/'needs_review' STILL
+--      NEVER RETRY. V4's Step 1 idempotency guard was a plain
+--      INSERT ... ON CONFLICT (gmail_message_id) DO NOTHING: ANY
+--      existing row — regardless of its processing_status — made a
+--      re-invocation return 'already_processed' and attempt nothing
+--      further. That is correct forever for 'processed' (a genuinely
+--      finished outcome — including the successful-but-deliberately-
+--      inert stale_ignored/booking_already_exists cases, which also
+--      persist processing_status='processed') and correct forever for
+--      'needs_review' (a data-quality case requiring a SEPARATE,
+--      explicit/manual review mechanism — out of scope here — not
+--      silent automatic reprocessing; this matters concretely for cases
+--      like the known Juan Armas Puente POSSIBLE_EXISTING_MATCH booking,
+--      which must never re-enter automatic write attempts merely
+--      because the scheduler sees the same Gmail message again). But it
+--      also made a genuinely TRANSIENT failure (a dropped connection, a
+--      momentary constraint violation, any error caught by the Step 8
+--      EXCEPTION handler and recorded as processing_status='failed')
+--      PERMANENTLY unretryable under that Gmail message id — a real
+--      production reliability gap. V5 changes ONLY Step 1's conflict
+--      resolution to the following explicit four-state machine:
+--        processed     -> terminal;                 always already_processed
+--        received      -> in progress / abandoned;   always already_processed (never a second concurrent attempt)
+--        needs_review  -> terminal for AUTOMATIC use; always already_processed (processing_status='needs_review' in the payload; a future separate manual-retry mechanism is explicitly out of scope here)
+--        failed        -> retryable;                 ATOMICALLY reclaimed: the SAME row transitions failed -> received and Step 2 onward runs exactly as a fresh attempt would
+--      The reclaim is a single INSERT ... ON CONFLICT (gmail_message_id)
+--      DO UPDATE ... WHERE email_ingestions.processing_status = 'failed'
+--      statement — a plain SQL UPSERT, not an application-side SELECT
+--      followed by an UPDATE. Postgres resolves the conflict by taking
+--      the SAME row-level lock two concurrent conflicting INSERTs for
+--      the same gmail_message_id already had to serialize on even in
+--      V4 (see the existing RACE-CONDITION note below): the first
+--      caller to reach the conflict wins the claim, flips the row to
+--      'received' (clearing error_reason/processed_at), and proceeds;
+--      the second caller blocks on that row lock until the first
+--      transaction commits, at which point the row's processing_status
+--      is no longer 'failed' (it is now whatever the first attempt's
+--      OWN outcome left it as), so the second caller's WHERE clause no
+--      longer matches, its UPSERT updates zero rows, and it correctly
+--      falls through to already_processed with the first attempt's real
+--      outcome — exactly one of two concurrent retries can ever proceed
+--      into business writes for the same failed row, enforced entirely
+--      by Postgres's own row-locking, not by any application-level
+--      coordination.
+--      *** CORRECTED BY V6 CHANGELOG POINT 10 ***: the preceding
+--      sentence is FALSE for one specific interleaving — if the first
+--      caller's OWN retry attempt itself fails again, its outcome is
+--      ALSO 'failed', so the second (blocked) caller's WHERE clause
+--      matches AGAIN once it wakes up, and it too proceeds into business
+--      processing. This was found by external review before V5 was ever
+--      applied anywhere and is fixed in V6 by a non-blocking
+--      gmail_message_id-scoped advisory lock acquired before this UPSERT
+--      is even attempted — see V6 changelog point 10 for the full
+--      corrected mechanism. This V5 section is otherwise kept verbatim
+--      as the historical record of why the retry design exists at all;
+--      do not rely on the sentence this note is attached to.
+--      The SAME email_ingestions row and id are reused —
+--      no second audit row is ever created for the same Gmail message,
+--      on a retry or otherwise. Because the existing nested
+--      BEGIN...EXCEPTION block (Step 8, unchanged) already rolls back
+--      every customer/reservation/guest/activity write attempted since
+--      the block began whenever the ORIGINAL failed attempt raised its
+--      error, a reclaimed row always resumes from a clean business
+--      state: Step 4's reservation lookup (also unchanged) genuinely
+--      finds nothing for a booking whose only prior attempt failed, so
+--      a retried new_booking event takes the same CREATE branch a fresh
+--      attempt would, with no partial customer/reservation left behind
+--      to conflict with or duplicate. If the retry itself fails again,
+--      the SAME unchanged EXCEPTION handler runs, writing a fresh
+--      error_reason to the SAME row and returning it to
+--      processing_status='failed' — nothing about that handler needed
+--      to change for this to be correct, since it already keys off
+--      v_ingestion_id, which is now simply "the row Step 1 either
+--      inserted or reclaimed" instead of always "the row Step 1
+--      inserted".
+--      Explicitly UNCHANGED by V5: the V4 event/reservation-state matrix
+--      (Step 6, all five branches, byte-for-byte identical), customer
+--      matching/creation behavior, passenger-list replacement guard,
+--      financial field mapping, the function's parameter signature, the
+--      REVOKE/GRANT service_role-only access control, and every other
+--      guarantee described below. api/civitatis/writeAdapter.js, the
+--      parser, the matching rules, and the application-layer ordering
+--      logic are not part of this file and are not touched by it.
+--
+-- V4 CHANGELOG (what changed since the reviewed V3, and why)
+-- ─────────────────────────────────────────────────────────────
+--   8. A SECOND 'new_booking' EVENT FOR AN ALREADY-EXISTING RESERVATION
+--      NO LONGER FALLS THROUGH TO THE UPDATE BRANCH. V3's branching
+--      only special-cased "reservation exists AND stale" (-> ignored)
+--      and otherwise treated "reservation exists AND not stale" as an
+--      update, regardless of p_event_type. Since the gmail_message_id
+--      uniqueness guard is keyed on the GMAIL message, not the
+--      Civitatis booking, a second, genuinely distinct Gmail message
+--      that Civitatis itself classified as "New booking A########:"
+--      (not "Booking A######## modified:") for a booking that already
+--      has a reservation would have been silently treated as a
+--      modification and allowed to change reservation fields — even
+--      though it is not a modification email at all. V4 makes the
+--      event-type check for this case explicit and unconditional: a
+--      reservation UPDATE now REQUIRES p_event_type = 'modified' AND an
+--      existing reservation AND the event not being stale — a
+--      'new_booking' event for an already-existing reservation is
+--      never eligible for the UPDATE branch, regardless of its
+--      received_at relative to anything else. It is handled as its own
+--      explicit branch, returning result:"booking_already_exists" with
+--      the SAME zero-business-state-side-effects guarantee a stale
+--      event already has: no customer created or changed, no
+--      reservation field changed, no passenger replaced, no activity
+--      created — only its own email_ingestions row is finalized
+--      (processing_status='processed', reservation_id resolved to the
+--      existing reservation, for auditability). See the fully explicit,
+--      exhaustive event/reservation-state branch in Step 6 below.
+--
+-- V3 CHANGELOG (what changed since the reviewed V2, and why)
+-- ─────────────────────────────────────────────────────────────
+--   1. STALE EVENTS NOW HAVE ZERO SIDE EFFECTS OUTSIDE email_ingestions.
+--      V2 computed the "is this event stale" ordering guard before
+--      resolving/creating a customer, but still ran customer resolution
+--      unconditionally — so a stale (out-of-order) event for an ALREADY-
+--      EXISTING reservation could create an unused customer row even
+--      though nothing else about the reservation changed. V3 locates
+--      the existing reservation FIRST, and when one exists AND the
+--      event is stale, returns immediately after only finalizing the
+--      email_ingestions audit row — no customer, reservation, guest, or
+--      activity write is attempted at all.
+--   2. NO FABRICATED DEFAULTS. V2's reservation INSERT used
+--      COALESCE(p_pax_adult,1), COALESCE(p_total_amount,0),
+--      COALESCE(p_currency,'EUR') — inventing plausible-looking business
+--      values for data that should always be present on a genuinely
+--      parseable Civitatis email. V3 validates every field the
+--      validated parser contract (api/civitatis/parser.js) actually
+--      guarantees non-null for an `ok:true` parse — source_id,
+--      external_booking_id, tour_id, event_type, check_in,
+--      check_in_time, pax_adult (>0), total_amount, currency,
+--      retail_amount, retail_currency, tour_language — BEFORE any
+--      table write, and routes to needs_review instead of guessing if
+--      any is missing. The one deliberate exception is pax_child,
+--      which COALESCEs to 0 — this is NOT a fabricated default: both
+--      api/civitatis/parser.js's extractGuestCounts and dryRun.js's own
+--      RESERVATION_DIFF_FIELDS (`fromState: s => s.childCount || 0`)
+--      already establish "no children mentioned" = 0 as the actual
+--      parser contract, not an invented value.
+--   3. EVENT TYPE IS NOW VALIDATED. V2 silently coerced a NULL/invalid
+--      p_event_type to 'unknown' for the audit row and otherwise didn't
+--      care. V3 still records whatever was given as the audit label
+--      (email_ingestions.event_type allows 'unknown' precisely for
+--      this), but now REFUSES any business write (customer/reservation/
+--      guest/activity) unless p_event_type is exactly 'new_booking' or
+--      'modified' — anything else is needs_review.
+--   4. MODIFICATIONS NEVER TOUCH CUSTOMER IDENTITY. V2 ran customer
+--      resolution/creation unconditionally before deciding create vs.
+--      update, so a 'modified' call whose OWN event didn't happen to
+--      carry a resolved customer_id could create a stray new customer
+--      row even though the reservation (and its real customer) already
+--      existed — the row was never attached to anything (the UPDATE
+--      branch never wrote customer_id), just wasted. V3 restructures
+--      the function so customer resolution/creation ONLY happens on the
+--      branch that creates a brand-new reservation. The update branch
+--      never calls it, never creates a customer, and never writes
+--      reservations.customer_id — it reads the EXISTING reservation's
+--      customer_id only to include in the return payload. This also
+--      means: a modification email that happens to carry different or
+--      newer contact info (e.g. a phone number appearing for the first
+--      time) does NOT update the existing customer's email/phone either
+--      — customer contact fields are outside the reservation
+--      modification allow-list entirely; updating an existing
+--      customer's own profile is a distinct, separately-designed
+--      feature this migration does not implement.
+--   5. A 'modified' EVENT WITH NO EXISTING RESERVATION IS NEVER TREATED
+--      AS A NEW BOOKING. V2 had no explicit rule for this; because
+--      customer resolution ran unconditionally, and the reservation
+--      lookup returning NULL always took the CREATE branch regardless
+--      of p_event_type, a 'modified' event arriving with no prior
+--      'new_booking' for the same external_booking_id would have
+--      silently created a reservation from whatever fields that
+--      modification email happened to carry. V3 explicitly checks this
+--      case and routes it to needs_review instead — a modification can
+--      only ever apply to a reservation that already exists.
+--   6. STALE RESULT IS ITS OWN EXPLICIT VALUE. V2 returned
+--      result:"updated" with a separate boolean stale:true/false
+--      alongside it for an event whose fields were deliberately not
+--      applied. V3 returns result:"stale_ignored" instead — a distinct,
+--      unambiguous value a caller can branch on without also having to
+--      check a second field. email_ingestions.processing_status is
+--      still 'processed' for a stale event (the email WAS understood
+--      correctly; it was deliberately, correctly ignored — that is a
+--      successful outcome, not a failure or a review case).
+--   7. PASSENGER-LIST REPLACEMENT ON A MODIFICATION IS NOW GUARDED. V2
+--      unconditionally DELETEd and re-INSERTed reservation_guests for
+--      any non-stale event, including a modification whose passengers
+--      payload was empty/missing — which would have silently erased a
+--      real, previously-recorded passenger list if a modification email
+--      ever failed to (re-)state passengers, since the parser does not
+--      currently guarantee passengers is non-empty for an `ok:true`
+--      parse (unlike every OTHER field validated in point 2, parser.js
+--      has no check requiring at least one passenger). V3 only replaces
+--      reservation_guests on the update path when p_passengers contains
+--      at least one entry with a non-empty fullName; otherwise the
+--      existing passenger rows are left completely untouched and the
+--      return payload reports passengers_replaced:false. The create
+--      path is unaffected (there is nothing pre-existing to erase).
+--
+-- Everything else — the overall single-RPC transactional architecture,
+-- the gmail_message_id idempotency guard, the (source_id,
+-- external_booking_id) uniqueness/advisory-lock idempotency guard, the
+-- exactly-once activity notification, the EXCEPTION-handler rollback
+-- behavior, the SECURITY DEFINER / REVOKE-then-GRANT-service_role-only
+-- access control, the required-field validation from V3 point 2, the
+-- customer creation behavior from V3 point 4, and the passenger-
+-- replacement guard for valid non-stale modifications from V3 point 7
+-- — is UNCHANGED from the already-reviewed V2/V3 architecture; see
+-- below for the full restated contract.
+--
+-- SCOPE OF THIS MIGRATION
+-- ─────────────────────────────────────────────────────────────
+-- Adds exactly ONE object: a single transactional PL/pgSQL function,
+-- public.ingest_civitatis_booking(...), plus the REVOKE/GRANT
+-- statements that restrict who may call it. Same name and parameter
+-- signature as V2 (CREATE OR REPLACE — safe to re-run over either V2 or
+-- a fresh database). No table is created, altered, or dropped. No
+-- existing row is touched. No RLS policy is added, changed, or removed.
+--
+-- WHY A SINGLE RPC INSTEAD OF A CHAIN OF INSERTS
+-- ─────────────────────────────────────────────────────────────
+-- A Civitatis booking write touches up to five tables (customers,
+-- reservations, reservation_guests, email_ingestions, activity_logs)
+-- and must never leave them inconsistent — e.g. a reservation created
+-- with no email_ingestions audit row, or a customer created with the
+-- reservation insert failing right after. A sequence of separate
+-- Supabase JS .insert()/.update() calls cannot guarantee this: each
+-- one commits independently. A single SQL function invoked once via
+-- supabase.rpc(...) runs as one implicit database transaction — every
+-- write inside it commits together or (on any unhandled error) rolls
+-- back together, which is exactly the guarantee required.
+--
+-- SCHEMA AUDIT THIS FUNCTION RELIES ON (verified against the files
+-- listed in "Depends" above; unchanged from V2's audit, restated here):
+--   • reservations.reservation_number is NOT NULL UNIQUE — generated
+--     via the existing public.next_ref_number('R','reservations',
+--     'reservation_number') helper (supabase_schema.sql), the exact
+--     function DeseTourDashboard.jsx's own ReservationRepository.create
+--     already calls for manually-created reservations.
+--   • reservations.check_in and check_out are both NOT NULL, with
+--     CHECK (check_out >= check_in). Civitatis bookings are single-day
+--     tours with no independent checkout date, so check_out is always
+--     set equal to check_in — the exact same default the existing
+--     manual-creation code path already uses.
+--   • reservations.customer_id is NOT NULL — a reservation cannot exist
+--     without a resolved customer, which is why customer resolution/
+--     creation must happen inside the same transaction, before the
+--     reservation insert (and, per V3 point 4 above, ONLY on the branch
+--     that inserts a brand-new reservation).
+--   • reservations.status CHECK allows 'pending_confirmation' — the
+--     exact initial status this function uses, matching
+--     dryRun.js's already-reported proposedReservationStatus.
+--   • reservations_source_id_external_booking_id_key (composite UNIQUE,
+--     added by supabase_migration_civitatis_ingestion.sql) is the
+--     business-identity idempotency guard this function relies on for
+--     "never two reservations for the same Civitatis booking."
+--   • email_ingestions.gmail_message_id is NOT NULL UNIQUE (same prior
+--     migration) — the Gmail-message-level idempotency guard this
+--     function relies on for "reprocessing the same email is a no-op."
+--   • email_ingestions.processing_status CHECK already allows exactly
+--     the vocabulary this function needs: received | processed |
+--     ignored | failed | needs_review. NOT widened by this migration.
+--     ('stale_ignored' and 'booking_already_exists' are RETURN VALUES
+--     of the function, describing the outcome to its caller — the
+--     email_ingestions row itself still uses processing_status=
+--     'processed' for both cases, an existing, already-allowed value;
+--     no new status string is written to the database.)
+--   • email_ingestions.event_type CHECK already allows exactly
+--     new_booking | modified | unknown. NOT widened by this migration.
+--   • customers.full_name is the only NOT NULL column on customers
+--     besides its primary key/defaults — email, phone, nationality,
+--     language (DEFAULT 'tr'), birthdate, passport fields, address,
+--     notes are all nullable, and import_type has NO CHECK constraint
+--     restricting its values, so this function can safely set
+--     import_type = 'civitatis' without any schema change.
+--   • activity_logs.entity_type CHECK already allows 'reservation';
+--     activity_logs.action CHECK already allows 'created'. Both
+--     confirmed sufficient by supabase_migration_civitatis_ingestion.sql's
+--     own audit — not re-widened here.
+--   • The existing "activity_logs: sales read system-generated
+--     reservation notifications" policy (added by
+--     supabase_migration_civitatis_ingestion.sql) already requires
+--     exactly entity_type='reservation' AND performed_by IS NULL AND
+--     metadata->>'auto_ingested'='true' — this function's activity_logs
+--     insert satisfies that contract exactly, unchanged.
+--
+-- IDEMPOTENCY CONTRACT
+-- ─────────────────────────────────────────────────────────────
+--   • Re-invoking with the SAME gmail_message_id when that message's
+--     existing email_ingestions row has processing_status IN
+--     ('processed','received','needs_review') is a guaranteed no-op:
+--     the function returns {"result":"already_processed", ...,
+--     "processing_status": <whichever of those three it actually is>}
+--     immediately — no customer, reservation, guest, or activity write
+--     is even attempted. 'received' covers a genuinely-in-progress or
+--     abandoned-mid-flight attempt — never a second concurrent one.
+--     'needs_review' is deliberately terminal for AUTOMATIC processing
+--     (see V5 changelog point 9) — a separate, explicit/manual review
+--     mechanism is the only intended way to act on it further, and is
+--     out of scope for this function.
+--   • Re-invoking with the SAME gmail_message_id when that message's
+--     existing row has processing_status = 'failed' (V5) is the ONE
+--     case that is NOT a no-op: it is atomically reclaimed — the SAME
+--     row transitions failed -> received (error_reason and processed_at
+--     cleared; gmail_thread_id/raw_subject/raw_body_snapshot/
+--     received_at/event_type are left exactly as originally recorded,
+--     since a retry is the SAME email, not a different one) — and
+--     Step 2 onward runs exactly as it would for a brand-new message,
+--     reusing the same email_ingestions.id throughout.
+--   • Before any of the above is even attempted, a non-blocking,
+--     gmail_message_id-scoped advisory lock (V6) gates the whole
+--     Step 1 claim: if another transaction currently owns processing for
+--     this EXACT Gmail message, this call returns immediately
+--     ("already_processed" with a last-committed processing_status
+--     snapshot) rather than waiting and re-deciding once that other
+--     transaction finishes — see V6 changelog point 10 for exactly why
+--     that distinction matters (it is what makes "at most one retry per
+--     failed row per concurrent wave" actually true, which V5's plain
+--     conditional UPSERT alone did not guarantee).
+--   • Re-invoking for the SAME (source_id, external_booking_id) from a
+--     DIFFERENT gmail_message_id (e.g. New booking + a later Booking
+--     modified — two distinct real Gmail messages) is NOT deduplicated
+--     at that first step (they are legitimately different emails, both
+--     must get their own email_ingestions row) — instead a session-
+--     level advisory lock (pg_advisory_xact_lock, released
+--     automatically at transaction end) keyed on the SAME
+--     (source_id, external_booking_id) pair serializes concurrent
+--     processing of the same booking, and the reservation itself is
+--     located via reservations_source_id_external_booking_id_key: the
+--     first message for a booking CREATES the reservation. Of every
+--     subsequent message for the same booking (found via that same
+--     unique pair): a 'modified' one either UPDATES the same row (if
+--     not stale) or is safely ignored (if stale); a SECOND
+--     'new_booking' message is safely ignored too (result:
+--     "booking_already_exists" — see V4 changelog point 8) — never a
+--     second INSERT, and never a 'new_booking' event applying an
+--     UPDATE.
+--   • A stale/out-of-order event (an older email, by received_at,
+--     arriving or being retried AFTER a newer one for the same booking
+--     has already been applied) is detected via the existing
+--     reservation lookup BEFORE any customer/reservation/guest/activity
+--     write, and results in result:"stale_ignored" with zero side
+--     effects beyond its own email_ingestions row (processing_status=
+--     'processed', reservation_id resolved for traceability). See V3
+--     changelog point 1 and 6.
+--   • Exactly one activity_logs "new reservation" row is possible per
+--     booking: it is only ever inserted in the branch that CREATES the
+--     reservation, which — by the UNIQUE constraint above plus the
+--     advisory lock — can only execute once per (source_id,
+--     external_booking_id), ever, regardless of how many times any
+--     message for that booking is retried.
+--
+-- WHAT THIS FUNCTION DELIBERATELY DOES NOT DO
+-- ─────────────────────────────────────────────────────────────
+--   • Does not parse email bodies, match tours, match customers by
+--     name, or decide whether a booking is safe to write. All of that
+--     already exists, is already validated against the real Civitatis
+--     mailbox, and is NOT duplicated here — see api/civitatis/parser.js,
+--     matching.js, and dryRun.js. This function receives ALREADY-
+--     RESOLVED, already-validated inputs (a matched tour_id, and either
+--     an already-matched customer_id or the raw booking-contact fields
+--     to create one) from api/civitatis/writeAdapter.js, which is the
+--     only intended caller. It is the caller's job — not this
+--     function's — to refuse to call it at all for POSSIBLE_EXISTING_
+--     MATCH / NEEDS_REVIEW / PARSE_ERROR bookings.
+--   • Does not fabricate a missing business value with a plausible-
+--     looking default (see V3 changelog point 2) — missing required
+--     data always routes to needs_review, never a guess.
+--   • Does not create a payments row, ever, for any Civitatis email.
+--   • Does not assign a guide, does not touch guide_id/guide_name.
+--   • Does not touch internal_notes, notes, pickup_location, pickup_time,
+--     vehicle_info, driver_name, hotel_name, hotel_confirmation, status,
+--     payment_status, deposit_amount, assigned_to, lead_id, quote_id,
+--     confirmed_at/completed_at/cancelled_at/cancel_reason — on the
+--     UPDATE (modification) path, ONLY the fields already covered by
+--     dryRun.js's RESERVATION_DIFF_FIELDS allow-list are written:
+--     check_in, check_in_time, pax_adult, pax_child, tour_language,
+--     total_amount, currency, retail_amount, retail_currency — plus
+--     check_out, which is not an independent Civitatis field but is
+--     mechanically kept equal to check_in.
+--   • Does not touch reservations.customer_id, and does not create or
+--     modify any customer row, on the UPDATE (modification) path at all
+--     — see V3 changelog point 4. Updating an existing customer's own
+--     contact details is explicitly out of scope for this function.
+--   • Does not treat a 'modified' event with no existing reservation as
+--     a new booking — see V3 changelog point 5.
+--   • Does not treat a 'new_booking' event for an ALREADY-EXISTING
+--     reservation as a modification, ever, regardless of received_at
+--     ordering — see V4 changelog point 8. Only a 'modified' event can
+--     ever reach the UPDATE branch.
+--   • Does not erase an existing passenger list when a modification's
+--     own passenger payload is empty/missing — see V3 changelog point 7.
+--   • Does not become callable by browser code: EXECUTE is revoked
+--     from PUBLIC, anon, and authenticated, and granted only to
+--     service_role (see SECURITY section below).
+--
+-- SECURITY
+-- ─────────────────────────────────────────────────────────────
+-- SECURITY DEFINER, so it runs with the privileges of its owner (able
+-- to write to every table it touches) regardless of who calls it —
+-- which is exactly why controlling WHO can call it matters more than
+-- for any other function in this schema so far. Every table reference
+-- inside the function body is schema-qualified (public.customers, not
+-- customers) AND `SET search_path = public` is set on the function
+-- itself, matching the existing convention already used by
+-- is_admin()/is_sales()/is_operations()/is_guide()/is_staff() in
+-- supabase_rls_policies.sql — both together close the standard
+-- SECURITY DEFINER "search_path hijack" risk. Unchanged from V2.
+--
+-- This repository has never previously needed an explicit REVOKE/GRANT
+-- statement (audited: zero GRANT/REVOKE anywhere in supabase_schema.sql,
+-- supabase_rls_policies.sql, or any prior supabase_migration_*.sql —
+-- every existing SECURITY DEFINER function is a read-only boolean
+-- predicate used inside RLS USING clauses, safe to leave at Postgres's
+-- default PUBLIC EXECUTE because it can only ever return TRUE/FALSE
+-- about the CALLING user's own row). This function is different: it
+-- writes to five tables and must never be reachable from a browser
+-- session, so this migration is the first to add explicit REVOKE/GRANT
+-- statements, immediately after the function definition:
+--   REVOKE EXECUTE ... FROM PUBLIC
+--   REVOKE EXECUTE ... FROM anon
+--   REVOKE EXECUTE ... FROM authenticated
+--   GRANT  EXECUTE ... TO service_role
+-- Unchanged from V2 — the function signature (parameter list/types) is
+-- identical, so these statements did not need to change.
+--
+-- RACE-CONDITION / CONCURRENCY NOTES
+-- ─────────────────────────────────────────────────────────────
+--   • Two concurrent calls with the SAME gmail_message_id, for ANY
+--     reason (a brand-new message being inserted twice, or a retry of a
+--     'failed' row) — V6: the very first statement in the function is a
+--     NON-BLOCKING, gmail_message_id-scoped
+--     pg_try_advisory_xact_lock(hashtextextended('civitatis_ingest:
+--     gmail_message:' || p_gmail_message_id, 1)). Exactly one concurrent
+--     caller acquires it; every other concurrent caller for the SAME
+--     gmail_message_id fails to acquire it IMMEDIATELY (no waiting) and
+--     returns immediately with result:"already_processed" and a
+--     processing_status snapshot of whatever was last COMMITTED for that
+--     message (or 'received', if no row is visible yet at all — see
+--     below) — it never touches Step 1's UPSERT, Step 2 onward, or the
+--     row itself in any way. Being the "_xact_" variant, the lock is
+--     held for the ENTIRE remainder of the winning caller's transaction
+--     (this whole function call, including its own business processing
+--     and a possible failure) and is released automatically at COMMIT or
+--     ROLLBACK — never explicitly unlocked. This means NO other caller
+--     can even attempt Step 1's UPSERT for this gmail_message_id while
+--     the current winner is still active, no matter what that winner's
+--     own eventual outcome turns out to be (created / updated / stale_
+--     ignored / manual_review_required / booking_already_exists /
+--     failed) — so a second caller can never block on the row, wake up
+--     once the winner commits, and re-decide against whatever the winner
+--     ended up leaving behind. Only once the winner's transaction has
+--     fully ended does the lock free up, letting a genuinely LATER,
+--     separate invocation acquire it and proceed normally — this is
+--     exactly how "at most one retry per failed row per concurrent wave,
+--     but a later independent caller may still retry it" is enforced.
+--     (V5 relied solely on the plain conditional UPSERT below for this,
+--     which an external review found insufficient for one interleaving —
+--     see V6 changelog point 10 and the *** CORRECTED BY V6 CHANGELOG
+--     POINT 10 *** note in the V5 changelog above for the exact bug.)
+--   • MVCC precision for the concurrent loser's reported
+--     processing_status: this branch never inspects the winning
+--     transaction's in-progress work (that is, by definition, not yet
+--     committed and therefore not visible under ordinary READ COMMITTED
+--     semantics) — it only ever reports the LAST COMMITTED state as of
+--     its own SELECT. That can be stale relative to what the winner is
+--     doing right now (e.g. it may report 'failed' even though the
+--     winner is, at that exact moment, successfully retrying it) — this
+--     is intentional and safe, since this branch's only job is "refuse
+--     to act, something else already owns this," never to describe the
+--     winner's live progress. A caller that needs the truly current
+--     state simply calls again later, after the winner's transaction has
+--     ended.
+--   • Once the gmail_message_id lock above is acquired, Step 1's own
+--     conditional UPSERT (unchanged from V5) still decides what happens
+--     for THIS (now-exclusive) attempt: a fresh gmail_message_id inserts
+--     normally; an existing 'processed'/'received'/'needs_review' row is
+--     never touched (already_processed); an existing 'failed' row is
+--     atomically reclaimed (failed -> received) and Step 2 onward
+--     proceeds exactly as a fresh attempt would. Because concurrent
+--     execution for this gmail_message_id is now impossible by
+--     construction (the lock above), this UPSERT's WHERE clause is only
+--     ever evaluated by one transaction at a time — it no longer needs
+--     to defend against a second, concurrently-blocked evaluator at all,
+--     which is exactly the gap V5 had.
+--   • Two concurrent calls for the SAME (source_id, external_booking_id)
+--     from different gmail_message_ids: pg_advisory_xact_lock blocks
+--     the second call until the first COMMITs (or rolls back), so the
+--     second call's SELECT for an existing reservation always sees the
+--     first call's result — it can never independently decide to
+--     INSERT a second reservation row. The composite UNIQUE constraint
+--     is also still in force as a hard backstop even if the advisory
+--     lock were ever bypassed by a future code path that forgets it.
+--     Unchanged from V2; the restructuring in V3 keeps the advisory
+--     lock acquisition as the very first statement inside the
+--     transactional sub-block, before the reservation lookup it
+--     protects.
+--   • KNOWN, ACCEPTED LIMITATION (unchanged from V2, kept deliberately
+--     unaddressed per explicit instruction — no name-based UNIQUE
+--     constraint or automatic merge is attempted in V3 either): two
+--     concurrent NEW bookings for the SAME real-world contact who has
+--     never been in the CRM before, and who has no email/phone in
+--     either message (so neither can match the other by contact info),
+--     for two DIFFERENT external_booking_ids, could each create their
+--     own new customers row for that person — the advisory lock above
+--     is keyed on external_booking_id, not on customer identity, so it
+--     does not serialize this case. customers has no UNIQUE constraint
+--     on email/phone/full_name to lean on instead. This mirrors the
+--     same fundamental limitation matching.js's matchCustomerByName
+--     already documents (name-only matching is never treated as
+--     certain). In practice this requires two genuinely simultaneous
+--     first-ever bookings from the same new contact with no email/phone
+--     recorded on either — rare, and recoverable later by a manual
+--     customer-merge, never a corrupted reservation/passenger/audit
+--     state.
+--
+-- HOW TO APPLY (once reviewed and approved — NOT done as part of
+-- producing this file)
+-- ─────────────────────────────────────────────────────────────
+-- Supabase Dashboard → SQL Editor → paste and run this file, after
+-- confirming supabase_migration_civitatis_ingestion.sql,
+-- supabase_migration_civitatis_write.sql (V6), AND
+-- supabase_migration_civitatis_write_v7_passenger_completeness.sql (V7)
+-- are already applied (they are, per operator confirmation — see the
+-- STATUS note above). Safe to re-run in full, and safe to run directly
+-- over the already-applied V7: CREATE OR REPLACE FUNCTION and the
+-- REVOKE/GRANT statements are all idempotent, and the function signature
+-- is unchanged from V2/V4/V5/V6/V7.
+-- ============================================================
+
+
+-- ──────────────────────────────────────────────────────────────────────────
+-- FUNCTION: ingest_civitatis_booking
+-- One call = one parsed, already-matched Civitatis email (a single Gmail
+-- message). See the header above for the full contract.
+-- ──────────────────────────────────────────────────────────────────────────
+
+CREATE OR REPLACE FUNCTION public.ingest_civitatis_booking(
+  p_gmail_message_id    TEXT,
+  p_gmail_thread_id     TEXT,
+  p_received_at         TIMESTAMPTZ,
+  p_raw_subject         TEXT,
+  p_raw_body_snapshot   TEXT,
+  p_event_type          TEXT,        -- 'new_booking' | 'modified' — anything else is needs_review
+  p_source_id           UUID,
+  p_external_booking_id TEXT,
+  p_tour_id             UUID,        -- already resolved by matching.js's matchTourChannel (exact match only)
+  p_tour_language       TEXT,
+  p_check_in            DATE,
+  p_check_in_time       TIME,
+  p_pax_adult           INTEGER,
+  p_pax_child           INTEGER,     -- the ONE field allowed to default (to 0) — see V3 changelog point 2
+  p_total_amount        NUMERIC,     -- Civitatis Net price -> reservations.total_amount
+  p_currency            TEXT,
+  p_retail_amount       NUMERIC,     -- Civitatis Retail price -> reservations.retail_amount
+  p_retail_currency     TEXT,
+  p_customer_id         UUID,        -- pre-resolved by matching.js's matchCustomer; NULL means "create" (CREATE path only — see V3 changelog point 4)
+  p_customer_full_name  TEXT,        -- used ONLY on the CREATE path when p_customer_id IS NULL
+  p_customer_email      TEXT,        -- used ONLY on the CREATE path when p_customer_id IS NULL
+  p_customer_phone      TEXT,        -- used ONLY on the CREATE path when p_customer_id IS NULL
+  p_passengers          JSONB        -- [{"fullName":"...", "sortOrder":0}, ...] from api/civitatis/parser.js
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_ingestion_id        UUID;
+  v_existing_status      TEXT;
+  v_existing_res_id       UUID;
+  v_missing_fields         TEXT[] := '{}';
+  v_customer_id              UUID;
+  v_reservation_id             UUID;
+  v_reservation_number          TEXT;
+  v_tour_name                    TEXT;
+  v_result                        TEXT;
+  v_newer_exists                    BOOLEAN;
+  v_expected_passenger_count          INTEGER;
+  v_usable_passenger_count              INTEGER;
+  v_passengers_replaced                   BOOLEAN := FALSE;
+  v_error_text                              TEXT;
+BEGIN
+  -- ── Step 0 (V6): non-blocking, gmail_message_id-scoped processing lock
+  -- — acquired BEFORE Step 1 is even attempted, and BEFORE the row is
+  -- touched in any way. Closes the exact race an external review found
+  -- in V5: without this, two concurrent retries of the SAME 'failed' row
+  -- could both reach business processing if the first one's own retry
+  -- failed again (see V6 changelog point 10, and the *** CORRECTED BY V6
+  -- CHANGELOG POINT 10 *** note in the V5 changelog above, for the full
+  -- interleaving V5 missed). Namespaced with a distinct string prefix AND
+  -- a different seed (1) than the existing Step 3 booking-level lock
+  -- (source_id:external_booking_id, seed 0) — the two locks are
+  -- independent and Step 3's lock is completely unchanged.
+  IF NOT pg_try_advisory_xact_lock(
+    hashtextextended('civitatis_ingest:gmail_message:' || p_gmail_message_id, 1)
+  ) THEN
+    -- Another transaction currently owns processing for this EXACT
+    -- Gmail message (a fresh first-ever insert, or a failed-row retry
+    -- claim, both from Step 1 below) — never wait for it to finish and
+    -- re-decide against its outcome (that is precisely what V5 got
+    -- wrong). Report the LAST COMMITTED state instead: this SELECT
+    -- cannot and does not see the current lock holder's own uncommitted
+    -- work (ordinary READ COMMITTED visibility), so it may under-report
+    -- (e.g. still show 'failed' while the holder is, right now,
+    -- successfully retrying it) — that is intentional and safe, since
+    -- this branch's only job is "refuse to act," never to describe the
+    -- holder's live progress. No row visible at all (NULL) means the
+    -- current holder is itself mid-way through a first-ever insert for
+    -- this message, not yet committed — reported as 'received', which is
+    -- exactly what that situation is. Reuses the existing
+    -- result:"already_processed" vocabulary; no new RPC result value.
+    SELECT id, processing_status, reservation_id
+      INTO v_ingestion_id, v_existing_status, v_existing_res_id
+      FROM public.email_ingestions
+     WHERE gmail_message_id = p_gmail_message_id;
+    RETURN jsonb_build_object(
+      'result', 'already_processed',
+      'ingestion_id', v_ingestion_id,
+      'processing_status', COALESCE(v_existing_status, 'received'),
+      'reservation_id', v_existing_res_id
+    );
+  END IF;
+
+  -- ── Step 1 (unchanged from V5): Gmail-message-level idempotency, WITH
+  -- safe retry for a PREVIOUSLY-FAILED attempt at the SAME message ──────
+  -- Atomic at the database level via a single conditional UPSERT, not an
+  -- application-side "SELECT then UPDATE". Records the event_type LABEL
+  -- as given (even if invalid — COALESCEd to 'unknown' only for this
+  -- audit row) so there is always a permanent record of what was
+  -- received; validity is enforced in Step 2 BEFORE any business write.
+  -- Concurrent execution of THIS statement for the SAME gmail_message_id
+  -- is now impossible by construction — the Step 0 lock above guarantees
+  -- only one transaction at a time ever reaches here for a given
+  -- message — so, unlike in V5, this UPSERT no longer needs to (and
+  -- does not) defend against a second, concurrently-blocked evaluator.
+  --
+  -- Three possible outcomes of this single statement:
+  --   (a) no existing row for this gmail_message_id -> plain INSERT
+  --       succeeds, RETURNING gives the new id -> fresh attempt.
+  --   (b) existing row's processing_status = 'failed' -> the ON CONFLICT
+  --       DO UPDATE's WHERE clause matches -> the SAME row is atomically
+  --       reclaimed (flipped to 'received', stale failure metadata
+  --       cleared), RETURNING gives the SAME id -> retry attempt,
+  --       Step 2 onward proceeds exactly as for a fresh attempt.
+  --   (c) existing row's processing_status IN
+  --       ('processed','received','needs_review') -> the WHERE clause
+  --       does not match -> zero rows are inserted or updated ->
+  --       RETURNING gives no row -> v_ingestion_id stays NULL -> falls
+  --       through to the already_processed report below, exactly as V4.
+  INSERT INTO public.email_ingestions (
+    gmail_message_id, gmail_thread_id, external_booking_id, source_id,
+    event_type, processing_status, raw_subject, raw_body_snapshot, received_at
+  ) VALUES (
+    p_gmail_message_id, p_gmail_thread_id, p_external_booking_id, p_source_id,
+    CASE WHEN p_event_type IN ('new_booking', 'modified') THEN p_event_type ELSE 'unknown' END,
+    'received', p_raw_subject, p_raw_body_snapshot,
+    COALESCE(p_received_at, NOW())
+  )
+  ON CONFLICT (gmail_message_id) DO UPDATE
+    SET processing_status = 'received',
+        error_reason      = NULL,
+        processed_at      = NULL
+    -- Deliberately NOT reset on a retry: gmail_thread_id, external_booking_id,
+    -- source_id, event_type, raw_subject, raw_body_snapshot, received_at —
+    -- a retry is the SAME Gmail message, not a new one; its original
+    -- identity and raw audit content are preserved unless a concrete
+    -- reason to refresh them arises (none does here).
+    WHERE public.email_ingestions.processing_status = 'failed'
+  RETURNING id INTO v_ingestion_id;
+
+  IF v_ingestion_id IS NULL THEN
+    -- Outcome (c) above: an existing row that is 'processed', 'received',
+    -- or 'needs_review'. All three are terminal for THIS (automatic)
+    -- call path — 'needs_review' in particular is intentionally never
+    -- auto-retried (see V5 changelog point 9); its processing_status is
+    -- still reported here so a caller/operator can see it needs a
+    -- SEPARATE, explicit/manual review mechanism (out of scope for this
+    -- function) rather than assuming it is simply done.
+    SELECT id, processing_status, reservation_id
+      INTO v_ingestion_id, v_existing_status, v_existing_res_id
+      FROM public.email_ingestions
+     WHERE gmail_message_id = p_gmail_message_id;
+    RETURN jsonb_build_object(
+      'result', 'already_processed',
+      'ingestion_id', v_ingestion_id,
+      'processing_status', v_existing_status,
+      'reservation_id', v_existing_res_id
+    );
+  END IF;
+
+  -- ── Step 2: consolidated required-field validation — BEFORE any
+  -- customer/reservation/guest/activity write is even attempted. Every
+  -- field checked here is guaranteed non-null by api/civitatis/parser.js
+  -- for any event with ok:true (see that file's reasons.push(...) calls
+  -- for internalCode/languageRaw/date/time/adultCount/retail/net/client);
+  -- a NULL here on a real ingestion call means either the caller
+  -- (writeAdapter.js) has a bug or the underlying data is genuinely
+  -- unusable — either way, this function never substitutes a fabricated
+  -- value (see V3 changelog point 2). p_pax_child is deliberately NOT
+  -- validated here: parser.js/dryRun.js's own established contract is
+  -- that an absent child count means zero children, not missing data.
+  IF p_source_id IS NULL THEN
+    v_missing_fields := array_append(v_missing_fields, 'source_id');
+  END IF;
+  IF p_external_booking_id IS NULL OR btrim(p_external_booking_id) = '' THEN
+    v_missing_fields := array_append(v_missing_fields, 'external_booking_id');
+  END IF;
+  IF p_tour_id IS NULL THEN
+    v_missing_fields := array_append(v_missing_fields, 'tour_id (Internal code did not match tour_channels)');
+  END IF;
+  IF p_event_type IS NULL OR p_event_type NOT IN ('new_booking', 'modified') THEN
+    v_missing_fields := array_append(v_missing_fields, 'event_type (must be exactly new_booking or modified)');
+  END IF;
+  IF p_check_in IS NULL THEN
+    v_missing_fields := array_append(v_missing_fields, 'check_in');
+  END IF;
+  IF p_check_in_time IS NULL THEN
+    v_missing_fields := array_append(v_missing_fields, 'check_in_time');
+  END IF;
+  IF p_pax_adult IS NULL OR p_pax_adult <= 0 THEN
+    v_missing_fields := array_append(v_missing_fields, 'pax_adult');
+  END IF;
+  IF p_total_amount IS NULL THEN
+    v_missing_fields := array_append(v_missing_fields, 'total_amount (Civitatis Net price)');
+  END IF;
+  IF p_currency IS NULL OR btrim(p_currency) = '' THEN
+    v_missing_fields := array_append(v_missing_fields, 'currency');
+  END IF;
+  IF p_retail_amount IS NULL THEN
+    v_missing_fields := array_append(v_missing_fields, 'retail_amount (Civitatis Retail price)');
+  END IF;
+  IF p_retail_currency IS NULL OR btrim(p_retail_currency) = '' THEN
+    v_missing_fields := array_append(v_missing_fields, 'retail_currency');
+  END IF;
+  IF p_tour_language IS NULL OR btrim(p_tour_language) = '' THEN
+    v_missing_fields := array_append(v_missing_fields, 'tour_language');
+  END IF;
+  -- ── V8: p_passengers, when provided, must be a genuine JSONB ARRAY —
+  -- never a JSONB scalar (string/number/boolean) or a JSONB object.
+  -- NULL remains explicitly allowed here (see V8 changelog point 12 and
+  -- the migration header "WHY THIS MIGRATION EXISTS" for the full
+  -- incident this check exists to prevent from ever reaching Step 2b's
+  -- jsonb_array_elements call as an unhandled exception again).
+  -- jsonb_typeof() never raises for any well-formed, non-NULL JSONB
+  -- value — this check itself cannot introduce a new failure mode.
+  IF p_passengers IS NOT NULL AND jsonb_typeof(p_passengers) <> 'array' THEN
+    v_missing_fields := array_append(v_missing_fields, 'passengers (must be a JSON array when provided)');
+  END IF;
+
+  IF array_length(v_missing_fields, 1) > 0 THEN
+    UPDATE public.email_ingestions
+       SET processing_status = 'needs_review',
+           error_reason = 'missing required field(s): ' || array_to_string(v_missing_fields, ', '),
+           processed_at = NOW()
+     WHERE id = v_ingestion_id;
+    RETURN jsonb_build_object(
+      'result', 'manual_review_required',
+      'ingestion_id', v_ingestion_id,
+      'reason', 'missing required field(s)',
+      'missing_fields', to_jsonb(v_missing_fields)
+    );
+  END IF;
+
+  -- ── Step 2b (V7): passenger-completeness inputs, computed ONCE here
+  -- and reused by both the CREATE and MODIFICATION branches in Step 6
+  -- below. Pure computation over already-validated scalar inputs
+  -- (p_pax_adult is already confirmed NOT NULL/>0 by Step 2 above) and
+  -- p_passengers — neither expression can itself raise, so it is safe
+  -- to compute unconditionally here, before the nested transactional
+  -- block, exactly like v_missing_fields above. usable_passenger_count
+  -- uses the EXACT SAME rule the reservation_guests INSERT statements
+  -- further below use to decide what actually gets persisted (non-null,
+  -- non-blank after btrim) — never just JSON array length, so a blank-
+  -- name entry can never masquerade as a real passenger here, and
+  -- legitimate duplicate names are never deduplicated (COUNT(*), not
+  -- COUNT(DISTINCT fullName)).
+  v_expected_passenger_count := p_pax_adult + COALESCE(p_pax_child, 0);
+  SELECT COUNT(*) INTO v_usable_passenger_count
+    FROM jsonb_array_elements(COALESCE(p_passengers, '[]'::jsonb)) AS g
+   WHERE btrim(g->>'fullName') IS NOT NULL AND btrim(g->>'fullName') <> '';
+
+  BEGIN  -- nested block: on any unexpected error below, roll back every
+         -- customer/reservation/guest/activity write attempted in this
+         -- call (but NOT the email_ingestions row from Step 1, which
+         -- this handler explicitly re-records as 'failed' after the
+         -- implicit rollback-to-savepoint) — see migration header.
+
+    -- ── Step 3: serialize concurrent processing of the SAME booking ──────
+    -- hashtextextended returns bigint, matching pg_advisory_xact_lock's
+    -- signature; released automatically at transaction end (COMMIT or
+    -- ROLLBACK) — never needs an explicit unlock call. Acquired BEFORE
+    -- the reservation lookup it protects.
+    PERFORM pg_advisory_xact_lock(
+      hashtextextended(p_source_id::text || ':' || p_external_booking_id, 0)
+    );
+
+    -- ── Step 4: locate the existing reservation for this booking, if any
+    -- — moved BEFORE any customer write (V3 changelog points 1 and 4).
+    -- FOR UPDATE locks the row (if found) for the remainder of this
+    -- transaction, consistent with the advisory lock's serialization.
+    SELECT id, customer_id INTO v_reservation_id, v_customer_id
+      FROM public.reservations
+     WHERE source_id = p_source_id AND external_booking_id = p_external_booking_id
+     FOR UPDATE;
+
+    -- ── Step 5: ordering guard — has a NEWER event for this booking
+    -- already been applied? Only meaningful when a reservation already
+    -- exists; a booking with no reservation yet cannot have a 'processed'
+    -- email_ingestions row either (Step 8 always sets both together), so
+    -- this is trivially FALSE when v_reservation_id IS NULL.
+    SELECT EXISTS (
+      SELECT 1 FROM public.email_ingestions
+       WHERE source_id = p_source_id
+         AND external_booking_id = p_external_booking_id
+         AND processing_status = 'processed'
+         AND received_at > COALESCE(p_received_at, NOW())
+    ) INTO v_newer_exists;
+
+    -- ── Step 6: branch — fully explicit, exhaustive event/reservation-
+    -- state matrix (V4 changelog point 8). Every branch condition names
+    -- BOTH p_event_type and the reservation-existence state explicitly
+    -- — a reservation UPDATE is reachable ONLY via the one branch that
+    -- requires p_event_type = 'modified' AND an existing reservation
+    -- AND NOT v_newer_exists, all three, together. A 'new_booking'
+    -- event can NEVER reach the UPDATE branch, regardless of
+    -- received_at ordering — see the explicit
+    -- "booking_already_exists" branch below, which handles a second,
+    -- genuinely distinct 'new_booking' Gmail message for a booking that
+    -- already has a reservation.
+    --
+    --   event_type=new_booking, no reservation          -> CREATE
+    --   event_type=modified,    reservation exists,
+    --                            not stale                -> UPDATE
+    --   event_type=modified,    reservation exists,
+    --                            stale                     -> stale_ignored
+    --   event_type=modified,    no reservation              -> manual_review_required
+    --   event_type=new_booking, reservation exists            -> booking_already_exists
+    IF v_reservation_id IS NOT NULL AND p_event_type = 'new_booking' THEN
+      -- A second, distinct Gmail message that Civitatis itself
+      -- classified as "New booking A########:" (not a modification) for
+      -- a booking that already has a reservation. This is NOT a
+      -- modification and must never be treated as one — zero business-
+      -- state side effects beyond this event's own audit row: no
+      -- customer created or changed, no reservation field changed, no
+      -- passenger replaced, no activity created (V4 changelog point 8).
+      UPDATE public.email_ingestions
+         SET processing_status = 'processed', reservation_id = v_reservation_id, processed_at = NOW()
+       WHERE id = v_ingestion_id;
+      RETURN jsonb_build_object(
+        'result', 'booking_already_exists',
+        'ingestion_id', v_ingestion_id,
+        'reservation_id', v_reservation_id,
+        'customer_id', v_customer_id
+      );
+
+    ELSIF v_reservation_id IS NULL AND p_event_type = 'modified' THEN
+      -- A 'modified' event with NO existing reservation to modify (V3
+      -- changelog point 5) — never silently treated as a new booking.
+      UPDATE public.email_ingestions
+         SET processing_status = 'needs_review',
+             error_reason = 'modification event with no existing reservation for this source_id/external_booking_id',
+             processed_at = NOW()
+       WHERE id = v_ingestion_id;
+      RETURN jsonb_build_object(
+        'result', 'manual_review_required',
+        'ingestion_id', v_ingestion_id,
+        'reason', 'modification event with no existing reservation'
+      );
+
+    ELSIF v_reservation_id IS NULL AND p_event_type = 'new_booking' THEN
+      -- V7: passenger-completeness guard — checked BEFORE any
+      -- customer/reservation/guest/activity write, and strictly BEFORE
+      -- a reservation number is ever allocated (see V7 changelog point
+      -- 11). v_expected_passenger_count/v_usable_passenger_count were
+      -- already computed once in Step 2b above.
+      IF v_usable_passenger_count <> v_expected_passenger_count THEN
+        UPDATE public.email_ingestions
+           SET processing_status = 'needs_review',
+               error_reason = format(
+                 'passenger count mismatch on create: expected %s usable passenger(s) (pax_adult=%s + pax_child=%s), found %s usable entr%s in p_passengers',
+                 v_expected_passenger_count, p_pax_adult, COALESCE(p_pax_child, 0), v_usable_passenger_count,
+                 CASE WHEN v_usable_passenger_count = 1 THEN 'y' ELSE 'ies' END
+               ),
+               processed_at = NOW()
+         WHERE id = v_ingestion_id;
+        RETURN jsonb_build_object(
+          'result', 'manual_review_required',
+          'ingestion_id', v_ingestion_id,
+          'reason', 'passenger count mismatch',
+          'expected_passenger_count', v_expected_passenger_count,
+          'usable_passenger_count', v_usable_passenger_count
+        );
+      END IF;
+
+      -- CREATE path. Customer resolution/creation happens ONLY here
+      -- (V3 changelog point 4) — the update branch below never reaches
+      -- this code. Never reached above this line — passenger
+      -- completeness is validated before any customer/reservation write.
+      IF p_customer_id IS NOT NULL THEN
+        IF NOT EXISTS (SELECT 1 FROM public.customers WHERE id = p_customer_id) THEN
+          RAISE EXCEPTION 'ingest_civitatis_booking: provided customer_id % does not exist', p_customer_id;
+        END IF;
+        v_customer_id := p_customer_id;
+      ELSE
+        IF p_customer_full_name IS NULL OR btrim(p_customer_full_name) = '' THEN
+          UPDATE public.email_ingestions
+             SET processing_status = 'needs_review',
+                 error_reason = 'no resolved customer_id and no booking-contact full name to create one',
+                 processed_at = NOW()
+           WHERE id = v_ingestion_id;
+          RETURN jsonb_build_object(
+            'result', 'manual_review_required',
+            'ingestion_id', v_ingestion_id,
+            'reason', 'missing booking-contact identity'
+          );
+        END IF;
+        -- Booking-contact data only — never a passenger. Never invented:
+        -- email/phone/nationality/country stay NULL when Civitatis did
+        -- not provide them. import_type has no CHECK constraint
+        -- restricting its values, so 'civitatis' needs no migration.
+        INSERT INTO public.customers (full_name, email, phone, source_id, import_type)
+        VALUES (p_customer_full_name, p_customer_email, p_customer_phone, p_source_id, 'civitatis')
+        RETURNING id INTO v_customer_id;
+      END IF;
+
+      SELECT name INTO v_tour_name FROM public.tours WHERE id = p_tour_id;
+      SELECT public.next_ref_number('R', 'reservations', 'reservation_number') INTO v_reservation_number;
+
+      INSERT INTO public.reservations (
+        reservation_number, customer_id, tour_id, source_id, external_booking_id,
+        status, payment_status, destination, check_in, check_out, check_in_time,
+        pax_adult, pax_child, tour_language, total_amount, currency,
+        retail_amount, retail_currency
+      ) VALUES (
+        v_reservation_number, v_customer_id, p_tour_id, p_source_id, p_external_booking_id,
+        'pending_confirmation', 'pending', v_tour_name,
+        p_check_in, p_check_in,  -- day-tour: check_out mirrors check_in (see schema audit)
+        p_check_in_time,
+        p_pax_adult, COALESCE(p_pax_child, 0),  -- pax_adult already validated NOT NULL/>0 in Step 2; pax_child's 0-default is the established parser contract, not a fabrication (see header)
+        p_tour_language, p_total_amount, p_currency,
+        p_retail_amount, p_retail_currency
+      )
+      RETURNING id INTO v_reservation_id;
+
+      v_result := 'created';
+
+      -- Passenger insert. The guard above already guarantees exactly
+      -- expected_passenger_count usable entries exist, so this SELECT is
+      -- guaranteed non-empty. sortOrder is cast defensively (V7): a
+      -- malformed (non-numeric) or missing sortOrder value safely
+      -- defaults to 0 instead of raising a cast exception that would
+      -- abort this otherwise-valid call — see V7 changelog point 11.
+      -- fullName is stored exactly as supplied — never trimmed here;
+      -- btrim() is used only to decide usability above.
+      INSERT INTO public.reservation_guests (reservation_id, full_name, sort_order)
+      SELECT v_reservation_id, (g->>'fullName'),
+             CASE WHEN g->>'sortOrder' ~ '^-?\d+$' THEN (g->>'sortOrder')::int ELSE 0 END
+        FROM jsonb_array_elements(COALESCE(p_passengers, '[]'::jsonb)) AS g
+       WHERE btrim(g->>'fullName') IS NOT NULL AND btrim(g->>'fullName') <> '';
+      v_passengers_replaced := TRUE;
+
+      UPDATE public.email_ingestions
+         SET processing_status = 'processed', reservation_id = v_reservation_id, processed_at = NOW()
+       WHERE id = v_ingestion_id;
+
+      -- Exactly-once "new reservation" activity notification — only ever
+      -- reached from this CREATE branch, which — by the UNIQUE
+      -- constraint + advisory lock — can execute at most once per
+      -- (source_id, external_booking_id), ever.
+      INSERT INTO public.activity_logs (entity_type, entity_id, action, description, metadata, performed_by)
+      VALUES (
+        'reservation', v_reservation_id, 'created',
+        'Yeni Rezervasyon Geldi: ' || v_reservation_number,
+        jsonb_build_object(
+          'auto_ingested', true,
+          'source', 'civitatis',
+          'external_booking_id', p_external_booking_id
+        ),
+        NULL  -- no staff session performed this — the RLS policy this
+              -- satisfies explicitly keys on performed_by IS NULL
+      );
+
+    ELSIF v_reservation_id IS NOT NULL AND p_event_type = 'modified' AND v_newer_exists THEN
+      -- STALE modification for an existing reservation: zero side
+      -- effects beyond this event's own audit row (V3 changelog points
+      -- 1 and 6). No customer, reservation, guest, or activity write of
+      -- any kind.
+      UPDATE public.email_ingestions
+         SET processing_status = 'processed', reservation_id = v_reservation_id, processed_at = NOW()
+       WHERE id = v_ingestion_id;
+      RETURN jsonb_build_object(
+        'result', 'stale_ignored',
+        'ingestion_id', v_ingestion_id,
+        'reservation_id', v_reservation_id,
+        'customer_id', v_customer_id
+      );
+
+    ELSIF v_reservation_id IS NOT NULL AND p_event_type = 'modified' AND NOT v_newer_exists THEN
+      -- UPDATE path: the ONLY branch that ever writes reservation
+      -- fields — reachable ONLY when p_event_type = 'modified' AND an
+      -- existing reservation was found AND the event is not stale, all
+      -- three required together (V4 changelog point 8).
+      -- Customer identity is NEVER touched here (V3 changelog point 4):
+      -- v_customer_id already holds the EXISTING reservation's
+      -- customer_id from Step 4's lookup, read-only, for the return
+      -- payload — no customers table write of any kind on this path,
+      -- regardless of what p_customer_id/p_customer_full_name/
+      -- p_customer_email/p_customer_phone were given.
+      UPDATE public.reservations SET
+        check_in         = p_check_in,
+        check_out        = p_check_in,
+        check_in_time     = p_check_in_time,
+        pax_adult          = p_pax_adult,
+        pax_child           = COALESCE(p_pax_child, 0),
+        tour_language        = p_tour_language,
+        total_amount          = p_total_amount,
+        currency                = p_currency,
+        retail_amount            = p_retail_amount,
+        retail_currency            = p_retail_currency
+      WHERE id = v_reservation_id;
+      -- Deliberately absent from this SET list (never written on an
+      -- update, by construction — not merely by convention): customer_id,
+      -- guide_id, guide_name, internal_notes, notes, status,
+      -- payment_status, deposit_amount, pickup_location, pickup_time,
+      -- vehicle_info, driver_name, hotel_name, hotel_confirmation,
+      -- assigned_to, lead_id, quote_id, confirmed_at, completed_at,
+      -- cancelled_at, cancel_reason, destination.
+
+      v_result := 'updated';
+
+      -- V7: passenger-list replacement now requires a COMPLETE match
+      -- (usable_passenger_count = expected_passenger_count, both
+      -- already computed once in Step 2b above), not merely "at least
+      -- one usable entry" (V6/V3). An empty, partial, or otherwise
+      -- incomplete passenger payload NEVER erases or partially
+      -- overwrites a real, previously-recorded passenger list — see V7
+      -- changelog point 11. The other independently-valid Civitatis-
+      -- controlled reservation fields above are still applied
+      -- regardless; only reservation_guests is protected here.
+      IF v_usable_passenger_count = v_expected_passenger_count AND v_expected_passenger_count > 0 THEN
+        DELETE FROM public.reservation_guests WHERE reservation_id = v_reservation_id;
+        -- sortOrder hardened exactly as the CREATE path (V7 changelog
+        -- point 11); fullName stored exactly as supplied, never trimmed.
+        INSERT INTO public.reservation_guests (reservation_id, full_name, sort_order)
+        SELECT v_reservation_id, (g->>'fullName'),
+               CASE WHEN g->>'sortOrder' ~ '^-?\d+$' THEN (g->>'sortOrder')::int ELSE 0 END
+          FROM jsonb_array_elements(p_passengers) AS g
+         WHERE btrim(g->>'fullName') IS NOT NULL AND btrim(g->>'fullName') <> '';
+        v_passengers_replaced := TRUE;
+      END IF;
+      -- else: v_passengers_replaced stays FALSE; existing
+      -- reservation_guests rows for this reservation are left completely
+      -- untouched — covers empty, partial, and over-complete payloads
+      -- alike (V7 widens V6's empty-only guard to any incomplete count).
+
+      -- No activity_logs row on the update path — a modification never
+      -- creates a second "new reservation" notification.
+      UPDATE public.email_ingestions
+         SET processing_status = 'processed', reservation_id = v_reservation_id, processed_at = NOW()
+       WHERE id = v_ingestion_id;
+
+    ELSE
+      -- Defensively unreachable: Step 2 already guarantees p_event_type
+      -- is exactly 'new_booking' or 'modified', and the five branches
+      -- above are an exhaustive case split over
+      -- {new_booking,modified} x {reservation exists?} x {stale?
+      -- — only meaningful for modified+exists}. Never silently write
+      -- business state if this is somehow reached anyway.
+      UPDATE public.email_ingestions
+         SET processing_status = 'needs_review',
+             error_reason = 'unexpected event_type/reservation-state combination',
+             processed_at = NOW()
+       WHERE id = v_ingestion_id;
+      RETURN jsonb_build_object(
+        'result', 'manual_review_required',
+        'ingestion_id', v_ingestion_id,
+        'reason', 'unexpected event_type/reservation-state combination'
+      );
+    END IF;
+
+    RETURN jsonb_build_object(
+      'result', v_result,
+      'ingestion_id', v_ingestion_id,
+      'reservation_id', v_reservation_id,
+      'customer_id', v_customer_id,
+      'passengers_replaced', v_passengers_replaced
+    );
+
+  EXCEPTION WHEN OTHERS THEN
+    -- Rolls back to the implicit savepoint at the start of this BEGIN
+    -- block — every customer/reservation/guest/activity write attempted
+    -- above is undone together. The email_ingestions row from Step 1
+    -- survives (it was written before this block began) and is now
+    -- updated to a permanent, honest 'failed' record rather than being
+    -- silently lost.
+    v_error_text := SQLERRM;
+    UPDATE public.email_ingestions
+       SET processing_status = 'failed',
+           error_reason = v_error_text,
+           processed_at = NOW()
+     WHERE id = v_ingestion_id;
+    RETURN jsonb_build_object('result', 'failed', 'ingestion_id', v_ingestion_id, 'error', v_error_text);
+  END;
+END;
+$$;
+
+COMMENT ON FUNCTION public.ingest_civitatis_booking IS
+  'Atomically ingests one already-parsed, already-matched Civitatis '
+  'booking-notification email. On the CREATE path (event_type= '
+  'new_booking, no existing reservation): resolves/creates the '
+  'booking-contact customer, creates the reservation, inserts '
+  'passengers, records the email_ingestions audit row, and inserts '
+  'exactly one activity_logs notification. On the UPDATE path '
+  '(event_type=modified, an existing reservation found, event not '
+  'stale — ALL THREE required together): updates ONLY the '
+  'Civitatis-allowed reservation fields and, ONLY when the passenger '
+  'payload''s usable count exactly equals pax_adult+pax_child, replaces '
+  'reservation_guests (V7) — an empty, partial, or otherwise incomplete '
+  'payload leaves the existing passenger list completely untouched '
+  'while still applying every other valid field. CREATE itself refuses '
+  'to write ANY business state (V7) unless the usable passenger count '
+  'exactly equals pax_adult+pax_child, checked before a customer is '
+  'resolved or a reservation number is allocated. Never touches customer '
+  'identity on the UPDATE path, never creates a second activity row. A '
+  'stale modification, '
+  'a modification with no existing reservation, a second new_booking '
+  'event for an already-existing reservation, or a call missing any '
+  'required field has ZERO business-state side effects and is reported '
+  'distinctly (stale_ignored / manual_review_required / '
+  'booking_already_exists). Any unexpected error rolls back all '
+  'business writes for that call while still recording a '
+  '''failed'' audit row on the SAME email_ingestions row/id. '
+  'Re-invoking with a gmail_message_id whose prior attempt is '
+  '''processed'', ''received'', or ''needs_review'' is always a no-op '
+  '(already_processed); ''needs_review'' is intentionally never '
+  'auto-retried. Re-invoking one whose prior attempt is ''failed'' '
+  'atomically reclaims that SAME row (failed -> received) via a single '
+  'conditional UPSERT and reprocesses it as a fresh attempt. A '
+  'non-blocking, gmail_message_id-scoped advisory lock, held for the '
+  'whole call, guarantees at most one concurrent caller can ever claim '
+  'or retry a given Gmail message at a time — a second, concurrent '
+  'caller returns already_processed immediately rather than waiting and '
+  're-deciding against the first caller''s eventual outcome (V6; fixes a '
+  'concurrency gap an external review found in V5 before it was ever '
+  'applied). A malformed or missing passenger sortOrder value safely '
+  'defaults to 0 instead of aborting an otherwise-valid call (V7). '
+  'A non-NULL p_passengers that is not a JSONB array (e.g. a '
+  'double-encoded JSON string) is rejected pre-flight as a required- '
+  'field problem (manual_review_required) instead of raising an '
+  'unhandled jsonb_array_elements exception (V8). '
+  'SECURITY DEFINER; callable only by service_role — see this '
+  'migration file''s header for the full contract. Never call directly '
+  'from browser code.';
+
+
+-- ──────────────────────────────────────────────────────────────────────────
+-- SECURITY: restrict EXECUTE to service_role only.
+-- Idempotent: REVOKE/GRANT can be re-run any number of times safely.
+-- Signature unchanged from V2 — these statements did not need to change.
+-- ──────────────────────────────────────────────────────────────────────────
+
+REVOKE ALL ON FUNCTION public.ingest_civitatis_booking(
+  TEXT, TEXT, TIMESTAMPTZ, TEXT, TEXT, TEXT, UUID, TEXT, UUID, TEXT, DATE, TIME,
+  INTEGER, INTEGER, NUMERIC, TEXT, NUMERIC, TEXT, UUID, TEXT, TEXT, TEXT, JSONB
+) FROM PUBLIC;
+
+REVOKE ALL ON FUNCTION public.ingest_civitatis_booking(
+  TEXT, TEXT, TIMESTAMPTZ, TEXT, TEXT, TEXT, UUID, TEXT, UUID, TEXT, DATE, TIME,
+  INTEGER, INTEGER, NUMERIC, TEXT, NUMERIC, TEXT, UUID, TEXT, TEXT, TEXT, JSONB
+) FROM anon;
+
+REVOKE ALL ON FUNCTION public.ingest_civitatis_booking(
+  TEXT, TEXT, TIMESTAMPTZ, TEXT, TEXT, TEXT, UUID, TEXT, UUID, TEXT, DATE, TIME,
+  INTEGER, INTEGER, NUMERIC, TEXT, NUMERIC, TEXT, UUID, TEXT, TEXT, TEXT, JSONB
+) FROM authenticated;
+
+GRANT EXECUTE ON FUNCTION public.ingest_civitatis_booking(
+  TEXT, TEXT, TIMESTAMPTZ, TEXT, TEXT, TEXT, UUID, TEXT, UUID, TEXT, DATE, TIME,
+  INTEGER, INTEGER, NUMERIC, TEXT, NUMERIC, TEXT, UUID, TEXT, TEXT, TEXT, JSONB
+) TO service_role;
+
+
+-- ──────────────────────────────────────────────────────────────────────────
+-- VERIFICATION QUERIES (for manual review after applying — not executed
+-- as part of producing this file)
+-- ──────────────────────────────────────────────────────────────────────────
+
+/*
+-- 1. Confirm only service_role can execute:
+SELECT grantee, privilege_type
+FROM information_schema.role_routine_grants
+WHERE routine_name = 'ingest_civitatis_booking';
+-- Expect exactly one row: grantee = service_role, privilege_type = EXECUTE.
+
+-- 2. Confirm the function is SECURITY DEFINER with a pinned search_path:
+SELECT proname, prosecdef, proconfig
+FROM pg_proc
+WHERE proname = 'ingest_civitatis_booking';
+-- Expect prosecdef = true, proconfig containing 'search_path=public'.
+*/
+
+-- ── END OF MIGRATION ────────────────────────────────────────────────────────

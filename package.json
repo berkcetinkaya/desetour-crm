@@ -6,10 +6,12 @@
   "engines": { "node": ">=18" },
   "scripts": {
     "build": "node build.js",
-    "start": "npx serve . -l 3000"
+    "start": "npx serve . -l 3000",
+    "test": "node --test"
   },
   "dependencies": {
-    "resend": "^3.0.0"
+    "resend": "^3.0.0",
+    "@supabase/supabase-js": "^2.45.4"
   },
   "devDependencies": {
     "@babel/core": "^7.23.0",

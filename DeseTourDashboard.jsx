@@ -10,7 +10,7 @@ function fmtNum(v, decimals) {
 function fmtMoney(v, currency) {
   const n = parseFloat(v);
   if (isNaN(n)) return "—";
-  const sym = currency === "TRY" ? "₺" : currency === "USD" ? "$" : "€";
+  const sym = currency === "TRY" ? "₺" : currency === "USD" ? "$" : currency === "GBP" ? "£" : "€";
   return sym + n.toLocaleString("tr-TR", { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 }
 function safeNum(v) { const n = parseFloat(v); return isNaN(n) ? 0 : n; }
@@ -118,6 +118,91 @@ const T = {
   rowH:        48,   // table row target height
 };
 
+// Regional-indicator flag emoji from a 2-letter ISO 3166-1 code — avoids
+// hand-typing 190+ flag glyphs alongside the country list below.
+function isoToFlagEmoji(iso2) {
+  return (iso2||"").toUpperCase().replace(/./g, c => String.fromCodePoint(127397 + c.charCodeAt(0)));
+}
+
+// ── Canonical country dataset ───────────────────────────────────────────
+// One shared ISO 3166-1 country list (Turkish display names) used by every
+// nationality/country selector in the app (customers, reservations,
+// guides, …) instead of each form keeping its own short hardcoded array.
+const COUNTRIES = [
+  ["TR","Türkiye"],["US","Amerika Birleşik Devletleri"],["GB","Birleşik Krallık"],
+  ["DE","Almanya"],["FR","Fransa"],["IT","İtalya"],["ES","İspanya"],["PT","Portekiz"],
+  ["NL","Hollanda"],["BE","Belçika"],["LU","Lüksemburg"],["CH","İsviçre"],["AT","Avusturya"],
+  ["IE","İrlanda"],["DK","Danimarka"],["SE","İsveç"],["NO","Norveç"],["FI","Finlandiya"],
+  ["IS","İzlanda"],["PL","Polonya"],["CZ","Çekya"],["SK","Slovakya"],["HU","Macaristan"],
+  ["RO","Romanya"],["BG","Bulgaristan"],["GR","Yunanistan"],["CY","Kıbrıs"],["MT","Malta"],
+  ["HR","Hırvatistan"],["SI","Slovenya"],["RS","Sırbistan"],["BA","Bosna Hersek"],
+  ["ME","Karadağ"],["MK","Kuzey Makedonya"],["AL","Arnavutluk"],["XK","Kosova"],
+  ["MD","Moldova"],["UA","Ukrayna"],["BY","Belarus"],["RU","Rusya"],["EE","Estonya"],
+  ["LV","Letonya"],["LT","Litvanya"],["GE","Gürcistan"],["AM","Ermenistan"],
+  ["AZ","Azerbaycan"],["KZ","Kazakistan"],["UZ","Özbekistan"],["TM","Türkmenistan"],
+  ["TJ","Tacikistan"],["KG","Kırgızistan"],["MN","Moğolistan"],
+  ["CA","Kanada"],["MX","Meksika"],["BR","Brezilya"],["AR","Arjantin"],["CL","Şili"],
+  ["CO","Kolombiya"],["PE","Peru"],["VE","Venezuela"],["EC","Ekvador"],["BO","Bolivya"],
+  ["PY","Paraguay"],["UY","Uruguay"],["CR","Kosta Rika"],["PA","Panama"],["CU","Küba"],
+  ["DO","Dominik Cumhuriyeti"],["GT","Guatemala"],["HN","Honduras"],["SV","El Salvador"],
+  ["NI","Nikaragua"],["JM","Jamaika"],["TT","Trinidad ve Tobago"],["BS","Bahamalar"],
+  ["CN","Çin"],["JP","Japonya"],["KR","Güney Kore"],["KP","Kuzey Kore"],["IN","Hindistan"],
+  ["PK","Pakistan"],["BD","Bangladeş"],["LK","Sri Lanka"],["NP","Nepal"],["BT","Butan"],
+  ["MM","Myanmar"],["TH","Tayland"],["VN","Vietnam"],["KH","Kamboçya"],["LA","Laos"],
+  ["MY","Malezya"],["SG","Singapur"],["ID","Endonezya"],["PH","Filipinler"],["BN","Brunei"],
+  ["TL","Doğu Timor"],["TW","Tayvan"],["HK","Hong Kong"],["MO","Makao"],
+  ["SA","Suudi Arabistan"],["AE","Birleşik Arap Emirlikleri"],["QA","Katar"],
+  ["KW","Kuveyt"],["BH","Bahreyn"],["OM","Umman"],["YE","Yemen"],["IQ","Irak"],
+  ["IR","İran"],["IL","İsrail"],["PS","Filistin"],["JO","Ürdün"],["LB","Lübnan"],
+  ["SY","Suriye"],
+  ["EG","Mısır"],["LY","Libya"],["TN","Tunus"],["DZ","Cezayir"],["MA","Fas"],
+  ["SD","Sudan"],["SS","Güney Sudan"],["ET","Etiyopya"],["ER","Eritre"],["DJ","Cibuti"],
+  ["SO","Somali"],["KE","Kenya"],["TZ","Tanzanya"],["UG","Uganda"],["RW","Ruanda"],
+  ["BI","Burundi"],["ZA","Güney Afrika Cumhuriyeti"],["NA","Namibya"],["BW","Botsvana"],
+  ["ZW","Zimbabve"],["ZM","Zambiya"],["MZ","Mozambik"],["MW","Malavi"],["AO","Angola"],
+  ["CD","Kongo Demokratik Cumhuriyeti"],["CG","Kongo Cumhuriyeti"],["CM","Kamerun"],
+  ["NG","Nijerya"],["GH","Gana"],["CI","Fildişi Sahili"],["SN","Senegal"],["ML","Mali"],
+  ["NE","Nijer"],["TD","Çad"],["BF","Burkina Faso"],["BJ","Benin"],["TG","Togo"],
+  ["SL","Sierra Leone"],["LR","Liberya"],["GN","Gine"],["GW","Gine-Bissau"],
+  ["GM","Gambiya"],["MR","Moritanya"],["GA","Gabon"],["GQ","Ekvator Ginesi"],
+  ["CF","Orta Afrika Cumhuriyeti"],["MG","Madagaskar"],["MU","Mauritius"],
+  ["SC","Seyşeller"],["KM","Komorlar"],["CV","Cape Verde"],["SZ","Esvatini"],["LS","Lesotho"],
+  ["AU","Avustralya"],["NZ","Yeni Zelanda"],["FJ","Fiji"],["PG","Papua Yeni Gine"],
+  ["WS","Samoa"],["TO","Tonga"],["VU","Vanuatu"],["SB","Solomon Adaları"],
+];
+const COUNTRY_LIST = COUNTRIES.map(([code, name]) => ({ code, name, flag: isoToFlagEmoji(code) }));
+// Turkish nationality/country picker order: home market first, then A→Z.
+const COUNTRY_OPTIONS = [
+  COUNTRY_LIST.find(c => c.code === "TR"),
+  ...COUNTRY_LIST.filter(c => c.code !== "TR").sort((a,b) => a.name.localeCompare(b.name,'tr')),
+];
+const COUNTRY_FLAG_BY_NAME = Object.fromEntries(COUNTRY_LIST.map(c => [c.name, c.flag]));
+function countryFlag(name) { return COUNTRY_FLAG_BY_NAME[name] || "🌍"; }
+
+// ── Canonical language dataset ──────────────────────────────────────────
+// One shared list — ISO 639-1 code + Turkish display label — for every
+// language selector in the app (customers, reservations, guides, …).
+// guides' spoken languages are persisted relationally (guide_languages:
+// language_code + language_name), so codes are part of the canonical
+// dataset itself rather than invented ad hoc at the point of use.
+const LANGUAGES = [
+  ["tr","Türkçe"],["en","İngilizce"],["es","İspanyolca"],["pt","Portekizce"],["it","İtalyanca"],
+  ["fr","Fransızca"],["de","Almanca"],["ru","Rusça"],["ar","Arapça"],["fa","Farsça"],
+  ["he","İbranice"],["el","Yunanca"],["nl","Felemenkçe"],["pl","Lehçe"],["cs","Çekçe"],
+  ["sk","Slovakça"],["hu","Macarca"],["ro","Romence"],["bg","Bulgarca"],["sr","Sırpça"],
+  ["hr","Hırvatça"],["bs","Boşnakça"],["sq","Arnavutça"],["uk","Ukraynaca"],["ka","Gürcüce"],
+  ["hy","Ermenice"],["az","Azerbaycanca"],["kk","Kazakça"],["uz","Özbekçe"],["zh","Çince"],
+  ["ja","Japonca"],["ko","Korece"],["hi","Hintçe"],["ur","Urduca"],["bn","Bengalce"],
+  ["id","Endonezce"],["ms","Malayca"],["th","Tayca"],["vi","Vietnamca"],["tl","Filipince"],
+  ["sv","İsveççe"],["no","Norveççe"],["da","Danca"],["fi","Fince"],["et","Estonca"],
+  ["lv","Letonca"],["lt","Litvanca"],
+];
+// Plain Turkish-label list — kept for every existing single-select picker
+// (customer language, quote language, …) that only ever stored a label.
+const LANGUAGE_OPTIONS = LANGUAGES.map(([,name]) => name);
+const LANGUAGE_CODE_BY_NAME = Object.fromEntries(LANGUAGES.map(([code,name]) => [name, code]));
+const LANGUAGE_NAME_BY_CODE = Object.fromEntries(LANGUAGES.map(([code,name]) => [code, name]));
+
 const DB = {
 
   staff: [
@@ -127,79 +212,78 @@ const DB = {
     { id:"STAFF-004", name:"Zeynep Arslan",  initials:"ZA", email:"zeynep@desetour.com", role:"Rehber",    active:false },
   ],
 
+  // is_sales_channel/is_review_source mirror the real sources table's
+  // capability flags (supabase_migration_tour_channels.sql), defaulting to
+  // FALSE for every row exactly like production — mock mode must show the
+  // same honest "no channel/review source defined" empty states as real
+  // Supabase until a row is explicitly flagged, never a fabricated platform.
   sources: [
-    { id:"SRC-01", slug:"website",     label:"Website",     active:true  },
-    { id:"SRC-02", slug:"whatsapp",    label:"WhatsApp",    active:true  },
-    { id:"SRC-03", slug:"telefon",     label:"Telefon",     active:true  },
-    { id:"SRC-04", slug:"instagram",   label:"Instagram",   active:true  },
-    { id:"SRC-05", slug:"facebook",    label:"Facebook",    active:true  },
-    { id:"SRC-06", slug:"booking",     label:"Booking",     active:true  },
-    { id:"SRC-07", slug:"tripadvisor", label:"Tripadvisor", active:false },
-    { id:"SRC-08", slug:"email",       label:"Email",       active:true  },
-    { id:"SRC-09", slug:"manuel",      label:"Manuel",      active:true  },
-    { id:"SRC-10", slug:"civitatis",   label:"Civitatis",   active:true  },
+    { id:"SRC-01", slug:"website",     label:"Website",     active:true,  is_sales_channel:false, is_review_source:false },
+    { id:"SRC-02", slug:"whatsapp",    label:"WhatsApp",    active:true,  is_sales_channel:false, is_review_source:false },
+    { id:"SRC-03", slug:"telefon",     label:"Telefon",     active:true,  is_sales_channel:false, is_review_source:false },
+    { id:"SRC-04", slug:"instagram",   label:"Instagram",   active:true,  is_sales_channel:false, is_review_source:false },
+    { id:"SRC-05", slug:"facebook",    label:"Facebook",    active:true,  is_sales_channel:false, is_review_source:false },
+    { id:"SRC-06", slug:"booking",     label:"Booking",     active:true,  is_sales_channel:false, is_review_source:false },
+    { id:"SRC-07", slug:"tripadvisor", label:"Tripadvisor", active:false, is_sales_channel:false, is_review_source:false },
+    { id:"SRC-08", slug:"email",       label:"Email",       active:true,  is_sales_channel:false, is_review_source:false },
+    { id:"SRC-09", slug:"manuel",      label:"Manuel",      active:true,  is_sales_channel:false, is_review_source:false },
+    { id:"SRC-10", slug:"civitatis",   label:"Civitatis",   active:true,  is_sales_channel:false, is_review_source:false },
   ],
 
   tours: [
     {
-      id:"TUR-001", name:"Private Istanbul Experience", category:"Özel Tur",
-      duration:"8 Saat", pricingType:"Kişi Bazlı", basePrice:180, currency:"EUR",
-      status:"Aktif", updatedAt:"03 Haz 2026", usageCount:18,
+      id:"TUR-001", name:"Private Istanbul Experience", category:"custom",
+      duration:1, pricingType:"flat", basePrice:180, currency:"EUR",
+      status:"Aktif", createdAt:"2026-06-03", updatedAt:"03 Haz 2026",
       description:"Özel rehber eşliğinde İstanbul'un ikonik mekanlarını keşfedin.",
-      included:["Lisanslı Özel Rehber","Otel Karşılama","Tüm Giriş Ücretleri","Öğle Yemeği","Özel Ulaşım","Su ve İkramlar"],
-      excluded:["Kişisel Harcamalar","Alkollü İçecekler","Bahşiş","Belirtilmeyen Aktiviteler"],
-      tiers:{1:180,2:240,3:300,4:360,5:420,6:480,7:520,8:560},
-      ops:{pickup:true,vehicle:true,guide:true,defaultNotes:"VIP misafirler için özel düzenlemeler yapılabilir."},
+      tourType:["private"], maxGuests:null, meetingPoint:"",
+      notes:"VIP misafirler için özel düzenlemeler yapılabilir.",
+      languages:[], channels:[],
     },
     {
-      id:"TUR-002", name:"Bosphorus & Asian Side Tour", category:"Tekne Turu",
-      duration:"6 Saat", pricingType:"Kişi Bazlı", basePrice:150, currency:"EUR",
-      status:"Aktif", updatedAt:"02 Haz 2026", usageCount:11,
+      id:"TUR-002", name:"Bosphorus & Asian Side Tour", category:"sea",
+      duration:1, pricingType:"flat", basePrice:150, currency:"EUR",
+      status:"Aktif", createdAt:"2026-06-02", updatedAt:"02 Haz 2026",
       description:"Boğaz turu ile Avrupa ve Asya kıtaları arasında unutulmaz deneyim.",
-      included:["Lisanslı Rehber","Özel Tekne Turu","Kahvaltı","Otel Karşılama"],
-      excluded:["Öğle Yemeği","Kişisel Harcamalar"],
-      tiers:{1:150,2:200,3:260,4:320,5:380,6:440,7:490,8:530},
-      ops:{pickup:true,vehicle:true,guide:true,defaultNotes:"Tekne büyüklüğü kişi sayısına göre belirlenir."},
+      tourType:["group"], maxGuests:null, meetingPoint:"",
+      notes:"Tekne büyüklüğü kişi sayısına göre belirlenir.",
+      languages:[], channels:[],
     },
     {
-      id:"TUR-003", name:"Old City Highlights Tour", category:"Kültürel Tur",
-      duration:"5 Saat", pricingType:"Kişi Bazlı", basePrice:90, currency:"EUR",
-      status:"Aktif", updatedAt:"01 Haz 2026", usageCount:9,
+      id:"TUR-003", name:"Old City Highlights Tour", category:"cultural",
+      duration:1, pricingType:"flat", basePrice:90, currency:"EUR",
+      status:"Aktif", createdAt:"2026-06-01", updatedAt:"01 Haz 2026",
       description:"Sultanahmet bölgesinin en önemli tarihi alanları.",
-      included:["Lisanslı Rehber","Tüm Giriş Ücretleri","Ayasofya","Topkapı Sarayı","Kapalıçarşı"],
-      excluded:["Yemekler","Kişisel Ulaşım","Kişisel Harcamalar"],
-      tiers:{1:90,2:150,3:200,4:260,5:310,6:360,7:400,8:440},
-      ops:{pickup:false,vehicle:false,guide:true,defaultNotes:"Sultanahmet'te buluşma noktası belirlenir."},
+      tourType:["group"], maxGuests:null, meetingPoint:"Sultanahmet Meydanı",
+      notes:"",
+      languages:[], channels:[],
     },
     {
-      id:"TUR-004", name:"Cappadocia Full Experience", category:"Macera Turu",
-      duration:"2 Gün", pricingType:"Sabit Fiyat", basePrice:450, flatPrice:450, currency:"EUR",
-      status:"Aktif", updatedAt:"28 May 2026", usageCount:4,
+      id:"TUR-004", name:"Cappadocia Full Experience", category:"nature",
+      duration:2, pricingType:"flat", basePrice:450, currency:"EUR",
+      status:"Aktif", createdAt:"2026-05-28", updatedAt:"28 May 2026",
       description:"Kapadokya'nın peri bacaları, balon turu ve yeraltı şehirleri.",
-      included:["Balon Turu","Lisanslı Rehber","2 Öğün Yemek","Konaklama Transferi"],
-      excluded:["Uçuş","Konaklama","Kişisel Harcamalar"],
-      tiers:null,
-      ops:{pickup:true,vehicle:true,guide:true,defaultNotes:"Kapadokya'ya uçuş ayrıca planlanmalı."},
+      tourType:["private","group"], maxGuests:null, meetingPoint:"",
+      notes:"Kapadokya'ya uçuş ayrıca planlanmalı.",
+      languages:[], channels:[],
     },
     {
-      id:"TUR-005", name:"Istanbul Food & Culture Tour", category:"Gastronomi",
-      duration:"4 Saat", pricingType:"Sabit Fiyat", basePrice:280, flatPrice:280, currency:"EUR",
-      status:"Taslak", updatedAt:"03 Haz 2026", usageCount:0,
+      id:"TUR-005", name:"Istanbul Food & Culture Tour", category:"gastronomy",
+      duration:1, pricingType:"flat", basePrice:280, currency:"EUR",
+      status:"Taslak", createdAt:"2026-06-03", updatedAt:"03 Haz 2026",
       description:"İstanbul'un en autentik sokak lezzetleri ve gizli mutfak hazineleri.",
-      included:["Profesyonel Rehber","Tüm Tadım Ücretleri","6+ Yemek Durağı"],
-      excluded:["Ek Yemekler","Kişisel Harcamalar"],
-      tiers:null,
-      ops:{pickup:false,vehicle:false,guide:true,defaultNotes:"Yürüyüş turu."},
+      tourType:["group"], maxGuests:12, meetingPoint:"",
+      notes:"Yürüyüş turu.",
+      languages:[], channels:[],
     },
     {
-      id:"TUR-006", name:"Classic Half Day Tour", category:"Gün Turu",
-      duration:"4 Saat", pricingType:"Kişi Bazlı", basePrice:65, currency:"EUR",
-      status:"Arşiv", updatedAt:"10 May 2026", usageCount:3,
+      id:"TUR-006", name:"Classic Half Day Tour", category:"city",
+      duration:1, pricingType:"flat", basePrice:65, currency:"EUR",
+      status:"Arşiv", createdAt:"2026-05-10", updatedAt:"10 May 2026",
       description:"Kısa sürede İstanbul'un en önemli alanlarını kapsayan ekonomik tur.",
-      included:["Rehber","Temel Giriş Ücretleri"],
-      excluded:["Yemekler","Ulaşım"],
-      tiers:{1:65,2:100,3:140,4:180,5:210,6:240},
-      ops:{pickup:false,vehicle:false,guide:true,defaultNotes:""},
+      tourType:[], maxGuests:null, meetingPoint:"",
+      notes:"",
+      languages:[], channels:[],
     },
   ],
 
@@ -380,10 +464,22 @@ const DB = {
     },
   ],
 
+  // Deliberately empty. Guide management is backed by real Supabase tables
+  // (guides / guide_languages / guide_payments) now that the migration is
+  // applied — production guide functionality must never fall back to
+  // seeded/fabricated records. These arrays exist only so the mock-mode
+  // GuideRepository/GuidePaymentRepository (used solely when Supabase is
+  // NOT configured, e.g. local offline dev) have somewhere to read/write;
+  // they start empty and only ever contain records a user creates through
+  // the app's own Add Guide / Add Guide Payment forms during that session.
+  guides: [],
+  guidePayments: [],
+  reviews: [],
+
   reservations: [
     {
-      id:"R-2026-001", leadId:"LEAD-001", quoteId:"Q-2026-001", customerId:"CUST-001", tourId:"TUR-001",
-      tour:"Private Istanbul Experience", date:"22 Haz 2026", time:"09:00", duration:"8 Saat",
+      id:"R-2026-001", leadId:"LEAD-001", quoteId:"Q-2026-001", customerId:"CUST-001", tourId:"TUR-001", guideId:null,
+      tour:"Private Istanbul Experience", date:"22 Haz 2026", checkIn:"2026-06-22", checkOut:"2026-06-22", time:"09:00", duration:"8 Saat",
       pax:4, guide:"Ahmet Yıldız", vehicle:"Mercedes Vito · 34 ABC 123", driver:"Mehmet Kaya",
       pickup:"The Marmara Pera, Lobby", pickupTime:"08:30",
       opStatus:"Rehber Atandı", payStatus:"Kapora Ödendi",
@@ -392,8 +488,8 @@ const DB = {
       assigneeId:"STAFF-001", createdAt:"2026-06-03",
     },
     {
-      id:"R-2026-002", leadId:"LEAD-003", quoteId:"Q-2026-002", customerId:"CUST-002", tourId:"TUR-002",
-      tour:"Bosphorus & Asian Side Tour", date:"20 Haz 2026", time:"10:30", duration:"6 Saat",
+      id:"R-2026-002", leadId:"LEAD-003", quoteId:"Q-2026-002", customerId:"CUST-002", tourId:"TUR-002", guideId:null,
+      tour:"Bosphorus & Asian Side Tour", date:"20 Haz 2026", checkIn:"2026-06-20", checkOut:"2026-06-20", time:"10:30", duration:"6 Saat",
       pax:6, guide:"Fatma Şahin", vehicle:"Ford Transit · 34 DEF 456", driver:"Ali Çelik",
       pickup:"Hilton Istanbul Bosphorus, Giriş", pickupTime:"10:00",
       opStatus:"Hazırlanıyor", payStatus:"Ödendi",
@@ -631,6 +727,7 @@ function IDLink({ id, type }) {
     reservation: '/reservations/',
     customer:    '/customers/',
     tour:        '/tours/',
+    guide:       '/guides/',
     payment:     '/payments',
   };
   const route = routes[type];
@@ -680,7 +777,7 @@ function filterByDateRange(items, dateField, period) {
   });
 }
 
-function computeUrgent(leads, reservations, payments, tasks, reminders) {
+function computeUrgent(reservations, payments, reminders) {
   // Supabase mode: `null` means "not loaded yet" — must resolve to an empty
   // list, never to the DB mock arrays. Falling back to DB.* here previously
   // made "Acil İşler" flash fabricated urgent items on every dashboard load,
@@ -701,11 +798,6 @@ function computeUrgent(leads, reservations, payments, tasks, reminders) {
       tag:"Rehber",tagColor:C.blue,tagBg:C.blueBg,ago:r.date||"—",
       icon:"M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2 M23 21v-2a4 4 0 00-3-3.87 M16 3.13a4 4 0 010 7.75"});
   });
-  (tasks ?? (useMock ? DB.tasks : [])).filter(t=>t.status!=="Tamamlandı"&&["Yüksek","Acil"].includes(t.priority)).slice(0,2).forEach(t=>{
-    items.push({id:id++,level:"medium",title:t.title,sub:`Öncelik: ${t.priority} · ${t.dueDate||"—"}`,
-      tag:"Görev",tagColor:C.amber,tagBg:"#FEF3E2",ago:t.dueDate||"—",
-      icon:"M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"});
-  });
   (reminders ?? (useMock ? DB.reminders : [])).filter(r=>!r.status?.includes("Tamamlandı")&&r.dueDateRaw&&r.dueDateRaw<now).slice(0,2).forEach(r=>{
     items.push({id:id++,level:"medium",title:r.title,sub:`Gecikmiş · ${r.type||"Hatırlatma"}`,
       tag:"Hatırlatma",tagColor:"#6B3FA0",tagBg:"#F3EEF9",ago:r.dueDate||"—",
@@ -716,11 +808,10 @@ function computeUrgent(leads, reservations, payments, tasks, reminders) {
 
 // Shared in-flight/resolved fetch cache for useRepo, keyed by
 // "entity:method:arg". Without this, every component that calls
-// useRepo("lead","getAll") (Sidebar, Dashboard, LeadsPage, ...) issued its
-// own independent Supabase request for the exact same rows — visiting
-// /leads alone fired the leads table query twice (once from Sidebar's
-// badge count, once from LeadsPage itself), and the Dashboard fired it
-// three times over (Sidebar + Welcome + KpiRow). Cleared on every
+// useRepo("reservation","getAll") (Sidebar, Dashboard, ReservationsPage, ...)
+// issued its own independent Supabase request for the exact same rows, and
+// the Dashboard fired it three times over (Sidebar + Welcome + KpiRow).
+// Cleared on every
 // Store.notify() so a mutation still forces a fresh read everywhere, same
 // as before — this only removes *redundant simultaneous* requests for
 // identical data, it never serves stale data past a mutation.
@@ -934,6 +1025,11 @@ const ReservationRepository = {
   getByCustomerId(customerId) {
     return DB.reservations.filter(r => r.customerId === customerId);
   },
+  // No demo-data passengers modeled yet — the Yolcular card simply shows
+  // its empty state for every mock/demo reservation.
+  getGuests(_resId) {
+    return [];
+  },
   create(data) {
     const id = 'R-' + new Date().getFullYear() + '-' + String(DB.reservations.length + 1).padStart(3, '0');
     const record = {
@@ -1144,10 +1240,9 @@ const TourRepository = {
     const record = {
       id,
       status: 'Aktif',
-      usageCount: 0,
+      createdAt: new Date().toISOString().split('T')[0],
       updatedAt: new Date().toLocaleDateString('tr-TR', { day:'2-digit', month:'short', year:'numeric' }),
-      included: [], excluded: [],
-      ops: { pickup:true, vehicle:true, guide:true, defaultNotes:'' },
+      languages: [], channels: [],
       ...data,
     };
     DB.tours.push(record);
@@ -1170,6 +1265,187 @@ const TourRepository = {
     return true;
   },
 };
+
+// Mock counterparts of SupabaseGuideRepo/SupabaseGuidePaymentRepo (defined
+// further below, once getSB()/mapGuideFromDB exist), following the same
+// dual-mode pattern as every other entity in this file — in-memory when
+// AppConfig.useSupabase is off, the real guides/guide_languages/
+// guide_payments tables when it's on.
+function _withGuideLanguageNames(g) {
+  return { ...g, languageNames: (g.languages||[]).map(l=>l.name) };
+}
+const GuideRepository = {
+  getAll(filters = {}) {
+    let items = DB.guides;
+    if (filters.status) items = items.filter(g => g.status === filters.status);
+    if (filters.search) {
+      const q = filters.search.toLowerCase();
+      items = items.filter(g =>
+        g.name.toLowerCase().includes(q) ||
+        g.phone?.includes(q) ||
+        g.email?.toLowerCase().includes(q) ||
+        g.licenseNumber?.toLowerCase().includes(q)
+      );
+    }
+    return items.map(_withGuideLanguageNames);
+  },
+  getById(id) { const g = DB.guides.find(g => g.id === id); return g ? _withGuideLanguageNames(g) : null; },
+  create(data) {
+    const id = 'GD-' + String(DB.guides.length + 1).padStart(3, '0');
+    const record = { id, status:'Aktif', languages:[], createdAt:new Date().toISOString().split('T')[0], ...data };
+    DB.guides.push(record);
+    ActivityRepository.create({ entityType:'guide', entityId:id, action:'created', description:`Yeni rehber: ${record.name}` });
+    Store.notify();
+    return record;
+  },
+  update(id, patch) {
+    const idx = DB.guides.findIndex(g => g.id === id);
+    if (idx < 0) return null;
+    Object.assign(DB.guides[idx], patch);
+    ActivityRepository.create({ entityType:'guide', entityId:id, action:'updated', description:`Rehber güncellendi: ${Object.keys(patch).join(', ')}` });
+    Store.notify();
+    return DB.guides[idx];
+  },
+  delete(id) {
+    const idx = DB.guides.findIndex(g => g.id === id);
+    if (idx < 0) return false;
+    DB.guides[idx].status = 'Pasif';
+    Store.notify();
+    return true;
+  },
+};
+
+const GuidePaymentRepository = {
+  getAll(filters = {}) {
+    let items = DB.guidePayments;
+    if (filters.guideId) items = items.filter(p => p.guideId === filters.guideId);
+    if (filters.status)  items = items.filter(p => p.status === filters.status);
+    return items;
+  },
+  getById(id) { return DB.guidePayments.find(p => p.id === id) || null; },
+  getByGuideId(guideId) { return DB.guidePayments.filter(p => p.guideId === guideId); },
+  create(data) {
+    const id = 'GP-' + new Date().getFullYear() + '-' + String(DB.guidePayments.length + 1).padStart(3, '0');
+    const guide = DB.guides.find(g => g.id === data.guideId);
+    const res = DB.reservations.find(r => r.id === data.resId);
+    const tour = DB.tours.find(t => t.id === data.tourId);
+    const record = {
+      id, payNumber:id, status:'Bekliyor', currency:'EUR',
+      createdAt:new Date().toISOString().split('T')[0],
+      guideName:guide?.name||'', resRef:res?.id||'', tourName:tour?.name||res?.tour||'',
+      ...data,
+    };
+    DB.guidePayments.push(record);
+    ActivityRepository.create({ entityType:'guide_payment', entityId:id, action:'created', description:`Rehber ödemesi: ${data.currency==='TRY'?'₺':'€'}${(parseFloat(data.amount)||0).toLocaleString('tr-TR')}` });
+    Store.notify();
+    return record;
+  },
+  update(id, patch) {
+    const idx = DB.guidePayments.findIndex(p => p.id === id);
+    if (idx < 0) return null;
+    Object.assign(DB.guidePayments[idx], patch);
+    Store.notify();
+    return DB.guidePayments[idx];
+  },
+  delete(id) {
+    const idx = DB.guidePayments.findIndex(p => p.id === id);
+    if (idx < 0) return false;
+    DB.guidePayments[idx].status = 'İptal';
+    Store.notify();
+    return true;
+  },
+};
+
+// Deliberately empty (DB.reviews:[]) — same rule as guides/guidePayments
+// above: mock-mode reviews only ever exist here after a user creates one
+// through the app's own Add Review form during this session, never seeded.
+const ReviewRepository = {
+  getAll(filters = {}) {
+    let items = DB.reviews;
+    if (filters.guideId) items = items.filter(r => r.guideId === filters.guideId);
+    if (filters.resId)   items = items.filter(r => r.resId === filters.resId);
+    return items;
+  },
+  getById(id) { return DB.reviews.find(r => r.id === id) || null; },
+  getByReservation(resId) { return DB.reviews.filter(r => r.resId === resId); },
+  getByGuide(guideId) { return DB.reviews.filter(r => r.guideId === guideId); },
+  create(data) {
+    const id = 'REV-' + new Date().getFullYear() + '-' + String(DB.reviews.length + 1).padStart(3, '0');
+    const res = DB.reservations.find(r => r.id === data.resId);
+    const src = DB.sources.find(s => s.id === data.sourceId);
+    const cust = res ? DB.customers.find(c => c.id === res.customerId) : null;
+    const record = {
+      id, resId:data.resId||null, guideId:data.guideId||null,
+      rating:parseInt(data.rating), reviewText:data.reviewText||'',
+      sourceId:data.sourceId||null, externalReviewId:data.externalReviewId||'',
+      reviewDate:data.reviewDate||'', reviewerName:data.reviewerName||'',
+      createdBy:data.createdBy||null,
+      createdAt:new Date().toISOString().split('T')[0],
+      updatedAt:new Date().toISOString().split('T')[0],
+      sourceName:src?.label||src?.name||'', resRef:res?.id||'',
+      tourName:res?.tour||'', customerName:cust?.name||'',
+    };
+    DB.reviews.push(record);
+    ActivityRepository.create({ entityType:'reservation_review', entityId:id, action:'created', description:`Değerlendirme eklendi: ${data.rating}★` });
+    Store.notify();
+    return record;
+  },
+  update(id, patch) {
+    const idx = DB.reviews.findIndex(r => r.id === id);
+    if (idx < 0) return null;
+    // guide_id is a historical snapshot captured only at creation time — an
+    // edit must never silently move a review's guide attribution, so any
+    // guideId present in the patch is deliberately ignored here.
+    const { guideId, ...safePatch } = patch;
+    Object.assign(DB.reviews[idx], safePatch);
+    Store.notify();
+    return DB.reviews[idx];
+  },
+};
+
+// Date-RANGE overlap check only — reservations.check_in/check_out are DATE
+// columns (no end-time column exists; check_in_time is a single TIME value
+// for the meeting time on check_in day only, with no matching check_out_time
+// to compute a real time-slot against). This deliberately cannot and does
+// not claim exact time-of-day overlap detection — it is a same-day/date-
+// range conflict check only. Two reservations "conflict" here if their
+// [checkIn,checkOut] date ranges intersect at all (single-day tours have
+// checkIn===checkOut, which still compares correctly).
+function _datesOverlap(aStart, aEnd, bStart, bEnd) {
+  if (!aStart || !bStart) return false;
+  const as = new Date(aStart), ae = new Date(aEnd || aStart);
+  const bs = new Date(bStart), be = new Date(bEnd || bStart);
+  if (isNaN(as) || isNaN(bs)) return false;
+  return as <= be && bs <= ae;
+}
+
+// Guide SAME-DAY / date-range assignment-conflict check — used by
+// NewReservationModal / AssignGuideModal to WARN (never silently block)
+// when the selected guide is already on another non-cancelled reservation
+// whose check_in..check_out date range overlaps the chosen date(s). This is
+// date-level only, not an exact check_in_time-vs-check_in_time comparison —
+// see the schema note above. Works in both mock and Supabase mode; always
+// excludes cancelled reservations (opStatus "İptal" / status 'cancelled').
+async function checkGuideConflicts(guideId, checkIn, checkOut, excludeResId) {
+  if (!guideId || !checkIn) return [];
+  const sb = getSB();
+  if (!sb) {
+    return DB.reservations
+      .filter(r => r.guideId === guideId && r.id !== excludeResId && r.opStatus !== 'İptal')
+      .filter(r => _datesOverlap(r.checkIn || r.date, r.checkOut || r.checkIn || r.date, checkIn, checkOut))
+      .map(r => ({ id:r.id, resNumber:r.id, tour:r.tour, checkIn:r.checkIn||r.date, checkOut:r.checkOut||r.checkIn||r.date }));
+  }
+  let q = sb.from('reservations')
+    .select('id,reservation_number,destination,check_in,check_out,status')
+    .eq('guide_id', guideId)
+    .neq('status', 'cancelled');
+  if (excludeResId) q = q.neq('id', excludeResId);
+  const { data, error } = await q;
+  if (error || !data) return [];
+  return data
+    .filter(r => _datesOverlap(r.check_in, r.check_out, checkIn, checkOut))
+    .map(r => ({ id:r.id, resNumber:r.reservation_number||r.id, tour:r.destination, checkIn:r.check_in, checkOut:r.check_out }));
+}
 
 const ActivityRepository = {
   getAll(filters = {}) {
@@ -1201,6 +1477,14 @@ const ActivityRepository = {
     };
     DB.activityLogs.push(record);
     return record;
+  },
+  // No demo-data auto-ingested reservations modeled yet — the notification
+  // bell simply shows zero for every mock/demo session.
+  getReservationNotifications() {
+    return [];
+  },
+  markReservationNotificationRead(_activityLogId) {
+    return true;
   },
 };
 
@@ -1467,19 +1751,19 @@ const MetricsService = {
 // a mock/demo count when real data is unavailable.
 const NAV_TOP = [
   { id:"dashboard",    label:"Ana Sayfa",      badge:null, icon:"M3 9.5L12 3l9 6.5V20a1 1 0 01-1 1H4a1 1 0 01-1-1V9.5z M9 21V12h6v9" },
-  { id:"leads",        label:"Talepler",        badge:null, icon:"M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" },
   { id:"customers",    label:"Misafirler",      badge:null, icon:"M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2 M23 21v-2a4 4 0 00-3-3.87 M16 3.13a4 4 0 010 7.75" },
-  { id:"quotes",       label:"Teklifler",       badge:null, icon:"M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z M14 2v6h6 M16 13H8 M16 17H8 M10 9H8" },
   { id:"reservations", label:"Rezervasyonlar",  badge:null, icon:"M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" },
   { id:"calendar",     label:"Takvim",          badge:null, icon:"M8 2v4M16 2v4M3 10h18M21 8a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2h14a2 2 0 002-2V8z" },
   { id:"tours",        label:"Turlar",          badge:null, icon:"M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z M9 22V12h6v10" },
+  { id:"guides",       label:"Rehberlerimiz",   badge:null, icon:"M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2 M23 21v-2a4 4 0 00-3-3.87 M16 3.13a4 4 0 010 7.75 M12 11a4 4 0 100-8 4 4 0 000 8z" },
 ];
 const NAV_BOT = [
-  { id:"tasks",      label:"Görevler",       badge:null, icon:"M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" },
   { id:"payments",   label:"Ödemeler",      badge:null, icon:"M2 9a2 2 0 012-2h16a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V9zM2 13h20" },
   { id:"messages",   label:"Mesajlar",      badge:null, icon:"M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" },
   { id:"reminders",  label:"Hatırlatmalar", badge:null, icon:"M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0" },
   { id:"reports",    label:"Raporlar",      badge:null, icon:"M18 20V10M12 20V4M6 20v-6" },
+];
+const NAV_SETTINGS = [
   { id:"settings",   label:"Ayarlar",       badge:null, icon:"M12 15a3 3 0 100-6 3 3 0 000 6z M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" },
 ];
 
@@ -1607,7 +1891,7 @@ function NavItem({ item, currentBase }) {
 }
 
 function SidebarInner({ currentBase, onNavItem, liveBadges }) {
-  const auth = getAuthContext();
+  const auth = useAuthContext();
   const role = auth.role;
   const badgeFor = (it) => (liveBadges && liveBadges[it.id] !== undefined) ? liveBadges[it.id] : it.badge;
 
@@ -1683,6 +1967,27 @@ function SidebarInner({ currentBase, onNavItem, liveBadges }) {
             </button>
           ))}
         </div>
+        <div style={{height:1, background:"rgba(255,255,255,0.07)", margin:"8px 10px"}}/>
+        <div>
+          {visibleItems(NAV_SETTINGS).map(it=>(
+            <button key={it.id} onClick={()=>handleItemClick(it.id)} style={{
+              display:"flex", alignItems:"center", gap:10, width:"100%",
+              padding:"9px 14px", border:"none", borderRadius:7, marginBottom:2,
+              background: currentBase===it.id ? "rgba(184,151,58,0.13)" : "transparent",
+              color: currentBase===it.id ? C.goldLight : "rgba(248,245,238,0.6)",
+              cursor:"pointer", textAlign:"left",
+              borderLeft: currentBase===it.id ? "3px solid "+C.goldLight : "3px solid transparent",
+              transition:"background 0.12s, color 0.12s",
+            }}>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" strokeWidth={currentBase===it.id ? 2 : 1.6}
+                strokeLinecap="round" strokeLinejoin="round">
+                <path d={it.icon}/>
+              </svg>
+              <span style={{fontSize:13, fontWeight:currentBase===it.id?500:400, fontFamily:"'DM Sans',sans-serif", flex:1, whiteSpace:"nowrap"}}>{it.label}</span>
+            </button>
+          ))}
+        </div>
       </nav>
 
       {}
@@ -1717,7 +2022,7 @@ function SidebarInner({ currentBase, onNavItem, liveBadges }) {
 }
 
 function Sidebar({ currentBase, collapsed, onToggle, mobileOpen, onMobileClose }) {
-  const auth = getAuthContext();
+  const auth = useAuthContext();
   const { isMobile } = useBreakpoint();
   const W = collapsed ? 64 : 208;
 
@@ -1838,23 +2143,10 @@ function Sidebar({ currentBase, collapsed, onToggle, mobileOpen, onMobileClose }
       <div style={{height:1, background:"rgba(255,255,255,0.07)", margin:"12px 18px"}}/>
       <nav style={{padding:"0 10px", display:"flex", flexDirection:"column", gap:2}}>
         {NAV_BOT.map(it=><NavItem key={it.id} item={{...withLiveBadge(it),_collapsed:collapsed}} currentBase={currentBase}/>)}
-
-        {}
-        <div style={{padding:"8px 10px", borderTop:"1px solid rgba(255,255,255,0.07)", marginTop:6}}>
-          <button onClick={()=>auth.logout()} style={{
-            display:"flex", alignItems:"center", gap:9, width:"100%",
-            padding:"9px 14px", border:"none", borderRadius:T.radiusSm,
-            background:"transparent", color:"rgba(248,245,238,0.45)",
-            cursor:"pointer", textAlign:"left", transition:"color .12s, background .12s",
-          }}
-            onMouseEnter={e=>{e.currentTarget.style.background="rgba(220,38,38,0.15)";e.currentTarget.style.color="#FCA5A5";}}
-            onMouseLeave={e=>{e.currentTarget.style.background="transparent";e.currentTarget.style.color="rgba(248,245,238,0.45)";}}>
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round">
-              <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9"/>
-            </svg>
-            <span style={{fontSize:13, fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap"}}>Çıkış Yap</span>
-          </button>
-        </div>
+      </nav>
+      <div style={{height:1, background:"rgba(255,255,255,0.07)", margin:"12px 18px"}}/>
+      <nav style={{padding:"0 10px", display:"flex", flexDirection:"column", gap:2}}>
+        {NAV_SETTINGS.map(it=><NavItem key={it.id} item={{...withLiveBadge(it),_collapsed:collapsed}} currentBase={currentBase}/>)}
       </nav>
       <div style={{flex:1}}/>
       <div style={{
@@ -1878,9 +2170,31 @@ function Sidebar({ currentBase, collapsed, onToggle, mobileOpen, onMobileClose }
           </div>
         )}
       </div>
+      <div style={{padding:"0 10px 8px"}}>
+        <button onClick={()=>auth.logout()} title={collapsed?"Çıkış Yap":undefined} style={{
+          display:"flex", alignItems:"center", gap:9, width:"100%",
+          padding: collapsed ? "9px 0" : "8px 14px",
+          justifyContent: collapsed ? "center" : "flex-start",
+          border:"none", borderRadius:T.radiusSm,
+          background:"transparent", color:"rgba(248,245,238,0.45)",
+          cursor:"pointer", textAlign:"left", transition:"color .12s, background .12s",
+        }}
+          onMouseEnter={e=>{e.currentTarget.style.background="rgba(220,38,38,0.15)";e.currentTarget.style.color="#FCA5A5";}}
+          onMouseLeave={e=>{e.currentTarget.style.background="transparent";e.currentTarget.style.color="rgba(248,245,238,0.45)";}}>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round">
+            <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9"/>
+          </svg>
+          {!collapsed && <span style={{fontSize:13, fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap"}}>Çıkış Yap</span>}
+        </button>
+      </div>
       {!collapsed && (
-        <div style={{padding:"6px 16px 12px", textAlign:"center"}}>
-          <div style={{fontSize:10, color:"rgba(248,245,238,0.22)", fontFamily:"'DM Sans',sans-serif"}}>© 2026 Dese Tour · Tüm hakları saklıdır.</div>
+        <div style={{padding:"10px 16px 16px", textAlign:"center", borderTop:"1px solid rgba(255,255,255,0.06)"}}>
+          <div style={{
+            fontSize:9.5, letterSpacing:"0.14em", color:"rgba(201,168,76,0.4)",
+            fontFamily:"'Playfair Display',serif", fontStyle:"italic", lineHeight:1.7,
+          }}>
+            MORE THAN A TRIP<br/>A STORY
+          </div>
         </div>
       )}
     </aside>
@@ -1888,143 +2202,142 @@ function Sidebar({ currentBase, collapsed, onToggle, mobileOpen, onMobileClose }
 }
 
 function Welcome() {
-  const auth = getAuthContext();
+  const auth = useAuthContext();
   const firstName = auth.displayName.split(" ")[0] || "Hoş geldiniz";
   const hour = new Date().getHours();
   const greeting = hour < 12 ? "Günaydın" : hour < 18 ? "İyi günler" : "İyi akşamlar";
-  const [showNewLead, setShowNewLead] = useState(false);
+  const [showNewRes, setShowNewRes] = useState(false);
 
   // Real urgent-item count for the context line below — this used to be a
   // hardcoded "3 acil işlem" regardless of actual data.
-  const { data:repoLeads, loading:l1 } = useRepo("lead",        "getAll");
-  const { data:repoRes,   loading:l2 } = useRepo("reservation", "getAll");
-  const { data:repoPays,  loading:l3 } = useRepo("payment",     "getAll");
-  const { data:repoTasks, loading:l4 } = useRepo("task",        "getAll");
-  const { data:repoRems,  loading:l5 } = useRepo("reminder",    "getAll");
-  const urgentLoading = l1||l2||l3||l4||l5;
+  const { data:repoRes,   loading:l1 } = useRepo("reservation", "getAll");
+  const { data:repoPays,  loading:l2 } = useRepo("payment",     "getAll");
+  const { data:repoRems,  loading:l3 } = useRepo("reminder",    "getAll");
+  const urgentLoading = l1||l2||l3;
   const urgentCount = useMemo(
-    () => computeUrgent(repoLeads, repoRes, repoPays, repoTasks, repoRems).length,
-    [repoLeads, repoRes, repoPays, repoTasks, repoRems]
+    () => computeUrgent(repoRes, repoPays, repoRems).length,
+    [repoRes, repoPays, repoRems]
   );
 
   return (
-    <div style={{
-      background: C.white,
-      border:`1px solid ${C.border}`,
-      borderRadius:T.radius,
-      padding:"22px 28px",
-      display:"flex", alignItems:"center", justifyContent:"space-between", gap:24,
+    <div className="hero-shell" style={{
+      position:"relative", overflow:"hidden",
+      background:C.white, border:`1px solid ${C.border}`, borderRadius:T.radius,
       boxShadow:T.shadowSoft,
     }}>
-      <div>
-        <div style={{
-          fontSize:10.5, letterSpacing:"0.12em", textTransform:"uppercase",
-          color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginBottom:7,
-        }}>
+      {showNewRes && <NewReservationModal onClose={()=>setShowNewRes(false)} onSuccess={()=>setShowNewRes(false)}/>}
+
+      {/* Photo layer — a real <img> confined to the hero's right portion
+          (not full-bleed) so object-fit:cover crops far less aggressively:
+          a narrower box whose aspect ratio sits close to the source
+          photo's own means most of its height shows, keeping the
+          panorama wide and the Galata Tower at its natural size instead
+          of an enlarged sliver. hero-fade above it hides the left edge so
+          the photo still reads as emerging from the ivory background. */}
+      <img src="/hero-crm.png" alt="" className="hero-photo" style={{
+        position:"absolute", top:0, right:0, bottom:0,
+        height:"100%", width:"72%",
+        objectFit:"cover",
+        backgroundColor:C.navyDeep,
+      }}/>
+      <div className="hero-fade" style={{ position:"absolute", inset:0 }}/>
+
+      {}
+      <div style={{position:"relative", maxWidth:460, padding:"32px 36px", display:"flex", flexDirection:"column", justifyContent:"center", gap:13, minWidth:0}}>
+        <div style={{fontSize:10.5, letterSpacing:"0.14em", textTransform:"uppercase", color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>
           {new Date().toLocaleDateString("tr-TR",{day:"2-digit",month:"long",year:"numeric",weekday:"long"})}
         </div>
         <h1 style={{
-          margin:0, fontSize:26, fontWeight:700, color:C.text,
-          fontFamily:"'Playfair Display',serif", lineHeight:1.2,
+          margin:0, fontSize:32, fontWeight:700, color:C.text,
+          fontFamily:"'Playfair Display',serif", lineHeight:1.15,
+          display:"flex", alignItems:"center", gap:10,
         }}>
-          {greeting}, {firstName} 👋
+          {greeting}, {firstName}
+          <span style={{fontSize:24}}>☀️</span>
         </h1>
         <p style={{
-          margin:"6px 0 0", fontSize:13.5, color:C.textMuted,
+          margin:0, fontSize:14, color:C.textMid,
           fontFamily:"'DM Sans',sans-serif", lineHeight:1.5,
         }}>
           {urgentLoading ? (
             "Bugünkü operasyon özetiniz hazırlanıyor…"
           ) : urgentCount > 0 ? (
-            <>Bugünkü operasyon özetiniz — <span style={{color:C.amber, fontWeight:500}}>{urgentCount} acil işlem</span> dikkat bekliyor.</>
+            <>Bugünkü operasyon özetiniz — <span style={{color:C.amber, fontWeight:600}}>{urgentCount} acil işlem</span> dikkat bekliyor.</>
           ) : (
-            "Bugünkü operasyon özetiniz — dikkat bekleyen acil işlem yok."
+            "Bugünkü operasyon özetiniz — her şey kontrol altında."
           )}
         </p>
+        <div style={{
+          fontSize:13, color:C.textMuted, fontFamily:"'Playfair Display',serif", fontStyle:"italic",
+          borderLeft:`2px solid rgba(184,151,58,0.4)`, paddingLeft:12, lineHeight:1.5,
+        }}>
+          "Güzel yolculuklar, iyi insanlarla başlar."
+          <div style={{fontStyle:"normal", fontSize:10, letterSpacing:"0.1em", color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:3}}>— DESE TOUR</div>
+        </div>
+        <div style={{marginTop:2}}>
+          <button style={{
+            display:"inline-flex", alignItems:"center", gap:8,
+            padding:"11px 20px", borderRadius:T.radiusSm,
+            border:"none", background:C.navy,
+            cursor:"pointer", color:C.white,
+            fontFamily:"'DM Sans',sans-serif", fontSize:13, fontWeight:600,
+            transition:"background 0.12s",
+          }}
+            onClick={()=>setShowNewRes(true)}
+            onMouseEnter={e=>e.currentTarget.style.background=C.navyHover}
+            onMouseLeave={e=>e.currentTarget.style.background=C.navy}
+          >
+            <Ic d="M12 5v14M5 12h14" size={15} sw={2}/>
+            Yeni Rezervasyon Ekle
+          </button>
+        </div>
       </div>
-
-      {}
-      {showNewLead && <NewLeadModal onClose={()=>setShowNewLead(false)} onSuccess={()=>setShowNewLead(false)}/>}
-      <button style={{
-        display:"flex", alignItems:"center", gap:8,
-        padding:"10px 18px", borderRadius:8, flexShrink:0,
-        border:`1.5px solid ${C.gold}`, background:C.goldPale,
-        cursor:"pointer", color:C.gold,
-        fontFamily:"'DM Sans',sans-serif", fontSize:13, fontWeight:500,
-        transition:"background 0.12s",
-      }}
-        onClick={()=>setShowNewLead(true)}
-        onMouseEnter={e=>e.currentTarget.style.background="#EDE3C0"}
-        onMouseLeave={e=>e.currentTarget.style.background=C.goldPale}
-      >
-        <Ic d="M12 5v14M5 12h14" size={15} sw={2}/>
-        Yeni Talep Ekle
-      </button>
     </div>
   );
 }
 
-
 function KpiCard({ kpi }) {
   return (
     <div style={{
-      background:C.white, border:`1px solid ${C.border}`, borderRadius:T.radius,
-      padding:"19px 20px", display:"flex", flexDirection:"column", gap:14,
+      background: kpi.accent ? "#FBF7EC" : C.white,
+      border:`1px solid ${kpi.accent ? "rgba(184,151,58,0.25)" : C.border}`, borderRadius:T.radius,
+      padding:"15px 16px", display:"flex", flexDirection:"column", gap:10,
       position:"relative", overflow:"hidden", boxShadow:T.shadowSoft,
     }}>
       {}
-      <div style={{display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:10}}>
+      <div style={{display:"flex", alignItems:"center", justifyContent:"space-between", gap:10}}>
         <div style={{
-          width:34, height:34, borderRadius:T.radiusSm, flexShrink:0,
-          background: kpi.alert ? C.redBg : C.goldPale,
+          width:30, height:30, borderRadius:T.radiusSm, flexShrink:0,
+          background:C.goldPale,
           display:"flex", alignItems:"center", justifyContent:"center",
-          color: kpi.alert ? C.red : C.gold,
+          color:C.gold,
         }}>
-          <Ic d={kpi.icon} size={16} sw={1.6}/>
+          <Ic d={kpi.icon} size={14} sw={1.6}/>
         </div>
-        {kpi.alert && (
-          <div style={{
-            width:7, height:7, borderRadius:"50%",
-            background:C.red, marginTop:4, flexShrink:0,
-          }}/>
-        )}
+        <span style={{fontSize:11, color:C.textMuted, fontFamily:"'DM Sans',sans-serif"}}>{kpi.label}</span>
+        <span style={{color:C.textFaint, flexShrink:0}}><Ic d="M9 18l6-6-6-6" size={13} sw={1.8}/></span>
       </div>
 
       {}
-      <div>
-        <div style={{
-          fontSize:28, fontWeight:700, color: kpi.alert ? C.red : C.text,
-          fontFamily:"'Playfair Display',serif", lineHeight:1, marginBottom:5,
-          letterSpacing:"-0.01em",
-        }}>{kpi.value}</div>
-        <div style={{fontSize:11.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", letterSpacing:"0.01em"}}>{kpi.label}</div>
-      </div>
+      <div style={{
+        fontSize:24, fontWeight:700, color:C.text,
+        fontFamily:"'Playfair Display',serif", lineHeight:1,
+        letterSpacing:"-0.01em",
+      }}>{kpi.value}</div>
 
       {}
-      {kpi.progress != null ? (
-        <div>
-          <div style={{height:3, background:C.ivoryDark, borderRadius:99, overflow:"hidden", marginBottom:4}}>
-            <div style={{width:`${kpi.progress}%`, height:"100%", background:C.gold, borderRadius:99}}/>
-          </div>
-          <div style={{fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>{kpi.sub}</div>
-        </div>
-      ) : (
-        <div style={{
-          fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif",
-          paddingTop:4, borderTop:`1px solid ${C.borderLight}`,
-        }}>{kpi.sub}</div>
-      )}
+      <div style={{fontSize:11, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>{kpi.sub}</div>
     </div>
   );
 }
 
 function KpiRow() {
-  const { data:repoLeads, loading:kpiLoadL }  = useRepo("lead",        "getAll");
   const { data:repoRes,   loading:kpiLoadR }  = useRepo("reservation", "getAll");
   const { data:repoPays,  loading:kpiLoadP }  = useRepo("payment",     "getAll");
-  const { data:repoTasks, loading:kpiLoadT }  = useRepo("task",        "getAll");
-  const kpiLoading = kpiLoadL || kpiLoadR || kpiLoadP || kpiLoadT;
-  const m = calculateDashboardMetrics(repoLeads, repoRes, repoPays, repoTasks, null);
+  const { data:repoGuides, loading:kpiLoadG } = useRepo("guide",       "getAll");
+  const kpiLoading = kpiLoadR || kpiLoadP;
+  const m = calculateDashboardMetrics(null, repoRes, repoPays, null, null);
+  const activeGuideCount = (repoGuides||[]).filter(g=>g.status==="Aktif").length;
   const kpis = [
     {
       label:"Bugünkü Turlar",
@@ -2034,25 +2347,23 @@ function KpiRow() {
       accent:false,
     },
     {
-      label:"Yeni Talepler",
-      value:String(m.openLeadsCount),
-      sub:"Aktif talepler",
-      icon:"M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01",
-      alert:m.openLeadsCount>0,
+      label:"Yaklaşan Rezervasyonlar",
+      value:String(m.upcomingCount),
+      sub:m.upcomingCount>0?"Aktif rezervasyonlar":"Bekleyen yok",
+      icon:"M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z",
+      accent:false,
     },
     {
       label:"Bekleyen Ödemeler",
       value:`€${m.pendingEUR.toLocaleString("tr-TR",{maximumFractionDigits:0})}`,
       sub:`${m.pendingPaysCount} rezervasyon`,
       icon:"M2 9a2 2 0 012-2h16a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V9zM2 13h20",
-      alert:m.pendingPaysCount>0,
     },
     {
-      label:"Yaklaşan Rezervasyonlar",
-      value:String(m.upcomingCount),
-      sub:m.upcomingCount>0?"Aktif rezervasyonlar":"Bekleyen yok",
-      icon:"M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z",
-      accent:false,
+      label:"Aktif Rehberler",
+      value: kpiLoadG ? '…' : String(activeGuideCount),
+      sub:"Görevlendirmeye hazır",
+      icon:"M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2 M23 21v-2a4 4 0 00-3-3.87 M16 3.13a4 4 0 010 7.75",
     },
     {
       label:"Bu Ay Beklenen Ciro",
@@ -2071,14 +2382,12 @@ function KpiRow() {
 
 function UrgentPanel() {
   const [dismissed, setDismissed] = useState([]);
-  const { data:repoLeads }     = useRepo("lead",        "getAll");
   const { data:repoRes }       = useRepo("reservation", "getAll");
   const { data:repoPays }      = useRepo("payment",     "getAll");
-  const { data:repoTasks }     = useRepo("task",        "getAll");
   const { data:repoRems }      = useRepo("reminder",    "getAll");
   const urgentItems = useMemo(
-    () => computeUrgent(repoLeads, repoRes, repoPays, repoTasks, repoRems),
-    [repoLeads, repoRes, repoPays, repoTasks, repoRems]
+    () => computeUrgent(repoRes, repoPays, repoRems),
+    [repoRes, repoPays, repoRems]
   );
   const visible = urgentItems.filter(u=>!dismissed.includes(u.id));
 
@@ -2358,11 +2667,59 @@ function UpcomingReservations() {
     <Card>
       <SectionHeader title="Yaklaşan Rezervasyonlar" action="Tümünü Gör"/>
       {upLoading  ? <LoadingState label="Yükleniyor…"/> : null}
-      <div style={{display:"flex", flexDirection:"column", gap:0}}>
-        {upcoming.map((r,i)=>(
-          <UpcomingResRow key={i} r={r} isLast={i===upcoming.length-1}/>
-        ))}
-      </div>
+      {!upLoading && upcoming.length === 0 && (
+        <EmptyState icon="📅" title="Yaklaşan rezervasyon bulunmuyor." subtitle="Onaylanan rezervasyonlar burada listelenecek."/>
+      )}
+      {!upLoading && upcoming.length > 0 && (
+        <div style={{display:"flex", flexDirection:"column", gap:0}}>
+          {upcoming.map((r,i)=>(
+            <UpcomingResRow key={i} r={r} isLast={i===upcoming.length-1}/>
+          ))}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function PendingPaymentsWidget() {
+  const { data:repoPays, loading:ppLoading } = useRepo("payment", "getAll");
+  const allPays = repoPays ?? [];
+  const pending = allPays
+    .filter(p => ["Bekliyor","Kısmi Ödendi"].includes(p.status))
+    .slice(0,5)
+    .map(p => {
+      const cust = getCustomerById(p.customerId);
+      const res  = getReservationById(p.resId||"");
+      return { ...p, customerName: cust?.name || res?.tour || "—", tourName: res?.tour || "—" };
+    });
+  return (
+    <Card>
+      <SectionHeader title="Bekleyen Ödemeler" action="Tümünü Gör"/>
+      {ppLoading  ? <LoadingState label="Yükleniyor…"/> : null}
+      {!ppLoading && pending.length === 0 && (
+        <EmptyState icon="💳" title="Bekleyen ödeme bulunmuyor." subtitle="Ödeme planları burada listelenecek."/>
+      )}
+      {!ppLoading && pending.length > 0 && (
+        <div style={{display:"flex", flexDirection:"column", gap:0}}>
+          {pending.map((p,i)=>(
+            <div key={i} className="dt-row" style={{
+              display:"flex", alignItems:"center", justifyContent:"space-between", gap:10,
+              padding:"12px 4px",
+              borderBottom: i<pending.length-1 ? `1px solid ${C.borderLight}` : "none",
+              borderRadius:6,
+            }}>
+              <div style={{minWidth:0}}>
+                <div style={{fontSize:13, fontWeight:500, color:C.text, fontFamily:"'DM Sans',sans-serif", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{p.customerName}</div>
+                <div style={{fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{p.tourName}</div>
+              </div>
+              <div style={{textAlign:"right", flexShrink:0}}>
+                <div style={{fontSize:13.5, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif"}}>{p.currency==="EUR"?"€":"₺"}{parseFloat(p.amount||0).toLocaleString("tr-TR")}</div>
+                <Pill label={p.status} color={C.amber} bg={C.amberBg} small/>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </Card>
   );
 }
@@ -2474,16 +2831,105 @@ function Dashboard() {
       <KpiRow/>
 
       {}
-      <div className="rsp-split" style={{display:"grid", gridTemplateColumns:"380px 1fr", gap:20, alignItems:"start"}}>
-        <UrgentPanel/>
+      <div className="rsp-split" style={{display:"grid", gridTemplateColumns:"1.85fr 1fr", gap:20, alignItems:"start"}}>
         <TodayTours/>
+        <UrgentPanel/>
       </div>
 
       {}
-      <div className="rsp-split" style={{display:"grid", gridTemplateColumns:"1fr 400px", gap:20, alignItems:"start"}}>
+      <div className="rsp-split" style={{display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:20, alignItems:"start"}}>
         <UpcomingReservations/>
+        <PendingPaymentsWidget/>
         <ActivityFeed/>
       </div>
+
+      {}
+      <GuideOpsPanel/>
+
+      {}
+      <RecentReviewsPanel/>
+    </div>
+  );
+}
+
+// Minimal, additive-only "Son Değerlendirmeler" panel — real reservation_
+// reviews rows only, newest first, capped at 5. Deliberately does not
+// compute any rate, ranking, or guide comparison; that scope is explicitly
+// out for this pass.
+function RecentReviewsPanel() {
+  const { data:repoReviews, loading } = useRepo("review", "getAll");
+  const reviews = (repoReviews || [])
+    .slice()
+    .sort((a,b)=>(b.reviewDate||b.createdAt||"").localeCompare(a.reviewDate||a.createdAt||""))
+    .slice(0,5);
+  return (
+    <Card>
+      <SectionHeader title="Son Değerlendirmeler"/>
+      {loading && <LoadingState label="Yükleniyor…"/>}
+      {!loading && reviews.length===0 && (
+        <div style={{padding:"12px 0 4px", color:C.textFaint, fontFamily:"'DM Sans',sans-serif", fontSize:13}}>
+          Henüz değerlendirme yok.
+        </div>
+      )}
+      {!loading && reviews.map(rv=>(
+        <div key={rv.id} style={{display:"flex", alignItems:"center", justifyContent:"space-between", padding:"9px 0", borderBottom:`1px solid ${C.borderLight}`, gap:10}}>
+          <div style={{minWidth:0}}>
+            <div style={{fontSize:12.5, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{rv.tourName||"—"}</div>
+            <div style={{fontSize:11, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:1}}>{rv.customerName||"—"}{rv.sourceName?` · ${rv.sourceName}`:""}</div>
+          </div>
+          <RatingStars rating={rv.rating} size={13}/>
+        </div>
+      ))}
+    </Card>
+  );
+}
+
+// Guide operational section — active guide count, how many are on a tour
+// today, and upcoming reservations still without a guide. All three are
+// derived live from reservations/guides; "available guides" is deliberately
+// NOT shown here since actual availability (free on a given date) can only
+// be computed per-reservation via checkGuideConflicts, not as a single
+// dashboard number without inventing a definition for it.
+function GuideOpsPanel() {
+  const { data:repoGuides } = useRepo("guide", "getAll");
+  const { data:repoRes }    = useRepo("reservation", "getAll");
+  const guides = repoGuides || [];
+  const reservations = repoRes || [];
+  const todayISO = _TODAY_ISO;
+
+  const activeGuides  = guides.filter(g=>g.status==="Aktif").length;
+  const assignedToday = new Set(
+    reservations.filter(r=>r.guideId && r.checkIn===todayISO && r.opStatus!=="İptal").map(r=>r.guideId)
+  ).size;
+  const upcomingNoGuide = reservations
+    .filter(r => !r.guideId && !r.guide && (r.checkIn||"")>=todayISO && !["Tamamlandı","İptal"].includes(r.opStatus))
+    .sort((a,b)=>(a.checkIn||"").localeCompare(b.checkIn||""));
+
+  return (
+    <div style={{background:C.white, border:`1px solid ${C.border}`, borderRadius:12, padding:"18px 20px"}}>
+      <div style={{fontSize:14, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif", marginBottom:14}}>Rehber Operasyonu</div>
+      <div className="rsp-stat-grid" style={{display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:12, marginBottom:upcomingNoGuide.length?16:0}}>
+        {[
+          { label:"Aktif Rehber",                       val:activeGuides,          color:C.green, bg:C.greenBg },
+          { label:"Bugün Atanmış Rehber",                val:assignedToday,         color:C.blue,  bg:C.blueBg },
+          { label:"Rehber Atanmamış Yaklaşan Rezervasyon", val:upcomingNoGuide.length, color:upcomingNoGuide.length>0?C.red:C.green, bg:upcomingNoGuide.length>0?C.redBg:C.greenBg },
+        ].map((s,i)=>(
+          <div key={i} style={{textAlign:"center", padding:"12px 8px", background:s.bg, borderRadius:9}}>
+            <div style={{fontSize:22, fontWeight:700, color:s.color, fontFamily:"'Playfair Display',serif", lineHeight:1}}>{s.val}</div>
+            <div style={{fontSize:11, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", marginTop:5, lineHeight:1.3}}>{s.label}</div>
+          </div>
+        ))}
+      </div>
+      {upcomingNoGuide.length > 0 && (
+        <div>
+          {upcomingNoGuide.slice(0,5).map(r=>(
+            <div key={r.id} style={{display:"flex", alignItems:"center", justifyContent:"space-between", padding:"8px 0", borderBottom:`1px solid ${C.borderLight}`}}>
+              <span style={{fontSize:12.5, color:C.text, fontFamily:"'DM Sans',sans-serif"}}>{r.tour} · {r.date}</span>
+              <IDLink id={r.id} type="reservation"/>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -2498,44 +2944,6 @@ const STATUS_META = {
   "İptal":                { color:"#C0392B", bg:"#FDECEC" },
 };
 
-const SOURCE_META = {
-  "Booking":      { color:"#003580", bg:"#E5EDF8", icon:"M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 14H9V8h2v8zm4 0h-2V8h2v8z" },
-  "WhatsApp":     { color:"#128C7E", bg:"#E7F5F3", icon:"M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z" },
-  "Website":      { color:"#2E7D52", bg:"#EBF5EF", icon:"M12 2a10 10 0 100 20A10 10 0 0012 2zm0 2c1.08 0 2.1.2 3.04.55L13 6.5h-2l-2.04-1.95A8 8 0 0112 4zm-6.5 3.5L7 9v2l-2.95.5A8.02 8.02 0 015.5 7.5zM4.07 13H7l1 3-1.5 1.5A8.01 8.01 0 014.07 13zm4.43 6.5L10 18h4l1.5 1.5A8 8 0 018.5 19.5zM17 15l1-3h2.93a8.01 8.01 0 01-1.43 4.5L17 15zm2.45-5L17 9V7.5a8.02 8.02 0 012.45 2.5z" },
-  "Telefon":      { color:"#4A5568", bg:"#F0EEF5", icon:"M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07A19.5 19.5 0 013.07 9.81a19.79 19.79 0 01-3.07-8.63A2 2 0 012 .18h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L6.09 7.91a16 16 0 006 6l1.09-1.09a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z" },
-  "Instagram":    { color:"#C13584", bg:"#FAEAF5", icon:"M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zM12 0C8.741 0 8.333.014 7.053.072 2.695.272.273 2.69.073 7.052.014 8.333 0 8.741 0 12c0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98C8.333 23.986 8.741 24 12 24c3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98C15.668.014 15.259 0 12 0zm0 5.838a6.162 6.162 0 100 12.324 6.162 6.162 0 000-12.324zM12 16a4 4 0 110-8 4 4 0 010 8zm6.406-11.845a1.44 1.44 0 100 2.881 1.44 1.44 0 000-2.881z" },
-  "Manuel":       { color:"#8A8070", bg:"#F3F1ED", icon:"M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" },
-  "Tripadvisor":  { color:"#34E0A1", bg:"#E6FBF5", icon:"M12 2a10 10 0 100 20A10 10 0 0012 2z" },
-  "Civitatis":    { color:"#D2492A", bg:"#FBEAE4", icon:"M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5A2.5 2.5 0 1112 6.5a2.5 2.5 0 010 5z" },
-};
-
-const MOCK_LEADS = DB.leads; // → centralized DB
-
-const STATUS_TABS = [
-  "Tümü","Yeni","Görüşüldü","Teklif Hazırlanıyor",
-  "Teklif Gönderildi","Ödeme Bekleniyor","Onaylandı","İptal",
-];
-
-const SOURCE_FILTERS = ["Tümü","Booking","Civitatis","WhatsApp","Website","Telefon","Instagram","Manuel","Tripadvisor"];
-
-function SourceBadge({ source }) {
-  const m = SOURCE_META[source] || SOURCE_META["Manuel"];
-  return (
-    <span style={{
-      display:"inline-flex", alignItems:"center", gap:5,
-      padding:"3px 8px", borderRadius:6,
-      background:m.bg, color:m.color,
-      fontSize:11.5, fontWeight:500,
-      fontFamily:"'DM Sans',sans-serif",
-      whiteSpace:"nowrap", border:`1px solid ${m.color}18`,
-    }}>
-      <svg width="11" height="11" viewBox="0 0 24 24" fill={m.color}>
-        <path d={m.icon}/>
-      </svg>
-      {source}
-    </span>
-  );
-}
 
 function StatusBadge({ status }) {
   const m = STATUS_META[status] || { color:C.textMuted, bg:C.ivoryDark };
@@ -2558,477 +2966,6 @@ function StatusBadge({ status }) {
   );
 }
 
-function AssigneeChip({ name, initials }) {
-  if (!initials) {
-    return (
-      <span style={{
-        fontSize:12, color:C.textFaint,
-        fontFamily:"'DM Sans',sans-serif",
-        fontStyle:"italic",
-      }}>Atanmadı</span>
-    );
-  }
-  return (
-    <div style={{display:"flex", alignItems:"center", gap:7}}>
-      <div style={{
-        width:26, height:26, borderRadius:"50%", flexShrink:0,
-        background:"rgba(27,45,79,0.09)",
-        border:`1.5px solid rgba(27,45,79,0.14)`,
-        display:"flex", alignItems:"center", justifyContent:"center",
-      }}>
-        <span style={{fontSize:10, fontWeight:600, color:C.navy, fontFamily:"'DM Sans',sans-serif"}}>{initials}</span>
-      </div>
-      <span style={{fontSize:12.5, color:C.textMid, fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap"}}>{name}</span>
-    </div>
-  );
-}
-
-function LeadRow({ lead, isLast, onSelect }) {
-  const isNew = lead.status === "Yeni";
-  const isUrgent = lead.status === "Ödeme Bekleniyor";
-
-  return (
-    <tr className="dt-row"
-      onClick={() => onSelect && onSelect(lead.id)}
-      style={{
-        background:C.white,
-        cursor:"pointer",
-        transition:"background 0.1s",
-      }}
-    >
-      {}
-      <td style={{
-        padding:"15px 16px 15px 20px",
-        borderBottom: isLast ? "none" : `1px solid ${C.borderLight}`,
-        verticalAlign:"middle",
-      }}>
-        <div style={{display:"flex", alignItems:"center", gap:10}}>
-          {}
-          <div style={{
-            width:3, height:36, borderRadius:99, flexShrink:0,
-            background: isNew ? C.blue : isUrgent ? C.red : "transparent",
-          }}/>
-          <div>
-            <div style={{display:"flex", alignItems:"center", gap:6, marginBottom:2}}>
-              <span style={{fontSize:13.5, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif"}}>{lead.name}</span>
-              {isNew && (
-                <span style={{
-                  fontSize:9.5, fontWeight:600, color:C.blue,
-                  background:C.blueBg, borderRadius:4, padding:"1px 5px",
-                  fontFamily:"'DM Sans',sans-serif", letterSpacing:"0.04em",
-                  textTransform:"uppercase",
-                }}>YENİ</span>
-              )}
-            </div>
-            <div style={{fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>
-              {lead.id} · {lead.flag} {lead.country}
-            </div>
-          </div>
-        </div>
-      </td>
-
-      {}
-      <td style={{
-        padding:"15px 12px",
-        borderBottom: isLast ? "none" : `1px solid ${C.borderLight}`,
-        verticalAlign:"middle",
-      }}>
-        <SourceBadge source={lead.source}/>
-      </td>
-
-      {}
-      <td style={{
-        padding:"15px 12px",
-        borderBottom: isLast ? "none" : `1px solid ${C.borderLight}`,
-        verticalAlign:"middle", maxWidth:200,
-      }}>
-        <div style={{fontSize:13, color:C.text, fontFamily:"'DM Sans',sans-serif", fontWeight:500, lineHeight:1.4}}>{lead.tour}</div>
-        <div style={{fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:2}}>{lead.dateRange}</div>
-      </td>
-
-      {}
-      <td style={{
-        padding:"15px 12px",
-        borderBottom: isLast ? "none" : `1px solid ${C.borderLight}`,
-        verticalAlign:"middle",
-      }}>
-        <div style={{display:"flex", alignItems:"center", gap:5, color:C.textMid}}>
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2 M23 21v-2a4 4 0 00-3-3.87 M16 3.13a4 4 0 010 7.75"/>
-          </svg>
-          <span style={{fontSize:13, fontFamily:"'DM Sans',sans-serif", fontWeight:500}}>{lead.pax}</span>
-        </div>
-      </td>
-
-      {}
-      <td style={{
-        padding:"15px 12px",
-        borderBottom: isLast ? "none" : `1px solid ${C.borderLight}`,
-        verticalAlign:"middle",
-      }}>
-        <StatusBadge status={lead.status}/>
-      </td>
-
-      {}
-      <td style={{
-        padding:"15px 12px",
-        borderBottom: isLast ? "none" : `1px solid ${C.borderLight}`,
-        verticalAlign:"middle",
-      }}>
-        <span style={{
-          fontSize:13.5, fontWeight:600,
-          color: lead.amount === "—" ? C.textFaint : C.text,
-          fontFamily:"'Playfair Display',serif",
-        }}>{lead.amount}</span>
-      </td>
-
-      {}
-      <td style={{
-        padding:"15px 12px",
-        borderBottom: isLast ? "none" : `1px solid ${C.borderLight}`,
-        verticalAlign:"middle",
-      }}>
-        <AssigneeChip name={lead.assignee} initials={lead.assigneeInitials}/>
-      </td>
-
-      {}
-      <td style={{
-        padding:"15px 16px 15px 12px",
-        borderBottom: isLast ? "none" : `1px solid ${C.borderLight}`,
-        verticalAlign:"middle",
-      }}>
-        <div style={{display:"flex", alignItems:"center", justifyContent:"space-between", gap:12}}>
-          <span style={{fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap"}}>{lead.ago}</span>
-          <button style={{
-            width:28, height:28, borderRadius:7,
-            border:`1px solid ${C.border}`, background:"transparent",
-            display:"flex", alignItems:"center", justifyContent:"center",
-            cursor:"pointer", color:C.textMuted, flexShrink:0,
-            transition:"background 0.1s, border-color 0.1s",
-          }}
-            onMouseEnter={e=>{ e.currentTarget.style.background=C.navyDeep; e.currentTarget.style.color=C.white; e.currentTarget.style.borderColor=C.navyDeep; }}
-            onMouseLeave={e=>{ e.currentTarget.style.background="transparent"; e.currentTarget.style.color=C.textMuted; e.currentTarget.style.borderColor=C.border; }}
-          >
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M9 18l6-6-6-6"/>
-            </svg>
-          </button>
-        </div>
-      </td>
-    </tr>
-  );
-}
-
-function EmptyLeads() {
-  return (
-    <div style={{
-      padding:"72px 40px", textAlign:"center",
-      display:"flex", flexDirection:"column", alignItems:"center", gap:16,
-    }}>
-      <div style={{
-        width:52, height:52, borderRadius:14,
-        background:C.ivory, border:`1px solid ${C.border}`,
-        display:"flex", alignItems:"center", justifyContent:"center",
-        color:C.textFaint, marginBottom:4,
-      }}>
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>
-        </svg>
-      </div>
-      <div>
-        <div style={{fontSize:16, fontWeight:600, color:C.text, fontFamily:"'Playfair Display',serif", marginBottom:6}}>
-          Henüz talep bulunmuyor.
-        </div>
-        <div style={{fontSize:13.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif"}}>
-          Bu filtre için kayıt yok. Yeni bir talep ekleyebilirsiniz.
-        </div>
-      </div>
-      <button style={{
-        display:"flex", alignItems:"center", gap:8,
-        padding:"9px 18px", borderRadius:8, marginTop:4,
-        border:`1.5px solid ${C.gold}`, background:C.goldPale,
-        cursor:"pointer", color:C.gold,
-        fontFamily:"'DM Sans',sans-serif", fontSize:13, fontWeight:500,
-      }}>
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-          <path d="M12 5v14M5 12h14"/>
-        </svg>
-        Yeni Talep Ekle
-      </button>
-    </div>
-  );
-}
-
-function LeadsPage({ onSelectLead }) {
-  const [showNewLead, setShowNewLead] = useState(false);
-  const [activeTab, setActiveTab] = useState("Tümü");
-  const [activeSource, setActiveSource] = useState("Tümü");
-  const [search, setSearch] = useState("");
-  const { data:repoLeads, loading:leadsLoading, error:leadsError, reload:reloadLeads }
-    = useRepo("lead", "getAll");
-
-  const [sortField, setSortField] = useState("ago");
-
-  const _allLeads = repoLeads ?? [];
-  const filtered = _allLeads.filter(lead => {
-    const tabMatch  = activeTab === "Tümü" || lead.status === activeTab;
-    const srcMatch  = activeSource === "Tümü" || lead.source === activeSource;
-    const srchMatch = search === "" ||
-      lead.name.toLowerCase().includes(search.toLowerCase()) ||
-      lead.tour.toLowerCase().includes(search.toLowerCase()) ||
-      lead.id.toLowerCase().includes(search.toLowerCase());
-    return tabMatch && srcMatch && srchMatch;
-  });
-
-  const counts = STATUS_TABS.reduce((acc, tab) => {
-    acc[tab] = tab === "Tümü"
-      ? _allLeads.length
-      : _allLeads.filter(l => l.status === tab).length;
-    return acc;
-  }, {});
-
-  return (
-    <div style={{display:"flex", flexDirection:"column", gap:20}}>
-
-      {}
-      <div className="page-header" style={{
-        background:C.white, border:`1px solid ${C.border}`,
-        borderRadius:12, padding:"20px 24px",
-        display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:20,
-      }}>
-        <div>
-          <h1 style={{
-            margin:0, fontSize:24, fontWeight:700, color:C.text,
-            fontFamily:"'Playfair Display',serif", lineHeight:1.2, marginBottom:5,
-          }}>Talepler</h1>
-          <p style={{
-            margin:0, fontSize:13.5, color:C.textMuted,
-            fontFamily:"'DM Sans',sans-serif",
-          }}>
-            Tüm müşteri taleplerini tek ekrandan takip edin.
-          </p>
-        </div>
-
-        <div className="page-header-actions" style={{display:"flex", alignItems:"center", gap:10, flexShrink:0}}>
-          {}
-          <div style={{position:"relative"}}>
-            <span style={{
-              position:"absolute", left:10, top:"50%", transform:"translateY(-50%)",
-              color:C.textFaint, pointerEvents:"none",
-            }}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>
-              </svg>
-            </span>
-            <input
-              type="text" value={search}
-              onChange={e=>setSearch(e.target.value)}
-              placeholder="İsim, tur veya talep ara…"
-              style={{
-                paddingLeft:32, paddingRight:12, paddingTop:8, paddingBottom:8,
-                border:`1px solid ${C.border}`, borderRadius:8,
-                background:C.ivory, fontSize:13, color:C.text,
-                fontFamily:"'DM Sans',sans-serif", outline:"none",
-                width:230, transition:"border-color 0.15s, box-shadow 0.15s",
-              }}
-              onFocus={e=>{ e.target.style.borderColor=C.gold; e.target.style.boxShadow=`0 0 0 3px ${C.gold}20`; }}
-              onBlur={e=>{ e.target.style.borderColor=C.border; e.target.style.boxShadow="none"; }}
-            />
-          </div>
-
-          {}
-          <button style={{
-            display:"flex", alignItems:"center", gap:7,
-            padding:"9px 16px", borderRadius:8,
-            border:"none", background:C.navy,
-            cursor:"pointer", color:C.white,
-            fontFamily:"'DM Sans',sans-serif", fontSize:13, fontWeight:500,
-            transition:"background 0.12s",
-          }}
-            onMouseEnter={e=>e.currentTarget.style.background=C.navyHover}
-            onMouseLeave={e=>e.currentTarget.style.background=C.navy}
-            onClick={()=>setShowNewLead(true)}
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-              <path d="M12 5v14M5 12h14"/>
-            </svg>
-            Yeni Talep Ekle
-          </button>
-        </div>
-      </div>
-      {showNewLead ? (<NewLeadModal onClose={()=>setShowNewLead(false)} onSuccess={()=>{setShowNewLead(false); reloadLeads&&reloadLeads();}}/>) : null}
-
-      {}
-      <div style={{
-        background:C.white, border:`1px solid ${C.border}`,
-        borderRadius:12, padding:"0 20px",
-        display:"flex", flexDirection:"column",
-      }}>
-
-        {}
-        <div style={{
-          display:"flex", alignItems:"center", gap:0,
-          borderBottom:`1px solid ${C.borderLight}`,
-          overflowX:"auto",
-        }}>
-          {STATUS_TABS.map(tab => {
-            const on = activeTab === tab;
-            const cnt = counts[tab];
-            return (
-              <button key={tab} onClick={()=>setActiveTab(tab)}
-                style={{
-                  padding:"14px 16px",
-                  border:"none", borderBottom: on ? `2px solid ${C.gold}` : "2px solid transparent",
-                  background:"transparent",
-                  color: on ? C.gold : C.textMuted,
-                  fontFamily:"'DM Sans',sans-serif", fontSize:13,
-                  fontWeight: on ? 600 : 400,
-                  cursor:"pointer", whiteSpace:"nowrap",
-                  display:"flex", alignItems:"center", gap:6,
-                  transition:"color 0.12s",
-                  marginBottom:-1,
-                }}>
-                {tab}
-                {cnt > 0 && (
-                  <span style={{
-                    minWidth:18, height:18, borderRadius:99, padding:"0 5px",
-                    display:"inline-flex", alignItems:"center", justifyContent:"center",
-                    fontSize:10.5, fontWeight:600, lineHeight:1,
-                    background: on ? `${C.gold}22` : C.ivoryDark,
-                    color: on ? C.gold : C.textFaint,
-                  }}>{cnt}</span>
-                )}
-              </button>
-            );
-          })}
-        </div>
-
-        {}
-        <div style={{
-          display:"flex", alignItems:"center", gap:8,
-          padding:"12px 0",
-          overflowX:"auto",
-        }}>
-          <span style={{fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginRight:4, flexShrink:0}}>Kaynak:</span>
-          {SOURCE_FILTERS.map(src => {
-            const on = activeSource === src;
-            return (
-              <button key={src} onClick={()=>setActiveSource(src)}
-                style={{
-                  padding:"4px 12px", borderRadius:99, cursor:"pointer",
-                  border: on ? `1.5px solid ${C.navy}` : `1px solid ${C.border}`,
-                  background: on ? C.navy : "transparent",
-                  color: on ? C.white : C.textMid,
-                  fontFamily:"'DM Sans',sans-serif", fontSize:12, fontWeight: on ? 500 : 400,
-                  whiteSpace:"nowrap", transition:"all 0.12s",
-                }}>
-                {src}
-              </button>
-            );
-          })}
-
-          {}
-          <div style={{marginLeft:"auto", flexShrink:0}}>
-            <span style={{fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>
-              {filtered.length} talep gösteriliyor
-            </span>
-          </div>
-        </div>
-      </div>
-
-      {}
-      <div style={{
-        background:C.white, border:`1px solid ${C.border}`,
-        borderRadius:12, overflow:"hidden",
-      }}>
-        {leadsLoading ? (
-          <LoadingState label="Talepler yükleniyor…"/>
-        ) : leadsError ? (
-          <ErrorState message={leadsError} onRetry={reloadLeads}/>
-        ) : filtered.length === 0 ? <EmptyLeads/> : (
-          <>
-          <table className="rsp-table" style={{width:"100%", borderCollapse:"collapse"}}>
-            <thead>
-              <tr style={{borderBottom:`1px solid ${C.border}`}}>
-                {[
-                  { label:"Misafir",     w:"auto" },
-                  { label:"Kaynak",      w:120    },
-                  { label:"Tur / Tarih", w:"auto" },
-                  { label:"Kişi",        w:60     },
-                  { label:"Durum",       w:170    },
-                  { label:"Tutar",       w:110    },
-                  { label:"Sorumlu",     w:160    },
-                  { label:"Son İşlem",   w:130    },
-                ].map(h => (
-                  <th key={h.label} style={{
-                    padding: h.label === "Misafir" ? "12px 16px 12px 20px" : "12px 12px",
-                    textAlign:"left", width:h.w !== "auto" ? h.w : undefined,
-                    fontSize:10.5, fontWeight:600, color:C.textFaint,
-                    fontFamily:"'DM Sans',sans-serif",
-                    textTransform:"uppercase", letterSpacing:"0.07em",
-                    background:C.ivory,
-                  }}>{h.label}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((lead, i) => (
-                <LeadRow key={lead.id} lead={lead} isLast={i === filtered.length - 1} onSelect={onSelectLead}/>
-              ))}
-            </tbody>
-          </table>
-            <div className="rsp-cards"><MobileCardList items={filtered} renderCard={(lead) => {
-              const sm = STATUS_META[lead.status]||{color:C.textMuted,bg:C.ivoryDark};
-              const srcObj = DB.sources.find(s=>s.id===lead.sourceId);
-              const cust = getCustomerById(lead.customerId);
-              return (
-                <MobileCard onClick={()=>onSelectLead&&onSelectLead(lead.id)}>
-                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:7}}>
-                    <div>
-                      <div style={{fontSize:14,fontWeight:600,color:C.text,fontFamily:"'DM Sans',sans-serif"}}>{lead.tour||"—"}</div>
-                      <div style={{fontSize:12,color:C.textFaint,fontFamily:"'DM Sans',sans-serif"}}>{cust?.name||"—"}</div>
-                    </div>
-                    <span style={{fontSize:11,padding:"3px 9px",borderRadius:99,fontWeight:500,color:sm.color,background:sm.bg,fontFamily:"'DM Sans',sans-serif",flexShrink:0}}>{lead.status}</span>
-                  </div>
-                  <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
-                    <span style={{fontSize:12,color:C.textMuted,fontFamily:"'DM Sans',sans-serif"}}>{lead.paxAdult} kişi · {lead.dateRange||"Tarih yok"}</span>
-                    <span style={{fontSize:12,color:C.textFaint,fontFamily:"'DM Sans',sans-serif"}}>{srcObj?.label||"—"} · {lead.ago}</span>
-                  </div>
-                </MobileCard>
-              );
-            }}/></div>
-          </>
-        )}
-
-        {}
-        {filtered.length > 0 && (
-          <div style={{
-            padding:"12px 20px",
-            borderTop:`1px solid ${C.borderLight}`,
-            display:"flex", alignItems:"center", justifyContent:"space-between",
-            background:C.ivory,
-          }}>
-            <span style={{fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>
-              {filtered.length} / {_allLeads.length} talep gösteriliyor
-            </span>
-            <div style={{display:"flex", alignItems:"center", gap:6}}>
-              {[1].map(p=>(
-                <button key={p} style={{
-                  width:28, height:28, borderRadius:6,
-                  border:`1px solid ${C.gold}`,
-                  background:C.goldPale, color:C.gold,
-                  fontSize:12, fontWeight:600, cursor:"pointer",
-                  fontFamily:"'DM Sans',sans-serif",
-                }}>1</button>
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
-
-    </div>
-  );
-}
 
 const LEAD_ACTIVITY_LABEL = {
   created: "Talep oluşturuldu", updated: "Güncellendi", status_changed: "Durum güncellendi",
@@ -3616,14 +3553,15 @@ function LeadDetailPage({ onBack, leadId }) {
 
   const { data:lead, loading:leadLoading, error:leadError }
     = useRepo("lead", "getById", leadId || (DB.leads[0]?.id ?? null));
+  const { data:custTasks,  loading:tasksLoading }  = useRepo("task",        "getByCustomerId", lead?.customerId || null);
+  const { data:custQuotes, loading:quotesLoading } = useRepo("quote",       "getByCustomerId", lead?.customerId || null);
+  const { data:custRes,    loading:resLoading }    = useRepo("reservation", "getByCustomerId", lead?.customerId || null);
+
   if (leadLoading) return <LoadingState label="Talep yükleniyor…"/>;
   if (leadError)   return <ErrorState message={leadError} onRetry={()=>{}}/>;
   if (!lead)       return <NotFoundCard entityType="Talep" entityId={leadId} onBack={onBack}/>;
   const sm = STATUS_META[lead?.status] || { color: C.textMuted, bg: C.ivoryDark };
 
-  const { data:custTasks,  loading:tasksLoading }  = useRepo("task",        "getByCustomerId", lead.customerId || null);
-  const { data:custQuotes, loading:quotesLoading } = useRepo("quote",       "getByCustomerId", lead.customerId || null);
-  const { data:custRes,    loading:resLoading }    = useRepo("reservation", "getByCustomerId", lead.customerId || null);
   const leadTasks = (custTasks||[]).filter(t => t.leadId === lead.id);
   const leadQuotes = (custQuotes||[]).filter(q => q.leadId === lead.id);
   const leadReservations = (custRes||[]).filter(r => r.leadId === lead.id);
@@ -3791,281 +3729,6 @@ function QStatusBadge({ status }) {
   );
 }
 
-function QuoteRow({ q, isLast, onSelect }) {
-  const sm = QUOTE_STATUS[q.status] || {};
-  const expired = q.status === "Süresi Doldu" || q.status === "Reddedildi";
-
-  return (
-    <tr className="dt-row"
-      onClick={()=>onSelect&&onSelect(q.id)}
-      style={{
-        background:C.white,
-        cursor:"pointer", transition:"background 0.1s",
-        opacity: expired ? 0.7 : 1,
-      }}
-    >
-      {}
-      <td style={{ padding:"14px 16px 14px 22px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle" }}>
-        <span style={{
-          fontSize:12.5, fontWeight:600, color:C.navy,
-          fontFamily:"'DM Mono',monospace",
-          background:C.ivory, border:`1px solid ${C.borderLight}`,
-          padding:"3px 8px", borderRadius:5,
-        }}>{q.id}</span>
-      </td>
-      {}
-      <td style={{ padding:"14px 12px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle" }}>
-        <div style={{ fontSize:13.5, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif" }}>{q.flag} {q.customer}</div>
-        <div style={{ fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:2 }}>{q.country}</div>
-      </td>
-      {}
-      <td style={{ padding:"14px 12px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle", maxWidth:200 }}>
-        <div style={{ fontSize:13, color:C.text, fontFamily:"'DM Sans',sans-serif", fontWeight:500 }}>{q.tour}</div>
-        <div style={{ fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:2 }}>{q.dateRange}</div>
-      </td>
-      {}
-      <td style={{ padding:"14px 12px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle" }}>
-        <div style={{ display:"flex", alignItems:"center", gap:5, color:C.textMid }}>
-          <QIc d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2 M23 21v-2a4 4 0 00-3-3.87 M16 3.13a4 4 0 010 7.75" size={13} sw={1.5}/>
-          <span style={{ fontSize:13, fontFamily:"'DM Sans',sans-serif", fontWeight:500 }}>{q.pax}</span>
-        </div>
-      </td>
-      {}
-      <td style={{ padding:"14px 12px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle" }}>
-        <div style={{ fontSize:15, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif" }}>
-          {q.currency === "EUR" ? "€" : "₺"}{q.fmtNum(total)}
-        </div>
-        <div style={{ fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:2 }}>{q.currency}</div>
-      </td>
-      {}
-      <td style={{ padding:"14px 12px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle" }}>
-        <QStatusBadge status={q.status}/>
-      </td>
-      {}
-      <td style={{ padding:"14px 12px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle" }}>
-        <div style={{ fontSize:12.5, color: expired ? C.red : C.textMuted, fontFamily:"'DM Sans',sans-serif" }}>{q.validUntil}</div>
-      </td>
-      {}
-      <td style={{ padding:"14px 12px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle" }}>
-        <div style={{ fontSize:12.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif" }}>{q.createdAt}</div>
-      </td>
-      {}
-      <td style={{ padding:"14px 16px 14px 8px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle" }}>
-        <div style={{ color:C.textFaint }}>
-          <QIc d="M9 18l6-6-6-6" size={14} sw={1.8}/>
-        </div>
-      </td>
-    </tr>
-  );
-}
-
-function QuotesPage({ onSelectQuote, onNewQuote }) {
-  const [activeTab, setActiveTab] = useState("Tümü");
-  const [search, setSearch] = useState("");
-  const { data:repoQuotes, loading:quotesLoading, error:quotesError, reload:reloadQuotes }
-    = useRepo("quote", "getAll");
-
-  const TABS = ["Tümü",...Object.keys(QUOTE_STATUS)];
-  const allQuotes = repoQuotes ?? [];
-
-  const filtered = allQuotes.filter(q => {
-    const tabMatch  = activeTab === "Tümü" || q.status === activeTab;
-    const srchMatch = search === "" ||
-      q.customer.toLowerCase().includes(search.toLowerCase()) ||
-      q.tour.toLowerCase().includes(search.toLowerCase()) ||
-      q.id.toLowerCase().includes(search.toLowerCase());
-    return tabMatch && srchMatch;
-  });
-
-  const counts = TABS.reduce((acc,t) => {
-    acc[t] = t === "Tümü" ? allQuotes.length : allQuotes.filter(q=>q.status===t).length;
-    return acc;
-  }, {});
-
-  const totalSent     = allQuotes.filter(q=>q.status==="Gönderildi").length;
-  const totalApproved = allQuotes.filter(q=>q.status==="Onaylandı").length;
-  const totalValue    = allQuotes.filter(q=>q.status==="Onaylandı").reduce((s,q)=>s+q.total,0);
-  const convRate      = allQuotes.length > 0 ? Math.round((totalApproved/allQuotes.length)*100) : 0;
-
-  return (
-    <div style={{ display:"flex", flexDirection:"column", gap:20 }}>
-
-      {}
-      <div className="page-header" style={{
-        background:C.white, border:`1px solid ${C.border}`, borderRadius:12,
-        padding:"20px 24px",
-        display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:20,
-      }}>
-        <div>
-          <h1 style={{ margin:0, fontSize:24, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif", marginBottom:5 }}>Teklifler</h1>
-          <p style={{ margin:0, fontSize:13.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif" }}>
-            Tüm teklifleri yönetin ve satış sürecini takip edin.
-          </p>
-        </div>
-        <div className="page-header-actions" style={{ display:"flex", alignItems:"center", gap:10, flexShrink:0 }}>
-          {}
-          <div style={{ position:"relative" }}>
-            <span style={{ position:"absolute", left:10, top:"50%", transform:"translateY(-50%)", color:C.textFaint, pointerEvents:"none" }}>
-              <QIc d="M21 21l-4.35-4.35 M17 11A6 6 0 105 11a6 6 0 0012 0z" size={14} sw={1.8}/>
-            </span>
-            <input type="text" value={search} onChange={e=>setSearch(e.target.value)}
-              placeholder="Teklif, misafir veya tur ara…"
-              style={{
-                paddingLeft:32, paddingRight:12, paddingTop:8, paddingBottom:8,
-                border:`1px solid ${C.border}`, borderRadius:8,
-                background:C.ivory, fontSize:13, color:C.text,
-                fontFamily:"'DM Sans',sans-serif", outline:"none", width:240,
-                transition:"border-color 0.15s, box-shadow 0.15s",
-              }}
-              onFocus={e=>{ e.target.style.borderColor=C.gold; e.target.style.boxShadow=`0 0 0 3px ${C.gold}20`; }}
-              onBlur={e=>{ e.target.style.borderColor=C.border; e.target.style.boxShadow="none"; }}
-            />
-          </div>
-          <button style={{
-            display:"flex", alignItems:"center", gap:7,
-            padding:"9px 16px", borderRadius:8,
-            border:"none", background:C.navy, cursor:"pointer", color:C.white,
-            fontFamily:"'DM Sans',sans-serif", fontSize:13, fontWeight:500,
-            transition:"background 0.12s",
-          }}
-            onMouseEnter={e=>e.currentTarget.style.background=C.navyHover}
-            onMouseLeave={e=>e.currentTarget.style.background=C.navy}
-            onClick={onNewQuote}
-          >
-            <QIc d="M12 5v14M5 12h14" size={14} sw={2.5}/>
-            Yeni Teklif Oluştur
-          </button>
-        </div>
-      </div>
-
-      {}
-      <div className="rsp-stat-grid" style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:14 }}>
-        {[
-          { label:"Toplam Teklif",    val:allQuotes.length, sub:"Tüm zamanlar", icon:"M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z M14 2v6h6" },
-          { label:"Gönderildi",       val:totalSent,          sub:"Yanıt bekleniyor", icon:"M22 2L11 13 M22 2L15 22l-4-9-9-4 22-7z", alert:false },
-          { label:"Onaylandı",        val:totalApproved,      sub:`€${totalValue} toplam değer`, icon:"M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11", green:true },
-          { label:"Dönüşüm Oranı",    val:`%${convRate}`,     sub:"Onaylanan / Toplam", icon:"M18 20V10M12 20V4M6 20v-6", gold:true },
-        ].map((k,i) => (
-          <div key={i} style={{
-            background:C.white, border:`1px solid ${C.border}`, borderRadius:12,
-            padding:"18px 20px", display:"flex", alignItems:"flex-start", gap:14,
-          }}>
-            <div style={{
-              width:40, height:40, borderRadius:10, flexShrink:0,
-              background: k.green ? C.greenBg : k.gold ? C.goldPale : C.ivory,
-              border:`1px solid ${C.borderLight}`,
-              display:"flex", alignItems:"center", justifyContent:"center",
-              color: k.green ? C.green : k.gold ? C.gold : C.textMuted,
-            }}>
-              <QIc d={k.icon} size={17} sw={1.6}/>
-            </div>
-            <div style={{ flex:1 }}>
-              <div style={{ fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginBottom:4 }}>{k.label}</div>
-              <div style={{ fontSize:24, fontWeight:700, color: k.green ? C.green : k.gold ? C.gold : C.text, fontFamily:"'Playfair Display',serif", lineHeight:1 }}>{k.val}</div>
-              <div style={{ fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:4 }}>{k.sub}</div>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {}
-      <div style={{ background:C.white, border:`1px solid ${C.border}`, borderRadius:12, overflow:"hidden" }}>
-        {}
-        <div style={{ display:"flex", alignItems:"center", borderBottom:`1px solid ${C.borderLight}`, padding:"0 20px", overflowX:"auto" }}>
-          {TABS.map(tab => {
-            const on = activeTab === tab;
-            return (
-              <button key={tab} onClick={()=>setActiveTab(tab)} style={{
-                padding:"14px 14px",
-                border:"none", borderBottom: on ? `2px solid ${C.gold}` : "2px solid transparent",
-                background:"transparent",
-                color: on ? C.gold : C.textMuted,
-                fontFamily:"'DM Sans',sans-serif", fontSize:13,
-                fontWeight: on ? 600 : 400,
-                cursor:"pointer", whiteSpace:"nowrap",
-                display:"flex", alignItems:"center", gap:6,
-                marginBottom:-1, transition:"color 0.12s",
-              }}>
-                {tab}
-                {counts[tab] > 0 && (
-                  <span style={{
-                    minWidth:18, height:18, borderRadius:99, padding:"0 5px",
-                    display:"inline-flex", alignItems:"center", justifyContent:"center",
-                    fontSize:10.5, fontWeight:600, lineHeight:1,
-                    background: on ? `${C.gold}22` : C.ivoryDark,
-                    color: on ? C.gold : C.textFaint,
-                  }}>{counts[tab]}</span>
-                )}
-              </button>
-            );
-          })}
-          <div style={{ marginLeft:"auto", padding:"0 4px", flexShrink:0 }}>
-            <span style={{ fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif" }}>{filtered.length} teklif</span>
-          </div>
-        </div>
-
-        {}
-        {quotesLoading ? (
-          <LoadingState label="Teklifler yükleniyor…"/>
-        ) : quotesError ? (
-          <ErrorState message={quotesError} onRetry={reloadQuotes}/>
-        ) : filtered.length === 0 ? (
-          <div style={{ padding:"60px 40px", textAlign:"center" }}>
-            <div style={{ fontSize:32, opacity:0.2, marginBottom:12 }}>📄</div>
-            <div style={{ fontSize:15, fontWeight:600, color:C.text, fontFamily:"'Playfair Display',serif", marginBottom:6 }}>Teklif bulunamadı.</div>
-            <div style={{ fontSize:13, color:C.textMuted, fontFamily:"'DM Sans',sans-serif" }}>Bu filtre için kayıt yok.</div>
-          </div>
-        ) : (
-          <>
-            <table className="rsp-table" style={{ width:"100%", borderCollapse:"collapse" }}>
-              <thead>
-                <tr style={{ borderBottom:`1px solid ${C.border}` }}>
-                  {["Teklif No","Misafir","Tur / Tarih","Kişi","Tutar","Durum","Geçerlilik","Oluşturulma",""].map(h=>(
-                    <th key={h} style={{
-                      padding: h==="Teklif No" ? "12px 16px 12px 22px" : "12px 12px",
-                      textAlign:"left",
-                      fontSize:10.5, fontWeight:600, color:C.textFaint,
-                      fontFamily:"'DM Sans',sans-serif",
-                      textTransform:"uppercase", letterSpacing:"0.07em",
-                      background:C.ivory,
-                    }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map((q,i)=>(
-                  <QuoteRow key={q.id} q={q} isLast={i===filtered.length-1} onSelect={onSelectQuote}/>
-                ))}
-              </tbody>
-            </table>
-            <div className="rsp-cards"><MobileCardList items={filtered} renderCard={(item,i)=>(
-                <MobileCard key={item.id} onClick={()=>onSelectQuote&&onSelectQuote(item.id)}>
-                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                    <div>
-                      <div style={{fontWeight:600,fontSize:14,color:C.text}}>{item.quoteNumber}</div>
-                      <div style={{fontSize:12,color:C.textMuted,marginTop:2}}>{item.tour||"—"} · {item.currency} {fmtNum(item.total)}</div>
-                    </div>
-                    <span style={{fontSize:11,padding:"3px 8px",borderRadius:99,background:C.ivoryDark,color:C.textMid}}>{item.status}</span>
-                  </div>
-                </MobileCard>
-              )}/></div>
-            {}
-            <div style={{
-              padding:"11px 20px",
-              borderTop:`1px solid ${C.borderLight}`,
-              background:C.ivory,
-              display:"flex", alignItems:"center", justifyContent:"space-between",
-            }}>
-              <span style={{ fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif" }}>
-                {filtered.length} / {allQuotes.length} teklif gösteriliyor
-              </span>
-            </div>
-          </>
-        )}
-      </div>
-    </div>
-  );
-}
 
 function CheckItem({ label, checked }) {
   const [on, setOn] = useState(checked !== false);
@@ -4583,13 +4246,13 @@ function FCheckList({ items, setItems, accent }) {
 }
 
 // ════════════════════════════════════════════════════════════════════════
-// QUOTE CREATION — shared business logic
-// One set of rules for desktop (QuoteWizard, below) and mobile
-// (MobileNewQuotePage) — same fields, same totals math, same save/update
-// calls. Neither platform has its own separate copy of this logic.
+// QUOTE CREATION — shared business logic used by desktop QuoteWizard below.
+// Quote creation/editing has no active entry point in the simplified nav
+// (Teklifler was retired) — QuoteDetailPage is kept only for historical
+// records reachable via IDLink. This logic remains for that + the quotes
+// table itself, which is not deleted.
 // ════════════════════════════════════════════════════════════════════════
 
-const QUOTE_LANGUAGE_OPTIONS = ["Türkçe","İngilizce","Almanca","Fransızca","İspanyolca","Rusça","Arapça"];
 const QUOTE_PICKUP_OPTIONS   = ["Otel Karşılama","Havalimanı Transferi","Liman Karşılama","Özel Lokasyon","Karşılama Yok"];
 const QUOTE_STEPS = ["Misafir","Tur ve Tarih","Fiyatlandırma","Teklif Detayları","Önizleme ve Oluştur"];
 
@@ -4933,7 +4596,7 @@ function QuoteStepGuest({ s, setS, customerList, errs }) {
           <FRow label="E-posta"><FText value={s.email} onChange={v=>setS(p=>({...p,email:v}))} placeholder="email@example.com" type="email"/></FRow>
           <FRow label="Telefon"><FText value={s.phone} onChange={v=>setS(p=>({...p,phone:v}))} placeholder="+90 555 000 0000" mono/></FRow>
           <FRow label="Uyruk"><FText value={s.nationality} onChange={v=>setS(p=>({...p,nationality:v}))} placeholder="Türkiye"/></FRow>
-          <FRow label="Dil"><FSelect value={s.language} onChange={v=>setS(p=>({...p,language:v}))} options={QUOTE_LANGUAGE_OPTIONS}/></FRow>
+          <FRow label="Dil"><FSelect value={s.language} onChange={v=>setS(p=>({...p,language:v}))} options={LANGUAGE_OPTIONS}/></FRow>
         </FGrid>
       )}
     </div>
@@ -4946,8 +4609,8 @@ function QuoteStepTour({ s, setS, tourList, toursLoading, toursError, errs }) {
     setS(prev => ({
       ...prev, tourId:id, tourName: t?.name || prev.tourName,
       pricingType: (t?.pricingType==="flat" || t?.pricingType==="group") ? "group" : prev.pricingType,
-      groupPrice: (t?.pricingType==="flat" || t?.pricingType==="group") ? String(t.flatPrice||"") : prev.groupPrice,
-      pricePerPerson: t?.pricingType==="per_person" ? String(t.flatPrice||"") : prev.pricePerPerson,
+      groupPrice: (t?.pricingType==="flat" || t?.pricingType==="group") ? String(t.basePrice||"") : prev.groupPrice,
+      pricePerPerson: t?.pricingType==="per_person" ? String(t.basePrice||"") : prev.pricePerPerson,
       currency: t?.currency || prev.currency,
     }));
   }
@@ -4973,7 +4636,7 @@ function QuoteStepTour({ s, setS, tourList, toursLoading, toursError, errs }) {
         <FRow label="Başlangıç Tarihi" required error={errs.travelDate}><FText type="date" value={s.travelDate} onChange={v=>setS(p=>({...p,travelDate:v}))}/></FRow>
         <FRow label="Başlangıç Saati"><FText type="time" value={s.travelTime} onChange={v=>setS(p=>({...p,travelTime:v}))}/></FRow>
         <FRow label="Kişi Sayısı"><input type="number" min="1" value={s.guestCount} onChange={e=>setS(p=>({...p,guestCount:e.target.value}))} style={qwNumInputStyle()}/></FRow>
-        <FRow label="Dil"><FSelect value={s.language} onChange={v=>setS(p=>({...p,language:v}))} options={QUOTE_LANGUAGE_OPTIONS}/></FRow>
+        <FRow label="Dil"><FSelect value={s.language} onChange={v=>setS(p=>({...p,language:v}))} options={LANGUAGE_OPTIONS}/></FRow>
         <FRow label="Karşılama / Pickup"><FSelect value={s.pickup} onChange={v=>setS(p=>({...p,pickup:v}))} options={QUOTE_PICKUP_OPTIONS}/></FRow>
         {s.pickup !== "Karşılama Yok" && (
           <FRow label="Pickup Lokasyonu"><FText value={s.pickupLocation} onChange={v=>setS(p=>({...p,pickupLocation:v}))} placeholder="Otel adı / adres"/></FRow>
@@ -5308,6 +4971,289 @@ function GuideChip({ name }) {
   );
 }
 
+function AssignGuideModal({ r, onClose }) {
+  const { mutate, mutating } = useRepoMutation("reservation");
+  const { data:guideList } = useRepo("guide", "getAll");
+  const [guideId, setGuideId] = useState(r.guideId || "");
+  const [conflicts, setConflicts] = useState([]);
+  const guides = (guideList||[]).filter(g=>g.status!=="Pasif");
+
+  useEffect(() => {
+    let dead = false;
+    if (!guideId || !r.checkIn) { setConflicts([]); return; }
+    checkGuideConflicts(guideId, r.checkIn, r.checkOut||r.checkIn, r.id).then(list=>{ if(!dead) setConflicts(list); });
+    return () => { dead = true; };
+  }, [guideId]);
+
+  async function handleSubmit() {
+    const guide = guides.find(g=>g.id===guideId);
+    await mutate("update", r.id, { guideId: guideId||null, guide: guide?.name||null });
+    onClose();
+  }
+
+  return (
+    <Modal title="Rehber Ata" onClose={onClose} onSubmit={handleSubmit} submitLabel={mutating?"Kaydediliyor…":"Kaydet"}>
+      <FRow label="Rehber">
+        <FSelect value={guideId} onChange={setGuideId} options={[["","— Rehber atanmadı —"], ...guides.map(g=>[g.id, `${g.name}${(g.languageNames||[]).length?' · '+g.languageNames.join(', '):''}`])]}/>
+      </FRow>
+      {conflicts.length > 0 && (
+        <div style={{
+          display:"flex", gap:10, alignItems:"flex-start", padding:"10px 14px", marginTop:6,
+          background:C.amberBg, border:`1px solid ${C.amber}44`, borderRadius:8,
+        }}>
+          <URIc d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" size={16} sw={2} color={C.amber}/>
+          <div style={{fontSize:12.5, color:C.text, fontFamily:"'DM Sans',sans-serif", lineHeight:1.5}}>
+            <b>Aynı gün ataması:</b> Bu rehber seçilen tarih aralığında başka bir rezervasyona da atanmış —
+            {' '}{conflicts.map(c=>`${c.tour||c.resNumber} (${c.checkIn})`).join(', ')}.
+            Bu, yalnızca tarih bazlı bir kontroldür; saat çakışması hesaplanmaz. Yine de atayabilirsiniz, ancak buluşma saatlerini kontrol edin.
+          </div>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+function EditTourLanguageModal({ r, onClose }) {
+  const { mutate, mutating } = useRepoMutation("reservation");
+  const { data: tour } = useRepo("tour", "getById", r.tourId || null);
+  const [tourLanguage, setTourLanguage] = useState(r.tourLanguage || "");
+
+  async function handleSubmit() {
+    await mutate("update", r.id, { tourLanguage: tourLanguage||null });
+    onClose();
+  }
+
+  // Prefer the tour's own offered languages (tour_languages) when
+  // configured; fall back to the full canonical list for older tours with
+  // no configured languages yet — never blocking the field. Editing this
+  // never happens automatically: the reservation's already-saved
+  // tourLanguage is only changed here by the user's own explicit action.
+  const tourLangOptions = (tour?.languageNames?.length ? tour.languageNames : LANGUAGE_OPTIONS);
+
+  return (
+    <Modal title="Tur Dili" onClose={onClose} onSubmit={handleSubmit} submitLabel={mutating?"Kaydediliyor…":"Kaydet"}>
+      <FRow label="Tur Dili" hint="Bu turun yürütüleceği dil — misafirin kendi dilinden (customers.language) farklı bir kavramdır.">
+        <FSelect value={tourLanguage} onChange={setTourLanguage} options={[["","— Belirtilmemiş —"], ...tourLangOptions.map(l=>[l,l])]}/>
+      </FRow>
+    </Modal>
+  );
+}
+
+/* -- Review UI: star display/picker + Add/Edit modal + reservation card - */
+function RatingStars({ rating, size }) {
+  const s = size || 14;
+  const r = rating || 0;
+  return (
+    <span style={{display:"inline-flex", gap:1}}>
+      {[1,2,3,4,5].map(n => (
+        <svg key={n} width={s} height={s} viewBox="0 0 24 24" fill={n<=r?C.gold:"none"} stroke={n<=r?C.gold:C.borderLight} strokeWidth="1.5">
+          <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
+        </svg>
+      ))}
+    </span>
+  );
+}
+
+function StarPicker({ value, onChange }) {
+  const [hover, setHover] = useState(0);
+  return (
+    <div style={{display:"flex", gap:4}}>
+      {[1,2,3,4,5].map(n => (
+        <button key={n} type="button" onClick={()=>onChange(n)}
+          onMouseEnter={()=>setHover(n)} onMouseLeave={()=>setHover(0)}
+          style={{background:"none", border:"none", cursor:"pointer", padding:2}}>
+          <svg width="26" height="26" viewBox="0 0 24 24" fill={n<=(hover||value)?C.gold:"none"} stroke={n<=(hover||value)?C.gold:C.border} strokeWidth="1.5">
+            <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
+          </svg>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// resId/guideId are only used on create — guideId is the reservation's
+// CURRENT guide_id at the moment "Değerlendirme Ekle" is opened, captured
+// once as the review's permanent historical snapshot. Editing an existing
+// review never touches guide attribution: `review` supplies only display
+// values here, and the update payload below never includes guideId.
+// Single reusable modal for both entry points (Reservation Detail and
+// Guide Detail) — same repository, same create/update payloads, no
+// duplicated review business logic. Reservation Detail always knows its
+// resId already and passes it in, so no picker renders there. Guide Detail
+// only knows guideId, so when resId is absent (and we're not editing) a
+// "Rezervasyon / Tur" picker appears first, scoped to that guide's own
+// real reservations — never a hand-built dataset. Whichever entry point is
+// used, guide_id is always the guideId prop (this guide, snapshotted once
+// at creation) — never re-derived from the reservation afterward.
+function AddEditReviewModal({ resId, guideId, review, onClose }) {
+  const isEdit = !!review;
+  const needsResPicker = !isEdit && !resId;
+  const { mutate, mutating } = useRepoMutation("review");
+  const { sources, srcLoading: srcLoadingReview } = useSources({ capability: 'review' });
+  const { data: repoRes } = useRepo("reservation", "getAll");
+  const [selectedResId, setSelectedResId] = useState("");
+  const [rating, setRating] = useState(review?.rating || 0);
+  const [reviewText, setReviewText] = useState(review?.reviewText || "");
+  const [sourceId, setSourceId] = useState(review?.sourceId || "");
+  const [reviewDate, setReviewDate] = useState(review?.reviewDate || new Date().toISOString().split("T")[0]);
+  const [reviewerName, setReviewerName] = useState(review?.reviewerName || "");
+  const [externalReviewId, setExternalReviewId] = useState(review?.externalReviewId || "");
+  const [error, setError] = useState("");
+
+  const guideReservations = needsResPicker
+    ? (repoRes || [])
+        .filter(r => r.guideId === guideId && r.opStatus !== "İptal")
+        .sort((a,b) => {
+          const aDone = a.opStatus === "Tamamlandı" ? 0 : 1;
+          const bDone = b.opStatus === "Tamamlandı" ? 0 : 1;
+          if (aDone !== bDone) return aDone - bDone;
+          return (b.checkIn||"").localeCompare(a.checkIn||"");
+        })
+    : [];
+  const selectedRes = needsResPicker ? guideReservations.find(r=>r.id===selectedResId) : null;
+  const effectiveResId = needsResPicker ? selectedResId : resId;
+
+  async function handleSubmit() {
+    if (needsResPicker && !selectedResId) { setError("Rezervasyon / Tur seçilmelidir."); return; }
+    if (!rating) { setError("Puan seçilmelidir."); return; }
+    setError("");
+    const payload = {
+      rating, reviewText: reviewText || null, sourceId: sourceId || null,
+      reviewDate: reviewDate || null, reviewerName: reviewerName || null,
+      externalReviewId: externalReviewId || null,
+    };
+    const { error: err } = isEdit
+      ? await mutate("update", review.id, payload)
+      : await mutate("create", { ...payload, resId: effectiveResId, guideId });
+    if (err) { setError(err); return; }
+    onClose();
+  }
+
+  return (
+    <Modal title={isEdit ? "Değerlendirmeyi Düzenle" : "Değerlendirme Ekle"} onClose={onClose} onSubmit={handleSubmit} submitLabel={mutating?"Kaydediliyor…":"Kaydet"}>
+      {needsResPicker && (
+        <>
+          <FRow label="Rezervasyon / Tur" required full hint="Yalnızca bu rehbere atanmış gerçek rezervasyonlar listelenir; tamamlanmış turlar önce gösterilir.">
+            <FSelect value={selectedResId} onChange={setSelectedResId} options={[
+              ["", "— Seçiniz —"],
+              ...guideReservations.map(r => [r.id, `${r.date} · ${r.tour || "—"} · ${r.name || "—"}`]),
+            ]}/>
+          </FRow>
+          {guideReservations.length===0 && (
+            <div style={{fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:-8, marginBottom:14}}>
+              Bu rehbere atanmış bir rezervasyon bulunamadı.
+            </div>
+          )}
+          {selectedRes && (
+            <div style={{
+              display:"flex", flexWrap:"wrap", gap:14, padding:"10px 12px", marginBottom:14,
+              background:C.ivory, border:`1px solid ${C.borderLight}`, borderRadius:8,
+              fontSize:12, color:C.textMid, fontFamily:"'DM Sans',sans-serif",
+            }}>
+              <span><b>Misafir:</b> {selectedRes.name || "—"}</span>
+              <span><b>Tur:</b> {selectedRes.tour || "—"}</span>
+              <span><b>Tarih:</b> {selectedRes.date || "—"}</span>
+            </div>
+          )}
+        </>
+      )}
+      <FRow label="Puan" required full>
+        <StarPicker value={rating} onChange={setRating}/>
+      </FRow>
+      <FGrid cols={2}>
+        <FRow label="Değerlendirme Kaynağı" hint="Değerlendirmenin yayınlandığı platform (booking kaynağından farklı bir kavram).">
+          {!srcLoadingReview && sources.length === 0 ? (
+            <div style={{fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", padding:"9px 0"}}>
+              Henüz değerlendirme kaynağı tanımlanmamış.
+            </div>
+          ) : (
+            <FSelect value={sourceId} onChange={setSourceId} options={[["","— Seçiniz —"], ...sources.map(s=>[s.id, s.name||s.label||s.slug])]}/>
+          )}
+        </FRow>
+        <FRow label="Değerlendirme Tarihi">
+          <FText type="date" value={reviewDate} onChange={setReviewDate}/>
+        </FRow>
+      </FGrid>
+      <FRow label="Değerlendiren" hint="Misafirin adı (varsa).">
+        <FText value={reviewerName} onChange={setReviewerName} placeholder="Ad Soyad"/>
+      </FRow>
+      <FRow label="Değerlendirme Metni" hint="Opsiyonel — misafirin yazdığı yorum.">
+        <FTextArea value={reviewText} onChange={setReviewText} rows={4} placeholder="Değerlendirme metni…"/>
+      </FRow>
+      <FRow label="External Review ID" hint="Platformun kendi değerlendirme kimliği (opsiyonel).">
+        <FText value={externalReviewId} onChange={setExternalReviewId} mono placeholder="örn. g_18293…"/>
+      </FRow>
+      {error && <div style={{fontSize:12, color:C.red, marginTop:10, fontFamily:"'DM Sans',sans-serif"}}>{error}</div>}
+    </Modal>
+  );
+}
+
+function ReviewCard({ r }) {
+  const { data: reviews, loading } = useRepo("review", "getByReservation", r.id);
+  const [showAdd, setShowAdd] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const canWrite = ["Yönetici","Operasyon"].includes(useAuthContext()?.role);
+  const list = reviews || [];
+
+  return (
+    <RCard>
+      {(showAdd || editing) && (
+        <AddEditReviewModal
+          resId={r.id} guideId={r.guideId} review={editing}
+          onClose={()=>{ setShowAdd(false); setEditing(null); }}
+        />
+      )}
+      <RCardHead title="Değerlendirme"
+        right={canWrite ? (
+          <button onClick={()=>setShowAdd(true)} style={{
+            display:"flex", alignItems:"center", gap:5,
+            padding:"5px 10px", borderRadius:6, border:`1px solid ${C.border}`,
+            background:C.white, cursor:"pointer", color:C.textMid,
+            fontFamily:"'DM Sans',sans-serif", fontSize:11.5,
+          }}>
+            <RIc d="M12 5v14m-7-7h14" size={12} sw={1.8}/>
+            Değerlendirme Ekle
+          </button>
+        ) : null}
+      />
+      {loading && <div style={{padding:"16px 20px", fontSize:12.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>Yükleniyor…</div>}
+      {!loading && list.length === 0 && (
+        <div style={{padding:"22px 20px", textAlign:"center"}}>
+          <div style={{fontSize:12.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", fontStyle:"italic"}}>
+            {r.opStatus === "Tamamlandı"
+              ? "Bu rezervasyon için henüz değerlendirme eklenmedi."
+              : "Bu rezervasyon için henüz değerlendirme yok."}
+          </div>
+        </div>
+      )}
+      {!loading && list.map(rv => (
+        <div key={rv.id} style={{ padding:"14px 20px", borderTop:`1px solid ${C.borderLight}` }}>
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:7, gap:8 }}>
+            <RatingStars rating={rv.rating} size={15}/>
+            {canWrite && (
+              <button onClick={()=>setEditing(rv)} style={{
+                background:"none", border:"none", cursor:"pointer",
+                color:C.textFaint, fontFamily:"'DM Sans',sans-serif", fontSize:11.5,
+                textDecoration:"underline", padding:0,
+              }}>Değerlendirmeyi Düzenle</button>
+            )}
+          </div>
+          <div style={{ display:"flex", gap:8, flexWrap:"wrap", fontSize:11, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginBottom: rv.reviewText ? 7 : 0 }}>
+            {rv.sourceName && <span>{rv.sourceName}</span>}
+            {rv.reviewDate && <span>· {rv.reviewDate}</span>}
+            {rv.reviewerName && <span>· {rv.reviewerName}</span>}
+          </div>
+          {rv.reviewText && (
+            <div style={{ fontSize:13, color:C.textMid, fontFamily:"'DM Sans',sans-serif", lineHeight:1.6 }}>{rv.reviewText}</div>
+          )}
+          {rv.externalReviewId && (
+            <div style={{ fontSize:10, color:C.textFaint, fontFamily:"'DM Mono',monospace", marginTop:5 }}>ID: {rv.externalReviewId}</div>
+          )}
+        </div>
+      ))}
+    </RCard>
+  );
+}
 
 /* -- NewReservationModal -------------------------------------------- */
 function NewReservationModal({ onClose, onSuccess }) {
@@ -5315,16 +5261,39 @@ function NewReservationModal({ onClose, onSuccess }) {
   const { mutate: mutRes } = useRepoMutation("reservation");
   const { data: custList } = useRepo("customer", "getAll");
   const { data: tourList } = useRepo("tour",     "getAll");
+  const { data: guideList } = useRepo("guide",   "getAll");
   const [custId,   setCustId]   = useState("");
   const [tourId,   setTourId]   = useState("");
+  const [guideId,  setGuideId]  = useState("");
   const [checkIn,  setCheckIn]  = useState("");
   const [checkOut, setCheckOut] = useState("");
+  const [time,     setTime]     = useState("");
   const [pax,      setPax]      = useState("2");
+  const [paxChild, setPaxChild] = useState("0");
+  const [pickup,   setPickup]   = useState("");
+  const [total,    setTotal]    = useState("");
+  const [deposit,  setDeposit]  = useState("");
+  const [currency, setCurrency] = useState("EUR");
+  const [tourLanguage, setTourLanguage] = useState("");
   const [notes,    setNotes]    = useState("");
   const [errs,     setErrs]     = useState({});
   const [busy,     setBusy]     = useState(false);
+  const [conflicts, setConflicts] = useState([]);
   const customers = custList || [];
   const tours     = tourList || [];
+  const guides    = (guideList || []).filter(g=>g.status!=="Pasif");
+  // Prefer the selected tour's own offered languages (tour_languages) once
+  // configured; fall back to the full canonical list for tours with none
+  // configured yet, so older/unconfigured tours never block booking.
+  const selectedTourForLang = tours.find(t=>t.id===tourId);
+  const tourLangOptions = (selectedTourForLang?.languageNames?.length ? selectedTourForLang.languageNames : LANGUAGE_OPTIONS);
+
+  useEffect(() => {
+    let dead = false;
+    if (!guideId || !checkIn) { setConflicts([]); return; }
+    checkGuideConflicts(guideId, checkIn, checkOut||checkIn).then(list => { if(!dead) setConflicts(list); });
+    return () => { dead = true; };
+  }, [guideId, checkIn, checkOut]);
 
   async function handleSubmit() {
     const e = {};
@@ -5335,9 +5304,15 @@ function NewReservationModal({ onClose, onSuccess }) {
     if (Object.keys(e).length) return;
     setBusy(true);
     try {
+      const guide = guides.find(g=>g.id===guideId);
       const { data, error } = await mutRes("create", {
         customerId: custId, tourId: tourId||null,
-        checkIn, checkOut, paxAdult: parseInt(pax)||1, notes,
+        guideId: guideId||null, guide: guide?.name||null,
+        checkIn, checkOut, time: time||null,
+        paxAdult: parseInt(pax)||1, paxChild: parseInt(paxChild)||0,
+        pickup: pickup||null, tourLanguage: tourLanguage||null,
+        total: total?parseFloat(total):0, deposit: deposit?parseFloat(deposit):0,
+        currency, notes,
       });
       if (error) throw new Error(error);
       showToast("Rezervasyon olusturuldu.");
@@ -5377,8 +5352,51 @@ function NewReservationModal({ onClose, onSuccess }) {
         <FRow label="Cikis Tarihi" required error={errs.checkOut}>
           <FText type="date" value={checkOut} onChange={setCheckOut} error={errs.checkOut}/>
         </FRow>
-        <FRow label="Kisi Sayisi">
+        <FRow label="Bulusma Saati">
+          <FText type="time" value={time} onChange={setTime}/>
+        </FRow>
+      </FGrid>
+      <FGrid>
+        <FRow label="Yetiskin Sayisi">
           <FText type="number" value={pax} onChange={setPax} placeholder="2"/>
+        </FRow>
+        <FRow label="Cocuk Sayisi">
+          <FText type="number" value={paxChild} onChange={setPaxChild} placeholder="0"/>
+        </FRow>
+        <FRow label="Alis Yeri (Pickup)">
+          <FText value={pickup} onChange={setPickup} placeholder="Otel adi / lobi"/>
+        </FRow>
+      </FGrid>
+      <FGrid>
+        <FRow label="Rehber (opsiyonel)" hint={guides.length===0?"Kayıtlı aktif rehber yok.":undefined}>
+          <FSelect value={guideId} onChange={setGuideId} options={[["","— Rehber atanmadı —"], ...guides.map(g=>[g.id, `${g.name}${(g.languageNames||[]).length?' · '+g.languageNames.join(', '):''}`])]}/>
+        </FRow>
+        <FRow label="Tur Dili (opsiyonel)" hint="Bu turun yürütüleceği dil — misafirin kendi dilinden farklı olabilir.">
+          <FSelect value={tourLanguage} onChange={setTourLanguage} options={[["","— Belirtilmemiş —"], ...tourLangOptions.map(l=>[l,l])]}/>
+        </FRow>
+      </FGrid>
+      {conflicts.length > 0 && (
+        <div style={{
+          display:"flex", gap:10, alignItems:"flex-start", padding:"10px 14px",
+          background:C.amberBg, border:`1px solid ${C.amber}44`, borderRadius:8, marginBottom:14,
+        }}>
+          <URIc d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" size={16} sw={2} color={C.amber}/>
+          <div style={{fontSize:12.5, color:C.text, fontFamily:"'DM Sans',sans-serif", lineHeight:1.5}}>
+            <b>Aynı gün ataması:</b> Bu rehber seçilen tarih aralığında başka bir rezervasyona da atanmış —
+            {' '}{conflicts.map(c=>`${c.tour||c.resNumber} (${c.checkIn})`).join(', ')}.
+            Bu, yalnızca tarih bazlı bir kontroldür; saat çakışması hesaplanmaz. Yine de devam edebilirsiniz, ancak buluşma saatlerini kontrol edin.
+          </div>
+        </div>
+      )}
+      <FGrid>
+        <FRow label="Toplam Fiyat">
+          <FText type="number" value={total} onChange={setTotal} placeholder="0" mono/>
+        </FRow>
+        <FRow label="Kapora">
+          <FText type="number" value={deposit} onChange={setDeposit} placeholder="0" mono/>
+        </FRow>
+        <FRow label="Para Birimi">
+          <FSelect value={currency} onChange={setCurrency} options={CURRENCY_OPTIONS}/>
         </FRow>
       </FGrid>
       <FRow label="Notlar" full>
@@ -5402,7 +5420,7 @@ function ReservationsPage({ onSelect }) {
     const srchOk = !search ||
       (r.name||'').toLowerCase().includes(search.toLowerCase()) ||
       r.tour.toLowerCase().includes(search.toLowerCase()) ||
-      r.id.toLowerCase().includes(search.toLowerCase());
+      (r.resNumber||r.id).toLowerCase().includes(search.toLowerCase());
     return tabOk && srchOk;
   });
 
@@ -5413,7 +5431,7 @@ function ReservationsPage({ onSelect }) {
   }, {});
 
   const upcoming   = _allRes.filter(r => !["Tamamlandı","İptal"].includes(r.opStatus)).length;
-  const noGuide    = _allRes.filter(r => !r.guide && r.opStatus !== "İptal").length;
+  const noGuide    = _allRes.filter(r => !r.guideId && !r.guide && r.opStatus !== "İptal").length;
   const pendingPay = _allRes.filter(r => r.payStatus === "Kapora Ödendi" || r.payStatus === "Ödeme Bekliyor").length;
   const completed  = _allRes.filter(r => r.opStatus === "Tamamlandı").length;
 
@@ -5579,7 +5597,7 @@ function ReservationsPage({ onSelect }) {
                             fontFamily:"'DM Mono',monospace",
                             background:C.ivory, border:`1px solid ${C.borderLight}`,
                             padding:"3px 7px", borderRadius:5,
-                          }}>{r.id}</span>
+                          }}>{r.resNumber || r.id}</span>
                         </div>
                       </td>
                       {}
@@ -5637,7 +5655,7 @@ function ReservationsPage({ onSelect }) {
                         <span style={{fontSize:11,padding:"2px 7px",borderRadius:99,color:rsm.color,background:rsm.bg,fontFamily:"'DM Sans',sans-serif",fontWeight:500,flexShrink:0}}>{res.opStatus}</span>
                       </div>
                       <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-                        <span style={{fontSize:12,color:C.textFaint,fontFamily:"'DM Mono',monospace"}}>{res.id}</span>
+                        <span style={{fontSize:12,color:C.textFaint,fontFamily:"'DM Mono',monospace"}}>{res.resNumber || res.id}</span>
                         <span style={{fontSize:12,color:C.textMuted,fontFamily:"'DM Sans',sans-serif"}}>{res.date} · {res.pax} kişi</span>
                         <span style={{fontSize:11,padding:"2px 7px",borderRadius:99,color:rpm.color,background:rpm.bg,fontFamily:"'DM Sans',sans-serif",fontWeight:500}}>{res.payStatus}</span>
                       </div>
@@ -5922,6 +5940,14 @@ function ReservationDetailPage({ resId, onBack }) {
   // Real guest contact info — mapResFromDB has no phone/email/country of its
   // own (those live on the customer record), so this used to render blank.
   const { data:resCustomer } = useRepo("customer", "getById", _resRec?.customerId || null);
+  // Actual tour participants (reservation_guests) — deliberately a SEPARATE
+  // fetch from the customer above: the customer is the booking contact
+  // (who/what made the booking), these are the people actually traveling.
+  const { data:resGuests } = useRepo("reservation", "getGuests", resId);
+  const { mutate:mutGuideAssign } = useRepoMutation("reservation");
+  const [showAssignGuide, setShowAssignGuide] = useState(false);
+  const [removingGuide, setRemovingGuide] = useState(false);
+  const [showEditLanguage, setShowEditLanguage] = useState(false);
   if (resDetLoading) return <LoadingState label="Rezervasyon yükleniyor…"/>;
   if (resDetError)   return <ErrorState message={resDetError} onRetry={()=>{}}/>;
   if (!_resRec)      return <NotFoundCard entityType="Rezervasyon" entityId={resId} onBack={onBack}/>;
@@ -5931,6 +5957,9 @@ function ReservationDetailPage({ resId, onBack }) {
   const paidPct = safePctNum(r.total - r.remaining, r.total);
 
   return (
+    <>
+    {showAssignGuide && <AssignGuideModal r={r} onClose={()=>setShowAssignGuide(false)}/>}
+    {showEditLanguage && <EditTourLanguageModal r={r} onClose={()=>setShowEditLanguage(false)}/>}
     <div style={{ display:"flex", flexDirection:"column", gap:20 }}>
 
       {}
@@ -5957,7 +5986,7 @@ function ReservationDetailPage({ resId, onBack }) {
             fontSize:12, color:C.textFaint, fontFamily:"'DM Mono',monospace",
             background:C.ivory, border:`1px solid ${C.borderLight}`,
             padding:"3px 8px", borderRadius:5,
-          }}>{r.id}</span>
+          }}>{r.resNumber || r.id}</span>
           <div>
             <div style={{ fontSize:17, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif", lineHeight:1.2 }}>
               {resCustomer?.flag||"🌍"} {r.name}
@@ -6005,6 +6034,40 @@ function ReservationDetailPage({ resId, onBack }) {
 
           {}
           <RCard>
+            <RCardHead title="Yolcular"
+              right={
+                <span style={{ fontSize:10.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif" }}>
+                  {resGuests && resGuests.length > 0 ? `${resGuests.length} Kişi` : ""}
+                </span>
+              }
+            />
+            {!resGuests || resGuests.length === 0 ? (
+              <div style={{ padding:"18px 20px", fontSize:12.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", fontStyle:"italic" }}>
+                Bu rezervasyon için henüz yolcu bilgisi kaydedilmedi.
+              </div>
+            ) : (
+              <div style={{ padding:"6px 0" }}>
+                {resGuests.map((g, i) => (
+                  <div key={g.id || i} style={{
+                    display:"flex", alignItems:"center", gap:10,
+                    padding:"8px 20px",
+                  }}>
+                    <span style={{
+                      width:22, height:22, borderRadius:"50%", flexShrink:0,
+                      background:C.ivory, border:`1px solid ${C.borderLight}`,
+                      display:"flex", alignItems:"center", justifyContent:"center",
+                      fontSize:10.5, fontWeight:600, color:C.textMuted,
+                      fontFamily:"'DM Sans',sans-serif",
+                    }}>{i + 1}</span>
+                    <span style={{ fontSize:13, color:C.text, fontFamily:"'DM Sans',sans-serif" }}>{g.fullName}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </RCard>
+
+          {}
+          <RCard>
             <RCardHead title="Tur Bilgileri"/>
             {}
             <div style={{
@@ -6024,6 +6087,22 @@ function ReservationDetailPage({ resId, onBack }) {
               </span>
               <span style={{ fontSize:14, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif" }}>{r.pax} Kişi</span>
             </div>
+            <div style={{ padding:"10px 20px", display:"flex", justifyContent:"space-between", alignItems:"center", gap:8 }}>
+              <span style={{ fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", display:"flex", alignItems:"center", gap:5 }}>
+                <RIc d="M5 8l6 6M4 14l6-6 2-3M2 5h12M7 2h1M22 22l-5-10-5 10M14 18h6" size={12} sw={1.5}/>
+                Tur Dili
+              </span>
+              <div style={{display:"flex", alignItems:"center", gap:8}}>
+                <span style={{ fontSize:13, color:r.tourLanguage?C.text:C.textFaint, fontFamily:"'DM Sans',sans-serif", fontStyle:r.tourLanguage?"normal":"italic" }}>
+                  {r.tourLanguage || "Belirtilmemiş"}
+                </span>
+                <button onClick={()=>setShowEditLanguage(true)} style={{
+                  padding:"4px 10px", borderRadius:6, border:`1px solid ${C.border}`,
+                  background:C.white, cursor:"pointer", color:C.textMid,
+                  fontFamily:"'DM Sans',sans-serif", fontSize:11.5,
+                }}>{r.tourLanguage ? "Değiştir" : "Belirle"}</button>
+              </div>
+            </div>
           </RCard>
 
           {}
@@ -6031,12 +6110,29 @@ function ReservationDetailPage({ resId, onBack }) {
             <RCardHead title="Ödeme Özeti"/>
             <div style={{ padding:"14px 20px 0" }}>
               {}
-              <div style={{
-                display:"flex", alignItems:"baseline", gap:8, marginBottom:14,
-                paddingBottom:14, borderBottom:`1px solid ${C.borderLight}`,
-              }}>
-                <span style={{ fontSize:32, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif" }}>{fmtMoney(r.total, r.currency)}</span>
-                <span style={{ fontSize:13, color:C.textFaint, fontFamily:"'DM Sans',sans-serif" }}>{r.currency}</span>
+              <div style={{ marginBottom:14, paddingBottom:14, borderBottom:`1px solid ${C.borderLight}` }}>
+                <div style={{ fontSize:10.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:3 }}>
+                  Net Tutar
+                </div>
+                <div style={{ display:"flex", alignItems:"baseline", gap:8 }}>
+                  <span style={{ fontSize:32, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif" }}>{fmtMoney(r.total, r.currency)}</span>
+                  <span style={{ fontSize:13, color:C.textFaint, fontFamily:"'DM Sans',sans-serif" }}>{r.currency}</span>
+                </div>
+                {}
+                {r.retailAmount != null && (
+                  <div style={{
+                    display:"flex", justifyContent:"space-between", alignItems:"center",
+                    marginTop:10, padding:"8px 10px", borderRadius:7,
+                    background:C.ivory, border:`1px solid ${C.borderLight}`,
+                  }}>
+                    <span style={{ fontSize:11.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif" }}>
+                      Satış Fiyatı <span style={{ color:C.textFaint, fontStyle:"italic" }}>(bilgi amaçlı)</span>
+                    </span>
+                    <span style={{ fontSize:13, fontWeight:600, color:C.textMid, fontFamily:"'DM Sans',sans-serif" }}>
+                      {fmtMoney(r.retailAmount, r.retailCurrency || r.currency)} {r.retailCurrency || r.currency}
+                    </span>
+                  </div>
+                )}
               </div>
               {}
               <div style={{ marginBottom:14 }}>
@@ -6091,12 +6187,32 @@ function ReservationDetailPage({ resId, onBack }) {
             <RInfoRow label="Pickup Lokasyonu" value={r.pickup}    icon="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z M12 10a1 1 0 100-2 1 1 0 000 2z"/>
             <RInfoRow label="Pickup Saati"     value={r.pickupTime} icon="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
             {}
-            <div style={{ padding:"10px 20px", borderBottom:`1px solid ${C.borderLight}`, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+            <div style={{ padding:"10px 20px", borderBottom:`1px solid ${C.borderLight}`, display:"flex", justifyContent:"space-between", alignItems:"center", gap:10, flexWrap:"wrap" }}>
               <span style={{ fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", display:"flex", alignItems:"center", gap:5 }}>
                 <RIc d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2 M23 21v-2a4 4 0 00-3-3.87 M16 3.13a4 4 0 010 7.75" size={12} sw={1.5}/>
                 Rehber
               </span>
-              <GuideChip name={r.guide}/>
+              <div style={{display:"flex", alignItems:"center", gap:8}}>
+                {r.guideId
+                  ? <a href={'#/guides/'+r.guideId} style={{textDecoration:"none"}}><GuideChip name={r.assignedGuideName || r.guide}/></a>
+                  : <GuideChip name={r.guide}/>}
+                <button onClick={()=>setShowAssignGuide(true)} style={{
+                  padding:"4px 10px", borderRadius:6, border:`1px solid ${C.border}`,
+                  background:C.white, cursor:"pointer", color:C.textMid,
+                  fontFamily:"'DM Sans',sans-serif", fontSize:11.5,
+                }}>{r.guideId ? "Değiştir" : "Ata"}</button>
+                {r.guideId && (
+                  <button disabled={removingGuide} onClick={async()=>{
+                    setRemovingGuide(true);
+                    await mutGuideAssign("update", r.id, { guideId:null, guide:null });
+                    setRemovingGuide(false);
+                  }} style={{
+                    padding:"4px 8px", borderRadius:6, border:`1px solid ${C.border}`,
+                    background:C.white, cursor: removingGuide ? "default" : "pointer", color:C.red,
+                    fontFamily:"'DM Sans',sans-serif", fontSize:11.5, opacity: removingGuide?0.6:1,
+                  }}>{removingGuide ? "…" : "Kaldır"}</button>
+                )}
+              </div>
             </div>
             <RInfoRow label="Araç"   value={r.vehicle} icon="M9 17a2 2 0 11-4 0 2 2 0 014 0zM19 17a2 2 0 11-4 0 2 2 0 014 0z M13 17H9m4 0h2m2-5H3M5 12V5h14v7"/>
             <RInfoRow label="Şoför"  value={r.driver}/>
@@ -6112,6 +6228,9 @@ function ReservationDetailPage({ resId, onBack }) {
               </div>
             )}
           </RCard>
+
+          {}
+          <ReviewCard r={r}/>
 
           {}
           <RCard>
@@ -6146,7 +6265,7 @@ function ReservationDetailPage({ resId, onBack }) {
           </RCard>
 
           {}
-          {!r.guide && r.opStatus !== "İptal" && (
+          {!r.guide && !r.guideId && r.opStatus !== "İptal" && (
             <div style={{
               background:C.redBg, border:`1px solid ${C.red}22`,
               borderRadius:12, padding:"14px 16px",
@@ -6170,6 +6289,7 @@ function ReservationDetailPage({ resId, onBack }) {
         </div>
       </div>
     </div>
+    </>
   );
 }
 
@@ -6999,620 +7119,6 @@ function CalendarPage() {
   );
 }
 
-const TASK_PRIORITY = {
-  "Acil":   { color:"#C0392B", bg:"#FDECEC", dot:"#C0392B", order:0 },
-  "Yüksek": { color:"#B45309", bg:"#FEF3E2", dot:"#B45309", order:1 },
-  "Orta":   { color:"#1A6FAE", bg:"#E8F2FB", dot:"#1A6FAE", order:2 },
-  "Düşük":  { color:"#6B7280", bg:"#F3F4F6", dot:"#9CA3AF", order:3 },
-};
-
-const TASK_STATUS = {
-  "Açık":         { color:"#1A6FAE", bg:"#E8F2FB" },
-  "Devam Ediyor": { color:"#B45309", bg:"#FEF3E2" },
-  "Tamamlandı":   { color:"#2E7D52", bg:"#EBF5EF" },
-  "İptal":        { color:"#9CA3AF", bg:"#F3F4F6" },
-};
-
-const TASK_CATEGORY = {
-  "Teklif":        { color:"#6B3FA0", bg:"#F3EEF9" },
-  "Ödeme":         { color:"#C05621", bg:"#FEF0E8" },
-  "Rezervasyon":   { color:"#1A6FAE", bg:"#E8F2FB" },
-  "Operasyon":     { color:"#2E7D52", bg:"#EBF5EF" },
-  "Rehber":        { color:"#B8973A", bg:"#F5EDD4" },
-  "Pickup":        { color:"#0E7490", bg:"#ECFEFF" },
-  "Müşteri Takibi":{ color:"#6B7280", bg:"#F3F4F6" },
-};
-
-const TODAY_STR = "03 Haz 2026";
-const TOMORROW_STR = "04 Haz 2026";
-
-const MOCK_TASKS = DB.tasks; // → centralized DB
-
-function TIc({ d, size=15, sw=1.6, color }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
-      stroke={color||"currentColor"} strokeWidth={sw}
-      strokeLinecap="round" strokeLinejoin="round">
-      <path d={d}/>
-    </svg>
-  );
-}
-
-function TPill({ label, map, small }) {
-  const m = map[label] || { color:"#6B7280", bg:"#F3F4F6" };
-  return (
-    <span style={{
-      display:"inline-flex", alignItems:"center", gap:5,
-      padding: small ? "3px 8px" : "4px 10px",
-      borderRadius:99, fontSize: small ? 10.5 : 11.5,
-      fontWeight:500, color:m.color, background:m.bg,
-      fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap",
-    }}>
-      {m.dot && <span style={{width:5, height:5, borderRadius:"50%", background:m.dot, flexShrink:0}}/>}
-      {label}
-    </span>
-  );
-}
-
-function TCatPill({ label }) {
-  const m = TASK_CATEGORY[label] || { color:"#6B7280", bg:"#F3F4F6" };
-  return (
-    <span style={{
-      display:"inline-block", padding:"2px 8px", borderRadius:5,
-      fontSize:11, fontWeight:500, color:m.color, background:m.bg,
-      fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap",
-    }}>{label}</span>
-  );
-}
-
-function TAssignee({ name, initials }) {
-  if (!initials) return (
-    <span style={{fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", fontStyle:"italic"}}>
-      Atanmadı
-    </span>
-  );
-  return (
-    <div style={{display:"flex", alignItems:"center", gap:7}}>
-      <div style={{
-        width:26, height:26, borderRadius:"50%", flexShrink:0,
-        background:"rgba(27,45,79,0.09)", border:"1.5px solid rgba(27,45,79,0.14)",
-        display:"flex", alignItems:"center", justifyContent:"center",
-      }}>
-        <span style={{fontSize:9.5, fontWeight:700, color:C.navy}}>{initials}</span>
-      </div>
-      <span style={{fontSize:12.5, color:C.textMid, fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap"}}>{name}</span>
-    </div>
-  );
-}
-
-function TDueDate({ task }) {
-  const overdue  = task.dueDateRaw < 0 && task.status !== "Tamamlandı";
-  const isToday  = task.dueDateRaw === 0;
-  const isTomorrow = task.dueDateRaw === 1;
-  const done     = task.status === "Tamamlandı";
-  const color    = done ? C.textFaint : overdue ? C.red : isToday ? C.amber : C.textMid;
-  const label    = done ? task.dueDate : overdue ? `${Math.abs(task.dueDateRaw)} gün gecikti`
-    : isToday ? "Bugün" : isTomorrow ? "Yarın" : task.dueDate;
-
-  return (
-    <div style={{display:"flex", alignItems:"center", gap:5}}>
-      {overdue && !done && (
-        <span style={{width:6, height:6, borderRadius:"50%", background:C.red, flexShrink:0}}/>
-      )}
-      <span style={{
-        fontSize:12.5, color,
-        fontFamily:"'DM Sans',sans-serif",
-        fontWeight: (overdue || isToday) && !done ? 600 : 400,
-      }}>{label}</span>
-    </div>
-  );
-}
-
-function TaskRow({ task, isLast, onToggle }) {
-  const done = task.status === "Tamamlandı";
-  const pMeta = TASK_PRIORITY[task.priority] || {};
-
-  return (
-    <tr className="dt-row"
-      style={{
-        background:C.white,
-        transition:"background .1s",
-        opacity: task.status === "İptal" ? 0.5 : 1,
-      }}
-    >
-      {}
-      <td style={{
-        padding:"13px 8px 13px 20px",
-        borderBottom: isLast ? "none" : `1px solid ${C.borderLight}`,
-        verticalAlign:"middle", width:40,
-      }}>
-        <div
-          onClick={()=>onToggle(task.id)}
-          style={{
-            width:18, height:18, borderRadius:5, cursor:"pointer",
-            border: done ? "none" : `1.5px solid ${C.border}`,
-            background: done ? C.green : C.white,
-            display:"flex", alignItems:"center", justifyContent:"center",
-            transition:"all .15s", flexShrink:0,
-          }}
-        >
-          {done && <TIc d="M20 6L9 17l-5-5" size={11} sw={2.5} color="#fff"/>}
-        </div>
-      </td>
-
-      {}
-      <td style={{
-        padding:"13px 12px",
-        borderBottom: isLast ? "none" : `1px solid ${C.borderLight}`,
-        verticalAlign:"middle",
-      }}>
-        <div style={{display:"flex", alignItems:"flex-start", gap:10}}>
-          {}
-          <div style={{
-            width:3, height:36, borderRadius:99, flexShrink:0, marginTop:2,
-            background: done ? C.border : pMeta.dot || C.border,
-          }}/>
-          <div style={{minWidth:0}}>
-            <div style={{
-              fontSize:13.5, fontWeight:500,
-              color: done ? C.textFaint : C.text,
-              fontFamily:"'DM Sans',sans-serif",
-              textDecoration: done ? "line-through" : "none",
-              lineHeight:1.4,
-            }}>{task.title}</div>
-            <div style={{
-              fontSize:11.5, color:C.textFaint,
-              fontFamily:"'DM Sans',sans-serif", marginTop:3,
-              display:"flex", alignItems:"center", gap:6,
-            }}>
-              <span>{task.guestFlag} {task.guest}</span>
-              <span style={{color:C.borderLight}}>·</span>
-              <span style={{
-                fontSize:11, color:C.textFaint,
-                fontFamily:"'DM Mono',monospace",
-              }}>{task.relatedType}: {task.relatedId}</span>
-            </div>
-          </div>
-        </div>
-      </td>
-
-      {}
-      <td style={{
-        padding:"13px 12px",
-        borderBottom: isLast ? "none" : `1px solid ${C.borderLight}`,
-        verticalAlign:"middle",
-      }}>
-        <TCatPill label={task.category}/>
-      </td>
-
-      {}
-      <td style={{
-        padding:"13px 12px",
-        borderBottom: isLast ? "none" : `1px solid ${C.borderLight}`,
-        verticalAlign:"middle",
-      }}>
-        <TPill label={task.priority} map={TASK_PRIORITY} small/>
-      </td>
-
-      {}
-      <td style={{
-        padding:"13px 12px",
-        borderBottom: isLast ? "none" : `1px solid ${C.borderLight}`,
-        verticalAlign:"middle",
-      }}>
-        <TDueDate task={task}/>
-      </td>
-
-      {}
-      <td style={{
-        padding:"13px 12px",
-        borderBottom: isLast ? "none" : `1px solid ${C.borderLight}`,
-        verticalAlign:"middle",
-      }}>
-        <TAssignee name={task.assignee} initials={task.assigneeInitials}/>
-      </td>
-
-      {}
-      <td style={{
-        padding:"13px 16px 13px 8px",
-        borderBottom: isLast ? "none" : `1px solid ${C.borderLight}`,
-        verticalAlign:"middle",
-      }}>
-        <TPill label={task.status} map={TASK_STATUS} small/>
-      </td>
-    </tr>
-  );
-}
-
-function TaskSidebar({ tasks }) {
-  const urgent = tasks
-    .filter(t => t.status !== "Tamamlandı" && t.status !== "İptal")
-    .sort((a,b) => {
-      const pOrder = (TASK_PRIORITY[a.priority]?.order||9) - (TASK_PRIORITY[b.priority]?.order||9);
-      if (pOrder !== 0) return pOrder;
-      return a.dueDateRaw - b.dueDateRaw;
-    })
-    .slice(0, 6);
-
-  return (
-    <div style={{
-      background:C.white, border:`1px solid ${C.border}`, borderRadius:12,
-      overflow:"hidden",
-    }}>
-      {}
-      <div style={{
-        background:`linear-gradient(135deg, ${C.navyDeep} 0%, ${C.navy} 100%)`,
-        padding:"16px 18px",
-      }}>
-        <div style={{fontSize:14, fontWeight:600, color:C.ivory, fontFamily:"'Playfair Display',serif", marginBottom:2}}>
-          Öncelikli İşler
-        </div>
-        <div style={{fontSize:11.5, color:"rgba(248,245,238,0.5)", fontFamily:"'DM Sans',sans-serif"}}>
-          Acil ve yaklaşan görevler
-        </div>
-      </div>
-
-      {}
-      <div style={{padding:"8px 0"}}>
-        {urgent.length === 0 ? (
-          <div style={{
-            padding:"32px 20px", textAlign:"center",
-            color:C.textFaint, fontFamily:"'DM Sans',sans-serif", fontSize:13,
-          }}>
-            Tüm öncelikli görevler tamamlandı ✓
-          </div>
-        ) : urgent.map((task, i) => {
-          const pMeta = TASK_PRIORITY[task.priority] || {};
-          const overdue = task.dueDateRaw < 0;
-          const isToday = task.dueDateRaw === 0;
-          return (
-            <div key={task.id} style={{
-              padding:"11px 16px",
-              borderBottom: i < urgent.length-1 ? `1px solid ${C.borderLight}` : "none",
-              display:"flex", gap:11, alignItems:"flex-start",
-              cursor:"pointer",
-            }}
-              onMouseEnter={e=>e.currentTarget.style.background=C.ivory}
-              onMouseLeave={e=>e.currentTarget.style.background="transparent"}
-            >
-              {}
-              <div style={{
-                width:8, height:8, borderRadius:"50%", flexShrink:0,
-                background:pMeta.dot, marginTop:6,
-                boxShadow:`0 0 0 3px ${pMeta.dot}22`,
-              }}/>
-              <div style={{flex:1, minWidth:0}}>
-                <div style={{
-                  fontSize:13, fontWeight:500, color:C.text,
-                  fontFamily:"'DM Sans',sans-serif", lineHeight:1.35,
-                  marginBottom:4,
-                  overflow:"hidden", textOverflow:"ellipsis",
-                  display:"-webkit-box", WebkitLineClamp:2,
-                  WebkitBoxOrient:"vertical",
-                }}>{task.title}</div>
-                <div style={{display:"flex", alignItems:"center", gap:6, flexWrap:"wrap"}}>
-                  <TCatPill label={task.category}/>
-                  <span style={{
-                    fontSize:11, fontWeight:600,
-                    color: overdue ? C.red : isToday ? C.amber : C.textFaint,
-                    fontFamily:"'DM Sans',sans-serif",
-                  }}>
-                    {overdue ? `${Math.abs(task.dueDateRaw)} gün gecikti`
-                     : isToday ? "Bugün"
-                     : task.dueDate}
-                  </span>
-                </div>
-              </div>
-              <TIc d="M9 18l6-6-6-6" size={13} sw={1.8} color={C.textFaint}/>
-            </div>
-          );
-        })}
-      </div>
-
-      {}
-      <div style={{
-        padding:"10px 16px",
-        borderTop:`1px solid ${C.borderLight}`,
-        background:C.ivory,
-      }}>
-        <button style={{
-          width:"100%", background:"none", border:"none", cursor:"pointer",
-          fontSize:12.5, color:C.goldLight, fontWeight:500,
-          fontFamily:"'DM Sans',sans-serif",
-          display:"flex", alignItems:"center", justifyContent:"center", gap:5,
-        }}>
-          Tüm Görevleri Gör
-          <TIc d="M9 18l6-6-6-6" size={13} sw={2} color={C.goldLight}/>
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function TasksPage() {
-  const [showNewTask, setShowNewTask] = useState(false);
-  const [_taskTick, setTaskTick] = useState(0);
-  const [activeTab, setActiveTab]   = useState("Tümü");
-  const [activeFilter, setActiveFilter] = useState("Tümü");
-  const [search, setSearch]         = useState("");
-  const { data:repoTasks, loading:tasksLoading, error:tasksError, reload:reloadTasks }
-    = useRepo("task", "getAll");
-
-  const TABS = ["Tümü", "Bugün", "Geciken", "Bu Hafta", "Tamamlananlar"];
-
-  async function toggleTask(id) {
-    const repo = getActiveRepo("task");
-    await Promise.resolve(repo.toggle(id));
-    setTaskTick(n=>n+1);
-    reloadTasks && reloadTasks();
-  }
-
-  const tasks = repoTasks ?? [];
-  const filtered = tasks.filter(t => {
-    if (search && !t.title.toLowerCase().includes(search.toLowerCase()) &&
-        !t.guest.toLowerCase().includes(search.toLowerCase())) return false;
-    if (activeTab === "Bugün")         return t.dueDateRaw === 0 && t.status !== "Tamamlandı";
-    if (activeTab === "Geciken")       return t.dueDateRaw < 0 && t.status !== "Tamamlandı";
-    if (activeTab === "Bu Hafta")      return t.dueDateRaw >= 0 && t.dueDateRaw <= 7 && t.status !== "Tamamlandı";
-    if (activeTab === "Tamamlananlar") return t.status === "Tamamlandı";
-    return true;
-  });
-
-  const sorted = [...filtered].sort((a, b) => {
-    if (a.status === "Tamamlandı" && b.status !== "Tamamlandı") return 1;
-    if (b.status === "Tamamlandı" && a.status !== "Tamamlandı") return -1;
-    const pOrder = (TASK_PRIORITY[a.priority]?.order||9) - (TASK_PRIORITY[b.priority]?.order||9);
-    if (pOrder !== 0) return pOrder;
-    return a.dueDateRaw - b.dueDateRaw;
-  });
-
-  const todayCount    = tasks.filter(t => t.dueDateRaw === 0 && t.status !== "Tamamlandı").length;
-  const overdueCount  = tasks.filter(t => t.dueDateRaw < 0  && t.status !== "Tamamlandı").length;
-  const urgentCount   = tasks.filter(t => t.priority === "Acil" && t.status !== "Tamamlandı").length;
-  const doneCount     = tasks.filter(t => t.status === "Tamamlandı").length;
-
-  const tabCounts = {
-    "Tümü":          tasks.filter(t=>t.status!=="Tamamlandı").length,
-    "Bugün":         todayCount,
-    "Geciken":       overdueCount,
-    "Bu Hafta":      tasks.filter(t=>t.dueDateRaw>=0&&t.dueDateRaw<=7&&t.status!=="Tamamlandı").length,
-    "Tamamlananlar": doneCount,
-  };
-
-  return (
-    <>
-    {showNewTask ? (<NewTaskModal onClose={()=>{ setShowNewTask(false); reloadTasks && reloadTasks(); }}/>) : null}
-    <div style={{display:"flex", flexDirection:"column", gap:20}}>
-
-      {}
-      <div className="page-header" style={{
-        background:C.white, border:`1px solid ${C.border}`, borderRadius:12,
-        padding:"20px 24px",
-        display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:20,
-      }}>
-        <div>
-          <h1 style={{margin:0, fontSize:24, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif", marginBottom:5}}>Görevler</h1>
-          <p style={{margin:0, fontSize:13.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif"}}>
-            Satış ve operasyon ekibinin yapması gereken işleri takip edin.
-          </p>
-        </div>
-        <div className="page-header-actions" style={{display:"flex", alignItems:"center", gap:10, flexShrink:0}}>
-          {}
-          <div style={{position:"relative"}}>
-            <span style={{position:"absolute", left:10, top:"50%", transform:"translateY(-50%)", color:C.textFaint, pointerEvents:"none"}}>
-              <TIc d="M21 21l-4.35-4.35 M17 11A6 6 0 105 11a6 6 0 0012 0z" size={14} sw={1.8}/>
-            </span>
-            <input type="text" value={search} onChange={e=>setSearch(e.target.value)}
-              placeholder="Görev veya misafir ara…"
-              style={{
-                paddingLeft:32, paddingRight:12, paddingTop:8, paddingBottom:8,
-                border:`1px solid ${C.border}`, borderRadius:8,
-                background:C.ivory, fontSize:13, color:C.text,
-                fontFamily:"'DM Sans',sans-serif", outline:"none", width:"min(220px,45vw)",
-                transition:"border-color .15s, box-shadow .15s",
-              }}
-              onFocus={e=>{ e.target.style.borderColor=C.gold; e.target.style.boxShadow=`0 0 0 3px ${C.gold}20`; }}
-              onBlur={e=>{ e.target.style.borderColor=C.border; e.target.style.boxShadow="none"; }}
-            />
-          </div>
-          <button style={{
-            display:"flex", alignItems:"center", gap:7,
-            padding:"9px 16px", borderRadius:8,
-            border:"none", background:C.navy, cursor:"pointer", color:C.white,
-            fontFamily:"'DM Sans',sans-serif", fontSize:13, fontWeight:500,
-          }}
-            onMouseEnter={e=>e.currentTarget.style.background=C.navyHover}
-            onMouseLeave={e=>e.currentTarget.style.background=C.navy}
-          onClick={()=>setShowNewTask(true)}
-          >
-            <TIc d="M12 5v14M5 12h14" size={14} sw={2.5} color="#fff"/>
-            Yeni Görev Ekle
-          </button>
-        </div>
-      </div>
-
-      {}
-      <div className="rsp-stat-grid" style={{display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:14}}>
-        {[
-          {
-            label:"Bugünkü Görevler", val:todayCount,
-            icon:"M8 2v4M16 2v4M3 10h18M21 8a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2h14a2 2 0 002-2V8z",
-            color:C.blue, bg:C.blueBg,
-            sub: todayCount > 0 ? "Bugün tamamlanmalı" : "Bugün görev yok",
-          },
-          {
-            label:"Geciken Görevler", val:overdueCount,
-            icon:"M12 8v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z",
-            color:C.red, bg:C.redBg,
-            sub: overdueCount > 0 ? "Hemen ilgilenilmeli" : "Geciken görev yok ✓",
-          },
-          {
-            label:"Acil Görevler", val:urgentCount,
-            icon:"M13 10V3L4 14h7v7l9-11h-7z",
-            color:C.amber, bg:C.amberBg,
-            sub: urgentCount > 0 ? "Acil öncelikli" : "Acil görev yok ✓",
-          },
-          {
-            label:"Tamamlananlar", val:doneCount,
-            icon:"M22 11.08V12a10 10 0 11-5.93-9.14 M22 4L12 14.01l-3-3",
-            color:C.green, bg:C.greenBg,
-            sub:`${tasks.length} görevden ${doneCount} tamamlandı`,
-          },
-        ].map((k,i)=>(
-          <div key={i} style={{
-            background:C.white, border:`1px solid ${C.border}`, borderRadius:12,
-            padding:"18px 20px", display:"flex", alignItems:"flex-start", gap:14,
-          }}>
-            <div style={{
-              width:42, height:42, borderRadius:10, flexShrink:0,
-              background:k.bg, display:"flex", alignItems:"center", justifyContent:"center",
-              color:k.color,
-            }}>
-              <TIc d={k.icon} size={18} sw={1.6} color={k.color}/>
-            </div>
-            <div style={{flex:1}}>
-              <div style={{fontSize:26, fontWeight:700, color:k.color, fontFamily:"'Playfair Display',serif", lineHeight:1, marginBottom:4}}>
-                {k.val}
-              </div>
-              <div style={{fontSize:12, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", marginBottom:3}}>{k.label}</div>
-              <div style={{fontSize:11, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>{k.sub}</div>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {}
-      <div className="rsp-split" style={{display:"grid", gridTemplateColumns:"1fr 280px", gap:20, alignItems:"start"}}>
-
-        {}
-        <div style={{background:C.white, border:`1px solid ${C.border}`, borderRadius:12, overflow:"hidden"}}>
-
-          {}
-          <div style={{
-            display:"flex", alignItems:"center",
-            borderBottom:`1px solid ${C.borderLight}`,
-            padding:"0 20px", overflowX:"auto",
-          }}>
-            {TABS.map(tab => {
-              const on = activeTab === tab;
-              const cnt = tabCounts[tab];
-              return (
-                <button key={tab} onClick={()=>setActiveTab(tab)} style={{
-                  padding:"13px 14px",
-                  border:"none", borderBottom: on ? `2px solid ${C.gold}` : "2px solid transparent",
-                  background:"transparent",
-                  color: on ? C.gold : C.textMuted,
-                  fontFamily:"'DM Sans',sans-serif", fontSize:13,
-                  fontWeight: on ? 600 : 400, cursor:"pointer",
-                  whiteSpace:"nowrap", marginBottom:-1,
-                  display:"flex", alignItems:"center", gap:6,
-                  transition:"color .12s",
-                }}>
-                  {tab}
-                  {cnt > 0 && (
-                    <span style={{
-                      minWidth:18, height:18, borderRadius:99, padding:"0 5px",
-                      display:"inline-flex", alignItems:"center", justifyContent:"center",
-                      fontSize:10.5, fontWeight:600,
-                      background: on ? `${C.gold}22` : C.ivoryDark,
-                      color: on ? C.gold : C.textFaint,
-                    }}>{cnt}</span>
-                  )}
-                </button>
-              );
-            })}
-            <div style={{marginLeft:"auto", padding:"0 4px", flexShrink:0}}>
-              <span style={{fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>
-                {sorted.length} görev
-              </span>
-            </div>
-          </div>
-
-          {}
-          {tasksLoading ? <LoadingState label="Görevler yükleniyor…"/> :
-           tasksError   ? <ErrorState message={tasksError} onRetry={reloadTasks}/> :
-           sorted.length === 0 ? (
-            <div style={{padding:"64px 40px", textAlign:"center"}}>
-              <div style={{fontSize:36, opacity:.2, marginBottom:14}}>✓</div>
-              <div style={{fontSize:16, fontWeight:600, color:C.text, fontFamily:"'Playfair Display',serif", marginBottom:6}}>
-                Henüz görev bulunmuyor.
-              </div>
-              <div style={{fontSize:13.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif"}}>
-                Bu filtre için tamamlanmış veya kayıt yok.
-              </div>
-              <button style={{
-                marginTop:20, display:"inline-flex", alignItems:"center", gap:7,
-                padding:"9px 18px", borderRadius:8,
-                border:`1.5px solid ${C.gold}`, background:C.goldPale,
-                cursor:"pointer", color:C.gold,
-                fontFamily:"'DM Sans',sans-serif", fontSize:13, fontWeight:500,
-              }}>
-                <TIc d="M12 5v14M5 12h14" size={14} sw={2.5} color={C.gold}/>
-                Yeni Görev Ekle
-              </button>
-            </div>
-          ) : (
-            <>
-              <table style={{width:"100%", borderCollapse:"collapse"}}>
-                <thead>
-                  <tr style={{borderBottom:`1px solid ${C.border}`, background:C.ivory}}>
-                    <th style={{padding:"10px 8px 10px 20px", width:40}}/>
-                    {["Görev","Kategori","Öncelik","Son Tarih","Sorumlu","Durum"].map((h,i)=>(
-                      <th key={h} style={{
-                        padding:"10px 12px",
-                        textAlign:"left", fontSize:10.5, fontWeight:600,
-                        color:C.textFaint, fontFamily:"'DM Sans',sans-serif",
-                        textTransform:"uppercase", letterSpacing:"0.07em",
-                        whiteSpace:"nowrap",
-                      }}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {sorted.map((task, i) => (
-                    <TaskRow
-                      key={task.id} task={task}
-                      isLast={i===sorted.length-1}
-                      onToggle={toggleTask}
-                    />
-                  ))}
-                </tbody>
-              </table>
-            <div className="rsp-cards"><MobileCardList items={filtered} renderCard={(item,i)=>(
-                <MobileCard key={item.id}>
-                  <div>
-                    <div style={{fontWeight:600,fontSize:14,color:C.text}}>{item.title}</div>
-                    <div style={{fontSize:12,color:C.textMuted,marginTop:2}}>{item.dueDate||"—"} · {item.assignee||"—"}</div>
-                  </div>
-                </MobileCard>
-              )}/></div>
-
-              {}
-              <div style={{
-                padding:"10px 20px", background:C.ivory,
-                borderTop:`1px solid ${C.borderLight}`,
-                display:"flex", alignItems:"center", justifyContent:"space-between",
-              }}>
-                <span style={{fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>
-                  {sorted.length} / {tasks.length} görev gösteriliyor
-                </span>
-                <div style={{display:"flex", alignItems:"center", gap:6}}>
-                  <span style={{fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>
-                    {doneCount} tamamlandı · {overdueCount > 0 ? `${overdueCount} gecikiyor` : "geciken yok"}
-                  </span>
-                </div>
-              </div>
-            </>
-          )}
-        </div>
-
-        {}
-        <TaskSidebar tasks={tasks}/>
-      </div>
-    </div>
-    </>
-  );
-}
 
 const PAY_STATUS_MAP = {
   "Bekliyor":      { color:"#C05621", bg:"#FEF0E8", dot:"#C05621" },
@@ -7656,11 +7162,6 @@ function PBadge({ label, small }) {
       {label}
     </span>
   );
-}
-
-function fmtMoney(amount, currency) {
-  const sym = currency === "TRY" ? "₺" : currency === "USD" ? "$" : currency === "GBP" ? "£" : "€";
-  return `${sym}${amount.toLocaleString("tr-TR")}`;
 }
 
 function PctBar({ pct, color }) {
@@ -8869,14 +8370,39 @@ const TOUR_STATUS_CFG = {
   "Taslak": { color:"#6B3FA0", bg:"#F3EEF9", dot:"#6B3FA0" },
   "Arşiv":  { color:"#6B7280", bg:"#F3F4F6", dot:"#9CA3AF" },
 };
+// Single canonical category dataset — DB value (matches tours.category's
+// CHECK constraint exactly, including 'gastronomy' from
+// supabase_migration_tour_channels.sql) paired with its Turkish display
+// label. New Tour, Edit Tour, Tour Detail and every category-rendering
+// spot use this same array — no parallel vocabulary anywhere else.
+const TOUR_CATEGORIES = [
+  ["cultural",   "Kültürel"],
+  ["nature",     "Doğa"],
+  ["sea",        "Deniz / Tekne"],
+  ["religious",  "Dini"],
+  ["city",       "Şehir"],
+  ["custom",     "Özel Tasarım"],
+  ["transfer",   "Transfer"],
+  ["gastronomy", "Gastronomi"],
+  ["other",      "Diğer"],
+];
+const TOUR_CATEGORY_LABEL = Object.fromEntries(TOUR_CATEGORIES.map(([v,l]) => [v,l]));
 const TOUR_CATEGORY_CFG = {
-  "Özel Tur":     { color:"#1B2D4F", bg:"#E5EAF2" },
-  "Tekne Turu":   { color:"#0E7490", bg:"#ECFEFF" },
-  "Kültürel Tur": { color:"#6B3FA0", bg:"#F3EEF9" },
-  "Macera Turu":  { color:"#B45309", bg:"#FEF3E2" },
-  "Gastronomi":   { color:"#C05621", bg:"#FEF0E8" },
-  "Gün Turu":     { color:"#2E7D52", bg:"#EBF5EF" },
+  cultural:   { color:"#6B3FA0", bg:"#F3EEF9" },
+  nature:     { color:"#2E7D52", bg:"#EBF5EF" },
+  sea:        { color:"#0E7490", bg:"#ECFEFF" },
+  religious:  { color:"#8A6D1F", bg:"#FBF3DE" },
+  city:       { color:"#1B2D4F", bg:"#E5EAF2" },
+  custom:     { color:"#B45309", bg:"#FEF3E2" },
+  transfer:   { color:"#6B7280", bg:"#F3F4F6" },
+  gastronomy: { color:"#C05621", bg:"#FEF0E8" },
+  other:      { color:"#6B7280", bg:"#F3F4F6" },
 };
+// pricing_type is a real column ('per_person'|'flat'|'group') the app
+// always writes 'flat' for now (no per-person tier UI in this pass) —
+// this is only for rendering any pre-existing value honestly instead of
+// showing the raw English DB string.
+const TOUR_PRICING_TYPE_LABEL = { flat:"Sabit Fiyat", per_person:"Kişi Bazlı", group:"Grup" };
 
 const MOCK_TOURS = DB.tours; // → centralized DB
 
@@ -8914,134 +8440,58 @@ function TourCatPill({ category }) {
       fontSize:11.5, fontWeight:500,
       color:m.color, background:m.bg,
       fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap",
-    }}>{category}</span>
+    }}>{TOUR_CATEGORY_LABEL[category] || category}</span>
   );
 }
 
-function TourChecklist({ items, setItems, accent }) {
-  const [newVal, setNewVal] = useState("");
-  function toggle(i) { setItems(p=>p.map((x,j)=>j===i?{...x,on:!x.on}:x)); }
-  function remove(i) { setItems(p=>p.filter((_,j)=>j!==i)); }
-  function add()     { if(newVal.trim()){ setItems(p=>[...p,{label:newVal.trim(),on:true}]); setNewVal(""); } }
+// Offered language names for a tour, from the real tour_languages join
+// already present on the loaded tour object. Supabase-loaded tours carry
+// the derived t.languageNames (from mapTourFromDB); mock/local tours only
+// carry t.languages ([{code,name}]) — fall back to deriving names from
+// that so both sources render identically. Never raw codes, never a
+// separate dataset.
+function tourLanguageNames(tour) {
+  if (tour?.languageNames?.length) return tour.languageNames.filter(Boolean);
+  return (tour?.languages || []).map(l => l?.name).filter(Boolean);
+}
+// Names of the tour's currently active sales-channel listings, from the
+// real tour_channels join (t.channels[].sourceName) — "where it's actually
+// published" is defined as active listings, matching the "Yayında" card
+// already used on Tour Detail.
+function tourPlatformNames(tour) {
+  return (tour?.channels || []).filter(c => c && c.isActive !== false && c.sourceName).map(c => c.sourceName);
+}
+// Compact "A · B · +N" inline summary — quiet, scannable, no pills/icons.
+function InlineNameSummary({ items, emptyLabel }) {
+  if (!items || items.length === 0) {
+    return <span style={{fontSize:12.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", fontStyle:"italic"}}>{emptyLabel}</span>;
+  }
+  const shown = items.slice(0, 2);
+  const extra = items.length - shown.length;
   return (
-    <div>
-      {items.map((it,i)=>(
-        <div key={i} style={{
-          display:"flex", alignItems:"center", gap:9,
-          padding:"8px 0", borderBottom:`1px solid ${C.borderLight}`,
-        }}>
-          <div onClick={()=>toggle(i)} style={{
-            width:18, height:18, borderRadius:4, flexShrink:0, cursor:"pointer",
-            border: it.on?"none":`1.5px solid ${C.border}`,
-            background: it.on?(accent||C.green):C.white,
-            display:"flex", alignItems:"center", justifyContent:"center",
-            transition:"background .15s",
-          }}>
-            {it.on && <URIc d="M20 6L9 17l-5-5" size={11} sw={2.5} color="#fff"/>}
-          </div>
-          <span style={{
-            flex:1, fontSize:13, fontFamily:"'DM Sans',sans-serif",
-            color:it.on?C.text:C.textFaint,
-            textDecoration:it.on?"none":"line-through",
-          }}>{it.label}</span>
-          <button onClick={()=>remove(i)} style={{
-            background:"none", border:"none", cursor:"pointer", color:C.textFaint, padding:2,
-          }}>
-            <URIc d="M18 6L6 18M6 6l12 12" size={13} sw={2}/>
-          </button>
-        </div>
-      ))}
-      <div style={{display:"flex", gap:7, marginTop:10}}>
-        <input value={newVal} onChange={e=>setNewVal(e.target.value)}
-          onKeyDown={e=>e.key==="Enter"&&add()}
-          placeholder="Yeni öğe ekle…"
-          style={{
-            flex:1, padding:"7px 10px",
-            border:`1px solid ${C.border}`, borderRadius:6,
-            background:C.ivory, fontSize:12.5, color:C.text,
-            fontFamily:"'DM Sans',sans-serif", outline:"none", boxSizing:"border-box",
-          }}/>
-        <button onClick={add} style={{
-          padding:"7px 14px", borderRadius:6, cursor:"pointer",
-          background:C.navy, border:"none", color:C.white,
-          fontSize:12, fontFamily:"'DM Sans',sans-serif", fontWeight:500,
-        }}>+ Ekle</button>
-      </div>
-    </div>
+    <span style={{fontSize:13, color:C.textMid, fontFamily:"'DM Sans',sans-serif"}} title={items.join(" · ")}>
+      {shown.join(" · ")}{extra > 0 ? ` · +${extra}` : ""}
+    </span>
   );
 }
 
-function TourQuotePreview({ tour, paxCount, incItems }) {
-  const sym = tour.currency==="TRY"?"₺":"€";
-  const price = tour.pricingType==="Sabit Fiyat"
-    ? tour.flatPrice
-    : (tour.tiers?.[paxCount] || tour.basePrice * paxCount);
-  const incOn = incItems.filter(x=>x.on);
-  return (
-    <div style={{
-      background:"#F8F5EE", borderRadius:10, border:`1px solid ${C.border}`,
-      overflow:"hidden", fontSize:12.5,
-    }}>
-      {}
-      <div style={{
-        background:`linear-gradient(135deg, ${C.navyDeep} 0%, ${C.navy} 100%)`,
-        padding:"14px 18px",
-      }}>
-        <div style={{fontSize:10, color:"rgba(248,245,238,0.5)", letterSpacing:"0.14em", textTransform:"uppercase", marginBottom:4, fontFamily:"'DM Sans',sans-serif"}}>TEKLİFTE GÖRÜNÜM</div>
-        <div style={{fontSize:16, fontWeight:700, color:C.ivory, fontFamily:"'Playfair Display',serif"}}>{tour.name}</div>
-        <div style={{fontSize:12, color:"rgba(248,245,238,0.55)", marginTop:3, fontFamily:"'DM Sans',sans-serif"}}>
-          {tour.duration} · {tour.category}
-        </div>
-      </div>
-      <div style={{padding:"14px 18px"}}>
-        {}
-        <div style={{
-          background:C.white, borderRadius:8, padding:"12px 14px", marginBottom:12,
-          border:`1px solid ${C.borderLight}`,
-        }}>
-          <div style={{fontSize:10.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:8}}>Fiyat Hesabı</div>
-          {tour.pricingType==="Kişi Bazlı" ? (
-            <>
-              <div style={{display:"flex", justifyContent:"space-between", marginBottom:4}}>
-                <span style={{fontSize:12.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif"}}>Kişi Başı</span>
-                <span style={{fontSize:12.5, color:C.text, fontFamily:"'DM Sans',sans-serif"}}>{sym}{tour.tiers?.[paxCount] ? Math.round(tour.tiers[paxCount]/paxCount) : tour.basePrice}</span>
-              </div>
-              <div style={{display:"flex", justifyContent:"space-between", marginBottom:8}}>
-                <span style={{fontSize:12.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif"}}>Kişi Sayısı</span>
-                <span style={{fontSize:12.5, color:C.text, fontFamily:"'DM Sans',sans-serif"}}>× {paxCount}</span>
-              </div>
-            </>
-          ) : (
-            <div style={{display:"flex", justifyContent:"space-between", marginBottom:8}}>
-              <span style={{fontSize:12.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif"}}>Sabit Fiyat</span>
-              <span style={{fontSize:12.5, color:C.text, fontFamily:"'DM Sans',sans-serif"}}>{sym}{tour.flatPrice}</span>
-            </div>
-          )}
-          <div style={{height:1, background:C.borderLight, marginBottom:8}}/>
-          <div style={{display:"flex", justifyContent:"space-between", alignItems:"baseline"}}>
-            <span style={{fontSize:13, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif"}}>Toplam</span>
-            <span style={{fontSize:20, fontWeight:700, color:C.gold, fontFamily:"'Playfair Display',serif"}}>{sym}{price}</span>
-          </div>
-        </div>
-        {}
-        <div>
-          <div style={{fontSize:10.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:7}}>Dahil Hizmetler</div>
-          {incOn.slice(0,4).map((s,i)=>(
-            <div key={i} style={{display:"flex", gap:7, alignItems:"flex-start", marginBottom:5}}>
-              <URIc d="M22 11.08V12a10 10 0 11-5.93-9.14 M22 4L12 14.01l-3-3" size={13} sw={2} color={C.green}/>
-              <span style={{fontSize:12.5, color:C.textMid, fontFamily:"'DM Sans',sans-serif"}}>{s.label}</span>
-            </div>
-          ))}
-          {incOn.length > 4 && (
-            <div style={{fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", paddingLeft:20}}>+{incOn.length-4} daha…</div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
+// Dese Tour experiences are primarily hour-based (walking/day experiences),
+// not day-based, so duration_text — already in the schema, previously
+// unused — is now the single authoritative, operator-entered, human-
+// readable duration ("3 saat", "4.5 saat", "1 gün"…). duration_days is
+// kept only for backward compatibility on tours created before this field
+// existed: the app never writes it anymore (see mapTourToDB), it is only
+// ever read here as a graceful fallback so those older tours still show
+// their real (if less precise) duration instead of going blank. A tour
+// with neither returns null — never an invented duration.
+function tourDurationLabel(tour) {
+  if (tour?.durationText) return tour.durationText;
+  if (tour?.duration) return `${tour.duration} gün`;
+  return null;
 }
 
 function TourDetailPage({ tourId, onBack }) {
+  const { isMobile } = useBreakpoint();
   const _sp = safeParam(tourId);
   if (_sp.invalid) return (
     <div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',padding:60,gap:16}}>
@@ -9057,26 +8507,50 @@ function TourDetailPage({ tourId, onBack }) {
   const { data:orig, loading:tdLoading, error:tdError } = useRepo("tour", "getById", tourId);
   const { mutate:mutTour, mutating:tourSaving } = useRepoMutation("tour");
 
-  const [name,     setName]     = useState("");
-  const [category, setCategory] = useState("Kültür & Tarih");
-  const [duration, setDuration] = useState(1);
-  const [desc,     setDesc]     = useState("");
-  const [status,   setStatus]   = useState("Aktif");
-  const [pricingType, setPricingType] = useState("flat");
-  const [flatPrice,   setFlatPrice]   = useState(0);
-  const [saved,    setSaved]    = useState(false);
-  const [currency, setCurrency] = useState("EUR");
+  const [name, setName]                 = useState("");
+  const [category, setCategory]         = useState("cultural");
+  const [description, setDescription]   = useState("");
+  const [durationText, setDurationText] = useState("");
+  const [basePrice, setBasePrice]       = useState("");
+  const [currency, setCurrency]         = useState("EUR");
+  const [status, setStatus]             = useState("Aktif");
+  const [tourType, setTourType]         = useState([]);
+  const [maxGuests, setMaxGuests]       = useState("");
+  const [meetingPoint, setMeetingPoint] = useState("");
+  const [notes, setNotes]               = useState("");
+  const [languages, setLanguages]       = useState([]);
+  const [channels, setChannels]         = useState([]);
+  const [errs, setErrs]                 = useState({});
+  const [saved, setSaved]               = useState(false);
 
   useEffect(() => {
     if (orig) {
       setName(orig.name || "");
-      setCategory(orig.category || "Kültür & Tarih");
-      setDuration(orig.duration || 1);
-      setDesc(orig.description || "");
-      setStatus(orig.status || "Aktif");
-      setPricingType(orig.pricingType || "flat");
-      setFlatPrice(orig.flatPrice || 0);
+      setCategory(orig.category || "cultural");
+      setDescription(orig.description || "");
+      // Never auto-populate from the legacy duration_days fallback here —
+      // that would silently write a fabricated "X gün" into duration_text
+      // the moment this tour is next saved. The field starts blank for a
+      // tour that has no duration_text yet; the header preview below still
+      // falls back to orig.duration (via tourDurationLabel) for display.
+      setDurationText(orig.durationText || "");
+      setBasePrice(orig.basePrice ? String(orig.basePrice) : "");
       setCurrency(orig.currency || "EUR");
+      setStatus(orig.status || "Aktif");
+      // Existing tours predating this migration have tour_type/maxGuests/
+      // meetingPoint/languages/channels all NULL/empty — that is not
+      // corrupted data, it renders as the same empty/unspecified state a
+      // brand-new tour starts in, never an error.
+      setTourType(orig.tourType || []);
+      setMaxGuests(orig.maxGuests ? String(orig.maxGuests) : "");
+      setMeetingPoint(orig.meetingPoint || "");
+      setNotes(orig.notes || "");
+      setLanguages(orig.languages || []);
+      setChannels((orig.channels||[]).map(c => ({
+        sourceId: c.sourceId, externalProductId: c.externalProductId,
+        price: c.price!=null ? String(c.price) : "", currency: c.currency || "EUR",
+        isActive: c.isActive, listingUrl: c.listingUrl,
+      })));
     }
   }, [orig?.id]);
 
@@ -9084,69 +8558,27 @@ function TourDetailPage({ tourId, onBack }) {
   if (tdError)   return <ErrorState message={tdError} onRetry={()=>{}}/>;
   if (!orig)     return <NotFound404 onBack={onBack}/>;
 
-  const [tiers,    setTiers]    = useState(orig?.tiers||{1:180,2:240,3:300,4:360,5:420,6:480,7:520,8:560});
-  const [included, setIncluded] = useState((orig?.included||[]).map(l=>({label:l,on:true})));
-  const [excluded, setExcluded] = useState(orig?.excluded||[]);
-  const [ops,      setOps]      = useState(orig?.ops||[]);
-  const [paxPreview, setPaxPreview] = useState(4);
-
-  const sym = currency==="TRY"?"₺":"€";
-  const previewTour = {...orig, name, category, duration, pricingType, flatPrice, tiers, currency};
-
   async function handleSave() {
-    const errs = validate({
-      name:{ required:"Tur adı zorunludur", minLen:2 },
-    }, { name });
-    if (Object.keys(errs).length) { showToast(errs.name || "Form hatası"); return; }
-    const { error } = await mutTour("update", orig.id, {
-      name, category, duration: parseInt(duration)||1,
-      description: desc, status, pricingType,
-      flatPrice: parseFloat(flatPrice)||0, currency,
+    const e = validate({ name: { required:"Tur adı zorunludur", minLen:2 } }, { name });
+    if (maxGuests && (isNaN(parseInt(maxGuests)) || parseInt(maxGuests) <= 0)) {
+      e.maxGuests = "Maksimum misafir 0'dan büyük olmalıdır.";
+    }
+    setErrs(e);
+    if (Object.keys(e).length) { showToast(Object.values(e)[0]); return; }
+    const { data, error } = await mutTour("update", orig.id, {
+      name, category, description, durationText: durationText || null,
+      basePrice: basePrice ? parseFloat(basePrice) : 0, currency, status,
+      tourType, maxGuests: maxGuests || null, meetingPoint, notes,
+      languages, channels,
     });
     if (error) { showToast("Kaydedilemedi: " + error); return; }
-    setSaved(true);
-    showToast("Tur kaydedildi ✓");
-    setTimeout(() => setSaved(false), 2400);
-  }
-
-  const CATEGORIES = Object.keys(TOUR_CATEGORY_CFG);
-  const CURRENCIES = ["EUR","USD","TRY","GBP"];
-
-  function Field({ label, children }) {
-    return (
-      <div style={{marginBottom:16}}>
-        <div style={{fontSize:10.5, fontWeight:600, color:C.textFaint, textTransform:"uppercase", letterSpacing:"0.09em", fontFamily:"'DM Sans',sans-serif", marginBottom:6}}>{label}</div>
-        {children}
-      </div>
-    );
-  }
-  function TInput({ value, onChange, placeholder, type="text" }) {
-    const [foc,setFoc]=useState(false);
-    return (
-      <input type={type} value={value} onChange={e=>onChange(e.target.value)}
-        placeholder={placeholder}
-        onFocus={()=>setFoc(true)} onBlur={()=>setFoc(false)}
-        style={{
-          width:"100%", padding:"9px 12px", boxSizing:"border-box",
-          border:`1px solid ${foc?C.gold:C.border}`, borderRadius:7,
-          background:C.ivory, fontSize:13, color:C.text,
-          fontFamily:"'DM Sans',sans-serif", outline:"none",
-          boxShadow:foc?`0 0 0 3px ${C.gold}18`:"none",
-          transition:"border-color .15s, box-shadow .15s",
-        }}/>
-    );
-  }
-  function TSelect({ value, onChange, options }) {
-    return (
-      <select value={value} onChange={e=>onChange(e.target.value)} style={{
-        width:"100%", padding:"9px 12px", boxSizing:"border-box",
-        border:`1px solid ${C.border}`, borderRadius:7,
-        background:C.ivory, fontSize:13, color:C.text,
-        fontFamily:"'DM Sans',sans-serif", outline:"none", cursor:"pointer",
-      }}>
-        {options.map(o=><option key={o}>{o}</option>)}
-      </select>
-    );
+    if (data?._syncWarning) {
+      showToast("Kaydedildi, ancak " + data._syncWarning);
+    } else {
+      setSaved(true);
+      showToast("Tur kaydedildi ✓");
+      setTimeout(() => setSaved(false), 2400);
+    }
   }
 
   return (
@@ -9156,11 +8588,11 @@ function TourDetailPage({ tourId, onBack }) {
       <div style={{
         background:C.white, border:`1px solid ${C.border}`, borderRadius:12,
         padding:"15px 22px",
-        display:"flex", alignItems:"center", justifyContent:"space-between", gap:16,
+        display:"flex", alignItems:"center", justifyContent:"space-between", gap:16, flexWrap:"wrap",
       }}>
-        <div style={{display:"flex", alignItems:"center", gap:14}}>
+        <div style={{display:"flex", alignItems:"center", gap:14, minWidth:0}}>
           <button onClick={onBack} style={{
-            display:"flex", alignItems:"center", gap:6,
+            display:"flex", alignItems:"center", gap:6, flexShrink:0,
             background:C.ivory, border:`1px solid ${C.border}`,
             borderRadius:7, padding:"6px 12px", cursor:"pointer",
             color:C.textMid, fontFamily:"'DM Sans',sans-serif", fontSize:12.5,
@@ -9171,37 +8603,17 @@ function TourDetailPage({ tourId, onBack }) {
             <URIc d="M15 18l-6-6 6-6" size={13} sw={2}/>
             Turlar
           </button>
-          <div style={{width:1, height:20, background:C.borderLight}}/>
-          <span style={{fontSize:12, color:C.textFaint, fontFamily:"'DM Mono',monospace", background:C.ivory, border:`1px solid ${C.borderLight}`, padding:"3px 8px", borderRadius:5}}>{orig.id}</span>
-          <div>
-            <div style={{fontSize:16, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif", lineHeight:1.2}}>{name}</div>
-            <div style={{fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:2}}>{category} · {duration}</div>
+          <div style={{width:1, height:20, background:C.borderLight, flexShrink:0}}/>
+          <span style={{fontSize:12, color:C.textFaint, fontFamily:"'DM Mono',monospace", background:C.ivory, border:`1px solid ${C.borderLight}`, padding:"3px 8px", borderRadius:5, flexShrink:0}}>{orig.id}</span>
+          <div style={{minWidth:0}}>
+            <div style={{fontSize:16, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif", lineHeight:1.2, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{name}</div>
+            <div style={{fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:2}}>
+              {TOUR_CATEGORY_LABEL[category] || category} · {tourDurationLabel({ durationText, duration: orig?.duration }) || "Süre belirtilmemiş"}
+            </div>
           </div>
         </div>
-        <div style={{display:"flex", alignItems:"center", gap:8, flexShrink:0}}>
+        <div style={{display:"flex", alignItems:"center", gap:10, flexShrink:0}}>
           <TourStatusBadge status={status}/>
-          <div style={{width:1, height:20, background:C.borderLight}}/>
-          {}
-          {[
-            { label:"Önizle",          icon:"M15 12a3 3 0 11-6 0 3 3 0 016 0z M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" },
-            { label:"Teklifte Kullan", icon:"M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z M14 2v6h6 M16 13H8" },
-            { label:"Arşivle",         icon:"M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" },
-          ].map((a,i)=>(
-            <button key={i} style={{
-              display:"flex", alignItems:"center", gap:6,
-              padding:"7px 13px", borderRadius:7,
-              border:`1px solid ${C.border}`, background:C.white,
-              cursor:"pointer", color:C.textMid,
-              fontFamily:"'DM Sans',sans-serif", fontSize:12.5,
-              transition:"background .1s",
-            }}
-              onMouseEnter={e=>{ e.currentTarget.style.background=C.ivory; e.currentTarget.style.color=C.text; }}
-              onMouseLeave={e=>{ e.currentTarget.style.background=C.white; e.currentTarget.style.color=C.textMid; }}
-            >
-              <URIc d={a.icon} size={13} sw={1.7}/>
-              {a.label}
-            </button>
-          ))}
           <button onClick={handleSave} style={{
             display:"flex", alignItems:"center", gap:7,
             padding:"8px 18px", borderRadius:7,
@@ -9217,256 +8629,37 @@ function TourDetailPage({ tourId, onBack }) {
       </div>
 
       {}
-      <div style={{display:"grid", gridTemplateColumns: window.innerWidth < 768 ? "1fr" : "1fr 340px", gap:20, alignItems:"start"}}>
+      <div style={{display:"grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 300px", gap:20, alignItems:"start"}}>
 
         {}
-        <div style={{display:"flex", flexDirection:"column", gap:18}}>
-
-          {}
-          <div style={{background:C.white, border:`1px solid ${C.border}`, borderRadius:12, overflow:"hidden"}}>
-            <div style={{padding:"13px 20px", background:C.ivory, borderBottom:`1px solid ${C.borderLight}`, display:"flex", alignItems:"center", gap:8}}>
-              <div style={{width:22, height:22, borderRadius:"50%", background:C.navy, display:"flex", alignItems:"center", justifyContent:"center"}}>
-                <span style={{fontSize:11, fontWeight:700, color:C.goldLight, fontFamily:"'DM Sans',sans-serif"}}>1</span>
-              </div>
-              <span style={{fontSize:13.5, fontWeight:600, color:C.text, fontFamily:"'Playfair Display',serif"}}>Genel Bilgiler</span>
-            </div>
-            <div style={{padding:"20px"}}>
-              <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:14, marginBottom:14}}>
-                <Field label="Tur Adı"><TInput value={name} onChange={setName} placeholder="Tur adı"/></Field>
-                <Field label="Kategori"><TSelect value={category} onChange={setCategory} options={CATEGORIES}/></Field>
-                <Field label="Süre"><TInput value={duration} onChange={setDuration} placeholder="8 Saat"/></Field>
-                <Field label="Durum">
-                  <div style={{display:"flex", gap:8}}>
-                    {["Aktif","Taslak","Arşiv"].map(s=>{
-                      const m = TOUR_STATUS_CFG[s];
-                      const on = status===s;
-                      return (
-                        <button key={s} onClick={()=>setStatus(s)} style={{
-                          flex:1, padding:"8px 0", borderRadius:7, cursor:"pointer",
-                          border: on?`1.5px solid ${m.color}`:`1px solid ${C.border}`,
-                          background: on?m.bg:C.white,
-                          color: on?m.color:C.textMid,
-                          fontFamily:"'DM Sans',sans-serif", fontSize:13, fontWeight:on?600:400,
-                          transition:"all .12s",
-                        }}>{s}</button>
-                      );
-                    })}
-                  </div>
-                </Field>
-              </div>
-              <Field label="Kısa Açıklama">
-                <textarea value={desc} onChange={e=>setDesc(e.target.value)} rows={3} style={{
-                  width:"100%", padding:"9px 12px", boxSizing:"border-box",
-                  border:`1px solid ${C.border}`, borderRadius:7,
-                  background:C.ivory, fontSize:13, color:C.text,
-                  fontFamily:"'DM Sans',sans-serif", outline:"none", resize:"vertical", lineHeight:1.6,
-                }}/>
-              </Field>
-            </div>
-          </div>
-
-          {}
-          <div style={{background:C.white, border:`1px solid ${C.border}`, borderRadius:12, overflow:"hidden"}}>
-            <div style={{padding:"13px 20px", background:C.ivory, borderBottom:`1px solid ${C.borderLight}`, display:"flex", alignItems:"center", gap:8}}>
-              <div style={{width:22, height:22, borderRadius:"50%", background:C.navy, display:"flex", alignItems:"center", justifyContent:"center"}}>
-                <span style={{fontSize:11, fontWeight:700, color:C.goldLight, fontFamily:"'DM Sans',sans-serif"}}>2</span>
-              </div>
-              <span style={{fontSize:13.5, fontWeight:600, color:C.text, fontFamily:"'Playfair Display',serif"}}>Fiyatlandırma</span>
-            </div>
-            <div style={{padding:"20px"}}>
-              {}
-              <div style={{display:"flex", gap:10, marginBottom:20}}>
-                {[
-                  {k:"Kişi Bazlı", icon:"M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2 M23 21v-2a4 4 0 00-3-3.87 M16 3.13a4 4 0 010 7.75"},
-                  {k:"Sabit Fiyat",icon:"M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 11h.01M12 11h.01M15 11h.01M9 7h6m0 10v-3m-3 3h.01"},
-                ].map(({k,icon})=>{
-                  const on = pricingType===k;
-                  return (
-                    <button key={k} onClick={()=>setPricingType(k)} style={{
-                      flex:1, padding:"12px 16px", borderRadius:9, cursor:"pointer",
-                      border: on?`1.5px solid ${C.gold}`:`1px solid ${C.border}`,
-                      background: on?C.goldPale:C.white,
-                      display:"flex", flexDirection:"column", alignItems:"center", gap:7,
-                      transition:"all .12s",
-                    }}>
-                      <URIc d={icon} size={20} sw={1.5} color={on?C.gold:C.textFaint}/>
-                      <span style={{fontSize:13, fontWeight:on?600:400, color:on?C.gold:C.textMid, fontFamily:"'DM Sans',sans-serif"}}>{k}</span>
-                    </button>
-                  );
-                })}
-              </div>
-
-              {}
-              <div style={{marginBottom:16}}>
-                <div style={{fontSize:10.5, fontWeight:600, color:C.textFaint, textTransform:"uppercase", letterSpacing:"0.09em", fontFamily:"'DM Sans',sans-serif", marginBottom:6}}>Para Birimi</div>
-                <div style={{display:"flex", gap:8}}>
-                  {CURRENCIES.map(cur=>(
-                    <button key={cur} onClick={()=>setCurrency(cur)} style={{
-                      padding:"7px 16px", borderRadius:7, cursor:"pointer",
-                      border: cur===currency?`1.5px solid ${C.gold}`:`1px solid ${C.border}`,
-                      background: cur===currency?C.goldPale:C.white,
-                      color: cur===currency?C.gold:C.textMid,
-                      fontSize:13, fontWeight:cur===currency?600:400,
-                      fontFamily:"'DM Sans',sans-serif", transition:"all .12s",
-                    }}>{cur}</button>
-                  ))}
-                </div>
-              </div>
-
-              {pricingType==="Sabit Fiyat" ? (
-                <div>
-                  <div style={{fontSize:10.5, fontWeight:600, color:C.textFaint, textTransform:"uppercase", letterSpacing:"0.09em", fontFamily:"'DM Sans',sans-serif", marginBottom:6}}>Sabit Fiyat</div>
-                  <div style={{position:"relative", maxWidth:200}}>
-                    <span style={{position:"absolute", left:12, top:"50%", transform:"translateY(-50%)", color:C.textFaint, fontSize:14, pointerEvents:"none"}}>{sym}</span>
-                    <input type="number" value={flatPrice} onChange={e=>setFlatPrice(Number(e.target.value))} style={{
-                      width:"100%", padding:"10px 12px 10px 28px", boxSizing:"border-box",
-                      border:`1px solid ${C.border}`, borderRadius:7,
-                      background:C.ivory, fontSize:16, fontWeight:700, color:C.text,
-                      fontFamily:"'Playfair Display',serif", outline:"none",
-                    }}/>
-                  </div>
-                </div>
-              ) : (
-                <div>
-                  <div style={{fontSize:10.5, fontWeight:600, color:C.textFaint, textTransform:"uppercase", letterSpacing:"0.09em", fontFamily:"'DM Sans',sans-serif", marginBottom:8}}>Kişi Bazlı Fiyat Tablosu</div>
-                  <div className="rsp-stat-grid" style={{display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:8}}>
-                    {Object.entries(tiers).map(([n,p])=>(
-                      <div key={n} style={{
-                        background:C.ivory, borderRadius:8, padding:"10px 12px",
-                        border:`1px solid ${C.borderLight}`,
-                        textAlign:"center",
-                      }}>
-                        <div style={{fontSize:11, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginBottom:5}}>{n} kişi</div>
-                        <div style={{position:"relative"}}>
-                          <span style={{position:"absolute", left:6, top:"50%", transform:"translateY(-50%)", color:C.textFaint, fontSize:11, pointerEvents:"none"}}>{sym}</span>
-                          <input type="number" value={p}
-                            onChange={e=>setTiers(prev=>({...prev,[n]:Number(e.target.value)}))}
-                            style={{
-                              width:"100%", padding:"5px 6px 5px 18px", boxSizing:"border-box",
-                              border:`1px solid ${C.border}`, borderRadius:5,
-                              background:C.white, fontSize:14, fontWeight:700, color:C.gold,
-                              fontFamily:"'Playfair Display',serif", outline:"none", textAlign:"center",
-                            }}/>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {}
-          <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:18}}>
-            {[
-              {n:"3", title:"Dahil Olanlar",    items:included, setItems:setIncluded, accent:C.green},
-              {n:"4", title:"Dahil Olmayanlar", items:excluded,  setItems:setExcluded, accent:C.red},
-            ].map(sec=>(
-              <div key={sec.n} style={{background:C.white, border:`1px solid ${C.border}`, borderRadius:12, overflow:"hidden"}}>
-                <div style={{padding:"13px 20px", background:C.ivory, borderBottom:`1px solid ${C.borderLight}`, display:"flex", alignItems:"center", gap:8}}>
-                  <div style={{width:22, height:22, borderRadius:"50%", background:C.navy, display:"flex", alignItems:"center", justifyContent:"center"}}>
-                    <span style={{fontSize:11, fontWeight:700, color:C.goldLight, fontFamily:"'DM Sans',sans-serif"}}>{sec.n}</span>
-                  </div>
-                  <span style={{fontSize:13.5, fontWeight:600, color:C.text, fontFamily:"'Playfair Display',serif"}}>{sec.title}</span>
-                </div>
-                <div style={{padding:"16px 20px"}}>
-                  <TourChecklist items={sec.items} setItems={sec.setItems} accent={sec.accent}/>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          {}
-          <div style={{background:C.white, border:`1px solid ${C.border}`, borderRadius:12, overflow:"hidden"}}>
-            <div style={{padding:"13px 20px", background:C.ivory, borderBottom:`1px solid ${C.borderLight}`, display:"flex", alignItems:"center", gap:8}}>
-              <div style={{width:22, height:22, borderRadius:"50%", background:C.navy, display:"flex", alignItems:"center", justifyContent:"center"}}>
-                <span style={{fontSize:11, fontWeight:700, color:C.goldLight, fontFamily:"'DM Sans',sans-serif"}}>5</span>
-              </div>
-              <span style={{fontSize:13.5, fontWeight:600, color:C.text, fontFamily:"'Playfair Display',serif"}}>Operasyon Ayarları</span>
-            </div>
-            <div style={{padding:"20px"}}>
-              <div style={{display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:12, marginBottom:16}}>
-                {[
-                  {k:"pickup", label:"Pickup Gerekli", icon:"M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z M12 10a1 1 0 100-2 1 1 0 000 2z"},
-                  {k:"vehicle", label:"Araç Gerekli",  icon:"M9 17a2 2 0 11-4 0 2 2 0 014 0zM19 17a2 2 0 11-4 0 2 2 0 014 0z M13 17H9m4 0h2m2-5H3M5 12V5h14v7"},
-                  {k:"guide",  label:"Rehber Gerekli", icon:"M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2 M23 21v-2a4 4 0 00-3-3.87 M16 3.13a4 4 0 010 7.75"},
-                ].map(o=>{
-                  const on = ops[o.k];
-                  return (
-                    <div key={o.k}
-                      onClick={()=>setOps(prev=>({...prev,[o.k]:!prev[o.k]}))}
-                      style={{
-                        padding:"12px 14px", borderRadius:9, cursor:"pointer",
-                        border: on?`1.5px solid ${C.navy}`:`1px solid ${C.border}`,
-                        background: on?`rgba(27,45,79,0.06)`:C.white,
-                        display:"flex", flexDirection:"column", alignItems:"center", gap:6,
-                        transition:"all .12s",
-                      }}>
-                      <URIc d={o.icon} size={20} sw={1.5} color={on?C.navy:C.textFaint}/>
-                      <span style={{fontSize:12.5, fontWeight:on?600:400, color:on?C.navy:C.textMid, fontFamily:"'DM Sans',sans-serif", textAlign:"center"}}>{o.label}</span>
-                      <div style={{
-                        width:32, height:18, borderRadius:99, position:"relative",
-                        background: on?C.navy:C.borderLight, transition:"background .15s",
-                      }}>
-                        <div style={{
-                          width:14, height:14, borderRadius:"50%", background:C.white,
-                          position:"absolute", top:2, left: on?16:2,
-                          transition:"left .15s", boxShadow:"0 1px 3px rgba(0,0,0,0.2)",
-                        }}/>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-              <div>
-                <div style={{fontSize:10.5, fontWeight:600, color:C.textFaint, textTransform:"uppercase", letterSpacing:"0.09em", fontFamily:"'DM Sans',sans-serif", marginBottom:6}}>Varsayılan Notlar</div>
-                <textarea value={ops.defaultNotes} onChange={e=>setOps(p=>({...p,defaultNotes:e.target.value}))} rows={2} style={{
-                  width:"100%", padding:"9px 12px", boxSizing:"border-box",
-                  border:`1px solid ${C.border}`, borderRadius:7,
-                  background:C.ivory, fontSize:13, color:C.text,
-                  fontFamily:"'DM Sans',sans-serif", outline:"none", resize:"vertical", lineHeight:1.6,
-                }}/>
-              </div>
-            </div>
-          </div>
+        <div style={{background:C.white, border:`1px solid ${C.border}`, borderRadius:12, padding: isMobile ? "18px 16px" : "22px 24px"}}>
+          <TourFormFields
+            name={name} setName={setName} category={category} setCategory={setCategory}
+            description={description} setDescription={setDescription}
+            durationText={durationText} setDurationText={setDurationText}
+            basePrice={basePrice} setBasePrice={setBasePrice} currency={currency} setCurrency={setCurrency}
+            status={status} setStatus={setStatus}
+            tourType={tourType} setTourType={setTourType}
+            maxGuests={maxGuests} setMaxGuests={setMaxGuests}
+            meetingPoint={meetingPoint} setMeetingPoint={setMeetingPoint}
+            notes={notes} setNotes={setNotes}
+            languages={languages} setLanguages={setLanguages}
+            channels={channels} setChannels={setChannels}
+            errors={errs}
+          />
         </div>
 
         {}
-        <div style={{position:"sticky", top:20, display:"flex", flexDirection:"column", gap:16}}>
-          {}
-          <div style={{background:C.white, border:`1px solid ${C.border}`, borderRadius:12, padding:"16px 18px"}}>
-            <div style={{fontSize:11, fontWeight:600, color:C.textFaint, textTransform:"uppercase", letterSpacing:"0.09em", fontFamily:"'DM Sans',sans-serif", marginBottom:10}}>
-              6. Teklif Önizleme
-            </div>
-            <div style={{marginBottom:12}}>
-              <div style={{fontSize:12, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", marginBottom:6}}>Kişi sayısı seç:</div>
-              <div style={{display:"flex", gap:6, flexWrap:"wrap"}}>
-                {[1,2,3,4,5,6,7,8].map(n=>(
-                  <button key={n} onClick={()=>setPaxPreview(n)} style={{
-                    width:34, height:32, borderRadius:6, cursor:"pointer",
-                    border: n===paxPreview?`1.5px solid ${C.gold}`:`1px solid ${C.border}`,
-                    background: n===paxPreview?C.goldPale:C.white,
-                    color: n===paxPreview?C.gold:C.textMid,
-                    fontSize:13, fontWeight:n===paxPreview?700:400,
-                    fontFamily:"'DM Sans',sans-serif", transition:"all .12s",
-                  }}>{n}</button>
-                ))}
-              </div>
-            </div>
-            <TourQuotePreview tour={previewTour} paxCount={paxPreview} incItems={included}/>
-          </div>
-
-          {}
+        <div style={{position: isMobile ? "static" : "sticky", top:20, display:"flex", flexDirection:"column", gap:16}}>
           <div style={{background:C.white, border:`1px solid ${C.border}`, borderRadius:12, overflow:"hidden"}}>
             <div style={{padding:"13px 18px", background:C.ivory, borderBottom:`1px solid ${C.borderLight}`}}>
-              <span style={{fontSize:11, fontWeight:600, color:C.textFaint, textTransform:"uppercase", letterSpacing:"0.09em", fontFamily:"'DM Sans',sans-serif"}}>Tur İstatistikleri</span>
+              <span style={{fontSize:11, fontWeight:600, color:C.textFaint, textTransform:"uppercase", letterSpacing:"0.09em", fontFamily:"'DM Sans',sans-serif"}}>Tur Bilgileri</span>
             </div>
             <div style={{padding:"4px 0"}}>
               {[
-                { label:"Toplam Kullanım", val:`${orig.usageCount} teklif/rezervasyon` },
-                { label:"Son Güncelleme",  val:orig.updatedAt },
-                { label:"Fiyatlandırma",   val:pricingType },
-                { label:"Para Birimi",     val:currency },
+                { label:"Oluşturulma",    val:orig.createdAt || "—" },
+                { label:"Son Güncelleme", val:orig.updatedAt || "—" },
+                { label:"Fiyatlandırma",  val:TOUR_PRICING_TYPE_LABEL[orig.pricingType] || orig.pricingType || "—" },
               ].map((r,i,arr)=>(
                 <div key={i} style={{
                   display:"flex", justifyContent:"space-between", alignItems:"center",
@@ -9479,6 +8672,28 @@ function TourDetailPage({ tourId, onBack }) {
               ))}
             </div>
           </div>
+
+          {}
+          {orig.channels?.length > 0 && (
+            <div style={{background:C.white, border:`1px solid ${C.border}`, borderRadius:12, overflow:"hidden"}}>
+              <div style={{padding:"13px 18px", background:C.ivory, borderBottom:`1px solid ${C.borderLight}`}}>
+                <span style={{fontSize:11, fontWeight:600, color:C.textFaint, textTransform:"uppercase", letterSpacing:"0.09em", fontFamily:"'DM Sans',sans-serif"}}>Yayında</span>
+              </div>
+              <div style={{padding:"12px 18px", display:"flex", flexDirection:"column", gap:8}}>
+                {orig.channels.filter(c=>c.isActive).map(c=>(
+                  <div key={c.id} style={{display:"flex", alignItems:"center", justifyContent:"space-between", gap:8}}>
+                    <span style={{fontSize:12.5, color:C.text, fontFamily:"'DM Sans',sans-serif", fontWeight:500}}>{c.sourceName || "—"}</span>
+                    <span style={{fontSize:12, color:C.gold, fontFamily:"'DM Sans',sans-serif", fontWeight:600}}>
+                      {c.price!=null ? `${c.currency==='TRY'?'₺':c.currency==='USD'?'$':'€'}${c.price}` : "Baz fiyat"}
+                    </span>
+                  </div>
+                ))}
+                {orig.channels.filter(c=>c.isActive).length===0 && (
+                  <div style={{fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>Aktif satış kanalı yok.</div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -9497,14 +8712,21 @@ function ToursPage({ onSelect }) {
   const allTours = repoTours ?? (AppConfig.useSupabase ? [] : MOCK_TOURS);
   const filtered = allTours.filter(t => {
     const tabOk  = activeTab==="Tümü" || t.status===activeTab;
+    const catLabel = TOUR_CATEGORY_LABEL[t.category] || t.category || '';
+    const q = search.toLowerCase();
     const srchOk = !search ||
-      t.name.toLowerCase().includes(search.toLowerCase()) ||
-      t.category.toLowerCase().includes(search.toLowerCase());
+      t.name.toLowerCase().includes(q) ||
+      catLabel.toLowerCase().includes(q) ||
+      tourLanguageNames(t).some(n => n.toLowerCase().includes(q)) ||
+      tourPlatformNames(t).some(n => n.toLowerCase().includes(q));
     return tabOk && srchOk;
   });
 
   const counts = TABS.reduce((acc,t)=>({...acc, [t]: t==="Tümü"?allTours.length:allTours.filter(x=>x.status===t).length}),{});
-  const activeRevenue = allTours.filter(t=>t.status==="Aktif").reduce((s,t)=>s+(t.usageCount||0),0);
+  // usage_count doesn't exist in the schema (dead field, removed from
+  // mapTourFromDB) — the real, simple fact available instead is how many
+  // active sales-channel listings exist across the catalog.
+  const activeChannelCount = allTours.reduce((s,t)=>s+((t.channels||[]).filter(c=>c.isActive).length), 0);
 
   return (
     <>
@@ -9529,7 +8751,7 @@ function ToursPage({ onSelect }) {
               <URIc d="M21 21l-4.35-4.35 M17 11A6 6 0 105 11a6 6 0 0012 0z" size={14} sw={1.8}/>
             </span>
             <input type="text" value={search} onChange={e=>setSearch(e.target.value)}
-              placeholder="Tur adı veya kategori ara…"
+              placeholder="Tur adı, kategori, dil veya platform ara…"
               style={{
                 paddingLeft:32, paddingRight:12, paddingTop:8, paddingBottom:8,
                 border:`1px solid ${C.border}`, borderRadius:8,
@@ -9563,7 +8785,7 @@ function ToursPage({ onSelect }) {
           { label:"Toplam Tur",      val:allTours.length,                              icon:"M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z M9 22V12h6v10", color:C.text,  bg:C.ivoryDark },
           { label:"Aktif Tur",       val:allTours.filter(t=>t.status==="Aktif").length,icon:"M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11", color:C.green, bg:C.greenBg },
           { label:"Taslak",          val:allTours.filter(t=>t.status==="Taslak").length,icon:"M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z", color:C.amber, bg:C.amberBg },
-          { label:"Toplam Kullanım", val:`${activeRevenue} kez`,                         icon:"M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01", color:C.blue,  bg:C.blueBg },
+          { label:"Yayındaki Kanal", val:activeChannelCount,                            icon:"M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01", color:C.blue,  bg:C.blueBg },
         ].map((k,i)=>(
           <div key={i} style={{
             background:C.white, border:`1px solid ${C.border}`, borderRadius:12,
@@ -9626,7 +8848,7 @@ function ToursPage({ onSelect }) {
             <table className="rsp-table" style={{width:"100%", borderCollapse:"collapse"}}>
               <thead>
                 <tr style={{borderBottom:`1px solid ${C.border}`, background:C.ivory}}>
-                  {["Tur Adı","Kategori","Süre","Fiyatlandırma","Başlangıç Fiyatı","Kullanım","Durum","Son Güncelleme",""].map((h,i)=>(
+                  {["Tur Adı","Dil","Platform","Kategori","Süre","Başlangıç Fiyatı","Durum","Son Güncelleme",""].map((h,i)=>(
                     <th key={i} style={{
                       padding: i===0?"11px 16px 11px 22px":"11px 12px",
                       textAlign:"left", fontSize:10.5, fontWeight:600,
@@ -9654,29 +8876,28 @@ function ToursPage({ onSelect }) {
                       </td>
                       {}
                       <td style={{padding:"14px 12px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle"}}>
+                        <InlineNameSummary items={tourLanguageNames(tour)} emptyLabel="Belirtilmemiş"/>
+                      </td>
+                      {}
+                      <td style={{padding:"14px 12px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle"}}>
+                        <InlineNameSummary items={tourPlatformNames(tour)} emptyLabel="Direkt / Belirtilmemiş"/>
+                      </td>
+                      {}
+                      <td style={{padding:"14px 12px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle"}}>
                         <TourCatPill category={tour.category}/>
                       </td>
                       {}
                       <td style={{padding:"14px 12px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle"}}>
                         <div style={{display:"flex", alignItems:"center", gap:6, color:C.textMid}}>
                           <URIc d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" size={13} sw={1.5} color={C.textFaint}/>
-                          <span style={{fontSize:13, fontFamily:"'DM Sans',sans-serif"}}>{tour.duration}</span>
+                          <span style={{fontSize:13, fontFamily:"'DM Sans',sans-serif"}}>{tourDurationLabel(tour) || "—"}</span>
                         </div>
-                      </td>
-                      {}
-                      <td style={{padding:"14px 12px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle"}}>
-                        <span style={{fontSize:12.5, color:C.textMid, fontFamily:"'DM Sans',sans-serif"}}>{tour.pricingType}</span>
                       </td>
                       {}
                       <td style={{padding:"14px 12px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle"}}>
                         <div style={{fontSize:15, fontWeight:700, color:C.gold, fontFamily:"'Playfair Display',serif"}}>
                           {sym}{tour.basePrice}
-                          {tour.pricingType==="Kişi Bazlı" && <span style={{fontSize:11, fontWeight:400, color:C.textFaint}}>/kişi</span>}
                         </div>
-                      </td>
-                      {}
-                      <td style={{padding:"14px 12px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle"}}>
-                        <span style={{fontSize:13, color:C.textMid, fontFamily:"'DM Sans',sans-serif"}}>{tour.usageCount}×</span>
                       </td>
                       {}
                       <td style={{padding:"14px 12px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle"}}>
@@ -9704,9 +8925,13 @@ function ToursPage({ onSelect }) {
                     <div style={{fontSize:14,fontWeight:600,color:C.text,fontFamily:"'DM Sans',sans-serif"}}>{tour.name}</div>
                     <span style={{fontSize:11,padding:"2px 7px",borderRadius:99,color:tscm.color,background:tscm.bg,fontFamily:"'DM Sans',sans-serif",fontWeight:500,flexShrink:0}}>{tour.status}</span>
                   </div>
-                  <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
-                    <span style={{fontSize:12,color:C.textMuted,fontFamily:"'DM Sans',sans-serif"}}>{tour.category} · {tour.duration}</span>
-                    <span style={{fontSize:13,fontWeight:700,color:C.gold,fontFamily:"'Playfair Display',serif"}}>{sym}{tour.basePrice}{tour.pricingType==="Kişi Bazlı"?"/kişi":""}</span>
+                  <div style={{display:"flex",gap:10,flexWrap:"wrap",marginBottom:6}}>
+                    <span style={{fontSize:12,color:C.textMuted,fontFamily:"'DM Sans',sans-serif"}}>{TOUR_CATEGORY_LABEL[tour.category]||tour.category} · {tourDurationLabel(tour) || "—"}</span>
+                    <span style={{fontSize:13,fontWeight:700,color:C.gold,fontFamily:"'Playfair Display',serif"}}>{sym}{tour.basePrice}</span>
+                  </div>
+                  <div style={{display:"flex",flexDirection:"column",gap:3}}>
+                    <InlineNameSummary items={tourLanguageNames(tour)} emptyLabel="Belirtilmemiş"/>
+                    <InlineNameSummary items={tourPlatformNames(tour)} emptyLabel="Direkt / Belirtilmemiş"/>
                   </div>
                 </MobileCard>
               );
@@ -9719,6 +8944,824 @@ function ToursPage({ onSelect }) {
       </div>
     </div>
     </>
+  );
+}
+
+// Rehberlerimiz (guide management) — real Supabase-backed module. Backed by
+// public.guides / public.guide_languages / public.guide_payments (migration
+// applied) via SupabaseGuideRepo / SupabaseGuidePaymentRepo above. No mock
+// arrays, no localStorage — every list, KPI and detail value here is
+// derived from useRepo("guide"/"reservation"/"guidePayment", "getAll").
+
+const GUIDE_STATUS_CFG = {
+  "Aktif":         { color:"#2E7D52", bg:"#EBF5EF", dot:"#2E7D52" },
+  "Müsait Değil":  { color:"#B8860B", bg:"#FBF3DE", dot:"#B8860B" },
+  "Pasif":         { color:"#6B7280", bg:"#F3F4F6", dot:"#9CA3AF" },
+};
+function GuideStatusBadge({ status }) {
+  const m = GUIDE_STATUS_CFG[status] || {};
+  return (
+    <span style={{
+      display:"inline-flex", alignItems:"center", gap:5,
+      padding:"4px 10px", borderRadius:99, fontSize:11.5, fontWeight:500,
+      color:m.color, background:m.bg, fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap",
+    }}>
+      <span style={{width:6, height:6, borderRadius:"50%", background:m.dot||m.color}}/>
+      {status}
+    </span>
+  );
+}
+
+// Multi-select language picker — writes/reads {code,name} pairs so callers
+// can persist directly into guide_languages (language_code + language_name)
+// without a second lookup. Options come from the canonical LANGUAGES dataset.
+function FMultiSelect({ value, onChange, options, placeholder, error }) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState("");
+  const ref = useRef(null);
+  useEffect(() => {
+    function onDoc(e){ if(ref.current && !ref.current.contains(e.target)) setOpen(false); }
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, []);
+  const selected = value || [];
+  const selectedCodes = new Set(selected.map(v=>v.code));
+  function toggle(code, name) {
+    if (selectedCodes.has(code)) onChange(selected.filter(v=>v.code!==code));
+    else onChange([...selected, { code, name }]);
+  }
+  const filteredOptions = options.filter(([,name]) => name.toLowerCase().includes(q.toLowerCase()));
+  return (
+    <div ref={ref} style={{position:"relative"}}>
+      <div onClick={()=>setOpen(o=>!o)} style={{
+        minHeight:40, width:"100%", boxSizing:"border-box", padding:"6px 10px",
+        borderRadius:T.radiusSm, border:`1.5px solid ${error?C.red:C.border}`, background:C.white,
+        cursor:"pointer", display:"flex", flexWrap:"wrap", gap:6, alignItems:"center",
+      }}>
+        {selected.length===0 && <span style={{fontSize:13.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", padding:"4px 2px"}}>{placeholder||"Seçiniz…"}</span>}
+        {selected.map(v=>(
+          <span key={v.code} style={{
+            display:"inline-flex", alignItems:"center", gap:5,
+            padding:"4px 9px", borderRadius:99, background:C.ivoryDark,
+            color:C.navy, fontSize:12, fontFamily:"'DM Sans',sans-serif", fontWeight:500,
+          }}>
+            {v.name}
+            <span onClick={(e)=>{ e.stopPropagation(); toggle(v.code,v.name); }}
+              style={{cursor:"pointer", opacity:.55, fontSize:14, lineHeight:1}}>×</span>
+          </span>
+        ))}
+      </div>
+      {open && (
+        <div style={{
+          position:"absolute", top:"calc(100% + 4px)", left:0, right:0, zIndex:30,
+          background:C.white, border:`1px solid ${C.border}`, borderRadius:T.radiusSm,
+          boxShadow:"0 10px 28px rgba(13,27,62,0.18)", maxHeight:260, display:"flex", flexDirection:"column",
+        }}>
+          <input autoFocus value={q} onChange={e=>setQ(e.target.value)} placeholder="Dil ara…"
+            style={{
+              margin:6, padding:"7px 10px", border:`1px solid ${C.borderLight}`, borderRadius:6,
+              fontSize:12.5, fontFamily:"'DM Sans',sans-serif", outline:"none", background:C.ivory,
+            }}/>
+          <div style={{overflowY:"auto", padding:"0 6px 6px"}}>
+            {filteredOptions.map(([code,name])=>(
+              <label key={code} style={{
+                display:"flex", alignItems:"center", gap:8, padding:"7px 8px", borderRadius:6,
+                cursor:"pointer", fontSize:13, fontFamily:"'DM Sans',sans-serif", color:C.text,
+              }}
+                onMouseEnter={e=>e.currentTarget.style.background=C.ivory}
+                onMouseLeave={e=>e.currentTarget.style.background="transparent"}
+              >
+                <input type="checkbox" checked={selectedCodes.has(code)} onChange={()=>toggle(code,name)} style={{accentColor:C.navy}}/>
+                {name}
+              </label>
+            ))}
+            {filteredOptions.length===0 && (
+              <div style={{padding:"10px 8px", fontSize:12.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>Sonuç yok.</div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AddGuideModal({ onClose, guide }) {
+  const isEdit = !!guide;
+  const { mutate, mutating } = useRepoMutation("guide");
+  const [name, setName]             = useState(guide?.name || "");
+  const [phone, setPhone]           = useState(guide?.phone || "");
+  const [email, setEmail]           = useState(guide?.email || "");
+  const [nationality, setNationality] = useState(guide?.nationality || "Türkiye");
+  const [languages, setLanguages]   = useState(guide?.languages || []);
+  const [licenseNumber, setLicenseNumber] = useState(guide?.licenseNumber || "");
+  const [licenseNotes, setLicenseNotes]   = useState(guide?.licenseNotes || "");
+  const [region, setRegion]         = useState(guide?.region || "");
+  const [status, setStatus]         = useState(guide?.status || "Aktif");
+  const [notes, setNotes]           = useState(guide?.notes || "");
+  const [errors, setErrors]         = useState({});
+
+  async function handleSubmit() {
+    const errs = validate({
+      name:  { required:"Ad soyad zorunludur." },
+      phone: { phone:true },
+      email: { email:true },
+    }, { name, phone, email });
+    if (Object.keys(errs).length) { setErrors(errs); return; }
+    const payload = {
+      name, phone, email, nationality, languages,
+      licenseNumber, licenseNotes, region, status, notes,
+    };
+    const { error } = isEdit ? await mutate("update", guide.id, payload) : await mutate("create", payload);
+    if (error) { setErrors({ name: error }); return; }
+    onClose();
+  }
+
+  return (
+    <Modal title={isEdit ? "Rehberi Düzenle" : "Yeni Rehber Ekle"} onClose={onClose}
+      onSubmit={handleSubmit} submitLabel={mutating ? "Kaydediliyor…" : "Kaydet"} wide>
+      <FGrid cols={2}>
+        <FRow label="Ad Soyad" required error={errors.name}>
+          <FText value={name} onChange={setName} placeholder="Ahmet Yıldız" error={errors.name}/>
+        </FRow>
+        <FRow label="Telefon" error={errors.phone}>
+          <FText value={phone} onChange={setPhone} placeholder="+90 5xx xxx xx xx" error={errors.phone}/>
+        </FRow>
+        <FRow label="E-posta" error={errors.email}>
+          <FText value={email} onChange={setEmail} type="email" placeholder="rehber@desetour.com" error={errors.email}/>
+        </FRow>
+        <FRow label="Uyruk">
+          <FSelect value={nationality} onChange={setNationality} options={COUNTRY_OPTIONS.map(c=>[c.name,`${c.flag} ${c.name}`])}/>
+        </FRow>
+      </FGrid>
+      <FRow label="Diller" hint="Konuştuğu diller — guide_languages tablosuna ilişkisel olarak kaydedilir." full>
+        <FMultiSelect value={languages} onChange={setLanguages} options={LANGUAGES} placeholder="Dil seçiniz…"/>
+      </FRow>
+      <FGrid cols={2}>
+        <FRow label="Lisans Numarası">
+          <FText value={licenseNumber} onChange={setLicenseNumber} placeholder="IST-2024-0001"/>
+        </FRow>
+        <FRow label="Bölge">
+          <FText value={region} onChange={setRegion} placeholder="İstanbul"/>
+        </FRow>
+        <FRow label="Lisans Bilgisi">
+          <FText value={licenseNotes} onChange={setLicenseNotes} placeholder="A Sınıfı Profesyonel Turist Rehberi"/>
+        </FRow>
+        <FRow label="Durum">
+          <FSelect value={status} onChange={setStatus} options={["Aktif","Müsait Değil","Pasif"]}/>
+        </FRow>
+      </FGrid>
+      <FRow label="Notlar" full>
+        <FTextArea value={notes} onChange={setNotes} rows={3} placeholder="Uzmanlık alanı, tercih edilen tur tipleri, diğer notlar…"/>
+      </FRow>
+    </Modal>
+  );
+}
+
+function GuidesPage({ onSelect }) {
+  const { isMobile } = useBreakpoint();
+  const { data:repoGuides, loading, error, reload }   = useRepo("guide", "getAll");
+  const { data:repoRes }                              = useRepo("reservation", "getAll");
+  const { data:repoGP }                                = useRepo("guidePayment", "getAll");
+  const [showAdd, setShowAdd]     = useState(false);
+  const [search, setSearch]       = useState("");
+  const [statusFilter, setStatusFilter] = useState("Tümü");
+  const [langFilter, setLangFilter]     = useState("Tümü");
+
+  const guides = repoGuides || [];
+  const reservations = repoRes || [];
+  const guidePayments = repoGP || [];
+  const todayISO = _TODAY_ISO;
+
+  const statsByGuide = useMemo(() => {
+    const map = {};
+    guides.forEach(g => { map[g.id] = { totalTours:0, upcoming:null, totalPaidEur:0, todayTour:false }; });
+    reservations.forEach(r => {
+      if (!r.guideId || !map[r.guideId] || r.opStatus === "İptal") return;
+      const s = map[r.guideId];
+      s.totalTours++;
+      const ci = r.checkIn || "";
+      if (ci === todayISO) s.todayTour = true;
+      if (ci && ci >= todayISO && (!s.upcoming || ci < s.upcoming.checkIn)) {
+        s.upcoming = { checkIn:ci, tour:r.tour, resId:r.id };
+      }
+    });
+    guidePayments.forEach(p => {
+      if (!p.guideId || !map[p.guideId] || p.status === "İptal" || p.currency !== "EUR") return;
+      map[p.guideId].totalPaidEur += (p.amount||0);
+    });
+    return map;
+  }, [guides, reservations, guidePayments]);
+
+  const filtered = guides.filter(g => {
+    const stOk = statusFilter === "Tümü" || g.status === statusFilter;
+    const langOk = langFilter === "Tümü" || (g.languageNames||[]).includes(langFilter);
+    const srchOk = !search ||
+      g.name.toLowerCase().includes(search.toLowerCase()) ||
+      (g.phone||"").includes(search) ||
+      (g.email||"").toLowerCase().includes(search.toLowerCase()) ||
+      (g.licenseNumber||"").toLowerCase().includes(search.toLowerCase());
+    return stOk && langOk && srchOk;
+  });
+
+  const totalGuides  = guides.length;
+  const activeGuides = guides.filter(g=>g.status==="Aktif").length;
+  const onDutyToday  = guides.filter(g=>statsByGuide[g.id]?.todayTour).length;
+  const thisMonthPrefix = `${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,"0")}`;
+  const monthPaidEur = guidePayments
+    .filter(p => p.status !== "İptal" && p.currency === "EUR" && (p.paymentDate||"").startsWith(thisMonthPrefix))
+    .reduce((s,p)=>s+(p.amount||0), 0);
+
+  const availableLanguages = Array.from(new Set(guides.flatMap(g=>g.languageNames||[]))).sort((a,b)=>a.localeCompare(b,'tr'));
+
+  return (
+    <>
+    {showAdd && <AddGuideModal onClose={()=>{ setShowAdd(false); reload&&reload(); }}/>}
+    <div style={{display:"flex", flexDirection:"column", gap:20}}>
+
+      <div className="page-header" style={{
+        background:C.white, border:`1px solid ${C.border}`, borderRadius:12,
+        padding:"20px 24px", display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:20,
+      }}>
+        <div>
+          <h1 style={{margin:0, fontSize:24, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif", marginBottom:5}}>Rehberlerimiz</h1>
+          <p style={{margin:0, fontSize:13.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif"}}>
+            Operasyonel rehber ağınız — turlara atanan rehberler, dilleri ve ödemeleri.
+          </p>
+        </div>
+        <div className="page-header-actions" style={{display:"flex", alignItems:"center", gap:10, flexShrink:0}}>
+          <div style={{position:"relative"}}>
+            <span style={{position:"absolute", left:10, top:"50%", transform:"translateY(-50%)", color:C.textFaint, pointerEvents:"none"}}>
+              <URIc d="M21 21l-4.35-4.35 M17 11A6 6 0 105 11a6 6 0 0012 0z" size={14} sw={1.8}/>
+            </span>
+            <input type="text" value={search} onChange={e=>setSearch(e.target.value)}
+              placeholder="Ad, telefon, e-posta veya lisans no ara…"
+              style={{
+                paddingLeft:32, paddingRight:12, paddingTop:8, paddingBottom:8,
+                border:`1px solid ${C.border}`, borderRadius:8, background:C.ivory,
+                fontSize:13, color:C.text, fontFamily:"'DM Sans',sans-serif", outline:"none",
+                width:"min(260px,45vw)", transition:"border-color .15s, box-shadow .15s",
+              }}
+              onFocus={e=>{ e.target.style.borderColor=C.gold; e.target.style.boxShadow=`0 0 0 3px ${C.gold}20`; }}
+              onBlur={e=>{ e.target.style.borderColor=C.border; e.target.style.boxShadow="none"; }}
+            />
+          </div>
+          <button style={{
+            display:"flex", alignItems:"center", gap:7, padding:"9px 16px", borderRadius:8,
+            border:"none", background:C.navy, cursor:"pointer", color:C.white,
+            fontFamily:"'DM Sans',sans-serif", fontSize:13, fontWeight:500,
+          }}
+            onMouseEnter={e=>e.currentTarget.style.background=C.navyHover}
+            onMouseLeave={e=>e.currentTarget.style.background=C.navy}
+            onClick={()=>setShowAdd(true)}
+          >
+            <URIc d="M12 5v14M5 12h14" size={14} sw={2.5} color="#fff"/>
+            Yeni Rehber Ekle
+          </button>
+        </div>
+      </div>
+
+      <div className="rsp-stat-grid" style={{display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:14}}>
+        {[
+          { label:"Toplam Rehber",        val:totalGuides,  icon:"M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2 M23 21v-2a4 4 0 00-3-3.87 M16 3.13a4 4 0 010 7.75", color:C.text,  bg:C.ivoryDark },
+          { label:"Aktif Rehber",         val:activeGuides, icon:"M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11", color:C.green, bg:C.greenBg },
+          { label:"Bugün Görevli",        val:onDutyToday,  icon:"M8 2v4M16 2v4M3 10h18M21 8a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2h14a2 2 0 002-2V8z", color:C.amber, bg:C.amberBg },
+          { label:"Bu Ay Rehber Ödemeleri", val:`€${monthPaidEur.toLocaleString("tr-TR")}`, icon:"M12 2v20M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6", color:C.gold, bg:C.goldPale },
+        ].map((k,i)=>(
+          <div key={i} style={{
+            background:C.white, border:`1px solid ${C.border}`, borderRadius:12,
+            padding:"18px 20px", display:"flex", alignItems:"center", gap:14,
+          }}>
+            <div style={{width:40, height:40, borderRadius:10, flexShrink:0, background:k.bg, display:"flex", alignItems:"center", justifyContent:"center"}}>
+              <URIc d={k.icon} size={18} sw={1.6} color={k.color}/>
+            </div>
+            <div>
+              <div style={{fontSize:24, fontWeight:700, color:k.color, fontFamily:"'Playfair Display',serif", lineHeight:1, marginBottom:3}}>{k.val}</div>
+              <div style={{fontSize:12, color:C.textMuted, fontFamily:"'DM Sans',sans-serif"}}>{k.label}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{background:C.white, border:`1px solid ${C.border}`, borderRadius:12, overflow:"hidden"}}>
+        <div style={{display:"flex", alignItems:"center", gap:10, borderBottom:`1px solid ${C.borderLight}`, padding:"12px 20px", flexWrap:"wrap"}}>
+          <SSelect value={statusFilter} onChange={setStatusFilter} options={["Tümü","Aktif","Müsait Değil","Pasif"]}/>
+          <SSelect value={langFilter} onChange={setLangFilter} options={["Tümü", ...availableLanguages]}/>
+          <div style={{marginLeft:"auto", fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>{filtered.length} rehber</div>
+        </div>
+
+        {loading ? (
+          <LoadingState label="Rehberler yükleniyor…"/>
+        ) : error ? (
+          <div style={{padding:"40px 24px", textAlign:"center", color:C.red, fontFamily:"'DM Sans',sans-serif", fontSize:13}}>Rehberler yüklenemedi: {error}</div>
+        ) : filtered.length===0 ? (
+          <div style={{padding:"60px 40px", textAlign:"center"}}>
+            <div style={{fontSize:36, opacity:.2, marginBottom:12}}>🧭</div>
+            <div style={{fontSize:15, fontWeight:600, color:C.text, fontFamily:"'Playfair Display',serif", marginBottom:6}}>Rehber bulunamadı.</div>
+          </div>
+        ) : (
+          <>
+          <table className="rsp-table" style={{width:"100%", borderCollapse:"collapse"}}>
+            <thead>
+              <tr style={{borderBottom:`1px solid ${C.border}`, background:C.ivory}}>
+                {["Rehber","Diller","Telefon","Yaklaşan Tur","Toplam Tur","Toplam Ödeme","Durum",""].map((h,i)=>(
+                  <th key={i} style={{
+                    padding: i===0?"11px 16px 11px 22px":"11px 12px",
+                    textAlign:"left", fontSize:10.5, fontWeight:600, color:C.textFaint,
+                    fontFamily:"'DM Sans',sans-serif", textTransform:"uppercase", letterSpacing:"0.07em", whiteSpace:"nowrap",
+                  }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((g,i)=>{
+                const isLast = i===filtered.length-1;
+                const s = statsByGuide[g.id] || { totalTours:0, upcoming:null, totalPaidEur:0 };
+                return (
+                  <tr key={g.id} className="dt-row" onClick={()=>onSelect?onSelect(g.id):(NAV_REF.fn&&NAV_REF.fn('/guides/'+g.id))}
+                    style={{background:C.white, cursor:"pointer", opacity:g.status==="Pasif"?0.6:1}}>
+                    <td style={{padding:"14px 16px 14px 22px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle"}}>
+                      <div style={{fontSize:13.5, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif"}}>{g.name}</div>
+                      <div style={{fontSize:11.5, color:C.textFaint, fontFamily:"'DM Mono',monospace", marginTop:2}}>{g.licenseNumber || g.id}</div>
+                    </td>
+                    <td style={{padding:"14px 12px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle"}}>
+                      <div style={{display:"flex", flexWrap:"wrap", gap:4, maxWidth:180}}>
+                        {(g.languageNames||[]).length===0
+                          ? <span style={{fontSize:12, color:C.textFaint}}>—</span>
+                          : g.languageNames.map(l=><Pill key={l} label={l} color={C.navy} bg={C.ivoryDark} small/>)}
+                      </div>
+                    </td>
+                    <td style={{padding:"14px 12px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle"}}>
+                      <span style={{fontSize:13, color:C.textMid, fontFamily:"'DM Sans',sans-serif"}}>{g.phone || "—"}</span>
+                    </td>
+                    <td style={{padding:"14px 12px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle"}}>
+                      {s.upcoming ? (
+                        <span style={{fontSize:12.5, color:C.textMid, fontFamily:"'DM Sans',sans-serif"}}>
+                          {new Date(s.upcoming.checkIn).toLocaleDateString('tr-TR',{day:'2-digit',month:'short'})} · {s.upcoming.tour}
+                        </span>
+                      ) : <span style={{fontSize:12.5, color:C.textFaint}}>—</span>}
+                    </td>
+                    <td style={{padding:"14px 12px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle"}}>
+                      <span style={{fontSize:13, color:C.textMid, fontFamily:"'DM Sans',sans-serif"}}>{s.totalTours}</span>
+                    </td>
+                    <td style={{padding:"14px 12px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle"}}>
+                      <span style={{fontSize:13.5, fontWeight:600, color:C.gold, fontFamily:"'Playfair Display',serif"}}>€{s.totalPaidEur.toLocaleString("tr-TR")}</span>
+                    </td>
+                    <td style={{padding:"14px 12px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle"}}>
+                      <GuideStatusBadge status={g.status}/>
+                    </td>
+                    <td style={{padding:"14px 16px 14px 8px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle"}}>
+                      <URIc d="M9 18l6-6-6-6" size={14} sw={1.8} color={C.textFaint}/>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          <div className="rsp-cards"><MobileCardList items={filtered} renderCard={(g) => {
+            const s = statsByGuide[g.id] || { totalTours:0, totalPaidEur:0 };
+            const scm = GUIDE_STATUS_CFG[g.status]||{color:C.textMuted,bg:C.ivoryDark};
+            return (
+              <MobileCard key={g.id} onClick={()=>onSelect?onSelect(g.id):(NAV_REF.fn&&NAV_REF.fn('/guides/'+g.id))}>
+                <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
+                  <div style={{fontSize:14,fontWeight:600,color:C.text,fontFamily:"'DM Sans',sans-serif"}}>{g.name}</div>
+                  <span style={{fontSize:11,padding:"2px 7px",borderRadius:99,color:scm.color,background:scm.bg,fontFamily:"'DM Sans',sans-serif",fontWeight:500,flexShrink:0}}>{g.status}</span>
+                </div>
+                <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+                  <span style={{fontSize:12,color:C.textMuted,fontFamily:"'DM Sans',sans-serif"}}>{(g.languageNames||[]).join(', ')||'—'}</span>
+                  <span style={{fontSize:12,color:C.textMuted,fontFamily:"'DM Sans',sans-serif"}}>{s.totalTours} tur · €{s.totalPaidEur.toLocaleString('tr-TR')}</span>
+                </div>
+              </MobileCard>
+            );
+          }}/></div>
+          </>
+        )}
+      </div>
+    </div>
+    </>
+  );
+}
+
+function AddGuidePaymentModal({ guideId, onClose }) {
+  const { mutate, mutating } = useRepoMutation("guidePayment");
+  const { data:repoRes }  = useRepo("reservation", "getAll");
+  const { data:repoTours } = useRepo("tour", "getAll");
+  const guideRes = (repoRes||[]).filter(r=>r.guideId===guideId);
+  const [resId, setResId]     = useState("");
+  const [tourId, setTourId]   = useState("");
+  const [amount, setAmount]   = useState("");
+  const [currency, setCurrency] = useState("EUR");
+  const [status, setStatus]   = useState("Bekliyor");
+  const [paymentDate, setPaymentDate] = useState(new Date().toISOString().split('T')[0]);
+  const [notes, setNotes]     = useState("");
+  const [errors, setErrors]   = useState({});
+
+  async function handleSubmit() {
+    const errs = validate({ amount:{ required:"Tutar zorunludur.", number:true } }, { amount });
+    if (Object.keys(errs).length) { setErrors(errs); return; }
+    const { error } = await mutate("create", {
+      guideId, resId: resId||null, tourId: tourId||null,
+      amount: parseFloat(amount), currency, status, paymentDate: paymentDate||null, notes,
+      createdBy: getAuthContext()?.staff?.id || null,
+    });
+    if (error) { setErrors({ amount: error }); return; }
+    onClose();
+  }
+
+  return (
+    <Modal title="Rehber Ödemesi Ekle" onClose={onClose} onSubmit={handleSubmit}
+      submitLabel={mutating ? "Kaydediliyor…" : "Kaydet"}>
+      <FGrid cols={2}>
+        <FRow label="İlgili Rezervasyon" hint="Varsa">
+          <FSelect value={resId} onChange={setResId} options={[["","— Seçiniz —"], ...guideRes.map(r=>[r.id, `${r.resNumber||r.id} · ${r.tour}`])]}/>
+        </FRow>
+        <FRow label="İlgili Tur" hint="Varsa">
+          <FSelect value={tourId} onChange={setTourId} options={[["","— Seçiniz —"], ...(repoTours||[]).map(t=>[t.id,t.name])]}/>
+        </FRow>
+        <FRow label="Tutar" required error={errors.amount}>
+          <FText value={amount} onChange={setAmount} type="number" placeholder="0" error={errors.amount}/>
+        </FRow>
+        <FRow label="Para Birimi">
+          <FSelect value={currency} onChange={setCurrency} options={CURRENCY_OPTIONS}/>
+        </FRow>
+        <FRow label="Durum">
+          <FSelect value={status} onChange={setStatus} options={["Bekliyor","Ödendi","İptal"]}/>
+        </FRow>
+        <FRow label="Ödeme Tarihi">
+          <FText value={paymentDate} onChange={setPaymentDate} type="date"/>
+        </FRow>
+      </FGrid>
+      <FRow label="Notlar" full>
+        <FTextArea value={notes} onChange={setNotes} rows={2} placeholder="Ödeme ile ilgili not…"/>
+      </FRow>
+    </Modal>
+  );
+}
+
+function GuideDetailPage({ guideId, onBack }) {
+  const { isMobile } = useBreakpoint();
+  const _sp = safeParam(guideId);
+  if (_sp.invalid) return (
+    <div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',padding:60,gap:16}}>
+      <div style={{fontSize:36}}>🔍</div>
+      <div style={{fontSize:16,fontWeight:600,color:'#1B2D4F',fontFamily:"'Playfair Display',serif"}}>Kayıt bulunamadı</div>
+      <div style={{fontSize:13,color:'#6B7280'}}>
+        {_sp.reason==='demo' ? 'Bu demo kayıt Supabase modunda görüntülenemez.' : 'Geçersiz kayıt kimliği.'}
+      </div>
+      <button onClick={onBack} style={{padding:'9px 20px',borderRadius:8,border:'none',background:'#1B2D4F',color:'#fff',cursor:'pointer',fontSize:13}}>Geri Dön</button>
+    </div>
+  );
+
+  const { data:guide, loading, error, reload } = useRepo("guide", "getById", guideId);
+  const { data:repoRes }  = useRepo("reservation", "getAll");
+  const { data:repoGP, reload:reloadGP } = useRepo("guidePayment", "getByGuideId", guideId);
+  // Reviews are fetched by reservation_reviews.guide_id directly (the
+  // historical snapshot) — never by joining reservations.guide_id — so this
+  // list, and every metric derived from it below, stays correct even after
+  // a reservation is later reassigned to a different guide.
+  const { data:repoReviews } = useRepo("review", "getByGuide", guideId);
+  const { data:repoCustomers } = useRepo("customer", "getAll");
+  const { sources } = useSources();
+  const [showEdit, setShowEdit]               = useState(false);
+  const [showAddPayment, setShowAddPayment]   = useState(false);
+  const [showAddReview, setShowAddReview]     = useState(false);
+  const canWriteReview = ["Yönetici","Operasyon"].includes(useAuthContext()?.role);
+
+  if (loading) return <LoadingState label="Rehber profili yükleniyor…"/>;
+  if (error)   return <ErrorState message={error} onRetry={()=>{}}/>;
+  if (!guide)  return <div style={{padding:40,textAlign:"center",color:C.textFaint,fontFamily:"'DM Sans',sans-serif"}}>Rehber bulunamadı.</div>;
+
+  const allRes = repoRes || [];
+  const guideRes = allRes.filter(r => r.guideId === guideId);
+  const activeRes = guideRes.filter(r => r.opStatus !== "İptal");
+  const todayISO = _TODAY_ISO;
+  const upcoming = activeRes.filter(r => (r.checkIn||"") >= todayISO).sort((a,b)=>(a.checkIn||"").localeCompare(b.checkIn||""));
+  const past     = activeRes.filter(r => (r.checkIn||"") < todayISO).sort((a,b)=>(b.checkIn||"").localeCompare(a.checkIn||""));
+  const thisMonthPrefix = `${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,"0")}`;
+  const thisMonthTours  = activeRes.filter(r => (r.checkIn||"").startsWith(thisMonthPrefix)).length;
+  const totalGuests     = activeRes.reduce((s,r)=>s+(r.pax||0)+(r.paxChild||0),0);
+
+  const payments        = repoGP || [];
+  const totalPaidEur    = payments.filter(p=>p.status==="Ödendi"  && p.currency==="EUR").reduce((s,p)=>s+(p.amount||0),0);
+  const pendingPaidEur  = payments.filter(p=>p.status==="Bekliyor"&& p.currency==="EUR").reduce((s,p)=>s+(p.amount||0),0);
+
+  const customerMap = new Map();
+  activeRes.forEach(r => {
+    if (!r.customerId) return;
+    if (!customerMap.has(r.customerId)) customerMap.set(r.customerId, { id:r.customerId, name:r.name, tours:0, lastDate:r.checkIn });
+    const c = customerMap.get(r.customerId);
+    c.tours++;
+    if ((r.checkIn||"") > (c.lastDate||"")) c.lastDate = r.checkIn;
+  });
+  const customers = Array.from(customerMap.values()).sort((a,b)=>(b.lastDate||"").localeCompare(a.lastDate||""));
+
+  // Performance summary — precise definitions per spec, computed from real
+  // data only. "Toplam Tur"/"Toplam Misafir" here are deliberately scoped
+  // to COMPLETED reservations only, which is a different (narrower)
+  // definition than the operational "Toplam Tur" KPI above (all active
+  // assigned tours) — the two cards serve different purposes and are kept
+  // separate rather than overloading one metric with two meanings.
+  const completedRes = guideRes.filter(r => r.opStatus === "Tamamlandı");
+  const perfTours  = completedRes.length;
+  const perfGuests = completedRes.reduce((s,r)=>s+(r.pax||0)+(r.paxChild||0),0);
+  const reviews = repoReviews || [];
+  const reviewedTourCount = new Set(reviews.map(rv=>rv.resId).filter(Boolean)).size;
+  const avgRating = reviews.length ? (reviews.reduce((s,rv)=>s+(rv.rating||0),0) / reviews.length) : null;
+  const fiveStarCount = reviews.filter(rv=>rv.rating===5).length;
+
+  const custById = new Map((repoCustomers||[]).map(c=>[c.id,c]));
+  const sourceById = new Map((sources||[]).map(s=>[s.id, s.name||s.label||s.slug]));
+  function resSourceName(r) {
+    const cust = custById.get(r.customerId);
+    return (cust && cust.sourceId) ? (sourceById.get(cust.sourceId) || "") : "";
+  }
+  const reviewsByRes = new Map();
+  reviews.forEach(rv => {
+    if (!rv.resId) return;
+    if (!reviewsByRes.has(rv.resId)) reviewsByRes.set(rv.resId, []);
+    reviewsByRes.get(rv.resId).push(rv);
+  });
+
+  const KPIS = [
+    { label:"Toplam Tur",              val:activeRes.length, icon:"M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z M9 22V12h6v10", color:C.text,  bg:C.ivoryDark },
+    { label:"Toplam Misafir",          val:totalGuests,       icon:"M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2 M23 21v-2a4 4 0 00-3-3.87 M16 3.13a4 4 0 010 7.75", color:C.blue,  bg:C.blueBg },
+    { label:"Bu Ay Tur",               val:thisMonthTours,    icon:"M8 2v4M16 2v4M3 10h18M21 8a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2h14a2 2 0 002-2V8z", color:C.amber, bg:C.amberBg },
+    { label:"Toplam Ödenen",           val:`€${totalPaidEur.toLocaleString("tr-TR")}`, icon:"M22 11.08V12a10 10 0 11-5.93-9.14 M22 4L12 14.01l-3-3", color:C.green, bg:C.greenBg },
+    { label:"Bekleyen Rehber Ödemesi", val:`€${pendingPaidEur.toLocaleString("tr-TR")}`, icon:"M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z", color:C.red, bg:C.redBg },
+  ];
+
+  return (
+    <>
+    {showEdit && <AddGuideModal guide={guide} onClose={()=>{ setShowEdit(false); reload&&reload(); }}/>}
+    {showAddPayment && <AddGuidePaymentModal guideId={guide.id} onClose={()=>{ setShowAddPayment(false); reloadGP&&reloadGP(); }}/>}
+    {showAddReview && <AddEditReviewModal guideId={guide.id} onClose={()=>setShowAddReview(false)}/>}
+    <div style={{display:"flex", flexDirection:"column", gap:20}}>
+
+      <div style={{
+        background:C.white, border:`1px solid ${C.border}`, borderRadius:12,
+        padding: isMobile ? "14px 16px" : "15px 22px",
+        display:"flex", flexDirection: isMobile ? "column" : "row",
+        alignItems: isMobile ? "stretch" : "center",
+        justifyContent:"space-between", gap: isMobile ? 12 : 16,
+      }}>
+        <div style={{display:"flex", alignItems:"center", gap:14, minWidth:0}}>
+          <button onClick={onBack} style={{
+            display:"flex", alignItems:"center", gap:6, flexShrink:0,
+            background:C.ivory, border:`1px solid ${C.border}`,
+            borderRadius:7, padding:"6px 12px", cursor:"pointer",
+            color:C.textMid, fontFamily:"'DM Sans',sans-serif", fontSize:12.5,
+          }}
+            onMouseEnter={e=>e.currentTarget.style.background=C.ivoryDark}
+            onMouseLeave={e=>e.currentTarget.style.background=C.ivory}
+          >
+            <URIc d="M15 18l-6-6 6-6" size={13} sw={2}/>
+            {!isMobile && "Rehberlerimiz"}
+          </button>
+          {!isMobile && <div style={{width:1, height:20, background:C.borderLight, flexShrink:0}}/>}
+          {!isMobile && (
+            <span style={{fontSize:12, color:C.textFaint, fontFamily:"'DM Mono',monospace", background:C.ivory, border:`1px solid ${C.borderLight}`, padding:"3px 8px", borderRadius:5, flexShrink:0}}>{guide.id}</span>
+          )}
+          <div style={{minWidth:0}}>
+            <div style={{fontSize:17, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif", lineHeight:1.2}}>{guide.name}</div>
+            <div style={{fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:2}}>
+              {guide.region || "Bölge belirtilmemiş"} · {(guide.languageNames||[]).join(', ') || "Dil belirtilmemiş"}
+            </div>
+          </div>
+        </div>
+        <div style={{display:"flex", alignItems:"center", gap:10, flexShrink:0}}>
+          <GuideStatusBadge status={guide.status}/>
+          <button onClick={()=>setShowEdit(true)} style={{
+            padding:"8px 16px", borderRadius:8, border:`1px solid ${C.border}`,
+            background:C.white, cursor:"pointer", color:C.text,
+            fontFamily:"'DM Sans',sans-serif", fontSize:12.5, fontWeight:500,
+          }}>Düzenle</button>
+        </div>
+      </div>
+
+      <div className="rsp-stat-grid" style={{display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:14}}>
+        {KPIS.map((k,i)=>(
+          <div key={i} style={{
+            background:C.white, border:`1px solid ${C.border}`, borderRadius:12,
+            padding:"14px 16px", display:"flex", alignItems:"center", gap:12,
+          }}>
+            <div style={{width:36, height:36, borderRadius:9, flexShrink:0, background:k.bg, display:"flex", alignItems:"center", justifyContent:"center"}}>
+              <URIc d={k.icon} size={16} sw={1.6} color={k.color}/>
+            </div>
+            <div>
+              <div style={{fontSize:18, fontWeight:700, color:k.color, fontFamily:"'Playfair Display',serif", lineHeight:1}}>{k.val}</div>
+              <div style={{fontSize:11, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:3}}>{k.label}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="rsp-split" style={{display:"grid", gridTemplateColumns:"1fr 280px", gap:20, alignItems:"start"}}>
+
+        <div style={{display:"flex", flexDirection:"column", gap:18}}>
+
+          <GuideSectionCard title="Performans Özeti">
+            <div style={{display:"grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(5,1fr)", gap:14}}>
+              <PerfStat label="Toplam Tur" value={perfTours}/>
+              <PerfStat label="Toplam Misafir" value={perfGuests}/>
+              <PerfStat label="Değerlendirilen Tur" value={reviewedTourCount}/>
+              <PerfStat label="Ortalama Puan" value={avgRating!=null ? avgRating.toFixed(1) : null} empty="Henüz değerlendirme yok"/>
+              <PerfStat label="5 Yıldızlı Değerlendirme" value={fiveStarCount}/>
+            </div>
+          </GuideSectionCard>
+
+          <GuideSectionCard title={`Yaklaşan Turlar (${upcoming.length})`}>
+            {upcoming.length===0 ? <EmptyRow text="Yaklaşan tur yok."/> : upcoming.map(r=>(
+              <ResRow key={r.id} r={r}/>
+            ))}
+          </GuideSectionCard>
+
+          <GuideSectionCard title={`Tur Geçmişi (${past.length})`}>
+            {past.length===0 ? <EmptyRow text="Geçmiş tur yok."/> : past.map(r=>(
+              <GuideTourHistoryRow key={r.id} r={r} sourceName={resSourceName(r)} reviews={reviewsByRes.get(r.id)}/>
+            ))}
+          </GuideSectionCard>
+
+          <GuideSectionCard title={`Değerlendirmeler (${reviews.length})`} action={
+            canWriteReview ? (
+              <button onClick={()=>setShowAddReview(true)} style={{
+                padding:"6px 12px", borderRadius:7, border:"none", background:C.navy,
+                color:C.white, fontSize:12, fontWeight:500, fontFamily:"'DM Sans',sans-serif", cursor:"pointer",
+              }}>+ Değerlendirme Ekle</button>
+            ) : null
+          }>
+            {reviews.length===0 ? <EmptyRow text="Henüz değerlendirme yok."/> : (
+              [...reviews].sort((a,b)=>(b.reviewDate||"").localeCompare(a.reviewDate||"")).map(rv=>(
+                <div key={rv.id} style={{padding:"12px 0", borderBottom:`1px solid ${C.borderLight}`}}>
+                  <div style={{display:"flex", alignItems:"center", justifyContent:"space-between", gap:8, marginBottom:4}}>
+                    <RatingStars rating={rv.rating} size={13}/>
+                    <span style={{fontSize:11, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>{rv.reviewDate || "—"}</span>
+                  </div>
+                  <div style={{fontSize:12, color:C.textMid, fontFamily:"'DM Sans',sans-serif", marginBottom:3}}>
+                    {rv.tourName || "—"}{rv.customerName ? ` · ${rv.customerName}` : ""}{rv.sourceName ? ` · ${rv.sourceName}` : ""}
+                  </div>
+                  {rv.reviewText && <div style={{fontSize:12.5, color:C.textMid, fontFamily:"'DM Sans',sans-serif", lineHeight:1.55}}>{rv.reviewText}</div>}
+                </div>
+              ))
+            )}
+          </GuideSectionCard>
+
+          <GuideSectionCard title={`Misafir Geçmişi (${customers.length})`}>
+            {customers.length===0 ? <EmptyRow text="Bu rehber henüz bir misafire atanmadı."/> : customers.map(c=>(
+              <div key={c.id} style={{display:"flex", alignItems:"center", justifyContent:"space-between", padding:"10px 0", borderBottom:`1px solid ${C.borderLight}`}}>
+                <div>
+                  <div style={{fontSize:13, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif"}}>{c.name || "—"}</div>
+                  <div style={{fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:1}}>{c.tours} tur</div>
+                </div>
+                <IDLink id={c.id} type="customer"/>
+              </div>
+            ))}
+          </GuideSectionCard>
+
+          <GuideSectionCard title={`Ödeme Geçmişi (${payments.length})`} action={
+            <button onClick={()=>setShowAddPayment(true)} style={{
+              padding:"6px 12px", borderRadius:7, border:"none", background:C.navy,
+              color:C.white, fontSize:12, fontWeight:500, fontFamily:"'DM Sans',sans-serif", cursor:"pointer",
+            }}>+ Ödeme Ekle</button>
+          }>
+            {payments.length===0 ? <EmptyRow text="Ödeme kaydı yok."/> : payments.map(p=>(
+              <div key={p.id} style={{display:"flex", alignItems:"center", justifyContent:"space-between", padding:"10px 0", borderBottom:`1px solid ${C.borderLight}`}}>
+                <div>
+                  <div style={{fontSize:13, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif"}}>
+                    {p.currency==="TRY"?"₺":"€"}{p.amount.toLocaleString("tr-TR")}
+                    {p.resRef && <span style={{fontSize:11.5, color:C.textFaint, fontWeight:400, marginLeft:8}}>{p.resRef}</span>}
+                  </div>
+                  <div style={{fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:1}}>
+                    {p.paymentDate ? new Date(p.paymentDate).toLocaleDateString('tr-TR',{day:'2-digit',month:'short',year:'numeric'}) : "Tarih belirtilmemiş"}
+                    {p.notes && ` · ${p.notes}`}
+                  </div>
+                </div>
+                <Pill label={p.status} color={p.status==="Ödendi"?C.green:p.status==="İptal"?C.red:C.amber}
+                  bg={p.status==="Ödendi"?C.greenBg:p.status==="İptal"?C.redBg:C.amberBg}/>
+              </div>
+            ))}
+          </GuideSectionCard>
+
+        </div>
+
+        <div style={{display:"flex", flexDirection:"column", gap:18}}>
+          <GuideSectionCard title="Profil Bilgileri">
+            <GuideInfoRow label="Telefon" value={guide.phone}/>
+            <GuideInfoRow label="E-posta" value={guide.email}/>
+            <GuideInfoRow label="Uyruk"   value={guide.nationality}/>
+            <GuideInfoRow label="Lisans No" value={guide.licenseNumber}/>
+            <GuideInfoRow label="Lisans Bilgisi" value={guide.licenseNotes}/>
+            <GuideInfoRow label="Bölge"   value={guide.region}/>
+            {guide.notes && (
+              <div style={{marginTop:10, padding:"10px 12px", background:C.ivory, borderRadius:8, fontSize:12.5, color:C.textMid, fontFamily:"'DM Sans',sans-serif", lineHeight:1.5}}>
+                {guide.notes}
+              </div>
+            )}
+          </GuideSectionCard>
+
+          <GuideSectionCard title="Diller">
+            {(guide.languageNames||[]).length===0 ? <EmptyRow text="Dil belirtilmemiş."/> : (
+              <div style={{display:"flex", flexWrap:"wrap", gap:6}}>
+                {guide.languageNames.map(l=><Pill key={l} label={l} color={C.navy} bg={C.ivoryDark}/>)}
+              </div>
+            )}
+          </GuideSectionCard>
+        </div>
+
+      </div>
+    </div>
+    </>
+  );
+}
+
+function GuideSectionCard({ title, action, children }) {
+  return (
+    <div style={{background:C.white, border:`1px solid ${C.border}`, borderRadius:12, padding:"16px 18px"}}>
+      <div style={{display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:10}}>
+        <div style={{fontSize:13.5, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif"}}>{title}</div>
+        {action}
+      </div>
+      {children}
+    </div>
+  );
+}
+function EmptyRow({ text }) {
+  return <div style={{padding:"14px 0", fontSize:12.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", textAlign:"center"}}>{text}</div>;
+}
+function GuideInfoRow({ label, value }) {
+  return (
+    <div style={{display:"flex", justifyContent:"space-between", padding:"7px 0", borderBottom:`1px solid ${C.borderLight}`}}>
+      <span style={{fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>{label}</span>
+      <span style={{fontSize:12.5, color:C.text, fontFamily:"'DM Sans',sans-serif", fontWeight:500, textAlign:"right"}}>{value || "—"}</span>
+    </div>
+  );
+}
+function PerfStat({ label, value, empty }) {
+  const isEmpty = value === null || value === undefined;
+  return (
+    <div>
+      <div style={{
+        fontSize: isEmpty ? 12 : 20, fontWeight: isEmpty ? 500 : 700,
+        color: isEmpty ? C.textFaint : C.text,
+        fontFamily: isEmpty ? "'DM Sans',sans-serif" : "'Playfair Display',serif",
+        fontStyle: isEmpty ? "italic" : "normal", lineHeight:1.25,
+      }}>{isEmpty ? (empty || "—") : value}</div>
+      <div style={{fontSize:11, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:4}}>{label}</div>
+    </div>
+  );
+}
+
+// Upgraded tour-history row for GuideDetailPage's "Tur Geçmişi" (real
+// tour_language + booking-source + review data — never derived via
+// reservation_id → reservations.guide_id, only via the review's own
+// guide_id snapshot passed in as `reviews`). Multiple reviews for one
+// reservation are rendered as separate compact star rows, never collapsed.
+function GuideTourHistoryRow({ r, sourceName, reviews }) {
+  const list = reviews || [];
+  return (
+    <div style={{ padding:"12px 0", borderBottom:`1px solid ${C.borderLight}` }}>
+      <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:10 }}>
+        <div style={{minWidth:0, flex:1}}>
+          <div style={{fontSize:13, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{r.tour || "—"}</div>
+          <div style={{fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:1}}>{r.date} · {r.name || "—"} · {r.pax} kişi</div>
+          <div style={{fontSize:11, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:3, display:"flex", gap:10, flexWrap:"wrap"}}>
+            <span>Tur Dili: {r.tourLanguage || "Belirtilmemiş"}</span>
+            <span>Rezervasyon Kaynağı: {sourceName || "—"}</span>
+          </div>
+        </div>
+        <div style={{display:"flex", flexDirection:"column", alignItems:"flex-end", gap:6, flexShrink:0}}>
+          <div style={{display:"flex", alignItems:"center", gap:8}}>
+            <StatusBadge status={r.opStatus}/>
+            <IDLink id={r.id} type="reservation"/>
+          </div>
+          {list.length > 0 ? (
+            <div style={{display:"flex", flexDirection:"column", alignItems:"flex-end", gap:3}}>
+              {list.map(rv => (
+                <div key={rv.id} style={{display:"flex", alignItems:"center", gap:6}}>
+                  <RatingStars rating={rv.rating} size={12}/>
+                  {rv.reviewText && <span style={{fontSize:11, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", maxWidth:160, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{rv.reviewText}</span>}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div style={{fontSize:11, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>Puan: — · Değerlendirme yok</div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ResRow({ r }) {
+  return (
+    <div style={{display:"flex", alignItems:"center", justifyContent:"space-between", padding:"10px 0", borderBottom:`1px solid ${C.borderLight}`, gap:10}}>
+      <div style={{minWidth:0}}>
+        <div style={{fontSize:13, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{r.tour || "—"}</div>
+        <div style={{fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:1}}>{r.date} · {r.name || "—"} · {r.pax} kişi</div>
+      </div>
+      <div style={{display:"flex", alignItems:"center", gap:8, flexShrink:0}}>
+        <StatusBadge status={r.opStatus}/>
+        <IDLink id={r.id} type="reservation"/>
+      </div>
+    </div>
   );
 }
 
@@ -10357,34 +10400,24 @@ function SettingsPage() {
   );
 }
 
-const _COUNTRY_FLAG = {
-  "Avustralya":"🇦🇺","İngiltere":"🇬🇧","ABD":"🇺🇸","Almanya":"🇩🇪","Japonya":"🇯🇵",
-  "İtalya":"🇮🇹","Fransa":"🇫🇷","Türkiye":"🇹🇷","Hollanda":"🇳🇱","İspanya":"🇪🇸",
-  "Kanada":"🇨🇦","Brezilya":"🇧🇷","Diğer":"🌍",
-};
-
-function calculateReportMetrics(period, leads, quotes, reservations, payments, customers, sources) {
-  const _leads   = leads        ?? [];
-  const _quotes  = quotes       ?? [];
+function calculateReportMetrics(period, reservations, payments, customers, sources, guides, guidePayments) {
   const _res     = reservations ?? [];
   const _pays    = payments     ?? [];
   const _custs   = customers    ?? [];
+  const _guides  = guides         ?? [];
+  const _gPays   = guidePayments  ?? [];
   // Source lookup must use the live sources list — DB.sources is mock-only
-  // data with mock ids, so it never matched a real Supabase source_id and
-  // every real lead/quote/reservation fell into "Diğer" regardless of its
-  // actual source.
+  // data with mock ids, so it never matched a real Supabase source_id.
   const _sources = sources && sources.length ? sources : DB.sources;
   const srcName  = (id) => { const s=_sources.find(x=>x.id===id); return s?.name || s?.label || "Diğer"; };
 
-  const fLeads = filterByDateRange(_leads,   "createdAt",  period);
-  const fQuotes= filterByDateRange(_quotes,  "createdAt",  period);
   const fRes   = filterByDateRange(_res,     "checkIn",    period);
   const fPays  = filterByDateRange(_pays,    "createdAt",  period);
 
   const kpi = {
-    leads:        fLeads.length,
-    quotes:       fQuotes.length,
     reservations: fRes.length,
+    confirmed:    fRes.filter(r=>["Onaylandı","Tur Günü","Tamamlandı"].includes(r.opStatus)).length,
+    inProgress:   fRes.filter(r=>r.opStatus==="Tur Günü").length,
     completed:    fRes.filter(r=>r.opStatus==="Tamamlandı").length,
     expectedEur:  fPays.filter(p=>p.currency==="EUR")
                    .reduce((s,p)=>{ const r=getReservationById(p.resId||""); return s+(r?r.total:p.amount); },0),
@@ -10392,28 +10425,20 @@ function calculateReportMetrics(period, leads, quotes, reservations, payments, c
                    .reduce((s,p)=>s+parseFloat(p.amount||0), 0),
   };
 
+  // Source performance now reflects where CUSTOMERS came from (customers
+  // .source_id) and how many reservations/how much revenue followed —
+  // the lead→quote funnel this used to track no longer exists as an
+  // active workflow.
   const sourceMap = {};
-  fLeads.forEach(l => {
-    const src = l.sourceId ? srcName(l.sourceId) : (l.importType === "manual" ? "Manuel" : "Diğer");
-    if (!sourceMap[src]) sourceMap[src] = { source:src, leads:0, quotes:0, reservations:0, revenue:0 };
-    sourceMap[src].leads++;
-  });
-  fQuotes.forEach(q => {
-    const lead = _leads.find(l=>l.id===q.leadId);
-    const src  = lead?.sourceId ? srcName(lead.sourceId) : "Diğer";
-    if (!sourceMap[src]) sourceMap[src] = { source:src, leads:0, quotes:0, reservations:0, revenue:0 };
-    sourceMap[src].quotes++;
-  });
   fRes.forEach(r => {
-    const lead = _leads.find(l=>l.id===r.leadId);
-    const src  = lead?.sourceId ? srcName(lead.sourceId) : "Diğer";
-    if (!sourceMap[src]) sourceMap[src] = { source:src, leads:0, quotes:0, reservations:0, revenue:0 };
+    const cust = _custs.find(c=>c.id===r.customerId);
+    const src  = cust?.sourceId ? srcName(cust.sourceId) : "Diğer";
+    if (!sourceMap[src]) sourceMap[src] = { source:src, reservations:0, revenue:0 };
     sourceMap[src].reservations++;
     sourceMap[src].revenue += parseFloat(r.total||0);
   });
   const sourcesData = Object.values(sourceMap)
-    .map(s => ({ ...s, conversion: s.leads>0 ? Math.round(s.reservations/s.leads*100) : 0 }))
-    .sort((a,b)=>b.leads-a.leads);
+    .sort((a,b)=>b.reservations-a.reservations);
 
   const tourMap = {};
   fRes.forEach(r => {
@@ -10428,24 +10453,20 @@ function calculateReportMetrics(period, leads, quotes, reservations, payments, c
     .sort((a,b)=>b.revenue-a.revenue)
     .slice(0,6);
 
+  // Country analysis is now reservation-based (who's actually booking),
+  // not lead-based (who merely enquired).
   const countryMap = {};
-  fLeads.forEach(l => {
-    const cust = _custs.find(c=>c.id===l.customerId);
-    const country = cust?.country || cust?.nationality || "Diğer";
-    if (!countryMap[country]) countryMap[country] = { country, flag:_COUNTRY_FLAG[country]||"🌍", leads:0, reservations:0, totalQuote:0, count:0 };
-    countryMap[country].leads++;
-  });
   fRes.forEach(r => {
     const cust = _custs.find(c=>c.id===r.customerId);
     const country = cust?.country || cust?.nationality || "Diğer";
-    if (!countryMap[country]) countryMap[country] = { country, flag:_COUNTRY_FLAG[country]||"🌍", leads:0, reservations:0, totalQuote:0, count:0 };
+    if (!countryMap[country]) countryMap[country] = { country, flag:countryFlag(country), reservations:0, totalRevenue:0, count:0 };
     countryMap[country].reservations++;
-    countryMap[country].totalQuote += parseFloat(r.total||0);
+    countryMap[country].totalRevenue += parseFloat(r.total||0);
     countryMap[country].count++;
   });
   const countriesData = Object.values(countryMap)
-    .map(c => ({ ...c, avgQuote: c.count>0 ? Math.round(c.totalQuote/c.count) : 0 }))
-    .sort((a,b)=>b.leads-a.leads)
+    .map(c => ({ ...c, avgRevenue: c.count>0 ? Math.round(c.totalRevenue/c.count) : 0 }))
+    .sort((a,b)=>b.reservations-a.reservations)
     .slice(0,8);
 
   const totalExpected = fPays.filter(p=>p.currency==="EUR")
@@ -10481,8 +10502,30 @@ function calculateReportMetrics(period, leads, quotes, reservations, payments, c
     upcoming:   _res.filter(r=>!["Tamamlandı","İptal"].includes(r.opStatus)).length,
     completed:  _res.filter(r=>r.opStatus==="Tamamlandı").length,
     cancelled:  _res.filter(r=>r.opStatus==="İptal").length,
-    noGuide:    _res.filter(r=>!r.guide&&!["Tamamlandı","İptal"].includes(r.opStatus)).length,
+    noGuide:    _res.filter(r=>!r.guideId&&!r.guide&&!["Tamamlandı","İptal"].includes(r.opStatus)).length,
     noPickup:   _res.filter(r=>!r.pickup&&!["Tamamlandı","İptal"].includes(r.opStatus)).length,
+  };
+
+  // Guide performance — tours/guests per guide within the selected period,
+  // derived purely from reservations.guide_id + guides; never a stored
+  // counter. Payment totals are EUR-only (same convention as the rest of
+  // this report) with a currency-mix note left to the caller.
+  const guideMap = {};
+  fRes.forEach(r => {
+    if (!r.guideId) return;
+    if (!guideMap[r.guideId]) {
+      const g = _guides.find(x=>x.id===r.guideId);
+      guideMap[r.guideId] = { id:r.guideId, name:g?.name||r.assignedGuideName||r.guide||"—", tours:0, guests:0 };
+    }
+    guideMap[r.guideId].tours++;
+    guideMap[r.guideId].guests += parseInt(r.pax||0) + parseInt(r.paxChild||0);
+  });
+  const guidesData = Object.values(guideMap).sort((a,b)=>b.tours-a.tours).slice(0,8);
+
+  const fGPays = filterByDateRange(_gPays, "paymentDate", period);
+  const guidePaymentsData = {
+    paidEur:    fGPays.filter(p=>p.currency==="EUR"&&p.status==="Ödendi").reduce((s,p)=>s+(p.amount||0),0),
+    pendingEur: fGPays.filter(p=>p.currency==="EUR"&&p.status==="Bekliyor").reduce((s,p)=>s+(p.amount||0),0),
   };
 
   return {
@@ -10492,6 +10535,8 @@ function calculateReportMetrics(period, leads, quotes, reservations, payments, c
     countries: countriesData,
     payments: paymentsData,
     ops: opsData,
+    guides: guidesData,
+    guidePayments: guidePaymentsData,
   };
 }
 
@@ -10500,20 +10545,19 @@ function calculateReportMetrics(period, leads, quotes, reservations, payments, c
 // Guarantees ReportsPage always has every field it reads, never fabricates
 // non-zero values, and never crashes.
 const EMPTY_REPORT_METRICS = {
-  kpi: { leads:0, quotes:0, reservations:0, completed:0, expectedEur:0, collectedEur:0 },
+  kpi: { reservations:0, confirmed:0, inProgress:0, completed:0, expectedEur:0, collectedEur:0 },
   sources: [], tours: [], countries: [],
   payments: { expected:0, collected:0, pending:0, partial:0, refunded:0, highValue:[] },
   ops: { upcoming:0, completed:0, cancelled:0, noGuide:0, noPickup:0 },
+  guides: [], guidePayments: { paidEur:0, pendingEur:0 },
 };
 
 function calculateDashboardMetrics(leads, reservations, payments, tasks, reminders) {
   // When Supabase is active, use empty arrays (not DB mock) if data not loaded yet
   // This prevents KPIs briefly showing mock values then disappearing
   const empty = [];
-  const _leads = leads         ?? empty;
   const _res   = reservations  ?? empty;
   const _pays  = payments      ?? empty;
-  const _tasks = tasks         ?? empty;
   const _rems  = reminders     ?? empty;
 
   const today  = _TODAY_STR;
@@ -10521,31 +10565,26 @@ function calculateDashboardMetrics(leads, reservations, payments, tasks, reminde
 
   const todayTours    = _res.filter(r => r.date===today || r.checkIn===todayISO);
   const upcomingRes   = _res.filter(r => !["Tamamlandı","İptal"].includes(r.opStatus));
-  const openLeads     = _leads.filter(l => !["Onaylandı","İptal"].includes(l.status));
   const pendingPays   = _pays.filter(p => ["Bekliyor","Kısmi Ödendi"].includes(p.status));
   const pendingEUR    = pendingPays.filter(p=>p.currency==="EUR")
     .reduce((s,p)=>s+parseFloat(p.amount||0), 0);
-  const highPrioTasks = _tasks.filter(t=>t.status!=="Tamamlandı"&&["Yüksek","Acil"].includes(t.priority));
 
-  const monthStart = `${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,"0")}-01`;
   const monthPays  = filterByDateRange(_pays, "createdAt", "Bu Ay");
   const monthRevEUR = monthPays.filter(p=>p.currency==="EUR")
     .reduce((s,p)=>{ const r=getReservationById(p.resId||""); return s+(r?r.total:parseFloat(p.amount||0)); },0);
 
-  const urgentItems = computeUrgent(_leads, _res, _pays, _tasks, _rems);
+  const urgentItems = computeUrgent(_res, _pays, _rems);
   const recentActivities = DB.activityLogs.slice(-6).reverse();
 
   return {
     todayTours,
     todayTourCount: todayTours.length,
     todayTourPax:   todayTours.reduce((s,r)=>s+parseInt(r.pax||1),0),
-    openLeadsCount: openLeads.length,
     pendingPaysCount: pendingPays.length,
     pendingEUR,
     upcomingRes:    upcomingRes.slice(0,5),
     upcomingCount:  upcomingRes.length,
     monthRevEUR,
-    highPrioTasks:  highPrioTasks.length,
     urgentItems,
     recentActivities,
   };
@@ -10616,36 +10655,37 @@ function ReportsPage() {
   const [period, setPeriod] = useState("Bu Ay");
   const PERIODS = ["Bugün","Bu Hafta","Bu Ay","Son 3 Ay"];
 
-  const { data:rLeads, loading:rLeadsLoading, error:rLeadsError, reload:reloadLeads } = useRepo("lead",        "getAll");
-  const { data:rQuotes }                                                              = useRepo("quote",       "getAll");
   const { data:rRes,   loading:rResLoading,  error:rResError,   reload:reloadRes }   = useRepo("reservation", "getAll");
   const { data:rPays,  loading:rPaysLoading, error:rPaysError,  reload:reloadPays }  = useRepo("payment",     "getAll");
   const { data:rCusts }                                                               = useRepo("customer",    "getAll");
+  const { data:rGuides }                                                              = useRepo("guide",       "getAll");
+  const { data:rGuidePays }                                                           = useRepo("guidePayment","getAll");
   const { sources } = useSources();
-  const isLoading = rLeadsLoading || rResLoading || rPaysLoading;
+  const isLoading = rResLoading || rPaysLoading;
 
   const metrics = useMemo(() => {
     try {
-      return calculateReportMetrics(period, rLeads, rQuotes, rRes, rPays, rCusts, sources) || EMPTY_REPORT_METRICS;
+      return calculateReportMetrics(period, rRes, rPays, rCusts, sources, rGuides, rGuidePays) || EMPTY_REPORT_METRICS;
     } catch (e) {
       console.error("[ReportsPage] calculateReportMetrics failed, showing zero-value report:", e);
       return EMPTY_REPORT_METRICS;
     }
-  }, [period, rLeads, rQuotes, rRes, rPays, rCusts, sources]);
+  }, [period, rRes, rPays, rCusts, sources, rGuides, rGuidePays]);
   const kpi       = metrics.kpi || EMPTY_REPORT_METRICS.kpi;
-  const convRate  = kpi.leads > 0 ? Math.round(kpi.reservations/kpi.leads*100) : 0;
-  const maxLeads  = Math.max(1, ...metrics.sources.map(s=>s.leads));
+  const completionRate = kpi.reservations > 0 ? Math.round(kpi.completed/kpi.reservations*100) : 0;
+  const maxSourceRes = Math.max(1, ...metrics.sources.map(s=>s.reservations));
   const maxRev    = Math.max(1, ...metrics.tours.map(t=>t.revenue));
+  const maxGuideTours = Math.max(1, ...metrics.guides.map(g=>g.tours));
 
   return (
     <div style={{display:"flex", flexDirection:"column", gap:20}}>
 
       {}
       {isLoading  ? <LoadingState label="Rapor verileri yükleniyor…"/> : null}
-      {(rLeadsError || rResError || rPaysError) && (
+      {(rResError || rPaysError) && (
         <ErrorState
           message="Rapor verileri yüklenirken bir hata oluştu."
-          onRetry={()=>{ reloadLeads?.(); reloadRes?.(); reloadPays?.(); }}
+          onRetry={()=>{ reloadRes?.(); reloadPays?.(); }}
         />
       )}
 
@@ -10680,10 +10720,9 @@ function ReportsPage() {
 
       {}
       <div className="rsp-stat-grid-1" style={{display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))", gap:12}}>
-        <RpKpiCard label="Toplam Talep"           value={kpi.leads}                             icon="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"                                                  color={C.blue}  bg={C.blueBg}   sub={`${period} döneminde`}/>
-        <RpKpiCard label="Gönderilen Teklif"      value={kpi.quotes}                            icon="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z M14 2v6h6"                                    color={C.amber} bg={C.amberBg}  sub={`${safePct(kpi.quotes, kpi.leads)} talep → teklif`}/>
-        <RpKpiCard label="Kesinleşen Rezervasyon" value={kpi.reservations}                      icon="M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"                              color={C.green} bg={C.greenBg}  sub={`${kpi.completed} tur tamamlandı`}/>
-        <RpKpiCard label="Dönüşüm Oranı"          value={`%${convRate}`}                        icon="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"                                                                      color={C.navy}  bg={C.ivoryDark} sub="Talep → Rezervasyon"/>
+        <RpKpiCard label="Rezervasyon"             value={kpi.reservations}                      icon="M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"                              color={C.blue}  bg={C.blueBg}   sub={`${period} döneminde`}/>
+        <RpKpiCard label="Onaylanan"               value={kpi.confirmed}                         icon="M20 6L9 17l-5-5"                                                                                     color={C.amber} bg={C.amberBg}  sub={`${safePct(kpi.confirmed, kpi.reservations)} onaylandı`}/>
+        <RpKpiCard label="Tamamlanan Tur"          value={kpi.completed}                         icon="M22 11.08V12a10 10 0 11-5.93-9.14 M22 4L12 14.01l-3-3"                                              color={C.green} bg={C.greenBg}  sub={`${completionRate}% tamamlanma oranı`}/>
         <RpKpiCard label="Beklenen Gelir"          value={`€${kpi.expectedEur.toLocaleString("tr-TR")}`} icon="M12 2v20M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"                                    color={C.gold}  bg={C.goldPale}  sub="EUR bazlı tüm rezervasyonlar" highlight/>
         <RpKpiCard label="Tahsil Edilen Gelir"    value={`€${kpi.collectedEur.toLocaleString("tr-TR")}`} icon="M22 11.08V12a10 10 0 11-5.93-9.14 M22 4L12 14.01l-3-3"                                    color={C.green} bg={C.greenBg}  sub={`${safePct(kpi.collectedEur, kpi.expectedEur)} tahsil edildi`} highlight/>
       </div>
@@ -10695,13 +10734,13 @@ function ReportsPage() {
         <div style={{display:"flex", flexDirection:"column", gap:20}}>
 
           {}
-          <RpSection title="Satış Hunisi" icon="M3 4h13M3 8h9m-9 4h9m5-4v12m0 0l-4-4m4 4l4-4" action={period}>
+          <RpSection title="Operasyon Akışı" icon="M3 4h13M3 8h9m-9 4h9m5-4v12m0 0l-4-4m4 4l4-4" action={period}>
             <div className="rsp-stat-grid" style={{display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:12}}>
               {[
-                { label:"Talep",           val:kpi.leads,        icon:"M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01",                            color:C.blue,  pct:100 },
-                { label:"Teklif",          val:kpi.quotes,       icon:"M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z M14 2v6h6",              color:C.amber, pct:safePctNum(kpi.quotes, kpi.leads) },
-                { label:"Rezervasyon",     val:kpi.reservations, icon:"M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11",         color:"#0E7490",  pct:safePctNum(kpi.reservations, kpi.leads) },
-                { label:"Tamamlanan Tur",  val:kpi.completed,    icon:"M22 11.08V12a10 10 0 11-5.93-9.14 M22 4L12 14.01l-3-3",                         color:C.green, pct:safePctNum(kpi.completed, kpi.leads) },
+                { label:"Rezervasyon",     val:kpi.reservations, icon:"M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11",         color:C.blue,  pct:100 },
+                { label:"Onaylanan",       val:kpi.confirmed,    icon:"M20 6L9 17l-5-5",                                                              color:C.amber, pct:safePctNum(kpi.confirmed, kpi.reservations) },
+                { label:"Tur Günü",        val:kpi.inProgress,   icon:"M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z M9 22V12h6v10",                    color:"#0E7490",  pct:safePctNum(kpi.inProgress, kpi.reservations) },
+                { label:"Tamamlanan Tur",  val:kpi.completed,    icon:"M22 11.08V12a10 10 0 11-5.93-9.14 M22 4L12 14.01l-3-3",                         color:C.green, pct:safePctNum(kpi.completed, kpi.reservations) },
               ].map((step,i)=>(
                 <div key={i} style={{display:"flex", flexDirection:"column", alignItems:"center", gap:10, position:"relative"}}>
                   {}
@@ -10743,12 +10782,12 @@ function ReportsPage() {
           {}
           <RpSection title="Kaynak Performansı" icon="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z">
             {metrics.sources.length === 0 ? (
-              <EmptyState icon="📊" title="Bu dönem için veri yok" subtitle="Seçilen tarih aralığında kaynak bazlı talep bulunmuyor."/>
+              <EmptyState icon="📊" title="Bu dönem için veri yok" subtitle="Seçilen tarih aralığında kaynak bazlı rezervasyon bulunmuyor."/>
             ) : (
             <table className="rsp-table" style={{width:"100%", borderCollapse:"collapse"}}>
               <thead>
                 <tr style={{borderBottom:`1px solid ${C.border}`}}>
-                  {["Kaynak","Talep","Teklif","Rezervasyon","Dönüşüm","Beklenen Gelir","Dağılım"].map((h,i)=>(
+                  {["Kaynak","Rezervasyon","Beklenen Gelir","Dağılım"].map((h,i)=>(
                     <th key={i} style={{
                       padding:"8px 10px", textAlign: i===0?"left":"center",
                       fontSize:10.5, fontWeight:600, color:C.textFaint,
@@ -10766,27 +10805,59 @@ function ReportsPage() {
                       <td style={{padding:"12px 10px", borderBottom:`1px solid ${C.borderLight}`, verticalAlign:"middle"}}>
                         <span style={{fontSize:13.5, fontWeight:500, color:C.text, fontFamily:"'DM Sans',sans-serif"}}>{s.source}</span>
                       </td>
-                      {[s.leads, s.quotes, s.reservations].map((v,j)=>(
-                        <td key={j} style={{padding:"12px 10px", borderBottom:`1px solid ${C.borderLight}`, textAlign:"center", verticalAlign:"middle"}}>
-                          <span style={{fontSize:13.5, fontWeight:600, color:C.text, fontFamily:"'Playfair Display',serif"}}>{v}</span>
-                        </td>
-                      ))}
                       <td style={{padding:"12px 10px", borderBottom:`1px solid ${C.borderLight}`, textAlign:"center", verticalAlign:"middle"}}>
-                        <span style={{
-                          fontSize:12.5, fontWeight:600,
-                          color: s.conversion>=30?C.green:s.conversion>=20?C.amber:C.red,
-                          fontFamily:"'DM Sans',sans-serif",
-                        }}>%{s.conversion}</span>
+                        <span style={{fontSize:13.5, fontWeight:600, color:C.text, fontFamily:"'Playfair Display',serif"}}>{s.reservations}</span>
                       </td>
                       <td style={{padding:"12px 10px", borderBottom:`1px solid ${C.borderLight}`, textAlign:"center", verticalAlign:"middle"}}>
                         <span style={{fontSize:13, fontWeight:600, color:C.gold, fontFamily:"'Playfair Display',serif"}}>€{s.revenue.toLocaleString("tr-TR")}</span>
                       </td>
                       <td style={{padding:"12px 10px", borderBottom:`1px solid ${C.borderLight}`, verticalAlign:"middle", minWidth:80}}>
-                        <MiniBar value={s.leads} max={maxLeads} color={C.navy} height={5}/>
+                        <MiniBar value={s.reservations} max={maxSourceRes} color={C.navy} height={5}/>
                       </td>
                     </tr>
                   );
                 })}
+              </tbody>
+            </table>
+            )}
+          </RpSection>
+
+          {}
+          <RpSection title="Rehber Performansı" icon="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2 M23 21v-2a4 4 0 00-3-3.87 M16 3.13a4 4 0 010 7.75" action={`€${metrics.guidePayments.paidEur.toLocaleString("tr-TR")} ödendi · €${metrics.guidePayments.pendingEur.toLocaleString("tr-TR")} bekliyor`}>
+            {metrics.guides.length === 0 ? (
+              <EmptyState icon="🧭" title="Bu dönem için veri yok" subtitle="Seçilen tarih aralığında rehbere atanmış rezervasyon bulunmuyor."/>
+            ) : (
+            <table className="rsp-table" style={{width:"100%", borderCollapse:"collapse"}}>
+              <thead>
+                <tr style={{borderBottom:`1px solid ${C.border}`}}>
+                  {["Rehber","Tur","Misafir","Dağılım"].map((h,i)=>(
+                    <th key={i} style={{
+                      padding:"8px 10px", textAlign: i===0?"left":"center",
+                      fontSize:10.5, fontWeight:600, color:C.textFaint,
+                      fontFamily:"'DM Sans',sans-serif",
+                      textTransform:"uppercase", letterSpacing:"0.07em",
+                    }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {metrics.guides.map((g,i)=>(
+                  <tr key={g.id} className="dt-row" style={{background:C.white, transition:"background .1s", cursor:"pointer"}}
+                    onClick={()=>{ if(NAV_REF.fn) NAV_REF.fn('/guides/'+g.id); }}>
+                    <td style={{padding:"12px 10px", borderBottom:`1px solid ${C.borderLight}`, verticalAlign:"middle"}}>
+                      <span style={{fontSize:13.5, fontWeight:500, color:C.text, fontFamily:"'DM Sans',sans-serif"}}>{g.name}</span>
+                    </td>
+                    <td style={{padding:"12px 10px", borderBottom:`1px solid ${C.borderLight}`, textAlign:"center", verticalAlign:"middle"}}>
+                      <span style={{fontSize:13.5, fontWeight:600, color:C.text, fontFamily:"'Playfair Display',serif"}}>{g.tours}</span>
+                    </td>
+                    <td style={{padding:"12px 10px", borderBottom:`1px solid ${C.borderLight}`, textAlign:"center", verticalAlign:"middle"}}>
+                      <span style={{fontSize:13, color:C.textMid, fontFamily:"'DM Sans',sans-serif"}}>{g.guests}</span>
+                    </td>
+                    <td style={{padding:"12px 10px", borderBottom:`1px solid ${C.borderLight}`, verticalAlign:"middle", minWidth:80}}>
+                      <MiniBar value={g.tours} max={maxGuideTours} color={C.navy} height={5}/>
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
             )}
@@ -10845,12 +10916,12 @@ function ReportsPage() {
           {}
           <RpSection title="Ülke Analizi" icon="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z">
             {metrics.countries.length === 0 ? (
-              <EmptyState icon="🌍" title="Bu dönem için veri yok" subtitle="Seçilen tarih aralığında ülke bazlı talep bulunmuyor."/>
+              <EmptyState icon="🌍" title="Bu dönem için veri yok" subtitle="Seçilen tarih aralığında ülke bazlı rezervasyon bulunmuyor."/>
             ) : (
             <table style={{width:"100%", borderCollapse:"collapse"}}>
               <thead>
                 <tr style={{borderBottom:`1px solid ${C.border}`}}>
-                  {["Ülke","Talep","Rezervasyon","Ort. Teklif","Pay"].map((h,i)=>(
+                  {["Ülke","Rezervasyon","Ort. Tutar","Pay"].map((h,i)=>(
                     <th key={i} style={{
                       padding:"8px 12px", textAlign:i===0?"left":"center",
                       fontSize:10.5, fontWeight:600, color:C.textFaint,
@@ -10862,7 +10933,7 @@ function ReportsPage() {
               </thead>
               <tbody>
                 {metrics.countries.map((c,i)=>{
-                  const maxLeadsC = Math.max(...metrics.countries.map(x=>x.leads));
+                  const maxResC = Math.max(...metrics.countries.map(x=>x.reservations));
                   const isTop = i===0;
                   return (
                     <tr key={i} className="dt-row"
@@ -10875,16 +10946,13 @@ function ReportsPage() {
                         </div>
                       </td>
                       <td style={{padding:"11px 12px", borderBottom:`1px solid ${C.borderLight}`, textAlign:"center", verticalAlign:"middle"}}>
-                        <span style={{fontSize:14, fontWeight:600, color:C.text, fontFamily:"'Playfair Display',serif"}}>{c.leads}</span>
-                      </td>
-                      <td style={{padding:"11px 12px", borderBottom:`1px solid ${C.borderLight}`, textAlign:"center", verticalAlign:"middle"}}>
                         <span style={{fontSize:14, fontWeight:600, color:C.green, fontFamily:"'Playfair Display',serif"}}>{c.reservations}</span>
                       </td>
                       <td style={{padding:"11px 12px", borderBottom:`1px solid ${C.borderLight}`, textAlign:"center", verticalAlign:"middle"}}>
-                        <span style={{fontSize:13.5, fontWeight:600, color:C.gold, fontFamily:"'Playfair Display',serif"}}>€{c.avgQuote}</span>
+                        <span style={{fontSize:13.5, fontWeight:600, color:C.gold, fontFamily:"'Playfair Display',serif"}}>€{c.avgRevenue}</span>
                       </td>
                       <td style={{padding:"11px 12px", borderBottom:`1px solid ${C.borderLight}`, verticalAlign:"middle", minWidth:80}}>
-                        <MiniBar value={c.leads} max={maxLeadsC} color={C.navy} height={5}/>
+                        <MiniBar value={c.reservations} max={maxResC} color={C.navy} height={5}/>
                       </td>
                     </tr>
                   );
@@ -11023,7 +11091,7 @@ function ReportsPage() {
               {(() => {
                 const topSource  = metrics.sources.length  ? metrics.sources[0]  : null;
                 const topTour    = metrics.tours.length    ? metrics.tours[0]    : null;
-                const topCountry = metrics.countries.length ? [...metrics.countries].sort((a,b)=>b.avgQuote-a.avgQuote)[0] : null;
+                const topCountry = metrics.countries.length ? [...metrics.countries].sort((a,b)=>b.avgRevenue-a.avgRevenue)[0] : null;
                 const pendingCount = metrics.payments.highValue.length;
                 const noGuide = metrics.ops.noGuide;
                 return [
@@ -11032,7 +11100,7 @@ function ReportsPage() {
                   color:C.green, bg:C.greenBg,
                   label:"En Güçlü Kaynak",
                   value: topSource ? topSource.source : "Veri yok",
-                  sub: topSource ? `${topSource.leads} talep · %${topSource.conversion} dönüşüm` : "Bu dönem için veri yok",
+                  sub: topSource ? `${topSource.reservations} rezervasyon · €${topSource.revenue.toLocaleString("tr-TR")}` : "Bu dönem için veri yok",
                 },
                 {
                   icon:"M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z M9 22V12h6v10",
@@ -11045,8 +11113,8 @@ function ReportsPage() {
                   icon:"M12 2v20M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6",
                   color:C.blue, bg:C.blueBg,
                   label:"En Yüksek Ortalama",
-                  value: topCountry ? `${topCountry.country} — €${topCountry.avgQuote}` : "Veri yok",
-                  sub:"Kişi başı ortalama teklif",
+                  value: topCountry ? `${topCountry.country} — €${topCountry.avgRevenue}` : "Veri yok",
+                  sub:"Kişi başı ortalama rezervasyon tutarı",
                 },
                 {
                   icon:"M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z",
@@ -11740,6 +11808,21 @@ function GuestDetailPage({ guestId, onBack, onNavigate }) {
   );
 }
 
+// Real joined source name for a customer (customers.source_id → sources),
+// never a fabricated/inferred value. Supabase-loaded customers carry the
+// joined c.source ({id,name}) from mapCustomerFromDB; mock/local customers
+// only carry c.sourceId — fall back to a DB.sources lookup (mock rows use
+// .label, real Supabase rows use .name) so both render identically. Empty
+// string when unassigned — the caller decides the "Belirtilmemiş" wording.
+function customerSourceName(customer) {
+  if (customer?.source?.name) return customer.source.name;
+  if (customer?.sourceId) {
+    const s = DB.sources.find(x => x.id === customer.sourceId);
+    if (s) return s.label || s.name || '';
+  }
+  return '';
+}
+
 function CustomersPage({ onSelectGuest }) {
   const { isMobile } = useBreakpoint();
   const [showNewGuest, setShowNewGuest] = useState(false);
@@ -11763,11 +11846,13 @@ function CustomersPage({ onSelectGuest }) {
   const allGuests  = _rawGuests.map(c => enrichCustomer(c.id) || c);
   const filtered = allGuests.filter(g => {
     const tabOk  = (tabMap[activeTab]||tabMap["Tümü"])(g);
+    const q = search.toLowerCase();
     const srchOk = !search ||
-      g.name.toLowerCase().includes(search.toLowerCase()) ||
-      g.country.toLowerCase().includes(search.toLowerCase()) ||
-      g.email.toLowerCase().includes(search.toLowerCase()) ||
-      g.phone.includes(search);
+      g.name.toLowerCase().includes(q) ||
+      g.country.toLowerCase().includes(q) ||
+      g.email.toLowerCase().includes(q) ||
+      g.phone.includes(search) ||
+      customerSourceName(g).toLowerCase().includes(q);
     return tabOk && srchOk;
   });
 
@@ -11797,7 +11882,7 @@ function CustomersPage({ onSelectGuest }) {
               <GIc d="M21 21l-4.35-4.35 M17 11A6 6 0 105 11a6 6 0 0012 0z" size={14} sw={1.8}/>
             </span>
             <input type="text" value={search} onChange={e=>setSearch(e.target.value)}
-              placeholder="Misafir adı, ülke, telefon veya email ara…"
+              placeholder="Misafir adı, ülke, kaynak, telefon veya email ara…"
               style={{
                 paddingLeft:32, paddingRight:12, paddingTop:8, paddingBottom:8,
                 border:`1px solid ${C.border}`, borderRadius:8,
@@ -11879,7 +11964,7 @@ function CustomersPage({ onSelectGuest }) {
             <table style={{width:"100%", borderCollapse:"collapse"}}>
               <thead>
                 <tr style={{borderBottom:`1px solid ${C.border}`, background:C.ivory}}>
-                  {["Misafir","Ülke / Dil","İletişim","Talep","Teklif","Rez.","Harcama","Son İletişim","Durum",""].map((h,i)=>(
+                  {["Misafir","Ülke / Dil","Kaynak","İletişim","Rezervasyon","Harcama","Son İletişim","Durum",""].map((h,i)=>(
                     <th key={i} style={{
                       padding: i===0?"11px 16px 11px 22px":"11px 12px",
                       textAlign:"left", fontSize:10.5, fontWeight:600,
@@ -11919,16 +12004,16 @@ function CustomersPage({ onSelectGuest }) {
                       </td>
                       {}
                       <td style={{padding:"14px 12px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle"}}>
+                        {customerSourceName(g) ? (
+                          <span style={{fontSize:12.5, color:C.textMid, fontFamily:"'DM Sans',sans-serif"}}>{customerSourceName(g)}</span>
+                        ) : (
+                          <span style={{fontSize:12.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", fontStyle:"italic"}}>Belirtilmemiş</span>
+                        )}
+                      </td>
+                      {}
+                      <td style={{padding:"14px 12px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle"}}>
                         <div style={{fontSize:12.5, color:C.textMid, fontFamily:"'DM Mono',monospace"}}>{g.phone}</div>
                         <div style={{fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:2}}>{g.email}</div>
-                      </td>
-                      {}
-                      <td style={{padding:"14px 12px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, textAlign:"center", verticalAlign:"middle"}}>
-                        <span style={{fontSize:14, fontWeight:600, color:C.blue, fontFamily:"'Playfair Display',serif"}}>{g.leads}</span>
-                      </td>
-                      {}
-                      <td style={{padding:"14px 12px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, textAlign:"center", verticalAlign:"middle"}}>
-                        <span style={{fontSize:14, fontWeight:600, color:C.amber, fontFamily:"'Playfair Display',serif"}}>{g.quotes}</span>
                       </td>
                       {}
                       <td style={{padding:"14px 12px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, textAlign:"center", verticalAlign:"middle"}}>
@@ -11966,6 +12051,11 @@ function CustomersPage({ onSelectGuest }) {
                     </div>
                     <span style={{fontSize:11,padding:"3px 8px",borderRadius:99,background:C.ivoryDark,color:C.textMid}}>{item.status||"Aktif"}</span>
                   </div>
+                  {customerSourceName(item) ? (
+                    <div style={{fontSize:11.5,color:C.textFaint,marginTop:6,fontFamily:"'DM Sans',sans-serif"}}>Kaynak: {customerSourceName(item)}</div>
+                  ) : (
+                    <div style={{fontSize:11.5,color:C.textFaint,marginTop:6,fontFamily:"'DM Sans',sans-serif",fontStyle:"italic"}}>Kaynak belirtilmemiş</div>
+                  )}
                 </MobileCard>
               )}/></div>
             <div style={{padding:"11px 20px", background:C.ivory, borderTop:`1px solid ${C.borderLight}`}}>
@@ -12304,7 +12394,7 @@ function NewGuestModal({ onClose }) {
   const { isMobile } = useBreakpoint();
   const { getSourceId, sourceOptions } = useSources();
   const [name,setName]=useState(""); const [phone,setPhone]=useState(""); const [email,setEmail]=useState("");
-  const [country,setCountry]=useState("Avustralya"); const [lang,setLang]=useState("İngilizce");
+  const [country,setCountry]=useState("Türkiye"); const [lang,setLang]=useState("Türkçe");
   const [source,setSource]=useState("Website");
   const [notes,setNotes]=useState(""); const [errs,setErrs]=useState({});
   const { mutate:mutCustG, mutating:guestMut } = useRepoMutation("customer");
@@ -12316,7 +12406,7 @@ function NewGuestModal({ onClose }) {
     const { error } = await mutCustG("create", {
       name, phone:phone||"", email:email||"",
       initials:name.split(" ").map(w=>w[0]).join("").slice(0,2).toUpperCase(),
-      flag:"🌍", country, language:lang, sourceId:resolvedSourceId, notes,
+      flag:countryFlag(country), country, language:lang, sourceId:resolvedSourceId, notes,
     });
     if (error) {
       console.error('[NewGuestModal] customer create failed:', error);
@@ -12332,8 +12422,8 @@ function NewGuestModal({ onClose }) {
         <FRow label="Ad Soyad" required error={errs.name}><FText value={name} onChange={setName} placeholder="Sarah Johnson"/></FRow>
         <FRow label="Telefon"><FText value={phone} onChange={setPhone} placeholder="+90 555 000 0000" mono/></FRow>
         <FRow label="E-posta" error={errs.email}><FText value={email} onChange={setEmail} placeholder="email@example.com" type="email"/></FRow>
-        <FRow label="Ülke"><FSelect value={country} onChange={setCountry} options={["Avustralya","ABD","İngiltere","Almanya","Japonya","İtalya","Fransa","Türkiye","Diğer"]}/></FRow>
-        <FRow label="Dil"><FSelect value={lang} onChange={setLang} options={["İngilizce","Türkçe","Almanca","Fransızca","İtalyanca","Japonca","Diğer"]}/></FRow>
+        <FRow label="Ülke"><FSelect value={country} onChange={setCountry} options={COUNTRY_OPTIONS.map(c=>[c.name,`${c.flag} ${c.name}`])}/></FRow>
+        <FRow label="Dil"><FSelect value={lang} onChange={setLang} options={LANGUAGE_OPTIONS}/></FRow>
         <FRow label="Kaynak"><FSelect value={source} onChange={setSource} options={sourceOptions}/></FRow>
       </FGrid>
       <FRow label="Notlar"><FTextArea value={notes} onChange={setNotes} placeholder="Misafir hakkında notlar…"/></FRow>
@@ -12341,61 +12431,6 @@ function NewGuestModal({ onClose }) {
   );
 }
 
-function NewTaskModal({ onClose, prefillCustomerId, prefillLeadId, prefillResId }) {
-  const [title,setTitle]=useState("");
-  const [category,setCategory]=useState("Operasyon");
-  const [priority,setPriority]=useState("Orta");
-  const [dueDate,setDueDate]=useState("");
-  const [custId,setCustId]=useState(prefillCustomerId||"");
-  const [assignee,setAssignee]=useState(DB.staff[0]?.id||"STAFF-001");
-  const [notes,setNotes]=useState("");
-  const [errs,setErrs]=useState({});
-  const { mutate:mutTask, mutating:taskMut } = useRepoMutation("task");
-
-  async function handleSubmit() {
-    const e = validate({ title:{ required:"Görev başlığı zorunludur" } }, { title });
-    setErrs(e); if (Object.keys(e).length) return;
-    const { error:te } = await mutTask("create", {
-      title, customerId:custId||null,
-      leadId:prefillLeadId||null, resId:prefillResId||null,
-      category, priority, dueDate:dueDate||"—", assigneeId:assignee, notes,
-    });
-    if (te) { showToast("Görev oluşturulamadı ✗"); return; }
-    showToast("Görev oluşturuldu ✓"); onClose();
-  }
-  return (
-    <Modal title="Yeni Görev Ekle" onClose={onClose} onSubmit={handleSubmit}
-      submitLabel={taskMut?"Kaydediliyor…":"Görevi Kaydet"}>
-      <FRow label="Görev Başlığı" required error={errs.title}>
-        <FText value={title} onChange={setTitle} placeholder="Görevi kısaca açıklayın…"/>
-      </FRow>
-      <FGrid>
-        <FRow label="Kategori">
-          <FSelect value={category} onChange={setCategory}
-            options={["Operasyon","Ödeme","Rehber","Ulaşım","Müşteri","Teklif","Genel"]}/>
-        </FRow>
-        <FRow label="Öncelik">
-          <FSelect value={priority} onChange={setPriority}
-            options={["Düşük","Orta","Yüksek","Acil"]}/>
-        </FRow>
-        <FRow label="Son Tarih">
-          <FText value={dueDate} onChange={setDueDate} placeholder="22 Haz 2026"/>
-        </FRow>
-        <FRow label="Sorumlu">
-          <FSelect value={assignee} onChange={setAssignee}
-            options={DB.staff.map(s=>[s.id,s.name])}/>
-        </FRow>
-      </FGrid>
-      <FRow label="İlgili Müşteri">
-        <FSelect value={custId} onChange={setCustId}
-          options={[["","— Seçin —"], ...DB.customers.map(c=>[c.id,c.name])]}/>
-      </FRow>
-      <FRow label="Notlar">
-        <FTextArea value={notes} onChange={setNotes} placeholder="Ek notlar…"/>
-      </FRow>
-    </Modal>
-  );
-}
 
 function NewReminderModal({ onClose }) {
   const [title,setTitle]=useState("");
@@ -12566,6 +12601,7 @@ function mapCustomerFromDB(r) {
     tags:r.tags||[], status:r.is_active===false?'Arşiv':'Aktif',
     initials:(r.full_name||'?').split(' ').map(w=>w[0]||'').join('').slice(0,2).toUpperCase(),
     flag:'🌍', sourceId:r.source_id||null,
+    source:r.source?{id:r.source.id,name:r.source.name}:null,
     firstContact:r.created_at?new Date(r.created_at).toLocaleDateString('tr-TR',{day:'2-digit',month:'short',year:'numeric'}):'—',
     lastContact:r.updated_at?new Date(r.updated_at).toLocaleDateString('tr-TR',{day:'2-digit',month:'short',year:'numeric'}):'—',
     importType:r.import_type||'manual', _fromDB:true };
@@ -12623,12 +12659,19 @@ function mapResFromDB(r) {
     date:r.check_in?new Date(r.check_in).toLocaleDateString('tr-TR',{day:'2-digit',month:'short',year:'numeric'}):'—',
     checkIn:r.check_in||null, checkOut:r.check_out||null, time:r.check_in_time||'09:00',
     pax:r.pax_adult||1, paxChild:r.pax_child||0,
-    guide:r.guide_name||'', vehicle:r.vehicle_info||'', driver:r.driver_name||'',
+    guide:r.guide_name||'', guideId:r.guide_id||null, assignedGuideName:r.guide?.full_name||'', vehicle:r.vehicle_info||'', driver:r.driver_name||'',
     pickup:r.pickup_location||'', pickupTime:r.pickup_time||'—',
+    tourLanguage:r.tour_language||'',
     opStatus:_r2App(r.status), payStatus:_p2App(r.payment_status),
     total:parseFloat(r.total_amount)||0, deposit:parseFloat(r.deposit_amount)||0,
     remaining:parseFloat(r.total_amount||0)-parseFloat(r.deposit_amount||0),
     currency:r.currency||'EUR', opNotes:r.notes||'', assigneeId:r.assigned_to||null,
+    // Civitatis (or any future channel) "Retail price" — informational only,
+    // never DeseTour's own revenue (that stays total/currency above) and
+    // never part of any payment-progress calculation. NULL for every
+    // reservation without a retail_amount (every manually-created booking).
+    retailAmount:r.retail_amount!=null?parseFloat(r.retail_amount):null,
+    retailCurrency:r.retail_currency||null,
     createdAt:r.created_at?r.created_at.split('T')[0]:'', _fromDB:true };
 }
 function mapPayFromDB(r) {
@@ -12687,6 +12730,92 @@ function mapActivityFromDB(r) {
     createdAt:r.created_at, _fromDB:true };
 }
 
+// ── Guides / guide_languages / guide_payments mapping ──────────────────────
+const _GS_DB  = {'Aktif':'active','Müsait Değil':'unavailable','Pasif':'inactive'};
+const _GS_APP = {'active':'Aktif','unavailable':'Müsait Değil','inactive':'Pasif'};
+const _GPS_DB  = {'Bekliyor':'pending','Ödendi':'paid','İptal':'cancelled'};
+const _GPS_APP = {'pending':'Bekliyor','paid':'Ödendi','cancelled':'İptal'};
+
+function mapGuideFromDB(g) {
+  if(!g) return null;
+  const languages = (g.guide_languages||[]).map(l => ({ code:l.language_code, name:l.language_name }));
+  return {
+    id:g.id, name:g.full_name||'', phone:g.phone||'', email:g.email||'',
+    nationality:g.nationality||'', licenseNumber:g.license_number||'',
+    licenseNotes:g.license_notes||'', region:g.region||'',
+    status:_GS_APP[g.status]||g.status||'Aktif', notes:g.notes||'',
+    staffUserId:g.staff_user_id||null, createdBy:g.created_by||null,
+    languages, languageNames:languages.map(l=>l.name),
+    createdAt:g.created_at?g.created_at.split('T')[0]:'', _fromDB:true,
+  };
+}
+function mapGuideToDB(d) {
+  const row = {};
+  if(d.name!==undefined)           row.full_name = d.name;
+  if(d.phone!==undefined)          row.phone = d.phone||null;
+  if(d.email!==undefined)          row.email = d.email||null;
+  if(d.nationality!==undefined)    row.nationality = d.nationality||null;
+  if(d.licenseNumber!==undefined)  row.license_number = d.licenseNumber||null;
+  if(d.licenseNotes!==undefined)   row.license_notes = d.licenseNotes||null;
+  if(d.region!==undefined)         row.region = d.region||null;
+  if(d.status!==undefined)         row.status = _GS_DB[d.status]||d.status||'active';
+  if(d.notes!==undefined)          row.notes = d.notes||null;
+  if(d.staffUserId!==undefined)    row.staff_user_id = d.staffUserId||null;
+  return row;
+}
+function mapGuidePaymentFromDB(r) {
+  if(!r) return null;
+  return {
+    id:r.id, payNumber:r.payment_number||r.id, guideId:r.guide_id||null,
+    resId:r.reservation_id||null, tourId:r.tour_id||null,
+    amount:parseFloat(r.amount)||0, currency:r.currency||'EUR',
+    status:_GPS_APP[r.status]||r.status||'Bekliyor',
+    paymentDate:r.payment_date||'', notes:r.notes||'', createdBy:r.created_by||null,
+    createdAt:r.created_at?r.created_at.split('T')[0]:'',
+    guideName:r.guide?.full_name||'', resRef:r.reservation?.reservation_number||'',
+    tourName:r.tour?.name||'', _fromDB:true,
+  };
+}
+
+// ── reservation_reviews mapping ─────────────────────────────────────────
+// guideId here is ALWAYS the snapshot stored on the review row itself
+// (reservation_reviews.guide_id) — never derived by joining through
+// reservation_id → reservations.guide_id. This is the historical
+// attribution rule: once a review is created, its guide attribution must
+// never silently follow a later change to the reservation's own guide_id.
+function mapReviewFromDB(r) {
+  if(!r) return null;
+  return {
+    id:r.id, resId:r.reservation_id||null, guideId:r.guide_id||null,
+    rating:r.rating!=null?parseInt(r.rating):null,
+    reviewText:r.review_text||'', sourceId:r.source_id||null,
+    externalReviewId:r.external_review_id||'', reviewDate:r.review_date||'',
+    reviewerName:r.reviewer_name||'', createdBy:r.created_by||null,
+    createdAt:r.created_at?r.created_at.split('T')[0]:'',
+    updatedAt:r.updated_at?r.updated_at.split('T')[0]:'',
+    sourceName:r.source?.name||'',
+    resRef:r.reservation?.reservation_number||'',
+    tourName:r.reservation?.destination||r.reservation?.tour?.name||'',
+    customerName:r.reservation?.customer?.full_name||'',
+    _fromDB:true,
+  };
+}
+function mapReviewToDB(d) {
+  const row = {};
+  if(d.resId!==undefined)            row.reservation_id = d.resId;
+  // guide_id is set ONLY on create (the snapshot) — see SupabaseReviewRepo
+  // below, which never lets update() touch this column.
+  if(d.guideId!==undefined)          row.guide_id = d.guideId||null;
+  if(d.rating!==undefined)           row.rating = parseInt(d.rating);
+  if(d.reviewText!==undefined)       row.review_text = d.reviewText||null;
+  if(d.sourceId!==undefined)         row.source_id = d.sourceId||null;
+  if(d.externalReviewId!==undefined) row.external_review_id = d.externalReviewId||null;
+  if(d.reviewDate!==undefined)       row.review_date = d.reviewDate||null;
+  if(d.reviewerName!==undefined)     row.reviewer_name = d.reviewerName||null;
+  if(d.createdBy!==undefined)        row.created_by = d.createdBy||null;
+  return row;
+}
+
 async function _updateResPayStatus(sb, resId) {
   try {
     const {data:pays}=await sb.from('payments').select('amount,status').eq('reservation_id',resId);
@@ -12703,7 +12832,7 @@ async function _updateResPayStatus(sb, resId) {
 const SupabaseCustomerRepo = {
   async getAll(f={}) {
     const sb=getSB(); if(!sb)return CustomerRepository.getAll(f);
-    let q=sb.from('customers').select('id,full_name,email,phone,nationality,language,notes,tags,import_type,is_active,source_id,created_at,updated_at').eq('is_active',true).order('created_at',{ascending:false});
+    let q=sb.from('customers').select('id,full_name,email,phone,nationality,language,notes,tags,import_type,is_active,source_id,created_at,updated_at,source:sources(id,name)').eq('is_active',true).order('created_at',{ascending:false});
     if(f?.search)q=q.or(`full_name.ilike.%${f.search}%,email.ilike.%${f.search}%,phone.ilike.%${f.search}%`);
     const {data,error}=await q; if(error)throw new Error(error.message);
     return (data||[]).map(mapCustomerFromDB);
@@ -12725,11 +12854,16 @@ const SupabaseLeadRepo = {
 };
 
 const SupabaseReservationRepo = {
-  async getAll(f={}){const sb=getSB();if(!sb)return ReservationRepository.getAll(f);let q=sb.from('reservations').select('*,customer:customers(id,full_name,email,phone,nationality),tour:tours(id,name,category)').order('check_in',{ascending:true});if(f.status)q=q.eq('status',_r2DB(f.status));if(f.payStatus)q=q.eq('payment_status',_p2DB(f.payStatus));if(f.customerId)q=q.eq('customer_id',f.customerId);if(f.search)q=q.or(`reservation_number.ilike.%${f.search}%,destination.ilike.%${f.search}%`);const{data,error}=await q;if(error)throw new Error(error.message);return(data||[]).map(mapResFromDB);},
-  async getById(id){const sb=getSB();if(!sb)return ReservationRepository.getById(id);const{data,error}=await sb.from('reservations').select('*,customer:customers(*),tour:tours(*)').eq('id',id).maybeSingle();if(error)throw new Error(error.message);return mapResFromDB(data);},
+  async getAll(f={}){const sb=getSB();if(!sb)return ReservationRepository.getAll(f);let q=sb.from('reservations').select('*,customer:customers(id,full_name,email,phone,nationality),tour:tours(id,name,category),guide:guides(id,full_name,status,phone)').order('check_in',{ascending:true});if(f.status)q=q.eq('status',_r2DB(f.status));if(f.payStatus)q=q.eq('payment_status',_p2DB(f.payStatus));if(f.customerId)q=q.eq('customer_id',f.customerId);if(f.search)q=q.or(`reservation_number.ilike.%${f.search}%,destination.ilike.%${f.search}%`);const{data,error}=await q;if(error)throw new Error(error.message);return(data||[]).map(mapResFromDB);},
+  async getById(id){const sb=getSB();if(!sb)return ReservationRepository.getById(id);const{data,error}=await sb.from('reservations').select('*,customer:customers(*),tour:tours(*),guide:guides(id,full_name,status,phone,email)').eq('id',id).maybeSingle();if(error)throw new Error(error.message);return mapResFromDB(data);},
   async getByCustomerId(cid){const sb=getSB();if(!sb)return ReservationRepository.getByCustomerId(cid);const{data,error}=await sb.from('reservations').select('*').eq('customer_id',cid).order('check_in',{ascending:false});if(error)throw new Error(error.message);return(data||[]).map(mapResFromDB);},
-  async create(d){const sb=getSB();if(!sb)return ReservationRepository.create(d);let rn=`R-${new Date().getFullYear()}-${String(Date.now()).slice(-4)}`;try{const{data:ref}=await sb.rpc('next_ref_number',{prefix:'R',table_name:'reservations',number_col:'reservation_number'});if(ref)rn=ref;}catch(_){}const row={reservation_number:rn,lead_id:d.leadId||null,quote_id:d.quoteId||null,customer_id:d.customerId,tour_id:d.tourId||null,status:'pending_confirmation',payment_status:'pending',destination:d.tour||d.destination||'',check_in:d.checkIn||d.date||null,check_out:d.checkOut||d.date||null,check_in_time:d.time||null,pax_adult:parseInt(d.pax||d.paxAdult)||1,pax_child:parseInt(d.paxChild)||0,guide_name:d.guide||null,vehicle_info:d.vehicle||null,driver_name:d.driver||null,pickup_location:d.pickup||null,pickup_time:d.pickupTime||null,total_amount:parseFloat(d.total)||0,currency:d.currency||'EUR',deposit_amount:parseFloat(d.deposit)||0,notes:d.opNotes||d.notes||null,assigned_to:d.assigneeId||null};const{data:c,error}=await sb.from('reservations').insert(row).select().single();if(error)throw new Error(error.message);await _sbLog('reservation',c.id,'created',`Rezervasyon: ${c.reservation_number}`);return mapResFromDB(c);},
-  async update(id,p){const sb=getSB();if(!sb)return ReservationRepository.update(id,p);const fm={opStatus:'status',payStatus:'payment_status',guide:'guide_name',vehicle:'vehicle_info',driver:'driver_name',pickup:'pickup_location',opNotes:'notes',total:'total_amount'};const row={};for(const[k,v]of Object.entries(p)){const col=fm[k]||k;if(col==='status')row[col]=_r2DB(v);else if(col==='payment_status')row[col]=_p2DB(v);else row[col]=v;}if(p.opStatus==='Tamamlandı')row.completed_at=new Date().toISOString();if(p.opStatus==='İptal')row.cancelled_at=new Date().toISOString();const{data:u,error}=await sb.from('reservations').update(row).eq('id',id).select().single();if(error)throw new Error(error.message);await _sbLog('reservation',id,'updated',`Güncellendi: ${Object.keys(p).join(', ')}`);return mapResFromDB(u);},
+  // Named tour participants (e.g. Civitatis "Passenger information 1/2/…"),
+  // NEVER the booking contact — reservations.customer_id/customer is a
+  // separate concept entirely. Read from reservation_guests directly, names
+  // stored/returned exactly as recorded (never inferred from the customer).
+  async getGuests(resId){const sb=getSB();if(!sb)return ReservationRepository.getGuests?ReservationRepository.getGuests(resId):[];const{data,error}=await sb.from('reservation_guests').select('id,full_name,sort_order').eq('reservation_id',resId).order('sort_order',{ascending:true});if(error)throw new Error(error.message);return(data||[]).map(g=>({id:g.id,fullName:g.full_name,sortOrder:g.sort_order}));},
+  async create(d){const sb=getSB();if(!sb)return ReservationRepository.create(d);let rn=`R-${new Date().getFullYear()}-${String(Date.now()).slice(-4)}`;try{const{data:ref}=await sb.rpc('next_ref_number',{prefix:'R',table_name:'reservations',number_col:'reservation_number'});if(ref)rn=ref;}catch(_){}const row={reservation_number:rn,lead_id:d.leadId||null,quote_id:d.quoteId||null,customer_id:d.customerId,tour_id:d.tourId||null,status:'pending_confirmation',payment_status:'pending',destination:d.tour||d.destination||'',check_in:d.checkIn||d.date||null,check_out:d.checkOut||d.date||null,check_in_time:d.time||null,pax_adult:parseInt(d.pax||d.paxAdult)||1,pax_child:parseInt(d.paxChild)||0,guide_name:d.guide||null,guide_id:d.guideId||null,vehicle_info:d.vehicle||null,driver_name:d.driver||null,pickup_location:d.pickup||null,pickup_time:d.pickupTime||null,tour_language:d.tourLanguage||null,total_amount:parseFloat(d.total)||0,currency:d.currency||'EUR',deposit_amount:parseFloat(d.deposit)||0,notes:d.opNotes||d.notes||null,assigned_to:d.assigneeId||null};const{data:c,error}=await sb.from('reservations').insert(row).select().single();if(error)throw new Error(error.message);await _sbLog('reservation',c.id,'created',`Rezervasyon: ${c.reservation_number}`);return mapResFromDB(c);},
+  async update(id,p){const sb=getSB();if(!sb)return ReservationRepository.update(id,p);const fm={opStatus:'status',payStatus:'payment_status',guide:'guide_name',guideId:'guide_id',vehicle:'vehicle_info',driver:'driver_name',pickup:'pickup_location',opNotes:'notes',total:'total_amount',tourLanguage:'tour_language'};const row={};for(const[k,v]of Object.entries(p)){const col=fm[k]||k;if(col==='status')row[col]=_r2DB(v);else if(col==='payment_status')row[col]=_p2DB(v);else row[col]=v;}if(p.opStatus==='Tamamlandı')row.completed_at=new Date().toISOString();if(p.opStatus==='İptal')row.cancelled_at=new Date().toISOString();const{data:u,error}=await sb.from('reservations').update(row).eq('id',id).select().single();if(error)throw new Error(error.message);await _sbLog('reservation',id,'updated',`Güncellendi: ${Object.keys(p).join(', ')}`);return mapResFromDB(u);},
   async delete(id){const sb=getSB();if(!sb)return ReservationRepository.delete(id);const{error}=await sb.from('reservations').update({status:'cancelled',cancelled_at:new Date().toISOString()}).eq('id',id);if(error)throw new Error(error.message);return true;},
 };
 
@@ -12741,6 +12875,138 @@ const SupabasePaymentRepo = {
   async create(d){const sb=getSB();if(!sb)return PaymentRepository.create(d);let pn=`PAY-${String(Date.now()).slice(-6)}`;try{const{data:ref}=await sb.rpc('next_ref_number',{prefix:'PAY',table_name:'payments',number_col:'payment_number'});if(ref)pn=ref;}catch(_){}const amt=parseFloat(d.amount)||0;const sm={'Tam Ödeme':'paid','İade':'refunded','Kapora':'paid','Kalan Ödeme':'paid'};const tm={'Tam Ödeme':'full','İade':'refund','Kapora':'deposit','Kalan Ödeme':'balance'};const row={payment_number:pn,reservation_id:d.resId||d.reservationId||null,customer_id:d.customerId||null,payment_type:tm[d.paymentType]||d.paymentType?.toLowerCase()||'deposit',status:sm[d.paymentType]||'paid',amount:amt,currency:d.currency||'EUR',method:_mToDB(d.method),paid_at:new Date().toISOString(),notes:d.notes||null};const{data:c,error}=await sb.from('payments').insert(row).select().single();if(error)throw new Error(error.message);if(row.reservation_id)await _updateResPayStatus(sb,row.reservation_id);await _sbLog('payment',c.id,'payment_received',`Ödeme: ${d.currency==='TRY'?'₺':'€'}${amt.toLocaleString('tr-TR')}`);return mapPayFromDB(c);},
   async update(id,p){const sb=getSB();if(!sb)return PaymentRepository.update(id,p);const{data:u,error}=await sb.from('payments').update(p).eq('id',id).select().single();if(error)throw new Error(error.message);return mapPayFromDB(u);},
   async delete(id){const sb=getSB();if(!sb)return PaymentRepository.delete(id);const{error}=await sb.from('payments').update({status:'cancelled'}).eq('id',id);if(error)throw new Error(error.message);return true;},
+};
+
+// Replace-all sync of a guide's guide_languages rows. Delete-then-insert
+// (rather than a diff) is safe here because guide_languages rows carry no
+// identity of their own beyond (guide_id, language_code) — the caller
+// always sends the guide's complete current language set from the Add/Edit
+// Guide form, never a partial patch.
+async function _syncGuideLanguages(sb, guideId, languages) {
+  const { error: delErr } = await sb.from('guide_languages').delete().eq('guide_id', guideId);
+  if (delErr) throw new Error(delErr.message);
+  const list = (languages||[]).filter(l => l && l.code);
+  if (!list.length) return;
+  const rows = list.map(l => ({ guide_id:guideId, language_code:l.code, language_name:l.name || LANGUAGE_NAME_BY_CODE[l.code] || l.code }));
+  const { error: insErr } = await sb.from('guide_languages').insert(rows);
+  if (insErr) throw new Error(insErr.message);
+}
+
+const SupabaseGuideRepo = {
+  async getAll(f={}){
+    const sb=getSB(); if(!sb) return GuideRepository.getAll(f);
+    let q=sb.from('guides').select('*,guide_languages(id,language_code,language_name)').order('full_name',{ascending:true});
+    if(f.status) q=q.eq('status',_GS_DB[f.status]||f.status);
+    if(f.search) q=q.or(`full_name.ilike.%${f.search}%,phone.ilike.%${f.search}%,email.ilike.%${f.search}%,license_number.ilike.%${f.search}%`);
+    const{data,error}=await q; if(error) throw new Error(error.message);
+    return (data||[]).map(mapGuideFromDB);
+  },
+  async getById(id){
+    const sb=getSB(); if(!sb) return GuideRepository.getById(id);
+    const{data,error}=await sb.from('guides').select('*,guide_languages(id,language_code,language_name)').eq('id',id).maybeSingle();
+    if(error) throw new Error(error.message);
+    return mapGuideFromDB(data);
+  },
+  async create(d){
+    const sb=getSB(); if(!sb) return GuideRepository.create(d);
+    const row=mapGuideToDB(d); if(!row.full_name) row.full_name=d.name||'Bilinmiyor'; if(!row.status) row.status='active';
+    const{data:g,error}=await sb.from('guides').insert(row).select().single();
+    if(error) throw new Error(error.message);
+    if(d.languages!==undefined) await _syncGuideLanguages(sb, g.id, d.languages);
+    await _sbLog('guide', g.id, 'created', `Yeni rehber: ${g.full_name}`);
+    return SupabaseGuideRepo.getById(g.id);
+  },
+  async update(id,p){
+    const sb=getSB(); if(!sb) return GuideRepository.update(id,p);
+    const row=mapGuideToDB(p);
+    if(Object.keys(row).length){
+      const{error}=await sb.from('guides').update(row).eq('id',id);
+      if(error) throw new Error(error.message);
+    }
+    if(p.languages!==undefined) await _syncGuideLanguages(sb, id, p.languages);
+    await _sbLog('guide', id, 'updated', `Rehber güncellendi: ${Object.keys(p).join(', ')}`);
+    return SupabaseGuideRepo.getById(id);
+  },
+  async delete(id){const sb=getSB();if(!sb)return GuideRepository.delete(id);const{error}=await sb.from('guides').update({status:'inactive'}).eq('id',id);if(error)throw new Error(error.message);return true;},
+};
+
+const SupabaseGuidePaymentRepo = {
+  async getAll(f={}){
+    const sb=getSB(); if(!sb) return GuidePaymentRepository.getAll(f);
+    let q=sb.from('guide_payments').select('*,guide:guides(id,full_name),reservation:reservations(id,reservation_number),tour:tours(id,name)').order('created_at',{ascending:false});
+    if(f.guideId) q=q.eq('guide_id',f.guideId);
+    if(f.status)  q=q.eq('status',_GPS_DB[f.status]||f.status);
+    const{data,error}=await q; if(error) throw new Error(error.message);
+    return (data||[]).map(mapGuidePaymentFromDB);
+  },
+  async getById(id){const sb=getSB();if(!sb)return GuidePaymentRepository.getById(id);const{data,error}=await sb.from('guide_payments').select('*,guide:guides(*),reservation:reservations(*),tour:tours(*)').eq('id',id).maybeSingle();if(error)throw new Error(error.message);return mapGuidePaymentFromDB(data);},
+  async getByGuideId(gid){return SupabaseGuidePaymentRepo.getAll({guideId:gid});},
+  async create(d){
+    const sb=getSB(); if(!sb) return GuidePaymentRepository.create(d);
+    let pn=`GP-${new Date().getFullYear()}-${String(Date.now()).slice(-4)}`;
+    try{const{data:ref}=await sb.rpc('next_ref_number',{prefix:'GP',table_name:'guide_payments',number_col:'payment_number'});if(ref)pn=ref;}catch(_){}
+    const row={payment_number:pn,guide_id:d.guideId,reservation_id:d.resId||null,tour_id:d.tourId||null,amount:parseFloat(d.amount)||0,currency:d.currency||'EUR',status:_GPS_DB[d.status]||d.status||'pending',payment_date:d.paymentDate||null,notes:d.notes||null,created_by:d.createdBy||null};
+    const{data:c,error}=await sb.from('guide_payments').insert(row).select().single();
+    if(error) throw new Error(error.message);
+    await _sbLog('guide_payment', c.id, 'created', `Rehber ödemesi: ${d.currency==='TRY'?'₺':'€'}${(parseFloat(d.amount)||0).toLocaleString('tr-TR')}`);
+    return mapGuidePaymentFromDB(c);
+  },
+  async update(id,p){
+    const sb=getSB(); if(!sb) return GuidePaymentRepository.update(id,p);
+    const row={};
+    if(p.status!==undefined) row.status=_GPS_DB[p.status]||p.status;
+    if(p.amount!==undefined) row.amount=parseFloat(p.amount)||0;
+    if(p.paymentDate!==undefined) row.payment_date=p.paymentDate||null;
+    if(p.notes!==undefined) row.notes=p.notes;
+    const{data:u,error}=await sb.from('guide_payments').update(row).eq('id',id).select().single();
+    if(error) throw new Error(error.message);
+    return mapGuidePaymentFromDB(u);
+  },
+  async delete(id){const sb=getSB();if(!sb)return GuidePaymentRepository.delete(id);const{error}=await sb.from('guide_payments').update({status:'cancelled'}).eq('id',id);if(error)throw new Error(error.message);return true;},
+};
+
+const _REVIEW_SELECT = '*,source:sources(id,name),reservation:reservations(id,reservation_number,destination,customer:customers(id,full_name),tour:tours(id,name))';
+const SupabaseReviewRepo = {
+  async getAll(f={}){
+    const sb=getSB(); if(!sb) return ReviewRepository.getAll(f);
+    let q=sb.from('reservation_reviews').select(_REVIEW_SELECT).order('review_date',{ascending:false,nullsFirst:false});
+    if(f.guideId) q=q.eq('guide_id',f.guideId);
+    if(f.resId)   q=q.eq('reservation_id',f.resId);
+    const{data,error}=await q; if(error) throw new Error(error.message);
+    return (data||[]).map(mapReviewFromDB);
+  },
+  async getById(id){const sb=getSB();if(!sb)return ReviewRepository.getById(id);const{data,error}=await sb.from('reservation_reviews').select(_REVIEW_SELECT).eq('id',id).maybeSingle();if(error)throw new Error(error.message);return mapReviewFromDB(data);},
+  async getByReservation(resId){return SupabaseReviewRepo.getAll({resId});},
+  async getByGuide(guideId){return SupabaseReviewRepo.getAll({guideId});},
+  async create(d){
+    const sb=getSB(); if(!sb) return ReviewRepository.create({...d, createdBy:getAuthContext()?.staff?.id||null});
+    // guide_id is captured here, once, from the caller-supplied snapshot of
+    // the reservation's guide_id at the moment the review is created — the
+    // repo never re-derives it, and update() below never touches it again.
+    const row = mapReviewToDB(d);
+    row.created_by = getAuthContext()?.staff?.id || null;
+    const{data:c,error}=await sb.from('reservation_reviews').insert(row).select(_REVIEW_SELECT).single();
+    if(error) throw new Error(error.message);
+    await _sbLog('reservation_review', c.id, 'created', `Değerlendirme eklendi: ${d.rating}★`);
+    return mapReviewFromDB(c);
+  },
+  async update(id,p){
+    const sb=getSB(); if(!sb) return ReviewRepository.update(id,p);
+    // Deliberately hand-built, field by field — guide_id/guideId is never
+    // read or written here under any circumstance. See SupabaseGuidePaymentRepo
+    // .update() for the identical precedent this mirrors.
+    const row={};
+    if(p.rating!==undefined)           row.rating = parseInt(p.rating);
+    if(p.reviewText!==undefined)       row.review_text = p.reviewText||null;
+    if(p.sourceId!==undefined)         row.source_id = p.sourceId||null;
+    if(p.externalReviewId!==undefined) row.external_review_id = p.externalReviewId||null;
+    if(p.reviewDate!==undefined)       row.review_date = p.reviewDate||null;
+    if(p.reviewerName!==undefined)     row.reviewer_name = p.reviewerName||null;
+    const{data:u,error}=await sb.from('reservation_reviews').update(row).eq('id',id).select(_REVIEW_SELECT).single();
+    if(error) throw new Error(error.message);
+    await _sbLog('reservation_review', u.id, 'updated', `Değerlendirme güncellendi`);
+    return mapReviewFromDB(u);
+  },
 };
 
 const SupabaseTaskRepo = {
@@ -12766,6 +13032,23 @@ const SupabaseActivityRepo = {
   async getAll(f={}){const sb=getSB();if(!sb)return ActivityRepository.getAll(f);let q=sb.from('activity_logs').select('*,performer:staff_users!performed_by(id,full_name)').order('created_at',{ascending:false});if(f.entityType&&f.entityId)q=q.eq('entity_type',f.entityType).eq('entity_id',f.entityId);if(f.limit)q=q.limit(f.limit);const{data,error}=await q;if(error)throw new Error(error.message);return(data||[]).map(mapActivityFromDB);},
   async getByCustomerId(cid){const sb=getSB();if(!sb)return ActivityRepository.getAll({customerId:cid});const[{data:leads},{data:res},{data:pays}]=await Promise.all([sb.from('leads').select('id').eq('customer_id',cid),sb.from('reservations').select('id').eq('customer_id',cid),sb.from('payments').select('id').eq('customer_id',cid)]);const ids=[...((leads||[]).map(r=>r.id)),...((res||[]).map(r=>r.id)),...((pays||[]).map(r=>r.id)),cid];const{data,error}=await sb.from('activity_logs').select('*,performer:staff_users!performed_by(id,full_name)').in('entity_id',ids).order('created_at',{ascending:false}).limit(50);if(error)throw new Error(error.message);return(data||[]).map(mapActivityFromDB);},
   async create(d){const sb=getSB();if(!sb)return ActivityRepository.create(d);const row={entity_type:d.entityType,entity_id:d.entityId,action:d.action,description:d.description,old_value:d.oldValue||null,new_value:d.newValue||null,metadata:d.metadata||null,performed_by:d.performedBy||null};const{data:c,error}=await sb.from('activity_logs').insert(row).select().single();if(error)throw new Error(error.message);return mapActivityFromDB(c);},
+  // System-generated "new reservation" notifications only (auto_ingested
+  // Civitatis rows today; additively covers any future auto-ingestion
+  // source the same way). Embedding activity_log_reads(id) relies on ITS
+  // OWN RLS ("activity_log_reads: staff read own", staff_id = auth.uid())
+  // to scope the embedded rows to the CURRENT viewer only — no client-side
+  // staff filtering needed, and a guide session (whose own "activity_logs:
+  // guide read own" policy only permits performed_by = auth.uid(), never
+  // NULL) simply gets zero rows back here, already correct at the RLS
+  // layer without this method doing anything role-specific itself.
+  async getReservationNotifications(){const sb=getSB();if(!sb)return ActivityRepository.getReservationNotifications?ActivityRepository.getReservationNotifications():[];const{data,error}=await sb.from('activity_logs').select('id,entity_id,description,metadata,created_at,activity_log_reads(id)').eq('entity_type','reservation').eq('metadata->>auto_ingested','true').order('created_at',{ascending:false}).limit(30);if(error)throw new Error(error.message);return(data||[]).map(l=>({id:l.id,reservationId:l.entity_id,description:l.description,source:l.metadata?.source||null,externalBookingId:l.metadata?.external_booking_id||null,createdAt:l.created_at,isRead:(l.activity_log_reads||[]).length>0}));},
+  // Per-staff read receipt — INSERT only, staff_id must equal auth.uid()
+  // (enforced by "activity_log_reads: staff insert own"), and the table's
+  // own UNIQUE(activity_log_id, staff_id) constraint makes a repeat click
+  // harmless (23505 = unique_violation, treated as already-read success)
+  // rather than needing a SELECT-then-INSERT round trip. Never touches
+  // activity_logs itself, which stays append-only.
+  async markReservationNotificationRead(activityLogId){const sb=getSB();if(!sb)return ActivityRepository.markReservationNotificationRead?ActivityRepository.markReservationNotificationRead(activityLogId):true;const staffId=getAuthContext()?.staff?.id;if(!staffId)return false;const{error}=await sb.from('activity_log_reads').insert({activity_log_id:activityLogId,staff_id:staffId});if(error&&error.code!=='23505')throw new Error(error.message);return true;},
 };
 
 async function autoLog(entityType, entityId, action, description) {
@@ -12785,6 +13068,9 @@ function getActiveRepo(entity) {
   if(entity==='activity')   return useReal ? SupabaseActivityRepo    : ActivityRepository;
   if(entity==='quote')      return useReal ? SupabaseQuoteRepo      : QuoteRepository;
   if(entity==='tour')       return useReal ? SupabaseTourRepo        : TourRepository;
+  if(entity==='guide')      return useReal ? SupabaseGuideRepo       : GuideRepository;
+  if(entity==='guidePayment')return useReal ? SupabaseGuidePaymentRepo : GuidePaymentRepository;
+  if(entity==='review')     return useReal ? SupabaseReviewRepo       : ReviewRepository;
   if(entity==='staff')      return useReal ? SupabaseStaffRepo       : { getAll: async () => DB.staff };
   return null;
 }
@@ -12876,11 +13162,17 @@ function DataSourceBadge() {
   );
 }
 
+// "leads"/"quotes" stay in the Satış/Operasyon lists even though neither
+// role has a nav entry pointing at them anymore — that only retired the
+// list/create/edit entry points (Talepler/Teklifler simplification); the
+// detail views must stay reachable so a role that could see them before
+// isn't suddenly blocked from a historical IDLink on a Reservation,
+// Customer, or Messages page.
 const ROLE_PERMISSIONS = {
   "Yönetici": null, // null = all pages
-  "Satış":    ["dashboard","leads","customers","quotes","tasks","reminders","messages","reports","more"],
-  "Operasyon":["dashboard","reservations","calendar","tours","tasks","reminders","payments","reports","more"],
-  "Rehber":   ["dashboard","calendar","reservations","tasks","more"],
+  "Satış":    ["dashboard","customers","reservations","guides","leads","quotes","reminders","messages","reports","more"],
+  "Operasyon":["dashboard","reservations","calendar","tours","guides","leads","quotes","reminders","payments","reports","more"],
+  "Rehber":   ["dashboard","calendar","reservations","more"],
 };
 
 function canAccess(role, page) {
@@ -12890,13 +13182,21 @@ function canAccess(role, page) {
   return perms ? perms.includes(page) : false;
 }
 
+// Returns { data, error }. Deliberately does NOT collapse a failed query
+// into "no profile" — .single() throws/errors on zero rows, which used to
+// be swallowed by a bare try/catch and returned as null indistinguishably
+// from "no staff_users row exists". .maybeSingle() correctly returns
+// {data:null, error:null} for a genuine zero-row result, and a real
+// {data:null, error:{...}} for an actual failure (network, RLS denial,
+// bad column, etc.) — the caller must branch on `error`, not just on
+// whether `data` is falsy, or a real failure looks identical to a
+// genuinely-missing profile.
 async function loadStaffData(userId) {
   const sb = getSB();
-  if (!sb) return null;
-  try {
-    const { data } = await sb.from('staff_users').select('*').eq('id', userId).single();
-    return data || null;
-  } catch(_) { return null; }
+  if (!sb) return { data:null, error:null };
+  const { data, error } = await sb.from('staff_users').select('*').eq('id', userId).maybeSingle();
+  if (error) console.error('[Auth] staff_users query failed for', userId, ':', error);
+  return { data: data || null, error: error || null };
 }
 
 // A hung Supabase call (paused project, unreachable network, bad API key)
@@ -12914,6 +13214,66 @@ let _authCache = null;
 let _authListeners = [];
 function _notifyAuthListeners() { _authListeners.forEach(fn => fn(_authCache)); }
 
+// Monotonic token for every in-flight staff-profile resolution. A resolution
+// started before a newer one (e.g. init() racing the first onAuthStateChange
+// event, or two background refreshes overlapping) is discarded when it
+// finally settles, instead of being allowed to overwrite whatever the most
+// recently *started* resolution already produced.
+let _authReqSeq = 0;
+
+// Applies a resolved { session, staff, staffQueryError } patch to the shared
+// auth cache, guarding against the exact failure this was built to fix: a
+// transient refresh failure silently erasing an already-verified identity.
+//   - A stale/out-of-order resolution (reqId no longer the latest) is
+//     dropped entirely.
+//   - A resolution that merely FAILED (staffQueryError set) for the SAME
+//     user who already had a verified staff profile never overwrites that
+//     profile — the failure is recorded separately (staffRefreshError) so
+//     it can be surfaced without gating the whole app off.
+//   - Anything else (a genuine result, a different/new user, first-ever
+//     resolution) replaces the cache outright, same as before.
+function _applyAuthResolution(reqId, patch, prevCache, prevUserId) {
+  if (reqId !== _authReqSeq) return false;
+  const newUserId = patch.session?.user?.id || null;
+  if (patch.staffQueryError && newUserId === prevUserId && prevCache?.staff) {
+    _authCache = { ...prevCache, session: patch.session, staffRefreshError: patch.staffQueryError };
+  } else {
+    _authCache = { ...patch, staffRefreshError: null };
+  }
+  return true;
+}
+
+// Resolves { session, staff, staffQueryError, staffInactive } for a given
+// Supabase auth session. Genuinely different outcomes are kept apart so
+// AuthGuard can show the right screen for each, and so no state is ever
+// conflated with a more permissive one:
+//   - staffQueryError set   → the staff_users query itself failed (timeout,
+//     network, RLS denial, bad column, etc.) — the profile's real state is
+//     UNKNOWN, not "missing".
+//   - staff null, no error, staffInactive false → the query succeeded and
+//     genuinely returned zero rows — no staff_users row exists for this
+//     auth UUID.
+//   - staff null, staffInactive true → a row exists and is linked, but
+//     is_active is false. This must never be treated as "missing" (which
+//     invites the wrong troubleshooting) or silently granted a role.
+async function _resolveStaffState(s) {
+  if (!s?.user) return { session:s, staff:null, authLoading:false, staffQueryError:null, staffInactive:false };
+  try {
+    const { data, error } = await _withTimeout(loadStaffData(s.user.id), 12000, 'Personel profili');
+    if (error) {
+      console.error('[Auth] staff_users query returned an error (session kept):', error);
+      return { session:s, staff:null, authLoading:false, staffQueryError: error.message || String(error), staffInactive:false };
+    }
+    if (data && data.is_active === false) {
+      return { session:s, staff:null, authLoading:false, staffQueryError:null, staffInactive:true };
+    }
+    return { session:s, staff:data, authLoading:false, staffQueryError:null, staffInactive:false };
+  } catch(e) {
+    console.error('[Auth] staff profile lookup threw (session kept):', e);
+    return { session:s, staff:null, authLoading:false, staffQueryError: e.message, staffInactive:false };
+  }
+}
+
 function useAuth() {
   const [authState, setAuthState] = useState(() => _authCache || {
     session: null, staff: null, authLoading: true
@@ -12923,6 +13283,26 @@ function useAuth() {
   const staff      = authState.staff;
   const authLoading = authState.authLoading;
   const authError   = authState.authError || null;
+  const staffQueryError = authState.staffQueryError || null;
+  // A background refresh that failed while a verified profile from the
+  // SAME user was already cached — never gates the app (staff/role stay
+  // intact), but is kept visible separately rather than silently dropped.
+  const staffRefreshError = authState.staffRefreshError || null;
+  const staffInactive = authState.staffInactive || false;
+
+  // Re-runs only the staff_users lookup for the current session, without
+  // dropping back to a full "Yükleniyor…" screen — used by the "Tekrar
+  // Dene" button on the staff-query-failed screen.
+  async function retryStaffLookup() {
+    if (!session) return;
+    const prevCache = _authCache;
+    const prevUserId = prevCache?.session?.user?.id || null;
+    const reqId = ++_authReqSeq;
+    const patch = await _resolveStaffState(session);
+    if (!_applyAuthResolution(reqId, patch, prevCache, prevUserId)) return;
+    setAuthState(_authCache);
+    _notifyAuthListeners();
+  }
 
   function updateAuth(patch) {
     _authCache = { ...(_authCache || { session:null, staff:null, authLoading:true }), ...patch };
@@ -12974,41 +13354,61 @@ function useAuth() {
       // Step 2: the session check above succeeded (session may legitimately
       // be null, i.e. genuinely signed out). A failure fetching the staff
       // profile below is a separate concern — it must NOT wipe out a valid
-      // session. Keep `s` as-is either way; only `staff`/`authError` reflect
-      // this step's outcome.
-      let st = null, staffErr = null;
-      if (s?.user) {
-        try {
-          st = await _withTimeout(loadStaffData(s.user.id), 12000, 'Personel profili');
-        } catch(e) {
-          console.error('[Auth] staff profile lookup failed (session kept):', e);
-          staffErr = e.message;
-        }
-      }
-      const newState = { session:s, staff:st, authLoading:false, authError:staffErr };
-      _authCache = newState;
-      setAuthState(newState);
+      // session. Keep `s` as-is either way; only `staff`/`staffQueryError`
+      // reflect this step's outcome. staffQueryError is kept SEPARATE from
+      // authError (session-check failures, shown on the login screen) so a
+      // failed staff_users query never gets silently reinterpreted as "no
+      // profile exists" — AuthGuard shows a distinct screen for each.
+      const prevCache = _authCache;
+      const prevUserId = prevCache?.session?.user?.id || null;
+      const reqId = ++_authReqSeq;
+      const patch = await _resolveStaffState(s);
+      if (!_applyAuthResolution(reqId, patch, prevCache, prevUserId)) return;
+      setAuthState(_authCache);
       _notifyAuthListeners();
     }
     init();
 
-    const { data:{ subscription } } = sb.auth.onAuthStateChange(async (_ev, s) => {
-      // Same principle: `s` (null or a session) comes straight from the
-      // auth event itself — a staff_users lookup failure must not override
-      // it with `null`, or a transient DB hiccup during an active session
-      // (e.g. right after some unrelated insert) would look like a logout.
-      let st = null, staffErr = null;
-      if (s?.user) {
-        try {
-          st = await _withTimeout(loadStaffData(s.user.id), 12000, 'Personel profili');
-        } catch(e) {
-          console.error('[Auth] onAuthStateChange staff lookup failed (session kept):', e);
-          staffErr = e.message;
-        }
+    const { data:{ subscription } } = sb.auth.onAuthStateChange(async (ev, s) => {
+      const prevCache  = _authCache;
+      const prevUserId = prevCache?.session?.user?.id || null;
+      const newUserId  = s?.user?.id || null;
+
+      // TOKEN_REFRESHED (and a duplicate INITIAL_SESSION firing right after
+      // init() already resolved it) mean the same already-authenticated
+      // user just received a new JWT — nothing about their staff_users row
+      // changed as a side effect of that, so there is nothing to re-query.
+      // Re-running the staff_users lookup on every background refresh is
+      // exactly what let a purely transient timeout overwrite an
+      // already-valid profile — skip the query entirely when identity
+      // hasn't changed and a verified profile is already cached for it.
+      if ((ev === 'TOKEN_REFRESHED' || ev === 'INITIAL_SESSION') && newUserId && newUserId === prevUserId && prevCache?.staff) {
+        _authCache = { ...prevCache, session: s };
+        setAuthState(_authCache);
+        _notifyAuthListeners();
+        return;
       }
-      const newState = { session:s, staff:st, authLoading:false, authError:staffErr };
-      _authCache = newState;
-      setAuthState(newState);
+
+      const reqId = ++_authReqSeq;
+
+      // A different user signed in, or the session ended — never let a
+      // previous user's cached profile leak into the new session, even
+      // for the moment it takes the new lookup to resolve.
+      if (newUserId !== prevUserId) {
+        _authCache = { session:s, staff:null, authLoading:true, staffQueryError:null, staffRefreshError:null };
+        setAuthState(_authCache);
+        _notifyAuthListeners();
+      }
+
+      // Same principle as init(): `s` (null or a session) comes straight
+      // from the auth event itself — a staff_users lookup failure must not
+      // override it with `null`, or a transient DB hiccup during an active
+      // session (e.g. right after some unrelated insert) would look like a
+      // logout. _applyAuthResolution additionally protects an already
+      // -verified same-user profile from being erased by this failure.
+      const patch = await _resolveStaffState(s);
+      if (!_applyAuthResolution(reqId, patch, prevCache, prevUserId)) return;
+      setAuthState(_authCache);
       _notifyAuthListeners();
     });
     return () => {
@@ -13025,8 +13425,16 @@ function useAuth() {
       const found = DB.staff.find(s => s.email === email);
       if (found && password === "demo") {
         const mockUser = { ...found, full_name:found.name };
-        setStaff(mockUser);
-        setSession({ user:{ email:found.email, id:found.id } });
+        // Pre-existing bug fixed here: this used to call setStaff()/
+        // setSession(), neither of which exist in this hook (state lives
+        // in a single authState object updated via updateAuth), so a mock
+        // -mode login with the correct demo credentials threw a
+        // ReferenceError instead of logging in.
+        updateAuth({
+          staff: mockUser,
+          session: { user:{ email:found.email, id:found.id } },
+          authLoading: false, authError:null, staffQueryError:null,
+        });
         return { error:null };
       }
       return { error:"Hatalı email veya şifre." };
@@ -13039,13 +13447,34 @@ function useAuth() {
   async function logout() {
     const sb = getSB();
     if (sb) await sb.auth.signOut();
-    setSession(null);
-    setStaff(null);
+    // Same pre-existing bug as login(): setSession()/setStaff() don't
+    // exist here — fixed to go through updateAuth() like everything else.
+    updateAuth({ session:null, staff:null, authLoading:false, authError:null, staffQueryError:null });
     if (typeof NAV_REF.fn === 'function') NAV_REF.fn('/login');
   }
 
-  const displayName = staff?.full_name || staff?.name || "—";
-  const initials    = displayName.split(" ").map(w=>w[0]||"").join("").slice(0,2).toUpperCase() || "?";
+  // staff_users lookup can legitimately come back empty even with a valid
+  // session — staff_users.id must equal the Supabase Auth user's own id
+  // (it's a FK to auth.users), so this means either no staff_users row
+  // exists for this account, or one exists with a different id. Either way
+  // that's a data-linkage problem, not something to paper over by inventing
+  // a "name" out of the email local-part (e.g. hello@desetour.com → "Hello"
+  // is not this person's name). Show the real authenticated email verbatim
+  // instead — truthful about what we actually know — and flag it in the
+  // console so it's easy to spot during setup/QA.
+  if (!staff && session?.user?.email && !authLoading && !staffQueryError) {
+    // The query itself completed with no error, but PostgREST/Supabase
+    // returns zero rows identically whether (a) no staff_users row exists
+    // for this id, or (b) a row exists but RLS silently filtered it out —
+    // a SELECT-with-RLS denial is NOT an error, it just looks like an
+    // empty result. This log can't tell those apart; a direct SQL check
+    // against staff_users (and its RLS policies) is the way to.
+    console.warn('[Auth] staff_users query returned zero rows for', session.user.email, '(auth id', session.user.id, '). This means either no matching row exists, or one exists but RLS is filtering it out for this session — check both.');
+  }
+  const displayName = staff?.full_name || staff?.name || session?.user?.email || "Kullanıcı";
+  const initials    = staff?.full_name || staff?.name
+    ? displayName.split(" ").map(w=>w[0]||"").join("").slice(0,2).toUpperCase() || "?"
+    : "?";
   // Map Supabase DB role values → Turkish display roles used in ROLE_PERMISSIONS
   const ROLE_MAP = {
     'admin':      'Yönetici',
@@ -13053,10 +13482,16 @@ function useAuth() {
     'operations': 'Operasyon',
     'guide':      'Rehber',
   };
-  const rawRole = staff?.role || 'admin';
-  const role    = ROLE_MAP[rawRole] || rawRole;
+  // No fallback to 'admin' here: a session with no linked staff_users row
+  // must never silently become a full-access Yönetici. role stays null,
+  // which canAccess() already treats as zero access everywhere — AuthGuard
+  // below shows an explicit "profile not linked" screen instead of letting
+  // the app render with an invented role.
+  const rawRole = staff?.role || null;
+  const role    = rawRole ? (ROLE_MAP[rawRole] || rawRole) : null;
+  const staffLinked = !!staff;
 
-  return { session, staff, authLoading, authError, login, logout, displayName, initials, role, isLoggedIn:!!session };
+  return { session, staff, authLoading, authError, staffQueryError, staffRefreshError, staffInactive, retryStaffLookup, login, logout, displayName, initials, role, staffLinked, isLoggedIn:!!session };
 }
 
 const AuthContext = createContext(null);
@@ -13407,6 +13842,140 @@ function AuthGuard({ children }) {
     />;
   }
 
+  // Authenticated, but the staff_users query itself failed (timeout,
+  // network, RLS denial, bad column, anything) — this is NOT the same as
+  // "no profile exists". Surface the real error and offer a retry instead
+  // of silently reinterpreting a failed query as a missing profile.
+  if (!auth.staffLinked && auth.staffQueryError) {
+    return (
+      <div style={{
+        minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center",
+        background:`linear-gradient(135deg, ${C.navyDeep} 0%, ${C.navy} 100%)`, padding:20,
+      }}>
+        <div style={{
+          maxWidth:460, width:"100%", background:C.white, borderRadius:14,
+          padding:"32px 30px", textAlign:"center", boxShadow:"0 20px 60px rgba(0,0,0,0.3)",
+        }}>
+          <div style={{
+            width:52, height:52, borderRadius:"50%", background:C.amberBg, margin:"0 auto 16px",
+            display:"flex", alignItems:"center", justifyContent:"center",
+          }}>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={C.amber} strokeWidth="2" strokeLinecap="round">
+              <path d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
+            </svg>
+          </div>
+          <div style={{fontSize:17, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif", marginBottom:8}}>
+            Personel Profili Sorgulanamadı
+          </div>
+          <div style={{fontSize:13.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", lineHeight:1.6, marginBottom:8}}>
+            <b>{auth.session?.user?.email}</b> hesabı için <code style={{background:C.ivory, padding:"1px 5px", borderRadius:4, fontFamily:"'DM Mono',monospace", fontSize:12}}>staff_users</code> sorgusu bir hata ile sonuçlandı — bu, profilin eksik olduğu anlamına gelmez, sorgunun kendisi başarısız oldu.
+          </div>
+          <div style={{
+            fontSize:12, color:C.red, fontFamily:"'DM Mono',monospace", lineHeight:1.6, marginBottom:20,
+            background:C.redBg, borderRadius:8, padding:"10px 12px", textAlign:"left", wordBreak:"break-word",
+          }}>
+            {auth.staffQueryError}
+          </div>
+          <div style={{display:"flex", gap:10, justifyContent:"center"}}>
+            <button onClick={auth.retryStaffLookup} style={{
+              padding:"10px 22px", borderRadius:9, border:"none",
+              background:`linear-gradient(135deg,${C.navyDeep},${C.navy})`,
+              color:C.white, fontSize:13.5, fontWeight:500,
+              fontFamily:"'DM Sans',sans-serif", cursor:"pointer",
+            }}>Tekrar Dene</button>
+            <button onClick={auth.logout} style={{
+              padding:"10px 22px", borderRadius:9, border:`1px solid ${C.border}`,
+              background:C.white, color:C.textMid, fontSize:13.5, fontWeight:500,
+              fontFamily:"'DM Sans',sans-serif", cursor:"pointer",
+            }}>Çıkış Yap</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Authenticated, a matching staff_users row was found, but is_active is
+  // false. Never conflate this with "no row exists" (wrong troubleshooting)
+  // or grant any role-based access — the account was deliberately
+  // deactivated.
+  if (!auth.staffLinked && auth.staffInactive) {
+    return (
+      <div style={{
+        minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center",
+        background:`linear-gradient(135deg, ${C.navyDeep} 0%, ${C.navy} 100%)`, padding:20,
+      }}>
+        <div style={{
+          maxWidth:440, width:"100%", background:C.white, borderRadius:14,
+          padding:"32px 30px", textAlign:"center", boxShadow:"0 20px 60px rgba(0,0,0,0.3)",
+        }}>
+          <div style={{
+            width:52, height:52, borderRadius:"50%", background:C.redBg, margin:"0 auto 16px",
+            display:"flex", alignItems:"center", justifyContent:"center",
+          }}>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={C.red} strokeWidth="2" strokeLinecap="round">
+              <circle cx="12" cy="12" r="10"/><line x1="8" y1="8" x2="16" y2="16"/>
+            </svg>
+          </div>
+          <div style={{fontSize:17, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif", marginBottom:8}}>
+            Hesap Pasif
+          </div>
+          <div style={{fontSize:13.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", lineHeight:1.6, marginBottom:20}}>
+            <b>{auth.session?.user?.email}</b> hesabına bağlı bir <code style={{background:C.ivory, padding:"1px 5px", borderRadius:4, fontFamily:"'DM Mono',monospace", fontSize:12}}>staff_users</code> kaydı bulundu, ancak bu hesap pasif olarak işaretlenmiş. Erişim için bir yöneticinin hesabı yeniden aktifleştirmesi gerekir.
+          </div>
+          <button onClick={auth.logout} style={{
+            padding:"10px 22px", borderRadius:9, border:"none",
+            background:`linear-gradient(135deg,${C.navyDeep},${C.navy})`,
+            color:C.white, fontSize:13.5, fontWeight:500,
+            fontFamily:"'DM Sans',sans-serif", cursor:"pointer",
+          }}>Çıkış Yap</button>
+        </div>
+      </div>
+    );
+  }
+
+  // Authenticated, staff_users query succeeded, but genuinely returned zero
+  // rows for this auth UUID — never let the app render as if this were a
+  // real, role-permissioned user. Report the problem explicitly instead of
+  // inventing a name or a role.
+  if (!auth.staffLinked) {
+    return (
+      <div style={{
+        minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center",
+        background:`linear-gradient(135deg, ${C.navyDeep} 0%, ${C.navy} 100%)`, padding:20,
+      }}>
+        <div style={{
+          maxWidth:440, width:"100%", background:C.white, borderRadius:14,
+          padding:"32px 30px", textAlign:"center", boxShadow:"0 20px 60px rgba(0,0,0,0.3)",
+        }}>
+          <div style={{
+            width:52, height:52, borderRadius:"50%", background:C.redBg, margin:"0 auto 16px",
+            display:"flex", alignItems:"center", justifyContent:"center",
+          }}>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={C.red} strokeWidth="2" strokeLinecap="round">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+              <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+            </svg>
+          </div>
+          <div style={{fontSize:17, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif", marginBottom:8}}>
+            Personel Profili Bağlı Değil
+          </div>
+          <div style={{fontSize:13.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", lineHeight:1.6, marginBottom:8}}>
+            <b>{auth.session?.user?.email}</b> hesabı ile giriş yaptınız, ancak bu hesaba bağlı bir <code style={{background:C.ivory, padding:"1px 5px", borderRadius:4, fontFamily:"'DM Mono',monospace", fontSize:12}}>staff_users</code> kaydı görüntülenemedi.
+          </div>
+          <div style={{fontSize:12.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", lineHeight:1.6, marginBottom:20}}>
+            Bunun iki olası nedeni var: (1) bu hesabın auth kimliğiyle eşleşen bir <code style={{background:C.ivory, padding:"1px 5px", borderRadius:4, fontFamily:"'DM Mono',monospace", fontSize:11.5}}>staff_users</code> satırı gerçekten yok, ya da (2) satır var ama satır düzeyi güvenlik (RLS) politikaları bu oturumun onu okumasını engelliyor — bir sorgu hatası olmadığı için bu iki durum istemci tarafında birbirinden ayırt edilemez. Veritabanını doğrudan kontrol etmek gerekir.
+          </div>
+          <button onClick={auth.logout} style={{
+            padding:"10px 22px", borderRadius:9, border:"none",
+            background:`linear-gradient(135deg,${C.navyDeep},${C.navy})`,
+            color:C.white, fontSize:13.5, fontWeight:500,
+            fontFamily:"'DM Sans',sans-serif", cursor:"pointer",
+          }}>Çıkış Yap</button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <AuthContext.Provider value={auth}>
       {children}
@@ -13414,12 +13983,20 @@ function AuthGuard({ children }) {
   );
 }
 
+// AuthGuard._current is set synchronously during AuthGuard's own render,
+// before any child (which is everything that calls getAuthContext) can
+// render — so this fallback is only ever reached if a component somehow
+// calls it outside the AuthGuard tree. Fails CLOSED: no role and not
+// logged in, so canAccess()/role-gated UI everywhere treats it as zero
+// access rather than silently granting Yönetici. A previous version of
+// this fallback defaulted to role:"Yönetici" — that was a live
+// admin-by-default landmine and must never be reintroduced.
 function getAuthContext() {
   return AuthGuard._current || {
-    displayName: DB.staff[0]?.name || "Berk Çetinkaya",
-    initials:    "BÇ",
-    role:        "Yönetici",
-    isLoggedIn:  true,
+    displayName: "Kullanıcı",
+    initials:    "?",
+    role:        null,
+    isLoggedIn:  false,
     logout:      ()=>{},
   };
 }
@@ -13478,17 +14055,24 @@ function Modal({ title, onClose, onSubmit, submitLabel, children, wide, danger }
     document.body.style.overflow = 'hidden';
     return () => { document.body.style.overflow = prev; };
   }, []);
-  return (
+  // Portal straight to <body> — a fixed-position overlay is only guaranteed
+  // to size against the real viewport when nothing between it and <body>
+  // has a transform/filter/will-change (e.g. the page's own .fade mount
+  // animation), any of which silently turns position:fixed into something
+  // else's containing block instead and is exactly what let this modal
+  // grow past the viewport with no way to reach its footer.
+  return ReactDOM.createPortal((
     <div style={{
       position:"fixed", inset:0, zIndex:1000,
       background:"rgba(13,27,62,0.55)", backdropFilter:"blur(3px)",
       display:"flex", alignItems:"center", justifyContent:"center",
       padding: isMobile ? 0 : 16,
+      overflowY:"auto", // safety fallback if the modal is ever taller than the viewport
     }} onClick={e=>{ if(e.target===e.currentTarget) onClose(); }}>
       <div className="modal-inner" style={{
         background:C.white, borderRadius:T.radius,
         width:"100%", maxWidth: wide ? 720 : 520,
-        maxHeight:"90vh", overflowY:"auto", overflowX:"hidden",
+        maxHeight:"calc(100vh - 48px)", overflow:"hidden", minHeight:0,
         boxShadow:"0 16px 40px rgba(13,27,62,0.22)",
         display:"flex", flexDirection:"column",
         boxSizing:"border-box",
@@ -13512,8 +14096,11 @@ function Modal({ title, onClose, onSubmit, submitLabel, children, wide, danger }
             </svg>
           </button>
         </div>
-        {}
-        <div style={{padding: isMobile ? "18px 16px" : "22px 24px", flex:1, overflowY:"auto"}}>
+        {/* Independently scrollable body — minHeight:0 overrides the flex
+            default (min-height:auto) that would otherwise let this child's
+            content force the whole modal taller than maxHeight instead of
+            scrolling within it. */}
+        <div style={{padding: isMobile ? "18px 16px" : "22px 24px", flex:"1 1 auto", minHeight:0, overflowY:"auto"}}>
           {children}
         </div>
         {}
@@ -13542,7 +14129,7 @@ function Modal({ title, onClose, onSubmit, submitLabel, children, wide, danger }
         </div>
       </div>
     </div>
-  );
+  ), document.body);
 }
 
 function FGrid({ children, cols }) {
@@ -13686,9 +14273,17 @@ function NotFound404({ onBack }) {
 }
 
 
-/* -- useSources: loads real UUIDs from Supabase sources table ------- */
+/* -- useSources: loads real UUIDs from Supabase sources table -------
+   One shared query/cache regardless of capability — is_sales_channel and
+   is_review_source are independent boolean flags on the same source row
+   (see supabase_migration_tour_channels.sql), never a second dataset, so
+   fetching them all once and filtering client-side per-caller avoids
+   duplicate requests for the same table. Pass { capability: 'sales' } for
+   the Satış Kanalları picker or { capability: 'review' } for the review-
+   source picker; omit it for the full list (customer/lead source forms). */
 const _sourcesCache = { data: null, loading: false };
-function useSources() {
+function useSources(opts) {
+  const capability = opts?.capability;
   const [sources, setSources] = useState(null);
   const [srcLoading, setSrcLoading] = useState(AppConfig.useSupabase && !_sourcesCache.data);
 
@@ -13699,7 +14294,7 @@ function useSources() {
     _sourcesCache.loading = true;
     const sb = getSB();
     if (!sb) { setSrcLoading(false); return; }
-    sb.from("sources").select("id,name,slug,is_active").eq("is_active", true).order("name")
+    sb.from("sources").select("id,name,slug,is_active,is_sales_channel,is_review_source").eq("is_active", true).order("name")
       .then(({ data, error }) => {
         if (!error && data) { _sourcesCache.data = data; setSources(data); }
         setSrcLoading(false);
@@ -13708,181 +14303,270 @@ function useSources() {
       .catch(() => { setSrcLoading(false); _sourcesCache.loading = false; });
   }, []);
 
+  const allSources = sources || (AppConfig.useSupabase ? [] : DB.sources);
+  // Never fall back to showing every source when none carry the requested
+  // capability — an empty, honest result, not a silent "show everything".
+  const filtered = capability === 'sales'  ? allSources.filter(s => s.is_sales_channel)
+                  : capability === 'review' ? allSources.filter(s => s.is_review_source)
+                  : allSources;
+
   const getSourceId = (label) => {
     if (!AppConfig.useSupabase) return null;
     const s = (sources || []).find(x => x.name === label || x.slug === (label||"").toLowerCase());
     return s ? s.id : null;
   };
-  const sourceOptions = (sources || DB.sources).map(s => s.name || s.label || s.slug || "");
-  return { sources: sources || [], srcLoading, getSourceId, sourceOptions };
+  const sourceOptions = filtered.map(s => s.name || s.label || s.slug || "");
+  return { sources: filtered, srcLoading, getSourceId, sourceOptions };
 }
-function NewLeadModal({ onClose, onSuccess }) {
-  const { isMobile } = useBreakpoint();
-  const { getSourceId, sourceOptions } = useSources();
-  const [name,    setName]    = useState("");
-  const [phone,   setPhone]   = useState("");
-  const [email,   setEmail]   = useState("");
-  const [tour,    setTour]    = useState("");
-  const [source,  setSource]  = useState("");
-  const [adults,  setAdults]  = useState("2");
-  const [date,    setDate]    = useState("");
-  const [currency,setCurrency]= useState("EUR");
-  const [notes,   setNotes]   = useState("");
-  const [errs,    setErrs]    = useState({});
-  const { mutate:mutCust } = useRepoMutation("customer");
-  const { mutate:mutLead } = useRepoMutation("lead");
-  const [busy, setBusy] = useState(false);
 
-  async function handleSubmit() {
-    const e = validate({
-      name:  { required:"Ad Soyad zorunludur" },
-      phone: { phone:"Geçerli bir telefon numarası girin (örn: +90 555 000 0000)" },
-      email: { email:"Geçerli bir e-posta adresi girin" },
-      adults:{ number:"Kişi sayısı sayısal olmalıdır", min:1, max:100 },
-    }, { name, phone: phone||"0", email: email||"a@b.c", adults });
-    const eReq = validate({ name:{ required:"Ad Soyad zorunludur" } }, { name });
-    const ePhone = phone ? validate({ phone:{ phone:"Geçerli telefon numarası girin" } }, { phone }) : {};
-    const eEmail = email ? validate({ email:{ email:"Geçerli e-posta adresi girin" } }, { email }) : {};
-    const merged = { ...eReq, ...ePhone, ...eEmail };
-    setErrs(merged);
-    if (Object.keys(merged).length) return;
+// "Private"/"Group" chip toggle for tours.tour_type — deliberately NOT a
+// single-select: a tour may run as both, which an enum can't represent.
+function TourTypeChips({ value, onChange }) {
+  const opts = [["private","Private"],["group","Group"]];
+  const list = value || [];
+  function toggle(v) { onChange(list.includes(v) ? list.filter(x=>x!==v) : [...list, v]); }
+  return (
+    <div style={{display:"flex", gap:8}}>
+      {opts.map(([v,label]) => {
+        const on = list.includes(v);
+        return (
+          <button key={v} type="button" onClick={()=>toggle(v)} style={{
+            padding:"8px 20px", borderRadius:99, cursor:"pointer",
+            border: on ? `1.5px solid ${C.gold}` : `1px solid ${C.border}`,
+            background: on ? C.goldPale : C.white,
+            color: on ? C.gold : C.textMid,
+            fontSize:13, fontWeight: on?600:400,
+            fontFamily:"'DM Sans',sans-serif", transition:"all .12s",
+          }}>{label}</button>
+        );
+      })}
+    </div>
+  );
+}
 
-    setBusy(true);
-    try {
-      // ── Resolve real source UUID from Supabase (mock IDs break FK) ──
-      const resolvedSourceId = getSourceId(source);
+// Repeatable Satış Kanalları row editor — shared by New Tour and Tour
+// Detail/Edit so the channel-editing logic exists in exactly one place.
+// Platform choices come ONLY from real sources rows with
+// is_sales_channel=true (useSources({capability:'sales'})) — never every
+// source, never a hardcoded platform list.
+function TourChannelRows({ channels, setChannels, sources, srcLoading }) {
+  function updateRow(i, patch) { setChannels(prev => prev.map((c,j) => j===i ? {...c, ...patch} : c)); }
+  function removeRow(i) { setChannels(prev => prev.filter((_,j)=>j!==i)); }
+  function addRow() { setChannels(prev => [...prev, { sourceId:"", externalProductId:"", price:"", currency:"EUR", isActive:true, listingUrl:"" }]); }
 
-      // ── Find or create customer ─────────────────────────────────────
-      let custId = null;
-      if (AppConfig.useSupabase) {
-        const repo = getActiveRepo('customer');
-        const existing = await Promise.resolve(
-          repo.findByContact({ email:email||null, phone:phone||null })
-        ).catch(()=>null);
-        if (existing) {
-          custId = existing.id;
-        } else {
-          const { data:newCust, error:custErr } = await mutCust("create", {
-            name, phone, email, country:"Diğer", language:"İngilizce",
-            importType:"manual", sourceId: resolvedSourceId,
-          });
-          if (custErr) throw new Error("Müşteri oluşturulamadı: " + custErr);
-          custId = newCust?.id || null;
-        }
-      } else {
-        const nc = { id:`CUST-${Date.now()}`, name, phone, email, flag:"🌍",
-          country:"Diğer", language:"İngilizce", status:"Aktif", sourceId:"SRC-01",
-          initials:name.split(" ").map(w=>w[0]||"").join("").slice(0,2).toUpperCase() };
-        DB.customers.push(nc);
-        custId = nc.id;
-      }
-
-      // ── Create lead ─────────────────────────────────────────────────
-      const { data:newLead, error } = await mutLead("create", {
-        customerId: custId, name, phone, email, tour,
-        paxAdult: parseInt(adults)||2, travelStart: date||null,
-        currency, notes, sourceId: resolvedSourceId, importType:"manual",
-      });
-      if (error) throw new Error("Talep oluşturulamadı: " + error);
-
-      showToast("Talep başarıyla oluşturuldu.");
-      onSuccess && onSuccess(newLead);
-      onClose();
-    } catch(err) {
-      console.error('[NewLeadModal] create failed:', err);
-      showToast("Talep oluşturulurken bir hata oluştu: " + (err?.message || err));
-    } finally {
-      setBusy(false);
-    }
+  if (!srcLoading && (sources||[]).length === 0) {
+    return (
+      <div style={{padding:"16px", background:C.ivory, border:`1px solid ${C.borderLight}`, borderRadius:8, fontSize:12.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", textAlign:"center"}}>
+        Henüz satış kanalı tanımlanmamış.
+      </div>
+    );
   }
 
+  const usedSourceIds = new Set((channels||[]).map(c=>c.sourceId).filter(Boolean));
+  const allUsed = !srcLoading && sources.length > 0 && usedSourceIds.size >= sources.length;
+
   return (
-    <FormShell isMobile={isMobile} title="Yeni Talep Ekle" onClose={onClose} onSubmit={handleSubmit}
-      submitLabel="Talebi Kaydet" submitting={busy}>
-      <FGrid>
-        <FRow label="Ad Soyad" required error={errs.name}>
-          <FText value={name} onChange={setName} placeholder="Sarah Johnson" error={errs.name}/>
+    <div style={{display:"flex", flexDirection:"column", gap:10}}>
+      {(channels||[]).map((c,i) => {
+        const inherit = c.price === "" || c.price === null || c.price === undefined;
+        return (
+          <div key={i} style={{border:`1px solid ${C.borderLight}`, borderRadius:9, padding:"12px 14px", background:C.ivory}}>
+            <div style={{display:"flex", gap:10, alignItems:"flex-end", marginBottom:10}}>
+              <div style={{flex:1}}>
+                <div style={{fontSize:10.5, fontWeight:600, color:C.textFaint, textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:5, fontFamily:"'DM Sans',sans-serif"}}>Platform</div>
+                <FSelect value={c.sourceId} onChange={v=>updateRow(i,{sourceId:v})}
+                  options={[["","— Seçiniz —"], ...sources.filter(s=>s.id===c.sourceId || !usedSourceIds.has(s.id)).map(s=>[s.id, s.name])]}/>
+              </div>
+              <button type="button" onClick={()=>removeRow(i)} style={{
+                padding:"9px 10px", borderRadius:7, border:`1px solid ${C.border}`, background:C.white,
+                cursor:"pointer", color:C.red, flexShrink:0, display:"flex", alignItems:"center",
+              }}><RIc d="M18 6L6 18M6 6l12 12" size={13} sw={2}/></button>
+            </div>
+            <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom: inherit ? 4 : 10}}>
+              <div>
+                <div style={{fontSize:10.5, fontWeight:600, color:C.textFaint, textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:5, fontFamily:"'DM Sans',sans-serif"}}>Platform Fiyatı</div>
+                <FText type="number" value={c.price} onChange={v=>updateRow(i,{price:v, currency: v ? (c.currency||'EUR') : null})} placeholder="Baz fiyat kullanılır" mono/>
+              </div>
+              <div>
+                <div style={{fontSize:10.5, fontWeight:600, color:C.textFaint, textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:5, fontFamily:"'DM Sans',sans-serif"}}>Para Birimi</div>
+                <FSelect value={inherit ? "" : (c.currency||'EUR')} onChange={v=>updateRow(i,{currency:v})} disabled={inherit}
+                  options={inherit ? [["","—"]] : CURRENCY_OPTIONS}/>
+              </div>
+            </div>
+            {inherit && (
+              <div style={{fontSize:11, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginBottom:10, fontStyle:"italic"}}>
+                Baz fiyat kullanılır.
+              </div>
+            )}
+            <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:10}}>
+              <div>
+                <div style={{fontSize:10.5, fontWeight:600, color:C.textFaint, textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:5, fontFamily:"'DM Sans',sans-serif"}}>External Product ID</div>
+                <FText value={c.externalProductId} onChange={v=>updateRow(i,{externalProductId:v})} placeholder="Opsiyonel" mono/>
+              </div>
+              <div>
+                <div style={{fontSize:10.5, fontWeight:600, color:C.textFaint, textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:5, fontFamily:"'DM Sans',sans-serif"}}>Listing URL</div>
+                <FText value={c.listingUrl} onChange={v=>updateRow(i,{listingUrl:v})} placeholder="https://…"/>
+              </div>
+            </div>
+            <label style={{display:"flex", alignItems:"center", gap:8, cursor:"pointer"}}>
+              <SToggle on={c.isActive!==false} onChange={v=>updateRow(i,{isActive:v})}/>
+              <span style={{fontSize:12.5, color:C.textMid, fontFamily:"'DM Sans',sans-serif"}}>{c.isActive!==false ? "Aktif" : "Pasif"}</span>
+            </label>
+          </div>
+        );
+      })}
+      <button type="button" onClick={addRow} disabled={allUsed} style={{
+        alignSelf:"flex-start", display:"flex", alignItems:"center", gap:6,
+        padding:"8px 14px", borderRadius:7, border:`1px dashed ${C.border}`, background:C.white,
+        cursor: allUsed ? "not-allowed" : "pointer",
+        color:C.navy, fontFamily:"'DM Sans',sans-serif", fontSize:12.5, fontWeight:500,
+        opacity: allUsed ? 0.5 : 1,
+      }}>
+        <RIc d="M12 5v14m-7-7h14" size={13} sw={2}/>
+        + Satış Kanalı Ekle
+      </button>
+    </div>
+  );
+}
+
+// Shared Temel Bilgiler / Operasyon / Diller / Satış Kanalları field set —
+// used identically by NewTourModal and TourDetailPage so the two forms can
+// never drift apart. Purely controlled: all state/setters come from props.
+function TourFormFields({
+  name, setName, category, setCategory, description, setDescription,
+  durationText, setDurationText, basePrice, setBasePrice, currency, setCurrency,
+  status, setStatus, tourType, setTourType, maxGuests, setMaxGuests,
+  meetingPoint, setMeetingPoint, notes, setNotes,
+  languages, setLanguages, channels, setChannels, errors,
+}) {
+  const { sources: channelSources, srcLoading } = useSources({ capability: 'sales' });
+  return (
+    <>
+      <FRow label="Tur Adı" required error={errors?.name} full>
+        <FText value={name} onChange={setName} placeholder="Grand Bazaar Experience" error={errors?.name}/>
+      </FRow>
+      <FGrid cols={2}>
+        <FRow label="Kategori" required>
+          <FSelect value={category} onChange={setCategory} options={TOUR_CATEGORIES}/>
         </FRow>
-        <FRow label="Kaynak">
-          <FSelect value={source} onChange={setSource} options={sourceOptions}/>
-        </FRow>
-        <FRow label="Telefon" error={errs.phone}>
-          <FText value={phone} onChange={setPhone} placeholder="+90 555 000 0000" mono error={errs.phone}/>
-        </FRow>
-        <FRow label="E-posta" error={errs.email}>
-          <FText value={email} onChange={setEmail} placeholder="email@example.com" type="email" error={errs.email}/>
+        <FRow label="Süre" hint="Dese Tour deneyimleri saat bazlıdır.">
+          <FText value={durationText} onChange={setDurationText} placeholder="Örn: 3 saat, 4.5 saat, 1 gün"/>
         </FRow>
       </FGrid>
-      <FRow label="Tur / Destinasyon" full>
-        <FText value={tour} onChange={setTour} placeholder="Private Istanbul Experience"/>
+      <FRow label="Açıklama" full>
+        <FTextArea value={description} onChange={setDescription} rows={3} placeholder="Tur hakkında kısa açıklama…"/>
       </FRow>
-      <FGrid>
-        <FRow label="Kişi Sayısı" error={errs.adults}>
-          <FText value={adults} onChange={setAdults} placeholder="2" mono error={errs.adults}/>
-        </FRow>
-        <FRow label="Seyahat Tarihi (yaklaşık)">
-          <FText value={date} onChange={setDate} placeholder="2026-07-15" mono/>
+      <FGrid cols={2}>
+        <FRow label="Baz Fiyat">
+          <FText type="number" value={basePrice} onChange={setBasePrice} placeholder="0.00" mono/>
         </FRow>
         <FRow label="Para Birimi">
-          <FSelect value={currency} onChange={setCurrency} options={["EUR","USD","GBP","TRY"]}/>
+          <FSelect value={currency} onChange={setCurrency} options={CURRENCY_OPTIONS}/>
         </FRow>
       </FGrid>
-      <FRow label="Notlar" full>
-        <FTextArea value={notes} onChange={setNotes} placeholder="Müşteri hakkında ekstra bilgi…"/>
+      <FRow label="Durum" full>
+        <div style={{display:"flex", gap:8}}>
+          {["Aktif","Taslak","Arşiv"].map(s => {
+            const m = TOUR_STATUS_CFG[s]; const on = status===s;
+            return (
+              <button key={s} type="button" onClick={()=>setStatus(s)} style={{
+                flex:1, padding:"9px 0", borderRadius:7, cursor:"pointer",
+                border: on?`1.5px solid ${m.color}`:`1px solid ${C.border}`,
+                background: on?m.bg:C.white, color: on?m.color:C.textMid,
+                fontFamily:"'DM Sans',sans-serif", fontSize:13, fontWeight:on?600:400,
+                transition:"all .12s",
+              }}>{s}</button>
+            );
+          })}
+        </div>
       </FRow>
-    </FormShell>
+
+      <div style={{height:1, background:C.borderLight, margin:"20px 0 16px"}}/>
+      <div style={{fontSize:13.5, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif", marginBottom:14}}>Operasyon</div>
+      <FRow label="Tur Modeli" hint="Boş bırakılırsa belirtilmemiş sayılır." full>
+        <TourTypeChips value={tourType} onChange={setTourType}/>
+      </FRow>
+      <FGrid cols={2}>
+        <FRow label="Maksimum Misafir" error={errors?.maxGuests}>
+          <FText type="number" value={maxGuests} onChange={setMaxGuests} placeholder="Opsiyonel" mono error={errors?.maxGuests}/>
+        </FRow>
+        <FRow label="Buluşma Noktası">
+          <FText value={meetingPoint} onChange={setMeetingPoint} placeholder="Opsiyonel"/>
+        </FRow>
+      </FGrid>
+      <FRow label="Operasyon Notları" full>
+        <FTextArea value={notes} onChange={setNotes} rows={2} placeholder="Opsiyonel — operasyon ekibi için notlar…"/>
+      </FRow>
+
+      <div style={{height:1, background:C.borderLight, margin:"20px 0 16px"}}/>
+      <div style={{fontSize:13.5, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif", marginBottom:14}}>Diller</div>
+      <FRow label="Tur Dilleri" hint="Bu turun sunulduğu diller — tour_languages tablosuna ilişkisel olarak kaydedilir." full>
+        <FMultiSelect value={languages} onChange={setLanguages} options={LANGUAGES} placeholder="Dil seçiniz…"/>
+      </FRow>
+
+      <div style={{height:1, background:C.borderLight, margin:"20px 0 16px"}}/>
+      <div style={{fontSize:13.5, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif", marginBottom:14}}>Satış Kanalları</div>
+      <TourChannelRows channels={channels} setChannels={setChannels} sources={channelSources} srcLoading={srcLoading}/>
+    </>
   );
 }
 
 function NewTourModal({ onClose }) {
-  const [name,     setName]     = useState("");
-  const [category, setCategory] = useState("Kültür & Tarih");
-  const [duration, setDuration] = useState("1");
-  const [price,    setPrice]    = useState("");
-  const [currency, setCurrency] = useState("EUR");
-  const [desc,     setDesc]     = useState("");
-  const [errs,     setErrs]     = useState({});
+  const [name, setName]                 = useState("");
+  const [category, setCategory]         = useState("cultural");
+  const [description, setDescription]   = useState("");
+  const [durationText, setDurationText] = useState("");
+  const [basePrice, setBasePrice]       = useState("");
+  const [currency, setCurrency]         = useState("EUR");
+  const [status, setStatus]             = useState("Aktif");
+  const [tourType, setTourType]         = useState([]);
+  const [maxGuests, setMaxGuests]       = useState("");
+  const [meetingPoint, setMeetingPoint] = useState("");
+  const [notes, setNotes]               = useState("");
+  const [languages, setLanguages]       = useState([]);
+  const [channels, setChannels]         = useState([]);
+  const [errs, setErrs]                 = useState({});
   const { mutate:mutTour, mutating:tourMut } = useRepoMutation("tour");
 
   async function handleSubmit() {
-    const e = validate({
-      name:  { required:"Tur adı zorunludur", minLen:3 },
-      price: { required:"Fiyat zorunludur", number:"Sayısal bir fiyat girin", min:1 },
-    }, { name, price });
+    const e = validate({ name: { required:"Tur adı zorunludur", minLen:3 } }, { name });
+    if (maxGuests && (isNaN(parseInt(maxGuests)) || parseInt(maxGuests) <= 0)) {
+      e.maxGuests = "Maksimum misafir 0'dan büyük olmalıdır.";
+    }
     setErrs(e);
     if (Object.keys(e).length) return;
-    const { error } = await mutTour("create", {
-      name, category, duration:parseInt(duration)||1,
-      flatPrice:parseFloat(price)||0, currency, description:desc,
+    const { data, error } = await mutTour("create", {
+      name, category, description, durationText: durationText || null,
+      basePrice: basePrice ? parseFloat(basePrice) : 0, currency, status,
+      tourType, maxGuests: maxGuests || null, meetingPoint, notes,
+      languages, channels,
     });
     if (error) { showToast("Tur oluşturulamadı ✗"); return; }
-    showToast("Tur oluşturuldu ✓"); onClose();
+    if (data?._syncWarning) {
+      showToast("Tur oluşturuldu, ancak " + data._syncWarning + " Tur Detayı'ndan tekrar deneyin.");
+    } else {
+      showToast("Tur oluşturuldu ✓");
+    }
+    onClose();
   }
 
   return (
     <Modal title="Yeni Tur Ekle" onClose={onClose} onSubmit={handleSubmit}
-      submitLabel={tourMut?"Kaydediliyor…":"Turu Kaydet"}>
-      <FRow label="Tur Adı" required error={errs.name} full>
-        <FText value={name} onChange={setName} placeholder="Private Istanbul Experience" error={errs.name}/>
-      </FRow>
-      <FGrid>
-        <FRow label="Kategori">
-          <FSelect value={category} onChange={setCategory}
-            options={["Kültür & Tarih","Gastronomi","Macera","Doğa","VIP","Aile"]}/>
-        </FRow>
-        <FRow label="Süre (gün)">
-          <FText value={duration} onChange={setDuration} placeholder="1" mono/>
-        </FRow>
-        <FRow label="Fiyat" required error={errs.price}>
-          <FText value={price} onChange={setPrice} placeholder="350.00" mono error={errs.price}/>
-        </FRow>
-        <FRow label="Para Birimi">
-          <FSelect value={currency} onChange={setCurrency} options={["EUR","USD","GBP","TRY"]}/>
-        </FRow>
-      </FGrid>
-      <FRow label="Açıklama" full>
-        <FTextArea value={desc} onChange={setDesc} placeholder="Tur hakkında kısa açıklama…" rows={3}/>
-      </FRow>
+      submitLabel={tourMut?"Kaydediliyor…":"Turu Kaydet"} wide>
+      <TourFormFields
+        name={name} setName={setName} category={category} setCategory={setCategory}
+        description={description} setDescription={setDescription}
+        durationText={durationText} setDurationText={setDurationText}
+        basePrice={basePrice} setBasePrice={setBasePrice} currency={currency} setCurrency={setCurrency}
+        status={status} setStatus={setStatus}
+        tourType={tourType} setTourType={setTourType}
+        maxGuests={maxGuests} setMaxGuests={setMaxGuests}
+        meetingPoint={meetingPoint} setMeetingPoint={setMeetingPoint}
+        notes={notes} setNotes={setNotes}
+        languages={languages} setLanguages={setLanguages}
+        channels={channels} setChannels={setChannels}
+        errors={errs}
+      />
     </Modal>
   );
 }
@@ -13933,9 +14617,9 @@ function mapQuoteFromDB(r, items) {
     customerId:    r.customer_id   || null,
     tourId:        r.tour_id       || tourItem?.tourId || null,
     // Real Supabase rows never had this field, only mock data did — every
-    // consumer (QuotesPage's search filter, QuoteDetailPage) calls
-    // .toLowerCase() / renders it directly as a string, so a missing
-    // value here was a hard crash in Supabase mode, not just a blank cell.
+    // remaining consumer (QuoteDetailPage) calls .toLowerCase() / renders it
+    // directly as a string, so a missing value here was a hard crash in
+    // Supabase mode, not just a blank cell.
     customer:      r.customer?.full_name || '',
     flag:          r.flag || '🌍',
     tour:          r.tour_name || (r.lead && r.lead.destination) || r.destination || '—',
@@ -14155,35 +14839,130 @@ const SupabaseQuoteRepo = {
   },
 };
 
+// ── Tours / tour_languages / tour_channels mapping ──────────────────────────
+// tours.status is authoritative (supabase_migration_tour_channels.sql); the
+// database trigger derives is_active from it. This app-code layer must
+// never write is_active directly — only status, mapped here.
+const _TOUR_STATUS_DB  = { 'Aktif':'active', 'Taslak':'draft', 'Arşiv':'archived' };
+const _TOUR_STATUS_APP = { 'active':'Aktif', 'draft':'Taslak', 'archived':'Arşiv' };
+
+function mapTourChannelFromDB(c) {
+  if (!c) return null;
+  return {
+    id: c.id, tourId: c.tour_id, sourceId: c.source_id,
+    sourceName: c.source?.name || '',
+    externalProductId: c.external_product_id || '',
+    // NULL+NULL pairing from the DB (inherit tours.base_price/currency) is
+    // preserved as null here — never defaulted to a fabricated number.
+    price: c.price != null ? parseFloat(c.price) : null,
+    currency: c.currency || null,
+    isActive: c.is_active !== false,
+    listingUrl: c.listing_url || '',
+    notes: c.notes || '',
+  };
+}
+
 function mapTourFromDB(r) {
   if (!r) return null;
-  const s = { 'active':'Aktif', 'draft':'Taslak', 'archived':'Arşiv' };
+  const languages = (r.tour_languages||[]).map(l => ({ code:l.language_code, name:l.language_name }));
+  const channels  = (r.tour_channels||[]).map(mapTourChannelFromDB);
   return {
     id:          r.id,
     name:        r.name          || '',
-    category:    r.category      || 'Diğer',
-    duration:    r.duration_days || 1,
-    status:      s[r.status]     || r.status || 'Aktif',
-    flatPrice:   parseFloat(r.flat_price || 0),
+    category:    r.category      || 'other',
+    // duration_days: legacy day-count, kept read-only for graceful fallback
+    // (see tourDurationLabel). duration_text: the authoritative operator-
+    // entered human-readable duration going forward (e.g. "3 saat").
+    duration:    r.duration_days || null,
+    durationText:r.duration_text || '',
+    status:      _TOUR_STATUS_APP[r.status] || r.status || 'Aktif',
+    basePrice:   parseFloat(r.base_price || 0),
     currency:    r.currency      || 'EUR',
     description: r.description   || '',
     pricingType: r.pricing_type  || 'flat',
     isActive:    r.is_active     !== false,
-    usageCount:  r.usage_count   || 0,
+    tourType:    r.tour_type     || [],
+    maxGuests:   r.maximum_guest_capacity || null,
+    meetingPoint:r.meeting_point || '',
+    notes:       r.notes         || '',
+    languages, languageNames: languages.map(l=>l.name),
+    channels,
     createdAt:   r.created_at    ? r.created_at.split('T')[0] : '',
     updatedAt:   r.updated_at    ? r.updated_at.split('T')[0] : '',
     _fromDB:     true,
   };
 }
 
+function mapTourToDB(d) {
+  const row = {};
+  if (d.name         !== undefined) row.name = d.name;
+  if (d.category      !== undefined) row.category = d.category || 'other';
+  // duration_days is never written from here on — duration_text (operator
+  // free-text, hour-based) is now the sole authoritative duration write.
+  // duration_days stays in the schema/row untouched for whatever legacy
+  // value it already holds; see tourDurationLabel's read-side fallback.
+  if (d.durationText   !== undefined) row.duration_text = d.durationText || null;
+  if (d.basePrice      !== undefined) row.base_price = parseFloat(d.basePrice) || 0;
+  if (d.currency       !== undefined) row.currency = d.currency || 'EUR';
+  if (d.description    !== undefined) row.description = d.description || null;
+  // Authoritative lifecycle write — never is_active. The DB trigger derives
+  // is_active from this on every insert/update.
+  if (d.status         !== undefined) row.status = _TOUR_STATUS_DB[d.status] || d.status || 'active';
+  if (d.tourType        !== undefined) row.tour_type = (d.tourType && d.tourType.length) ? d.tourType : null;
+  if (d.maxGuests        !== undefined) row.maximum_guest_capacity = d.maxGuests ? parseInt(d.maxGuests) : null;
+  if (d.meetingPoint      !== undefined) row.meeting_point = d.meetingPoint || null;
+  if (d.notes             !== undefined) row.notes = d.notes || null;
+  return row;
+}
+
+// Replace-all sync of a tour's tour_languages rows — identical pattern to
+// _syncGuideLanguages (delete-then-insert is safe because these rows carry
+// no identity of their own beyond (tour_id, language_code), and the caller
+// always sends the tour's complete current language set).
+async function _syncTourLanguages(sb, tourId, languages) {
+  const { error: delErr } = await sb.from('tour_languages').delete().eq('tour_id', tourId);
+  if (delErr) throw new Error(delErr.message);
+  const list = (languages||[]).filter(l => l && l.code);
+  if (!list.length) return;
+  const rows = list.map(l => ({ tour_id:tourId, language_code:l.code, language_name:l.name || LANGUAGE_NAME_BY_CODE[l.code] || l.code }));
+  const { error: insErr } = await sb.from('tour_languages').insert(rows);
+  if (insErr) throw new Error(insErr.message);
+}
+
+// Replace-all sync of a tour's tour_channels rows. price/currency are
+// written as a strict pair — an empty/blank price always clears currency
+// to null too, matching tour_channels_price_currency_pair exactly, so a
+// row can never be sent as "price set, currency blank" or vice versa.
+async function _syncTourChannels(sb, tourId, channels) {
+  const { error: delErr } = await sb.from('tour_channels').delete().eq('tour_id', tourId);
+  if (delErr) throw new Error(delErr.message);
+  const list = (channels||[]).filter(c => c && c.sourceId);
+  if (!list.length) return;
+  const rows = list.map(c => {
+    const hasPrice = c.price !== '' && c.price !== null && c.price !== undefined;
+    return {
+      tour_id: tourId, source_id: c.sourceId,
+      external_product_id: c.externalProductId || null,
+      price: hasPrice ? parseFloat(c.price) : null,
+      currency: hasPrice ? (c.currency || 'EUR') : null,
+      is_active: c.isActive !== false,
+      listing_url: c.listingUrl || null,
+      notes: c.notes || null,
+    };
+  });
+  const { error: insErr } = await sb.from('tour_channels').insert(rows);
+  if (insErr) throw new Error(insErr.message);
+}
+
+const _TOUR_SELECT = '*,tour_languages(id,language_code,language_name),tour_channels(*,source:sources(id,name))';
+
 const SupabaseTourRepo = {
   async getAll(f = {}) {
     const sb = getSB();
     if (!sb) return TourRepository.getAll(f);
-    let q = sb.from('tours').select('*').order('name');
+    let q = sb.from('tours').select(_TOUR_SELECT).order('name');
     if (f.status && f.status !== 'Tümü') {
-      const dbS = f.status === 'Aktif' ? 'active' : f.status === 'Taslak' ? 'draft' : 'archived';
-      q = q.eq('status', dbS);
+      q = q.eq('status', _TOUR_STATUS_DB[f.status] || f.status);
     } else {
       q = q.in('status', ['active','draft']);
     }
@@ -14196,44 +14975,68 @@ const SupabaseTourRepo = {
   async getById(id) {
     const sb = getSB();
     if (!sb) return TourRepository.getById(id);
-    const { data, error } = await sb.from('tours').select('*').eq('id', id).maybeSingle();
+    const { data, error } = await sb.from('tours').select(_TOUR_SELECT).eq('id', id).maybeSingle();
     if (error) throw new Error(error.message);
     return mapTourFromDB(data);
   },
 
+  // Sequence: insert the tours row, then sync tour_languages/tour_channels.
+  // Supabase's client-side REST API has no multi-statement transaction —
+  // there is no real rollback available here, and none is invented. If the
+  // base insert succeeds but a relational sync fails, the tour row is real
+  // and stays (deleting it would destroy genuine, already-saved user data
+  // over a child-table failure, which is worse). The failure is surfaced
+  // via _syncWarning on the otherwise-successful return value instead of
+  // being silently swallowed or thrown away — the caller must show it
+  // distinctly from a full failure, and the tour remains editable via Tour
+  // Detail to retry the sync.
   async create(d) {
     const sb = getSB();
     if (!sb) return TourRepository.create(d);
-    const { data: c, error } = await sb.from('tours').insert({
-      name: d.name, category: d.category || 'Diğer',
-      duration_days: parseInt(d.duration || 1),
-      flat_price: parseFloat(d.flatPrice || d.price || 0),
-      currency: d.currency || 'EUR',
-      description: d.description || null,
-      status: 'active', is_active: true, pricing_type: 'flat',
-    }).select().single();
+    const row = mapTourToDB(d);
+    if (!row.name) throw new Error('Tur adı zorunludur.');
+    row.category = row.category || 'other';
+    row.status = row.status || 'active';
+    row.pricing_type = 'flat';
+    const { data: c, error } = await sb.from('tours').insert(row).select().single();
     if (error) throw new Error(error.message);
     await _sbLog('tour', c.id, 'created', `Tur oluşturuldu: ${c.name}`);
-    return mapTourFromDB(c);
+
+    let syncWarning = null;
+    if (d.languages !== undefined) {
+      try { await _syncTourLanguages(sb, c.id, d.languages); }
+      catch(e) { syncWarning = 'Diller kaydedilemedi: ' + e.message; }
+    }
+    if (d.channels !== undefined) {
+      try { await _syncTourChannels(sb, c.id, d.channels); }
+      catch(e) { syncWarning = syncWarning ? syncWarning + ' · Satış kanalları kaydedilemedi: ' + e.message : 'Satış kanalları kaydedilemedi: ' + e.message; }
+    }
+    const created = await SupabaseTourRepo.getById(c.id);
+    if (syncWarning) created._syncWarning = syncWarning;
+    return created;
   },
 
   async update(id, d) {
     const sb = getSB();
     if (!sb) return TourRepository.update(id, d);
-    const dbS = d.status === 'Aktif' ? 'active' : d.status === 'Taslak' ? 'draft' : d.status === 'Arşiv' ? 'archived' : undefined;
-    const row = {};
-    if (d.name        !== undefined) row.name          = d.name;
-    if (d.category    !== undefined) row.category      = d.category;
-    if (d.duration    !== undefined) row.duration_days = parseInt(d.duration);
-    if (d.flatPrice   !== undefined) row.flat_price    = parseFloat(d.flatPrice);
-    if (d.currency    !== undefined) row.currency      = d.currency;
-    if (d.description !== undefined) row.description   = d.description;
-    if (d.status      !== undefined) row.status        = dbS || d.status;
-    if (d.pricingType !== undefined) row.pricing_type  = d.pricingType;
-    const { data: u, error } = await sb.from('tours').update(row).eq('id', id).select().single();
-    if (error) throw new Error(error.message);
-    await _sbLog('tour', id, 'updated', `Tur güncellendi: ${u.name}`);
-    return mapTourFromDB(u);
+    const row = mapTourToDB(d);
+    if (Object.keys(row).length) {
+      const { error } = await sb.from('tours').update(row).eq('id', id);
+      if (error) throw new Error(error.message);
+    }
+    let syncWarning = null;
+    if (d.languages !== undefined) {
+      try { await _syncTourLanguages(sb, id, d.languages); }
+      catch(e) { syncWarning = 'Diller kaydedilemedi: ' + e.message; }
+    }
+    if (d.channels !== undefined) {
+      try { await _syncTourChannels(sb, id, d.channels); }
+      catch(e) { syncWarning = syncWarning ? syncWarning + ' · Satış kanalları kaydedilemedi: ' + e.message : 'Satış kanalları kaydedilemedi: ' + e.message; }
+    }
+    await _sbLog('tour', id, 'updated', `Tur güncellendi: ${d.name || id}`);
+    const updated = await SupabaseTourRepo.getById(id);
+    if (syncWarning) updated._syncWarning = syncWarning;
+    return updated;
   },
 };
 
@@ -15478,6 +16281,398 @@ function ResetPasswordPage() {
   );
 }
 
+// Result row shown inside a GlobalSearch group — id kept small/mono so it
+// reads as a real record reference, title+sub carry the identifying info.
+function SearchResultRow({ item, onSelect }) {
+  const [hover, setHover] = useState(false);
+  return (
+    <button
+      onMouseDown={e=>e.preventDefault()}
+      onClick={()=>onSelect(item.route)}
+      onMouseEnter={()=>setHover(true)}
+      onMouseLeave={()=>setHover(false)}
+      style={{
+        display:"flex", flexDirection:"column", gap:1,
+        width:"100%", textAlign:"left", padding:"7px 12px", borderRadius:6,
+        border:"none", background:hover?C.ivory:"transparent", cursor:"pointer",
+      }}
+    >
+      <span style={{fontSize:12.5, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}}>{item.title}</span>
+      {item.sub && <span style={{fontSize:11, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}}>{item.sub}</span>}
+    </button>
+  );
+}
+
+function SearchResultGroup({ label, items, onSelect }) {
+  if (!items.length) return null;
+  return (
+    <div style={{padding:"6px 4px"}}>
+      <div style={{fontSize:10, fontWeight:600, letterSpacing:"0.08em", textTransform:"uppercase", color:C.textFaint, fontFamily:"'DM Sans',sans-serif", padding:"4px 12px"}}>{label}</div>
+      {items.map(it => <SearchResultRow key={it.route} item={it} onSelect={onSelect}/>)}
+    </div>
+  );
+}
+
+// Real lightweight global search — reuses the same getAll() repo calls (and
+// their shared fetch cache) every list page already issues, and filters
+// client-side across each entity's identifying fields. No new backend/
+// search service, no added dependency.
+function GlobalSearch() {
+  const [query, setQuery]   = useState("");
+  const [open,  setOpen]    = useState(false);
+  const inputRef            = useRef(null);
+  const containerRef        = useRef(null);
+
+  const { data:repoCust,   error:errCust }   = useRepo("customer",    "getAll");
+  const { data:repoRes,    error:errRes }    = useRepo("reservation", "getAll");
+  const { data:repoTours,  error:errTours }  = useRepo("tour",        "getAll");
+  const { data:repoGuides, error:errGuides } = useRepo("guide",       "getAll");
+
+  useEffect(() => {
+    function onKeyDown(e) {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        inputRef.current?.focus();
+        inputRef.current?.select();
+      }
+    }
+    function onMouseDown(e) {
+      if (containerRef.current && !containerRef.current.contains(e.target)) setOpen(false);
+    }
+    window.addEventListener("keydown", onKeyDown);
+    document.addEventListener("mousedown", onMouseDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      document.removeEventListener("mousedown", onMouseDown);
+    };
+  }, []);
+
+  const q = query.trim().toLowerCase();
+  const active = q.length >= 2;
+  const allFailed = !!(errCust && errRes && errTours && errGuides);
+
+  const results = useMemo(() => {
+    if (!active) return null;
+    const hit = (...vals) => vals.some(v => (v != null ? String(v) : "").toLowerCase().includes(q));
+    const customers = (repoCust||[])
+      .filter(c => hit(c.name, c.email, c.phone))
+      .slice(0, 5)
+      .map(c => ({ route:`/customers/${c.id}`, title:c.name||c.id, sub:[c.email,c.phone].filter(Boolean).join(" · ") }));
+    const reservations = (repoRes||[])
+      .filter(r => hit(r.resNumber, r.id, r.name, r.tour))
+      .slice(0, 5)
+      .map(r => ({ route:`/reservations/${r.id}`, title:r.resNumber||r.id, sub:[r.name,r.tour].filter(Boolean).join(" · ") }));
+    const tours = (repoTours||[])
+      .filter(t => hit(t.name, t.category))
+      .slice(0, 5)
+      .map(t => ({ route:`/tours/${t.id}`, title:t.name||t.id, sub:t.category||"" }));
+    const guides = (repoGuides||[])
+      .filter(g => hit(g.name, g.phone, g.email, g.licenseNumber))
+      .slice(0, 5)
+      .map(g => ({ route:`/guides/${g.id}`, title:g.name||g.id, sub:[g.phone,g.licenseNumber].filter(Boolean).join(" · ") }));
+    return { customers, reservations, tours, guides };
+  }, [active, q, repoCust, repoRes, repoTours, repoGuides]);
+
+  const totalCount = results
+    ? results.customers.length + results.reservations.length + results.tours.length + results.guides.length
+    : 0;
+
+  function goTo(route) {
+    setOpen(false);
+    setQuery("");
+    if (typeof NAV_REF.fn === 'function') NAV_REF.fn(route);
+  }
+
+  return (
+    <div ref={containerRef} style={{position:"relative", width:360, maxWidth:"38vw"}}>
+      <span style={{position:"absolute", left:12, top:"50%", transform:"translateY(-50%)", color:C.textFaint, pointerEvents:"none", display:"flex"}}>
+        <Ic d="M21 21l-4.35-4.35 M17 11A6 6 0 105 11a6 6 0 0012 0z" size={14} sw={1.8}/>
+      </span>
+      <input
+        ref={inputRef}
+        value={query}
+        onChange={e=>{ setQuery(e.target.value); setOpen(true); }}
+        onFocus={()=>setOpen(true)}
+        onKeyDown={e=>{ if (e.key === "Escape") { setOpen(false); inputRef.current?.blur(); } }}
+        placeholder="Misafir, rezervasyon, tur, rehber ara…"
+        style={{
+          width:"100%", boxSizing:"border-box", padding:"9px 54px 9px 34px",
+          border:`1px solid ${C.border}`, borderRadius:T.radiusSm, background:C.ivory,
+          fontSize:13, color:C.text, fontFamily:"'DM Sans',sans-serif", outline:"none",
+        }}
+      />
+      {!query && (
+        <span style={{
+          position:"absolute", right:8, top:"50%", transform:"translateY(-50%)",
+          fontSize:10.5, color:C.textFaint, fontFamily:"'DM Mono',monospace",
+          border:`1px solid ${C.borderLight}`, borderRadius:5, padding:"2px 6px",
+          background:C.white, pointerEvents:"none",
+        }}>Ctrl + K</span>
+      )}
+
+      {open && active && (
+        <div style={{
+          position:"absolute", top:"calc(100% + 6px)", left:0, right:0,
+          background:C.white, border:`1px solid ${C.border}`, borderRadius:T.radiusSm,
+          boxShadow:"0 12px 32px rgba(13,27,62,0.16)", maxHeight:420, overflowY:"auto",
+          zIndex:100, padding:"4px",
+        }}>
+          {allFailed ? (
+            <div style={{padding:"14px 12px", fontSize:12.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>
+              Arama şu anda kullanılamıyor.
+            </div>
+          ) : totalCount === 0 ? (
+            <div style={{padding:"14px 12px", fontSize:12.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>
+              Sonuç bulunamadı.
+            </div>
+          ) : (
+            <>
+              <SearchResultGroup label="Misafirler"     items={results.customers}    onSelect={goTo}/>
+              <SearchResultGroup label="Rezervasyonlar" items={results.reservations} onSelect={goTo}/>
+              <SearchResultGroup label="Turlar"         items={results.tours}        onSelect={goTo}/>
+              <SearchResultGroup label="Rehberler"      items={results.guides}       onSelect={goTo}/>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Bell icon path shared by the disabled (guide) and active states, so both
+// always render the exact same glyph.
+const _BELL_ICON_D = "M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0";
+
+// System reservation notifications (auto-ingested "Yeni Rezervasyon Geldi"
+// events today) — read via activity_logs/activity_log_reads, exactly the
+// tables the database already writes to; no new backend behavior. Guides
+// never see this at all (RLS on activity_logs already returns zero rows
+// for them — see SupabaseActivityRepo.getReservationNotifications — and
+// this component additionally never renders the bell for that role, so
+// there's nothing to click into an always-empty panel).
+function NotificationBell() {
+  const auth = useAuthContext();
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef(null);
+  const { data:notifs, loading } = useRepo("activity", "getReservationNotifications");
+  const { mutate:mutMarkRead } = useRepoMutation("activity");
+
+  useEffect(() => {
+    function onMouseDown(e) {
+      if (containerRef.current && !containerRef.current.contains(e.target)) setOpen(false);
+    }
+    document.addEventListener("mousedown", onMouseDown);
+    return () => document.removeEventListener("mousedown", onMouseDown);
+  }, []);
+
+  const eligible = !!auth.role && auth.role !== "Rehber";
+  if (!eligible) {
+    return (
+      <button disabled title="Bildirimler bu rol için kullanılamıyor" style={{
+        border:"none", background:"transparent", color:C.textMuted,
+        cursor:"not-allowed", padding:6, display:"flex",
+      }}>
+        <Ic d={_BELL_ICON_D} size={18} sw={1.6}/>
+      </button>
+    );
+  }
+
+  const list = notifs || [];
+  const unread = list.filter(n => !n.isRead);
+
+  async function handleSelect(n) {
+    setOpen(false);
+    if (!n.isRead) await mutMarkRead("markReservationNotificationRead", n.id);
+    if (n.reservationId) {
+      if (typeof NAV_REF.fn === 'function') NAV_REF.fn('/reservations/' + n.reservationId);
+      else { try { window.location.hash = '#/reservations/' + n.reservationId; } catch(_) {} }
+    }
+  }
+
+  return (
+    <div ref={containerRef} style={{position:"relative"}}>
+      <button onClick={()=>setOpen(o=>!o)} style={{
+        border:"none", background:"transparent",
+        color: unread.length > 0 ? C.gold : C.textMuted,
+        cursor:"pointer", padding:6, display:"flex", position:"relative",
+      }}>
+        <Ic d={_BELL_ICON_D} size={18} sw={1.6}/>
+        {unread.length > 0 && (
+          <span style={{
+            position:"absolute", top:1, right:1, minWidth:15, height:15, borderRadius:99,
+            background:C.red, color:C.white, fontSize:9.5, fontWeight:700, lineHeight:1,
+            display:"flex", alignItems:"center", justifyContent:"center", padding:"0 3px",
+            fontFamily:"'DM Sans',sans-serif", border:`1.5px solid ${C.white}`,
+          }}>{unread.length}</span>
+        )}
+      </button>
+      {open && (
+        <div style={{
+          position:"absolute", top:"calc(100% + 10px)", right:0, width:340,
+          background:C.white, border:`1px solid ${C.border}`, borderRadius:T.radiusSm,
+          boxShadow:"0 12px 32px rgba(13,27,62,0.16)", maxHeight:420, overflowY:"auto",
+          zIndex:100,
+        }}>
+          <div style={{
+            padding:"12px 14px", borderBottom:`1px solid ${C.borderLight}`,
+            display:"flex", justifyContent:"space-between", alignItems:"center",
+          }}>
+            <span style={{fontSize:12.5, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif"}}>Rezervasyon Bildirimleri</span>
+            {unread.length > 0 && (
+              <span style={{fontSize:11, color:C.gold, fontFamily:"'DM Sans',sans-serif", fontWeight:600}}>{unread.length} okunmadı</span>
+            )}
+          </div>
+          {loading ? (
+            <div style={{padding:"20px 14px"}}><LoadingState label="Yükleniyor…"/></div>
+          ) : list.length === 0 ? (
+            <div style={{padding:"24px 14px", textAlign:"center", fontSize:12.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>
+              Henüz bildirim yok.
+            </div>
+          ) : (
+            list.map(n => (
+              <div key={n.id} onClick={()=>handleSelect(n)} style={{
+                padding:"11px 14px", borderBottom:`1px solid ${C.borderLight}`, cursor:"pointer",
+                background: n.isRead ? C.white : C.goldPale,
+                display:"flex", gap:10, alignItems:"flex-start",
+              }}>
+                {!n.isRead && <span style={{width:6, height:6, borderRadius:"50%", background:C.gold, marginTop:5, flexShrink:0}}/>}
+                <div style={{flex:1, minWidth:0}}>
+                  <div style={{
+                    fontSize:12.5, fontWeight: n.isRead ? 500 : 600, color:C.text,
+                    fontFamily:"'DM Sans',sans-serif", lineHeight:1.4,
+                  }}>{n.description}</div>
+                  <div style={{fontSize:11, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:3, display:"flex", gap:6, flexWrap:"wrap"}}>
+                    {n.source && <span style={{textTransform:"capitalize"}}>{n.source}</span>}
+                    <span>{new Date(n.createdAt).toLocaleString('tr-TR', {day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit'})}</span>
+                  </div>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Thin persistent desktop top bar (search shell + notification + identity).
+function DesktopTopBar({ leftOffset }) {
+  const auth = useAuthContext();
+  return (
+    <div style={{
+      position:"fixed", top:0, left:leftOffset, right:0, height:56, zIndex:40,
+      background:C.white, borderBottom:`1px solid ${C.border}`,
+      display:"flex", alignItems:"center", justifyContent:"space-between",
+      padding:"0 28px", gap:20,
+      transition:"left 0.22s cubic-bezier(0.4,0,0.2,1)",
+    }}>
+      <GlobalSearch/>
+      <div style={{display:"flex", alignItems:"center", gap:18, flexShrink:0}}>
+        <NotificationBell/>
+        <div style={{width:1, height:24, background:C.borderLight}}/>
+        <div style={{display:"flex", alignItems:"center", gap:9}}>
+          <div style={{width:32, height:32, borderRadius:"50%", flexShrink:0, background:C.goldPale, border:`1.5px solid ${C.gold}40`, display:"flex", alignItems:"center", justifyContent:"center"}}>
+            <span style={{fontSize:12, fontWeight:700, color:C.gold, fontFamily:"'DM Sans',sans-serif"}}>{auth.initials}</span>
+          </div>
+          <div>
+            <div style={{fontSize:12.5, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif", lineHeight:1.2, whiteSpace:"nowrap"}}>{auth.displayName}</div>
+            <div style={{fontSize:10.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>{auth.role}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// The actual route guard + page switch — deliberately a real component
+// (rendered via JSX from App, mounted as a descendant of AuthGuard's
+// AuthContext.Provider) rather than a plain function App calls directly
+// during its own render. App itself sits ABOVE AuthGuard in the tree (it
+// renders <AuthGuard>{...}</AuthGuard>), so a hook called from a function
+// invoked eagerly inside App's own body can never see AuthGuard's Provider
+// — this used to be exactly that eager call, reading the non-reactive
+// getAuthContext() instead, which is what let this route guard evaluate a
+// stale/inconsistent auth snapshot independently of the rest of the UI.
+function PageRouter({ base, param, isMobile, navigate }) {
+  const auth = useAuthContext();
+  const role = auth.role;
+
+  if (!canAccess(role, base)) {
+    return <AccessDenied page={base}/>;
+  }
+
+  if (base === "more") return <MobileMorePage navigate={navigate}/>;
+
+  // ── Mobile: dedicated screens for every route reachable from daily
+  // operations, list AND detail. Each one is its own information
+  // architecture — not the desktop page reused at a narrow width.
+  if (isMobile) {
+    if (base === "dashboard") return <MobileHomePage navigate={navigate}/>;
+    if (base === "calendar") return <MobileCalendarPage navigate={navigate}/>;
+    if (base === "messages") return <MobileMessagesPage/>;
+
+    // leads/quotes list+create/edit are retired from active navigation
+    // (Talepler/Teklifler simplification) — the detail views stay reachable
+    // by direct link only, since surviving pages (Reservation/Customer/
+    // Messages detail) still show historical IDLinks into them.
+    if (base === "leads" && param) return <MobileLeadDetailPage leadId={param} onBack={()=>navigate('/dashboard')}/>;
+
+    if (base === "reservations" && param) return <MobileReservationDetailPage resId={param} onBack={()=>navigate('/reservations')}/>;
+    if (base === "reservations") return <MobileReservationsPage onSelect={id=>navigate('/reservations/'+id)}/>;
+
+    if (base === "customers" && param) return <MobileGuestDetailPage guestId={param} onBack={()=>navigate('/customers')}/>;
+    if (base === "customers") return <MobileGuestsPage onSelectGuest={id=>navigate('/customers/'+id)}/>;
+
+    if (base === "quotes" && param) return <MobileQuoteDetailPage quoteId={param} onBack={()=>navigate('/dashboard')}/>;
+
+    if (base === "guides" && param) return <GuideDetailPage guideId={param} onBack={()=>navigate('/guides')}/>;
+    if (base === "guides") return <GuidesPage onSelect={id=>navigate('/guides/'+id)}/>;
+
+    if (base === "payments") return <MobilePaymentsPage/>;
+    if (base === "reminders") return <MobileTasksQueuePage/>;
+  }
+
+  if (base === "dashboard") return <Dashboard/>;
+
+  // Retired from active navigation — no more list/create/edit entry
+  // points — but detail views stay reachable by direct link for
+  // historical records still referenced from Reservation/Customer/
+  // Messages pages (leads/quotes tables are not deleted).
+  if (base === "leads" && param)
+    return <LeadDetailPage onBack={()=>navigate('/dashboard')} leadId={param}/>;
+
+  if (base === "quotes" && param)
+    return <QuoteDetailPage quoteId={param} onBack={()=>navigate('/dashboard')}/>;
+
+  if (base === "reservations" && param)
+    return <ReservationDetailPage resId={param} onBack={()=>navigate('/reservations')}/>;
+  if (base === "reservations")
+    return <ReservationsPage onSelect={id=>navigate('/reservations/'+id)}/>;
+
+  if (base === "customers" && param)
+    return <GuestDetailPage guestId={param} onBack={()=>navigate('/customers')}/>;
+  if (base === "customers")
+    return <CustomersPage onSelectGuest={id=>navigate('/customers/'+id)}/>;
+
+  if (base === "tours" && param)
+    return <TourDetailPage tourId={param} onBack={()=>navigate('/tours')}/>;
+  if (base === "tours")
+    return <ToursPage onSelect={id=>navigate('/tours/'+id)}/>;
+
+  if (base === "guides" && param)
+    return <GuideDetailPage guideId={param} onBack={()=>navigate('/guides')}/>;
+  if (base === "guides")    return <GuidesPage onSelect={id=>navigate('/guides/'+id)}/>;
+
+  if (base === "calendar")  return <CalendarPage/>;
+  if (base === "payments")  return <PaymentsPage/>;
+  if (base === "reminders") return <RemindersPage/>;
+  if (base === "reports")   return <ReportsPage/>;
+  if (base === "settings")  return <SettingsPage/>;
+  if (base === "messages")  return <MessagesPage/>;
+
+  return <NotFound404/>;
+}
+
 function App() {
   const { base, param, subParam, navigate, path } = useHashRouter();
   const { isMobile, isTablet } = useBreakpoint();
@@ -15494,87 +16689,6 @@ function App() {
 
   if (base === "reset-password") {
     return <ResetPasswordPage/>;
-  }
-
-  function renderPage() {
-    const auth = getAuthContext();
-    const role = auth.role;
-
-    if (!canAccess(role, base)) {
-      return <AccessDenied page={base}/>;
-    }
-
-    if (base === "more") return <MobileMorePage navigate={navigate}/>;
-
-    // ── Mobile: dedicated screens for every route reachable from daily
-    // operations, list AND detail. Each one is its own information
-    // architecture — not the desktop page reused at a narrow width.
-    if (isMobile) {
-      if (base === "dashboard") return <MobileHomePage navigate={navigate}/>;
-      if (base === "calendar") return <MobileCalendarPage navigate={navigate}/>;
-      if (base === "messages") return <MobileMessagesPage/>;
-
-      if (base === "leads" && param) return <MobileLeadDetailPage leadId={param} onBack={()=>navigate('/leads')}/>;
-      if (base === "leads") return <MobileRequestsPage onSelectLead={id=>navigate('/leads/'+id)}/>;
-
-      if (base === "reservations" && param) return <MobileReservationDetailPage resId={param} onBack={()=>navigate('/reservations')}/>;
-      if (base === "reservations") return <MobileReservationsPage onSelect={id=>navigate('/reservations/'+id)}/>;
-
-      if (base === "customers" && param) return <MobileGuestDetailPage guestId={param} onBack={()=>navigate('/customers')}/>;
-      if (base === "customers") return <MobileGuestsPage onSelectGuest={id=>navigate('/customers/'+id)}/>;
-
-      if (base === "quotes" && param === "new") return <MobileNewQuotePage onBack={()=>navigate('/quotes')}/>;
-      if (base === "quotes" && param && subParam === "edit") return <MobileNewQuotePage editQuoteId={param} onBack={()=>navigate('/quotes/'+param)}/>;
-      if (base === "quotes" && param) return <MobileQuoteDetailPage quoteId={param} onBack={()=>navigate('/quotes')}/>;
-      if (base === "quotes") return <MobileQuotesPage onSelectQuote={id=>navigate('/quotes/'+id)} onNewQuote={()=>navigate('/quotes/new')}/>;
-
-      if (base === "payments") return <MobilePaymentsPage/>;
-      if (base === "tasks" || base === "reminders") return <MobileTasksQueuePage/>;
-    }
-
-    if (base === "dashboard") return <Dashboard/>;
-
-    if (base === "leads" && param)
-      return <LeadDetailPage onBack={()=>navigate('/leads')} leadId={param}/>;
-    if (base === "leads")
-      return <LeadsPage onSelectLead={id=>navigate('/leads/'+id)}/>;
-
-    if (base === "quotes" && param === "new")
-      return <NewProposalPage onBack={()=>navigate('/quotes')}/>;
-    if (base === "quotes" && param && subParam === "edit")
-      return <NewProposalPage editQuoteId={param} onBack={()=>navigate('/quotes/'+param)}/>;
-    if (base === "quotes" && param)
-      return <QuoteDetailPage quoteId={param} onBack={()=>navigate('/quotes')}/>;
-    if (base === "quotes")
-      return <QuotesPage
-        onSelectQuote={id=>navigate('/quotes/'+id)}
-        onNewQuote={()=>navigate('/quotes/new')}
-      />;
-
-    if (base === "reservations" && param)
-      return <ReservationDetailPage resId={param} onBack={()=>navigate('/reservations')}/>;
-    if (base === "reservations")
-      return <ReservationsPage onSelect={id=>navigate('/reservations/'+id)}/>;
-
-    if (base === "customers" && param)
-      return <GuestDetailPage guestId={param} onBack={()=>navigate('/customers')}/>;
-    if (base === "customers")
-      return <CustomersPage onSelectGuest={id=>navigate('/customers/'+id)}/>;
-
-    if (base === "tours" && param)
-      return <TourDetailPage tourId={param} onBack={()=>navigate('/tours')}/>;
-    if (base === "tours")
-      return <ToursPage onSelect={id=>navigate('/tours/'+id)}/>;
-
-    if (base === "calendar")  return <CalendarPage/>;
-    if (base === "tasks")     return <TasksPage/>;
-    if (base === "payments")  return <PaymentsPage/>;
-    if (base === "reminders") return <RemindersPage/>;
-    if (base === "reports")   return <ReportsPage/>;
-    if (base === "settings")  return <SettingsPage/>;
-    if (base === "messages")  return <MessagesPage/>;
-
-    return <NotFound404/>;
   }
 
   return (
@@ -15665,6 +16779,8 @@ function App() {
         />
       )}
 
+      {!isMobile && <DesktopTopBar leftOffset={sidebarCollapsed ? 64 : 208}/>}
+
       {isMobile && (
         <div style={{
           position:"fixed", top:0, left:0, right:0, zIndex:200,
@@ -15685,8 +16801,8 @@ function App() {
 
       <main style={{
         marginLeft: isMobile ? 0 : (sidebarCollapsed ? 64 : 208),
-        marginTop: isMobile ? "calc(48px + env(safe-area-inset-top, 0px))" : 0,
-        minHeight: isMobile ? "100dvh" : "100vh",
+        marginTop: isMobile ? "calc(48px + env(safe-area-inset-top, 0px))" : 56,
+        minHeight: isMobile ? "100dvh" : "calc(100vh - 56px)",
         padding: isMobile ? "14px 12px calc(68px + env(safe-area-inset-bottom, 0px))" : isTablet ? "20px 18px 40px" : "26px 28px 52px",
         background: isMobile ? C.ivory : "#EDE9DF",
         transition:"margin-left 0.22s cubic-bezier(0.4,0,0.2,1)",
@@ -15695,7 +16811,7 @@ function App() {
         boxSizing:"border-box",
       }}>
         <div className="fade" key={path}>
-          {renderPage()}
+          <PageRouter base={base} param={param} isMobile={isMobile} navigate={navigate}/>
         </div>
       </main>
       {toastMsg && <Toast msg={toastMsg} onDone={()=>setToastMsg(null)}/>}
@@ -15850,7 +16966,10 @@ function MobileFullScreenForm({ title, onCancel, onSubmit, submitLabel, submitti
     document.body.style.overflow = 'hidden';
     return () => { document.body.style.overflow = prev; };
   }, []);
-  return (
+  // Same portal-to-<body> rationale as the desktop Modal above — keeps
+  // this fixed-position sheet sized against the real viewport regardless
+  // of any ancestor transform.
+  return ReactDOM.createPortal((
     <div style={{
       position:"fixed", inset:0, zIndex:1000, background:C.ivory,
       display:"flex", flexDirection:"column",
@@ -15877,11 +16996,11 @@ function MobileFullScreenForm({ title, onCancel, onSubmit, submitLabel, submitti
         }}>{submitLabel || "Kaydet"}</button>
       </div>
       {}
-      <div style={{ flex:1, overflowY:"auto", padding:"18px 16px calc(32px + env(safe-area-inset-bottom, 0px))" }}>
+      <div style={{ flex:"1 1 auto", minHeight:0, overflowY:"auto", padding:"18px 16px calc(32px + env(safe-area-inset-bottom, 0px))" }}>
         {children}
       </div>
     </div>
-  );
+  ), document.body);
 }
 
 /* Chooses the desktop centered Modal or the mobile full-screen form shell
@@ -15906,17 +17025,17 @@ function FormShell({ isMobile, title, onClose, onSubmit, submitLabel, submitting
    Deliberately five destinations: three high-frequency daily-operations
    routes, Calendar, and More (everything else, incl. logout). */
 const MOBILE_PAGE_TITLES = {
-  dashboard:"Bugün", leads:"Talepler", customers:"Misafirler", quotes:"Teklifler",
-  reservations:"Rezervasyonlar", calendar:"Takvim", tours:"Turlar", tasks:"Yapılacaklar",
+  dashboard:"Bugün", leads:"Talep", customers:"Misafirler", quotes:"Teklif",
+  reservations:"Rezervasyonlar", calendar:"Takvim", tours:"Turlar", guides:"Rehberlerimiz",
   payments:"Ödemeler", reminders:"Hatırlatmalar", reports:"Raporlar", settings:"Ayarlar",
   messages:"Mesajlar", more:"Diğer",
 };
 const BOTTOM_NAV_ITEMS = [
-  { id:"dashboard",    label:"Bugün",   icon:"M3 9.5L12 3l9 6.5V20a1 1 0 01-1 1H4a1 1 0 01-1-1V9.5z M9 21V12h6v9" },
-  { id:"leads",        label:"Talepler",icon:"M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" },
-  { id:"reservations", label:"Rezerv.", icon:"M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" },
-  { id:"calendar",     label:"Takvim",  icon:"M8 2v4M16 2v4M3 10h18M21 8a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2h14a2 2 0 002-2V8z" },
-  { id:"more",         label:"Diğer",   icon:"M12 15a3 3 0 100-6 3 3 0 000 6z M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" },
+  { id:"dashboard",    label:"Bugün",     icon:"M3 9.5L12 3l9 6.5V20a1 1 0 01-1 1H4a1 1 0 01-1-1V9.5z M9 21V12h6v9" },
+  { id:"reservations", label:"Rezerv.",   icon:"M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" },
+  { id:"guides",       label:"Rehberler", icon:"M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2 M23 21v-2a4 4 0 00-3-3.87 M16 3.13a4 4 0 010 7.75 M12 11a4 4 0 100-8 4 4 0 000 8z" },
+  { id:"calendar",     label:"Takvim",    icon:"M8 2v4M16 2v4M3 10h18M21 8a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2h14a2 2 0 002-2V8z" },
+  { id:"more",         label:"Diğer",     icon:"M12 15a3 3 0 100-6 3 3 0 000 6z M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" },
 ];
 function BottomNav({ active, navigate }) {
   return (
@@ -15952,13 +17071,12 @@ function BottomNav({ active, navigate }) {
    hamburger drawer as the primary way to reach everything not on the
    bottom tab bar. */
 function MobileMorePage({ navigate }) {
-  const auth = getAuthContext();
+  const auth = useAuthContext();
   const ALL_ITEMS = [
     { id:"customers",  label:"Misafirler",     icon:"M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2 M23 21v-2a4 4 0 00-3-3.87 M16 3.13a4 4 0 010 7.75" },
-    { id:"quotes",     label:"Teklifler",      icon:"M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z M14 2v6h6" },
     { id:"tours",      label:"Turlar",         icon:"M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z M9 22V12h6v10" },
+    { id:"guides",     label:"Rehberlerimiz",  icon:"M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2 M23 21v-2a4 4 0 00-3-3.87 M16 3.13a4 4 0 010 7.75 M12 11a4 4 0 100-8 4 4 0 000 8z" },
     { id:"payments",   label:"Ödemeler",       icon:"M2 9a2 2 0 012-2h16a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V9zM2 13h20" },
-    { id:"tasks",      label:"Yapılacaklar",   icon:"M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" },
     { id:"reminders",  label:"Hatırlatmalar",  icon:"M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0" },
     { id:"messages",   label:"Mesajlar",       icon:"M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" },
     { id:"reports",    label:"Raporlar",       icon:"M18 20V10M12 20V4M6 20v-6" },
@@ -16026,19 +17144,17 @@ function MobileMorePage({ navigate }) {
    (useRepo/computeUrgent/etc.) — only the presentation is different.
    ══════════════════════════════════════════════════════════════════════ */
 function MobileHomePage({ navigate }) {
-  const auth = getAuthContext();
-  const [quickAction, setQuickAction] = useState(null); // null|'guest'|'lead'|'reservation'|'payment'
+  const auth = useAuthContext();
+  const [quickAction, setQuickAction] = useState(null); // null|'guest'|'reservation'|'payment'
 
-  const { data:repoLeads }  = useRepo("lead",        "getAll");
   const { data:repoRes }    = useRepo("reservation", "getAll");
   const { data:repoPays }   = useRepo("payment",     "getAll");
-  const { data:repoTasks }  = useRepo("task",        "getAll");
   const { data:repoRems }   = useRepo("reminder",    "getAll");
   const { data:repoAct }    = useRepo("activity",    "getAll", { limit:5 });
 
   const urgentItems = useMemo(
-    () => computeUrgent(repoLeads, repoRes, repoPays, repoTasks, repoRems),
-    [repoLeads, repoRes, repoPays, repoTasks, repoRems]
+    () => computeUrgent(repoRes, repoPays, repoRems),
+    [repoRes, repoPays, repoRems]
   );
 
   const allRes = repoRes ?? [];
@@ -16055,7 +17171,6 @@ function MobileHomePage({ navigate }) {
   const firstName = (auth.displayName||"").split(" ")[0] || "";
 
   const QUICK_ACTIONS = [
-    { key:"lead",        label:"Yeni Talep",        icon:"M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" },
     { key:"guest",       label:"Yeni Misafir",      icon:"M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2 M23 21v-2a4 4 0 00-3-3.87 M16 3.13a4 4 0 010 7.75" },
     { key:"reservation", label:"Yeni Rezervasyon",  icon:"M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" },
     { key:"payment",     label:"Ödeme Ekle",        icon:"M2 9a2 2 0 012-2h16a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V9zM2 13h20" },
@@ -16199,112 +17314,12 @@ function MobileHomePage({ navigate }) {
       )}
 
       {quickAction === "guest" && <NewGuestModal onClose={()=>setQuickAction(null)}/>}
-      {quickAction === "lead" && <NewLeadModal onClose={()=>setQuickAction(null)} onSuccess={()=>setQuickAction(null)}/>}
       {quickAction === "reservation" && <NewReservationModal onClose={()=>setQuickAction(null)} onSuccess={()=>setQuickAction(null)}/>}
       {quickAction === "payment" && <NewPaymentModal onClose={()=>setQuickAction(null)}/>}
     </div>
   );
 }
 
-/* ══════════════════════════════════════════════════════════════════════
-   MOBILE REQUESTS — a lightweight sales inbox, not the desktop leads
-   table. One card per request; the two most common next actions (call,
-   quote) are one tap away, everything else opens the (already mobile-
-   adapted) LeadDetailPage.
-   ══════════════════════════════════════════════════════════════════════ */
-function MobileRequestsPage({ onSelectLead }) {
-  const [filter, setFilter] = useState("Açık");
-  const { data:repoLeads, loading } = useRepo("lead", "getAll");
-  const { sources } = useSources();
-  const [showNew, setShowNew] = useState(false);
-
-  const all = repoLeads ?? [];
-  const FILTERS = ["Açık","Yeni","Teklif Gönderildi","Tümü"];
-  const filtered = all.filter(l => {
-    if (filter === "Tümü") return true;
-    if (filter === "Açık") return !["Onaylandı","İptal"].includes(l.status);
-    return l.status === filter;
-  });
-
-  const STATUS_TONE = {
-    "Yeni":"info", "Görüşüldü":"neutral", "Teklif Hazırlanıyor":"neutral",
-    "Teklif Gönderildi":"warn", "Teklif Onaylandı":"good", "Onaylandı":"good",
-    "İptal":"bad", "Beklemede":"neutral",
-  };
-
-  return (
-    <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
-      {}
-      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:10 }}>
-        <div style={{ fontSize:20, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif" }}>Talepler</div>
-        <button onClick={()=>setShowNew(true)} style={{
-          display:"flex", alignItems:"center", gap:6, padding:"9px 14px", borderRadius:10,
-          border:"none", background:C.navy, color:C.white, cursor:"pointer",
-          fontSize:13, fontWeight:600, fontFamily:"'DM Sans',sans-serif",
-        }}>
-          <GIc d="M12 5v14M5 12h14" size={14} sw={2.5} color="#fff"/>
-          Yeni
-        </button>
-      </div>
-
-      {}
-      <div className="rsp-scroll-x" style={{ display:"flex", gap:8 }}>
-        {FILTERS.map(f=>(
-          <button key={f} onClick={()=>setFilter(f)} style={{
-            flexShrink:0, padding:"7px 14px", borderRadius:99, cursor:"pointer",
-            border: filter===f ? "none" : `1px solid ${C.border}`,
-            background: filter===f ? C.navy : C.white,
-            color: filter===f ? C.white : C.textMid,
-            fontSize:12.5, fontWeight:500, fontFamily:"'DM Sans',sans-serif",
-          }}>{f}</button>
-        ))}
-      </div>
-
-      {}
-      {loading ? <LoadingState label="Talepler yükleniyor…"/> : filtered.length === 0 ? (
-        <MobileEntityCard style={{ textAlign:"center", padding:"36px 16px" }}>
-          <div style={{ fontSize:13, color:C.textFaint, fontFamily:"'DM Sans',sans-serif" }}>Bu filtre için talep yok.</div>
-        </MobileEntityCard>
-      ) : (
-        <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
-          {filtered.map(l=>{
-            const srcLabel = (sources||[]).find(s=>s.id===l.sourceId)?.name || l.sourceId || "—";
-            return (
-              <MobileEntityCard key={l.id} onClick={()=>onSelectLead(l.id)}>
-                <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:8, marginBottom:6 }}>
-                  <div style={{ fontSize:14.5, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif" }}>{l.name}</div>
-                  <MobileStatusChip label={l.status} tone={STATUS_TONE[l.status]||"neutral"}/>
-                </div>
-                <div style={{ fontSize:12.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif" }}>{l.tour || "Deneyim belirtilmedi"}</div>
-                <div style={{ display:"flex", alignItems:"center", gap:8, marginTop:6, flexWrap:"wrap" }}>
-                  {l.dateRange && <span style={{ fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif" }}>📅 {l.dateRange}</span>}
-                  <span style={{ fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif" }}>{srcLabel}</span>
-                  <span style={{ fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif" }}>· {l.ago}</span>
-                </div>
-                {l.phone && (
-                  <div style={{ display:"flex", gap:8, marginTop:10 }}>
-                    <a href={`tel:${l.phone}`} onClick={e=>e.stopPropagation()} style={{
-                      flex:1, textAlign:"center", padding:"8px 0", borderRadius:8,
-                      border:`1px solid ${C.border}`, color:C.navy, fontSize:12.5, fontWeight:500,
-                      fontFamily:"'DM Sans',sans-serif", textDecoration:"none",
-                    }}>Ara</a>
-                    <button onClick={e=>{e.stopPropagation(); NAV_REF.fn && NAV_REF.fn('/quotes/new');}} style={{
-                      flex:1, textAlign:"center", padding:"8px 0", borderRadius:8, cursor:"pointer",
-                      border:"none", background:C.goldPale, color:"#8A6D1F", fontSize:12.5, fontWeight:600,
-                      fontFamily:"'DM Sans',sans-serif",
-                    }}>Teklif Oluştur</button>
-                  </div>
-                )}
-              </MobileEntityCard>
-            );
-          })}
-        </div>
-      )}
-
-      {showNew && <NewLeadModal onClose={()=>setShowNew(false)} onSuccess={()=>setShowNew(false)}/>}
-    </div>
-  );
-}
 
 /* ══════════════════════════════════════════════════════════════════════
    MOBILE RESERVATIONS — operational cards. Status is legible at a
@@ -16401,7 +17416,8 @@ function MobileGuestsPage({ onSelectGuest }) {
     (g.name||"").toLowerCase().includes(q) ||
     (g.country||"").toLowerCase().includes(q) ||
     (g.email||"").toLowerCase().includes(q) ||
-    (g.phone||"").includes(q)
+    (g.phone||"").includes(q) ||
+    customerSourceName(g).toLowerCase().includes(q)
   );
 
   return (
@@ -16422,7 +17438,7 @@ function MobileGuestsPage({ onSelectGuest }) {
         <span style={{ position:"absolute", left:12, top:"50%", transform:"translateY(-50%)", color:C.textFaint, pointerEvents:"none" }}>
           <GIc d="M21 21l-4.35-4.35 M17 11A6 6 0 105 11a6 6 0 0012 0z" size={14} sw={1.8}/>
         </span>
-        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="İsim, ülke, telefon veya email ara…" style={{
+        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="İsim, ülke, kaynak, telefon veya email ara…" style={{
           width:"100%", boxSizing:"border-box", padding:"11px 12px 11px 36px", borderRadius:12,
           border:`1px solid ${C.border}`, background:C.white, fontSize:14, color:C.text,
           fontFamily:"'DM Sans',sans-serif", outline:"none",
@@ -16451,6 +17467,9 @@ function MobileGuestsPage({ onSelectGuest }) {
                 <div style={{ fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
                   {g.country}{g.country && (g.phone||g.email) ? " · " : ""}{g.phone||g.email||""}
                 </div>
+                <div style={{ fontSize:11, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", fontStyle: customerSourceName(g) ? "normal" : "italic", marginTop:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                  {customerSourceName(g) || "Kaynak belirtilmemiş"}
+                </div>
               </div>
               <MobileStatusChip label={g.status||"Aktif"} tone={g.status==="Arşiv"?"neutral":"good"}/>
             </div>
@@ -16463,73 +17482,6 @@ function MobileGuestsPage({ onSelectGuest }) {
   );
 }
 
-/* ══════════════════════════════════════════════════════════════════════
-   MOBILE QUOTES — a status-driven document list.
-   ══════════════════════════════════════════════════════════════════════ */
-function MobileQuotesPage({ onSelectQuote, onNewQuote }) {
-  const [filter, setFilter] = useState("Tümü");
-  const { data:repoQuotes, loading } = useRepo("quote", "getAll");
-
-  const all = repoQuotes ?? [];
-  const FILTERS = ["Tümü","Taslak","Gönderildi","Görüntülendi","Onaylandı"];
-  const filtered = filter==="Tümü" ? all : all.filter(q=>q.status===filter);
-
-  const STATUS_TONE = { "Taslak":"neutral", "Gönderildi":"info", "Görüntülendi":"warn", "Onaylandı":"good", "Reddedildi":"bad" };
-
-  return (
-    <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
-      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:10 }}>
-        <div style={{ fontSize:20, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif" }}>Teklifler</div>
-        <button onClick={onNewQuote} style={{
-          display:"flex", alignItems:"center", gap:6, padding:"9px 14px", borderRadius:10,
-          border:"none", background:C.navy, color:C.white, cursor:"pointer",
-          fontSize:13, fontWeight:600, fontFamily:"'DM Sans',sans-serif",
-        }}>
-          <GIc d="M12 5v14M5 12h14" size={14} sw={2.5} color="#fff"/>
-          Yeni
-        </button>
-      </div>
-
-      <div className="rsp-scroll-x" style={{ display:"flex", gap:8 }}>
-        {FILTERS.map(f=>(
-          <button key={f} onClick={()=>setFilter(f)} style={{
-            flexShrink:0, padding:"7px 14px", borderRadius:99, cursor:"pointer",
-            border: filter===f ? "none" : `1px solid ${C.border}`,
-            background: filter===f ? C.navy : C.white,
-            color: filter===f ? C.white : C.textMid,
-            fontSize:12.5, fontWeight:500, fontFamily:"'DM Sans',sans-serif",
-          }}>{f}</button>
-        ))}
-      </div>
-
-      {loading ? <LoadingState label="Teklifler yükleniyor…"/> : filtered.length === 0 ? (
-        <MobileEntityCard style={{ textAlign:"center", padding:"36px 16px" }}>
-          <div style={{ fontSize:13, color:C.textFaint, fontFamily:"'DM Sans',sans-serif" }}>Bu filtre için teklif yok.</div>
-        </MobileEntityCard>
-      ) : (
-        <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
-          {filtered.map(q=>(
-            <MobileEntityCard key={q.id} onClick={()=>onSelectQuote(q.id)}>
-              <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:8, marginBottom:6 }}>
-                <div style={{ fontSize:14.5, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif" }}>{q.flag} {q.customer || "—"}</div>
-                <MobileStatusChip label={q.status} tone={STATUS_TONE[q.status]||"neutral"}/>
-              </div>
-              <div style={{ fontSize:12.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif" }}>{q.tour}</div>
-              <div style={{ display:"flex", alignItems:"baseline", justifyContent:"space-between", marginTop:8 }}>
-                <span style={{ fontSize:17, fontWeight:700, color:C.gold, fontFamily:"'Playfair Display',serif" }}>
-                  {q.currency==="TRY"?"₺":"€"}{q.total.toLocaleString("tr-TR")}
-                </span>
-                <span style={{ fontSize:11, color:C.textFaint, fontFamily:"'DM Sans',sans-serif" }}>
-                  {q.createdAt && `Gönderim: ${q.createdAt}`}{q.validUntil && ` · Geçerlilik: ${q.validUntil}`}
-                </span>
-              </div>
-            </MobileEntityCard>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
 
 /* ══════════════════════════════════════════════════════════════════════
    MOBILE PAYMENTS — unpaid/overdue first. Pending and Collected are
@@ -17383,332 +18335,6 @@ function MobileReservationDetailPage({ resId, onBack }) {
   );
 }
 
-/* ══════════════════════════════════════════════════════════════════════
-   MOBILE QUOTE CREATION — the same 5-step structure as the desktop
-   QuoteWizard (Misafir → Tur ve Tarih → Fiyatlandırma → Teklif Detayları
-   → Önizleme ve Oluştur), laid out full-screen for a phone. Uses the
-   exact same shared state shape and save/update functions as desktop
-   (emptyQuoteWizardState, computeQuoteTotals, validateQuoteStep,
-   createQuoteFromWizard, updateQuoteFromWizard) — no separate business
-   rules per platform.
-   ══════════════════════════════════════════════════════════════════════ */
-function MobileNewQuotePage({ onBack, editQuoteId }) {
-  const isEdit = !!editQuoteId;
-  const _sp = safeParam(editQuoteId);
-  const { data: editQuote, loading: editLoading } = useRepo("quote", "getById", editQuoteId || null);
-
-  useEffect(() => {
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => { document.body.style.overflow = prev; };
-  }, []);
-
-  if (isEdit && _sp.invalid) return <div style={{padding:40,textAlign:"center"}}><NotFound404 onBack={onBack}/></div>;
-  if (isEdit && editLoading) return <LoadingState label="Teklif yükleniyor…"/>;
-  if (isEdit && !editQuote)  return <div style={{padding:40,textAlign:"center"}}><NotFound404 onBack={onBack}/></div>;
-
-  return <MobileQuoteWizard key={editQuoteId||"new"} onBack={onBack} editQuote={isEdit ? editQuote : null}/>;
-}
-
-function MobileQuoteWizard({ onBack, editQuote }) {
-  const isEdit = !!editQuote;
-  const { data: tourList, loading: toursLoading } = useRepo("tour", "getAll");
-  const { data: customerList } = useRepo("customer", "getAll");
-
-  const [step, setStep] = useState(0);
-  const [s, setS] = useState(() => isEdit ? quoteStateFromExisting(editQuote) : emptyQuoteWizardState(SESSION.getPrefill()));
-  const [errs, setErrs] = useState({});
-  const [saving, setSaving] = useState(false);
-  const [custMode, setCustMode] = useState(s.customerId ? "linked" : "search");
-  const [custQuery, setCustQuery] = useState("");
-
-  const { data: originLead } = useRepo("lead", "getById", s.fromLeadId || null);
-  const { data: linkedCustomer } = useRepo("customer", "getById", s.customerId || null);
-
-  useEffect(() => {
-    if (originLead && originLead.customerId && !s.customerId) {
-      setS(prev => ({ ...prev, customerId: originLead.customerId }));
-      setCustMode("linked");
-    }
-  }, [originLead]);
-
-  const totals = computeQuoteTotals(s);
-  const sym = s.currency==="TRY"?"₺":s.currency==="GBP"?"£":s.currency==="USD"?"$":"€";
-  const STEPS = QUOTE_STEPS;
-
-  const custResults = useMemo(() => {
-    if (!custQuery.trim()) return [];
-    const q = custQuery.trim().toLowerCase();
-    return (customerList||[]).filter(c =>
-      (c.name||"").toLowerCase().includes(q) || (c.email||"").toLowerCase().includes(q) || (c.phone||"").includes(q)
-    ).slice(0,6);
-  }, [custQuery, customerList]);
-
-  function pickCustomer(c) {
-    setS(prev => ({ ...prev, customerId:c.id, guestName:c.name||"", email:c.email||"", phone:c.phone||"", nationality:c.country||"", language:c.language||"Türkçe" }));
-    setCustMode("linked");
-  }
-  function clearCustomerLink() {
-    setS(prev => ({ ...prev, customerId:null, guestName:"", email:"", phone:"", nationality:"" }));
-    setCustMode("search"); setCustQuery("");
-  }
-
-  function pickTour(id) {
-    const t = (tourList||[]).find(x=>x.id===id);
-    setS(prev => ({
-      ...prev, tourId:id, tourName: t?.name || prev.tourName,
-      pricingType: (t?.pricingType==="flat" || t?.pricingType==="group") ? "group" : prev.pricingType,
-      groupPrice: (t?.pricingType==="flat" || t?.pricingType==="group") ? String(t.flatPrice||"") : prev.groupPrice,
-      pricePerPerson: t?.pricingType==="per_person" ? String(t.flatPrice||"") : prev.pricePerPerson,
-      currency: t?.currency || prev.currency,
-    }));
-  }
-
-  function toggleItem(key, idx) {
-    setS(prev => ({ ...prev, [key]: prev[key].map((x,i)=> i===idx ? {...x,on:!x.on} : x) }));
-  }
-
-  function goBack() {
-    if (step===0) { onBack(); return; }
-    setStep(st=>st-1);
-  }
-  async function goNext() {
-    const e = validateQuoteStep(step, s);
-    setErrs(e);
-    if (Object.keys(e).length) return;
-    if (step < STEPS.length-1) setStep(st=>st+1);
-    else await handleSubmit();
-  }
-
-  async function handleSubmit() {
-    setSaving(true);
-    try {
-      const result = isEdit ? await updateQuoteFromWizard(editQuote.id, s) : await createQuoteFromWizard(s);
-      showToast(isEdit ? "Teklif güncellendi ✓" : "Teklif oluşturuldu ✓");
-      const targetId = result?.id || editQuote?.id;
-      if (targetId && NAV_REF.fn) NAV_REF.fn('/quotes/'+targetId);
-      else onBack();
-    } catch(err) {
-      showToast("Hata: " + (err?.message || err));
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return (
-    <div style={{ position:"fixed", inset:0, zIndex:1000, background:C.ivory, display:"flex", flexDirection:"column" }}>
-      {}
-      <div style={{
-        flexShrink:0, background:C.white, borderBottom:`1px solid ${C.border}`,
-        paddingTop:"env(safe-area-inset-top, 0px)",
-      }}>
-        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"calc(10px + env(safe-area-inset-top, 0px)) 8px 8px" }}>
-          <button onClick={goBack} style={{ border:"none", background:"transparent", cursor:"pointer", color:C.textMid, fontSize:14.5, fontFamily:"'DM Sans',sans-serif", padding:"8px 10px", minWidth:44 }}>
-            {step===0 ? "İptal" : "Geri"}
-          </button>
-          <div style={{ fontSize:15.5, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif" }}>{isEdit ? "Teklifi Düzenle" : "Yeni Teklif"}</div>
-          <div style={{ minWidth:44 }}/>
-        </div>
-        <div style={{ display:"flex", gap:4, padding:"0 16px 10px" }}>
-          {STEPS.map((st,i)=>(<div key={i} style={{ flex:1, height:3, borderRadius:99, background: i<=step ? C.gold : C.borderLight }}/>))}
-        </div>
-        <div style={{ padding:"0 16px 10px", fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif" }}>Adım {step+1}/{STEPS.length} · {STEPS[step]}</div>
-      </div>
-
-      {}
-      <div style={{ flex:1, overflowY:"auto", padding:"18px 16px 24px" }}>
-        {step===0 && (
-          custMode === "linked" && s.customerId ? (
-            <div>
-              {s.fromLeadId && (
-                <div style={{marginBottom:14, padding:"10px 14px", background:C.blueBg, border:`1px solid ${C.blue}30`, borderRadius:8}}>
-                  <span style={{fontSize:12, color:C.blue, fontFamily:"'DM Sans',sans-serif"}}>Talepten oluşturuluyor: </span>
-                  <IDLink id={s.fromLeadId} type="lead"/>
-                </div>
-              )}
-              <MobileEntityCard>
-                <div style={{ fontSize:16, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif", marginBottom:6 }}>{s.guestName || "—"}</div>
-                <MobileInfoLine label="E-posta" value={s.email || "—"}/>
-                <MobileInfoLine label="Telefon" value={s.phone || "—"}/>
-                <MobileInfoLine label="Uyruk / Dil" value={`${s.nationality || "—"} · ${s.language}`}/>
-              </MobileEntityCard>
-              <button onClick={clearCustomerLink} style={{ marginTop:10, width:"100%", padding:"9px 0", borderRadius:9, border:`1px solid ${C.border}`, background:C.white, color:C.textMid, fontFamily:"'DM Sans',sans-serif", fontSize:12.5 }}>Farklı Müşteri Seç</button>
-            </div>
-          ) : (
-            <div>
-              {s.fromLeadId && (
-                <div style={{marginBottom:14, padding:"10px 14px", background:C.blueBg, border:`1px solid ${C.blue}30`, borderRadius:8}}>
-                  <span style={{fontSize:12, color:C.blue, fontFamily:"'DM Sans',sans-serif"}}>Talepten oluşturuluyor: </span>
-                  <IDLink id={s.fromLeadId} type="lead"/>
-                </div>
-              )}
-              <div style={{display:"flex", gap:8, marginBottom:14}}>
-                <button onClick={()=>setCustMode("search")} style={qwPill(custMode!=="new")}>Mevcut Müşteri</button>
-                <button onClick={()=>setCustMode("new")} style={qwPill(custMode==="new")}>Yeni Müşteri</button>
-              </div>
-              {custMode === "new" ? (
-                <FGrid>
-                  <FRow label="Ad Soyad" required error={errs.guestName}><FText value={s.guestName} onChange={v=>setS(p=>({...p,guestName:v}))} placeholder="Ad Soyad"/></FRow>
-                  <FRow label="Telefon"><FText value={s.phone} onChange={v=>setS(p=>({...p,phone:v}))} placeholder="+90 555 000 0000" mono/></FRow>
-                  <FRow label="E-posta"><FText value={s.email} onChange={v=>setS(p=>({...p,email:v}))} placeholder="email@example.com" type="email"/></FRow>
-                  <FRow label="Uyruk"><FText value={s.nationality} onChange={v=>setS(p=>({...p,nationality:v}))} placeholder="Türkiye"/></FRow>
-                  <FRow label="Dil"><FSelect value={s.language} onChange={v=>setS(p=>({...p,language:v}))} options={QUOTE_LANGUAGE_OPTIONS}/></FRow>
-                </FGrid>
-              ) : (
-                <div>
-                  <FRow label="Müşteri Ara" hint="Ad, e-posta veya telefon"><FText value={custQuery} onChange={setCustQuery} placeholder="Ara…"/></FRow>
-                  {custQuery.trim() && (
-                    custResults.length===0 ? (
-                      <div style={{padding:12, textAlign:"center", fontSize:12.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>Eşleşen müşteri bulunamadı.</div>
-                    ) : (
-                      <div style={{border:`1px solid ${C.borderLight}`, borderRadius:8, overflow:"hidden"}}>
-                        {custResults.map(c=>(
-                          <div key={c.id} onClick={()=>pickCustomer(c)} style={{padding:"10px 12px", borderBottom:`1px solid ${C.borderLight}`}}>
-                            <div style={{fontSize:13, fontWeight:500, color:C.text, fontFamily:"'DM Sans',sans-serif"}}>{c.name}</div>
-                            <div style={{fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>{c.email || c.phone || ""}</div>
-                          </div>
-                        ))}
-                      </div>
-                    )
-                  )}
-                </div>
-              )}
-            </div>
-          )
-        )}
-
-        {step===1 && (
-          <FGrid>
-            <FRow label="Tur Kataloğundan Seç">
-              {toursLoading ? (
-                <div style={{fontSize:12.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>Turlar yükleniyor…</div>
-              ) : (tourList||[]).length===0 ? (
-                <div style={{fontSize:12.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", padding:"10px 12px", background:C.white, border:`1px solid ${C.borderLight}`, borderRadius:8}}>Henüz tanımlı tur yok — adını doğrudan girin.</div>
-              ) : (
-                <select value={s.tourId} onChange={e=>pickTour(e.target.value)} style={{ width:"100%", padding:"9px 10px", borderRadius:7, border:`1.5px solid ${C.border}`, fontSize:13.5, color:C.text, background:C.white }}>
-                  <option value="">-- Tur seçin --</option>
-                  {tourList.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}
-                </select>
-              )}
-            </FRow>
-            <FRow label="Tur / Deneyim Adı" required error={errs.tourName}>
-              <FText value={s.tourName} onChange={v=>setS(p=>({...p, tourId: v!==p.tourName ? "" : p.tourId, tourName:v}))} placeholder="Tur adı"/>
-            </FRow>
-            <FRow label="Başlangıç Tarihi" required error={errs.travelDate}><FText type="date" value={s.travelDate} onChange={v=>setS(p=>({...p,travelDate:v}))}/></FRow>
-            <FRow label="Başlangıç Saati"><FText type="time" value={s.travelTime} onChange={v=>setS(p=>({...p,travelTime:v}))}/></FRow>
-            <FRow label="Kişi Sayısı"><FText type="number" value={s.guestCount} onChange={v=>setS(p=>({...p,guestCount:v}))} placeholder="2"/></FRow>
-            <FRow label="Dil"><FSelect value={s.language} onChange={v=>setS(p=>({...p,language:v}))} options={QUOTE_LANGUAGE_OPTIONS}/></FRow>
-            <FRow label="Karşılama / Pickup"><FSelect value={s.pickup} onChange={v=>setS(p=>({...p,pickup:v}))} options={QUOTE_PICKUP_OPTIONS}/></FRow>
-            {s.pickup !== "Karşılama Yok" && (
-              <FRow label="Pickup Lokasyonu"><FText value={s.pickupLocation} onChange={v=>setS(p=>({...p,pickupLocation:v}))} placeholder="Otel adı / adres"/></FRow>
-            )}
-          </FGrid>
-        )}
-
-        {step===2 && (
-          <>
-            <FGrid>
-              <FRow label="Para Birimi"><FSelect value={s.currency} onChange={v=>setS(p=>({...p,currency:v}))} options={CURRENCY_OPTIONS}/></FRow>
-              <FRow label="Fiyatlandırma Tipi">
-                <div style={{display:"flex", gap:8}}>
-                  <button onClick={()=>setS(p=>({...p,pricingType:"per_person"}))} style={qwPill(s.pricingType==="per_person")}>Kişi Başı</button>
-                  <button onClick={()=>setS(p=>({...p,pricingType:"group"}))} style={qwPill(s.pricingType==="group")}>Grup Fiyatı</button>
-                </div>
-              </FRow>
-              {s.pricingType === "group" ? (
-                <FRow label="Toplam Grup Fiyatı" error={errs.pricing}><FText type="number" value={s.groupPrice} onChange={v=>setS(p=>({...p,groupPrice:v}))} placeholder="0"/></FRow>
-              ) : (
-                <FRow label="Kişi Başı Fiyat" error={errs.pricing}><FText type="number" value={s.pricePerPerson} onChange={v=>setS(p=>({...p,pricePerPerson:v}))} placeholder="0"/></FRow>
-              )}
-              <FRow label="İndirim (%)"><FText type="number" value={s.discountPct} onChange={v=>setS(p=>({...p,discountPct:v}))} placeholder="0"/></FRow>
-              <FRow label="Kapora (%)"><FText type="number" value={s.depositPct} onChange={v=>setS(p=>({...p,depositPct:v}))} placeholder="25"/></FRow>
-            </FGrid>
-            <div style={{ marginTop:6, padding:"14px 16px", background:C.goldPale, borderRadius:12, display:"flex", flexDirection:"column", gap:6 }}>
-              {[
-                {label:"Ara Toplam", val:totals.subtotal},
-                {label:"İndirim", val:totals.discountAmount},
-                {label:"Genel Toplam", val:totals.total, bold:true},
-                {label:"Kapora", val:totals.deposit},
-                {label:"Kalan", val:totals.remaining},
-              ].map((r,i)=>(
-                <div key={i} style={{display:"flex", justifyContent:"space-between"}}>
-                  <span style={{ fontSize:12, color:"#8A6D1F", fontFamily:"'DM Sans',sans-serif" }}>{r.label}</span>
-                  <span style={{ fontSize:r.bold?16:13, fontWeight:r.bold?700:600, color:"#8A6D1F", fontFamily:"'Playfair Display',serif" }}>{sym}{r.val.toLocaleString("tr-TR")}</span>
-                </div>
-              ))}
-            </div>
-          </>
-        )}
-
-        {step===3 && (
-          <div style={{display:"flex", flexDirection:"column", gap:16}}>
-            <MobileSection title="Dahil Olanlar" tight>
-              {s.included.map((it,i)=>(
-                <label key={i} style={{ display:"flex", alignItems:"center", gap:10, padding:"7px 2px", cursor:"pointer" }}>
-                  <input type="checkbox" checked={it.on} onChange={()=>toggleItem("included",i)}/>
-                  <span style={{ fontSize:13, color:C.text, fontFamily:"'DM Sans',sans-serif" }}>{it.label}</span>
-                </label>
-              ))}
-            </MobileSection>
-            <MobileSection title="Dahil Olmayanlar" tight>
-              {s.excluded.map((it,i)=>(
-                <label key={i} style={{ display:"flex", alignItems:"center", gap:10, padding:"7px 2px", cursor:"pointer" }}>
-                  <input type="checkbox" checked={it.on} onChange={()=>toggleItem("excluded",i)}/>
-                  <span style={{ fontSize:13, color:C.text, fontFamily:"'DM Sans',sans-serif" }}>{it.label}</span>
-                </label>
-              ))}
-            </MobileSection>
-            <FRow label="Özel Talepler / Notlar"><FTextArea value={s.notes} onChange={v=>setS(p=>({...p,notes:v}))} placeholder="Özel talepler…"/></FRow>
-            <FRow label="Teklif Geçerlilik Tarihi"><FText type="date" value={s.validUntil} onChange={v=>setS(p=>({...p,validUntil:v}))}/></FRow>
-            <FRow label="Ödeme Koşulları" hint={`Şemada ayrı bir alan yok — kapora oranı (%${s.depositPct}) bu teklifin ödeme koşuludur.`}>
-              <FText value={`Kapora %${s.depositPct}`} onChange={()=>{}} disabled/>
-            </FRow>
-          </div>
-        )}
-
-        {step===4 && (
-          <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
-            <MobileEntityCard>
-              <div style={{ fontSize:16, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif" }}>{linkedCustomer?.name || s.guestName || "—"}</div>
-              <div style={{ fontSize:12.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", marginTop:3 }}>
-                {[s.phone, s.email].filter(Boolean).join(" · ") || "İletişim bilgisi girilmedi"}
-              </div>
-            </MobileEntityCard>
-            <MobileEntityCard>
-              <MobileInfoLine label="Tur" value={s.tourName || "—"}/>
-              <MobileInfoLine label="Tarih" value={s.travelDate || "—"}/>
-              <MobileInfoLine label="Saat" value={s.travelTime || "—"}/>
-              <MobileInfoLine label="Kişi Sayısı" value={`${totals.pax} kişi`}/>
-              <MobileInfoLine label="Dil" value={s.language || "—"}/>
-              <MobileInfoLine label="Karşılama" value={`${s.pickup}${s.pickupLocation?" — "+s.pickupLocation:""}`}/>
-            </MobileEntityCard>
-            <MobileEntityCard>
-              <MobileInfoLine label="Ara Toplam" value={`${sym}${totals.subtotal.toLocaleString("tr-TR")}`}/>
-              <MobileInfoLine label="İndirim" value={`${sym}${totals.discountAmount.toLocaleString("tr-TR")}`}/>
-              <MobileInfoLine label="Genel Toplam" value={`${sym}${totals.total.toLocaleString("tr-TR")}`} bold/>
-              <MobileInfoLine label="Kapora" value={`${sym}${totals.deposit.toLocaleString("tr-TR")}`}/>
-              <MobileInfoLine label="Kalan" value={`${sym}${totals.remaining.toLocaleString("tr-TR")}`}/>
-              <MobileInfoLine label="Geçerlilik" value={s.validUntil || "Belirtilmedi"}/>
-            </MobileEntityCard>
-            <MobileEntityCard>
-              <div style={{fontSize:11, color:C.textFaint, textTransform:"uppercase", letterSpacing:"0.06em", fontFamily:"'DM Sans',sans-serif", marginBottom:6}}>Dahil Olanlar</div>
-              {s.included.filter(i=>i.on).length===0 ? <div style={{fontSize:12.5,color:C.textFaint,fontStyle:"italic"}}>Seçilmedi</div> : s.included.filter(i=>i.on).map((i,idx)=><div key={idx} style={{fontSize:12.5,color:C.textMid,fontFamily:"'DM Sans',sans-serif",padding:"3px 0"}}>• {i.label}</div>)}
-            </MobileEntityCard>
-          </div>
-        )}
-      </div>
-
-      {}
-      <div style={{ flexShrink:0, background:C.white, borderTop:`1px solid ${C.border}`, padding:`12px 16px calc(12px + env(safe-area-inset-bottom, 0px))` }}>
-        <button onClick={goNext} disabled={saving} style={{
-          width:"100%", padding:"13px 0", borderRadius:12, border:"none", cursor: saving?"default":"pointer",
-          background:C.navy, color:C.white, fontSize:14.5, fontWeight:700, fontFamily:"'DM Sans',sans-serif",
-          opacity: saving?0.7:1,
-        }}>{saving ? "Kaydediliyor…" : step===STEPS.length-1 ? (isEdit ? "Değişiklikleri Kaydet" : "Teklifi Oluştur") : "Devam Et"}</button>
-      </div>
-    </div>
-  );
-}
 
 /* ══════════════════════════════════════════════════════════════════════
    MOBILE MESSAGES — a real messaging inbox/thread, not the desktop
