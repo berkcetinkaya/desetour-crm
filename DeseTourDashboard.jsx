@@ -5071,32 +5071,32 @@ function StarPicker({ value, onChange }) {
   );
 }
 
-// TESTABLE:selectEligibleGuideReviewReservations:start
-// Eligible reservations for the Guide Detail "Değerlendirme Ekle" picker.
-// Historical reservations frequently never had reservations.guide_id
-// recorded, so this is deliberately NOT scoped to guideId — it is scoped to
-// "did this tour plausibly already happen" (completed, or its tour date is
-// today or earlier) and "is it still a real booking" (not cancelled).
-// Reservations assigned to another guide are still included (never
-// silently excluded) — AddEditReviewModal warns on selection instead; see
-// the guide_id snapshot comment below for why that's safe. Sorted so the
-// most likely matches surface first: this guide's own reservations, then
-// unassigned ones, then reservations assigned to someone else, each group
-// newest-completed-first — same tiebreak this list always used.
-function selectEligibleGuideReviewReservations(reservations, guideId, todayISO) {
-  const rankOf = r => r.guideId === guideId ? 0 : (!r.guideId ? 1 : 2);
+// TESTABLE:selectReviewableReservations:start
+// Reservations offered by the Guide Detail "Değerlendirme Ekle" picker.
+// This picker's job is to let an admin attach an external review to
+// WHICHEVER real reservation/tour it actually belongs to — it is a lookup
+// tool, not a guide-assignment tool. So this is deliberately NOT filtered
+// by tour date (past or future), operational status (completed, still
+// active, even cancelled), reservations.guide_id (null, this guide, or
+// someone else's), or whether the reservation already has a review — the
+// reservation_reviews schema supports multiple legitimate reviews per
+// reservation, so having one already is never a reason to hide it. The
+// ONLY exclusion is a record that isn't a real, addressable reservation
+// (no id). An earlier version of this filtered to "completed or past, not
+// cancelled" reservations, which is exactly what made real, currently
+// active/future reservations (e.g. Grand Bazaar Experience bookings dated
+// ahead) disappear from the list entirely — see AddEditReviewModal for how
+// guide_id attribution and the "assigned to another guide" warning are
+// still handled safely with this fully-open list.
+// Sorted newest-tour-date-first — a neutral default useful regardless of
+// which guide's page this was opened from; the search box narrows it
+// further as the list grows.
+function selectReviewableReservations(reservations) {
   return (reservations || [])
-    .filter(r => r.opStatus !== "İptal" && (r.opStatus === "Tamamlandı" || (!!r.checkIn && r.checkIn.slice(0, 10) <= todayISO)))
-    .sort((a, b) => {
-      const ra = rankOf(a), rb = rankOf(b);
-      if (ra !== rb) return ra - rb;
-      const aDone = a.opStatus === "Tamamlandı" ? 0 : 1;
-      const bDone = b.opStatus === "Tamamlandı" ? 0 : 1;
-      if (aDone !== bDone) return aDone - bDone;
-      return (b.checkIn || "").localeCompare(a.checkIn || "");
-    });
+    .filter(r => r && r.id)
+    .sort((a, b) => (b.checkIn || "").localeCompare(a.checkIn || ""));
 }
-// TESTABLE:selectEligibleGuideReviewReservations:end
+// TESTABLE:selectReviewableReservations:end
 
 // TESTABLE:formatGuideReviewReservationOption:start
 // "reservation number · tour name · tour date · tour language · customer
@@ -5134,6 +5134,7 @@ function AddEditReviewModal({ resId, guideId, guideName, review, onClose }) {
   const { sources, srcLoading: srcLoadingReview } = useSources({ capability: 'review' });
   const { data: repoRes } = useRepo("reservation", "getAll");
   const [selectedResId, setSelectedResId] = useState("");
+  const [resSearch, setResSearch] = useState("");
   const [rating, setRating] = useState(review?.rating || 0);
   const [reviewText, setReviewText] = useState(review?.reviewText || "");
   const [sourceId, setSourceId] = useState(review?.sourceId || "");
@@ -5143,8 +5144,16 @@ function AddEditReviewModal({ resId, guideId, guideName, review, onClose }) {
   const [error, setError] = useState("");
 
   const guideReservations = needsResPicker
-    ? selectEligibleGuideReviewReservations(repoRes, guideId, _TODAY_ISO)
+    ? selectReviewableReservations(repoRes)
     : [];
+  // Client-side text filter over the already-loaded full list, not a
+  // separate query — narrows a list that only grows over time without
+  // needing a dedicated searchable-select component this codebase doesn't
+  // otherwise have.
+  const searchTerm = resSearch.trim().toLocaleLowerCase('tr');
+  const visibleGuideReservations = searchTerm
+    ? guideReservations.filter(r => formatGuideReviewReservationOption(r).toLocaleLowerCase('tr').includes(searchTerm))
+    : guideReservations;
   const selectedRes = needsResPicker ? guideReservations.find(r=>r.id===selectedResId) : null;
   const effectiveResId = needsResPicker ? selectedResId : resId;
   // Purely informational — the reservation's own guide_id is never read to
@@ -5172,15 +5181,20 @@ function AddEditReviewModal({ resId, guideId, guideName, review, onClose }) {
     <Modal title={isEdit ? "Değerlendirmeyi Düzenle" : "Değerlendirme Ekle"} onClose={onClose} onSubmit={handleSubmit} submitLabel={mutating?"Kaydediliyor…":"Kaydet"}>
       {needsResPicker && (
         <>
-          <FRow label="Rezervasyon / Tur" required full hint="Tamamlanmış veya geçmiş tarihli, iptal edilmemiş rezervasyonlar listelenir — rehber ataması eksik olsa bile. Bu rehberin kendi rezervasyonları önce gösterilir.">
+          <FRow label="Rezervasyon Ara" full hint="Rezervasyon no, tur adı, tarih, dil veya misafir adına göre listeyi daraltır.">
+            <FText value={resSearch} onChange={setResSearch} placeholder="ör. Grand Bazaar, R-2026-0005, 06.10.2026…"/>
+          </FRow>
+          <FRow label="Rezervasyon / Tur" required full hint="Tüm gerçek rezervasyonlar listelenir — geçmiş veya gelecek, tamamlanmış veya aktif, rehber ataması olsun ya da olmasın. Bu seçim rezervasyonun rehber atamasını değiştirmez; değerlendirme her zaman şu an görüntülenen rehbere kaydedilir.">
             <FSelect value={selectedResId} onChange={setSelectedResId} options={[
               ["", "— Seçiniz —"],
-              ...guideReservations.map(r => [r.id, formatGuideReviewReservationOption(r)]),
+              ...visibleGuideReservations.map(r => [r.id, formatGuideReviewReservationOption(r)]),
             ]}/>
           </FRow>
-          {guideReservations.length===0 && (
+          {visibleGuideReservations.length===0 && (
             <div style={{fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:-8, marginBottom:14}}>
-              Değerlendirme eklenebilecek uygun bir rezervasyon bulunamadı.
+              {guideReservations.length===0
+                ? "Sistemde hiçbir rezervasyon bulunamadı."
+                : "Aramanızla eşleşen bir rezervasyon bulunamadı."}
             </div>
           )}
           {selectedRes && (

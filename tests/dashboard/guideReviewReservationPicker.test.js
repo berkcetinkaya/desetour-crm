@@ -6,125 +6,115 @@ const path = require('path');
 
 const { extractTestableFn } = require('./extractTestableFn');
 
-const selectEligibleGuideReviewReservations = extractTestableFn('selectEligibleGuideReviewReservations');
+const selectReviewableReservations = extractTestableFn('selectReviewableReservations');
 const formatGuideReviewReservationOption = extractTestableFn('formatGuideReviewReservationOption');
 
-const TODAY_ISO = '2026-09-15';
 const GUIDE_ID = 'guide-1';
+const TODAY_ISO = '2026-09-15';
 
 function res(overrides) {
   return {
     id: 'r-' + Math.random().toString(36).slice(2),
     resNumber: 'R-2026-0001',
     name: 'Jane Doe',
-    tour: 'Grand Bazaar Tour',
+    tour: 'Grand Bazaar Experience',
     date: '10 Eyl 2026',
     checkIn: '2026-09-10',
     tourLanguage: 'İngilizce',
     guideId: null,
     assignedGuideName: '',
-    opStatus: 'Tamamlandı',
+    opStatus: 'Onaylandı',
     ...overrides,
   };
 }
 
-// A. A reservation already assigned to THIS guide is included.
-test('includes a reservation already assigned to this guide', () => {
-  const r = res({ guideId: GUIDE_ID });
-  const out = selectEligibleGuideReviewReservations([r], GUIDE_ID, TODAY_ISO);
+// This is the exact regression the previous (too-restrictive) picker
+// caused: real, currently active reservations — e.g. a Grand Bazaar
+// Experience booked for a future date — must always appear.
+
+// A future Grand Bazaar reservation appears.
+test('a future Grand Bazaar reservation (not completed, not past) appears', () => {
+  const r = res({ tour: 'Grand Bazaar Experience', opStatus: 'Onaylandı', checkIn: '2026-10-06' });
+  const out = selectReviewableReservations([r]);
   assert.equal(out.length, 1);
   assert.equal(out[0].id, r.id);
 });
 
-// B. An unassigned historical reservation (guide_id null) is included —
-// this is the exact bug being fixed.
-test('includes an unassigned historical reservation (guide_id null)', () => {
-  const r = res({ guideId: null, opStatus: 'Tamamlandı' });
-  const out = selectEligibleGuideReviewReservations([r], GUIDE_ID, TODAY_ISO);
+// A past reservation appears.
+test('a past reservation appears', () => {
+  const r = res({ opStatus: 'Tamamlandı', checkIn: '2026-08-01' });
+  const out = selectReviewableReservations([r]);
   assert.equal(out.length, 1);
-  assert.equal(out[0].id, r.id);
 });
 
-// C. A reservation assigned to ANOTHER guide is still shown (never silently
-// excluded) — AddEditReviewModal is responsible for warning on selection.
-test('includes a reservation assigned to another guide, rather than hiding it', () => {
+// An unassigned reservation (guide_id null) appears.
+test('an unassigned reservation (guide_id null) appears', () => {
+  const r = res({ guideId: null });
+  const out = selectReviewableReservations([r]);
+  assert.equal(out.length, 1);
+});
+
+// A reservation assigned to another guide appears (the modal is
+// responsible for the warning — the selector itself never hides it).
+test('a reservation assigned to another guide still appears in the selector', () => {
   const r = res({ guideId: 'guide-2', assignedGuideName: 'Other Guide' });
-  const out = selectEligibleGuideReviewReservations([r], GUIDE_ID, TODAY_ISO);
-  assert.equal(out.length, 1);
-  assert.equal(out[0].id, r.id);
-});
-
-test('excludes cancelled reservations regardless of guide assignment', () => {
-  const r = res({ guideId: GUIDE_ID, opStatus: 'İptal' });
-  const out = selectEligibleGuideReviewReservations([r], GUIDE_ID, TODAY_ISO);
-  assert.equal(out.length, 0);
-});
-
-test('excludes a future (not-yet-happened) reservation that is not completed', () => {
-  const r = res({ guideId: GUIDE_ID, opStatus: 'Onaylandı', checkIn: '2026-09-20' });
-  const out = selectEligibleGuideReviewReservations([r], GUIDE_ID, TODAY_ISO);
-  assert.equal(out.length, 0);
-});
-
-test('includes a past (not explicitly completed) reservation whose tour date has already passed', () => {
-  const r = res({ guideId: GUIDE_ID, opStatus: 'Onaylandı', checkIn: '2026-09-01' });
-  const out = selectEligibleGuideReviewReservations([r], GUIDE_ID, TODAY_ISO);
+  const out = selectReviewableReservations([r]);
   assert.equal(out.length, 1);
 });
 
-test('includes a reservation whose tour date is today', () => {
-  const r = res({ guideId: GUIDE_ID, opStatus: 'Onaylandı', checkIn: TODAY_ISO });
-  const out = selectEligibleGuideReviewReservations([r], GUIDE_ID, TODAY_ISO);
+// A reservation that already has a review can still appear — multiple
+// legitimate reviews per reservation are supported by the schema.
+test('a reservation that already has a review still appears (hasReview is not a real reservation field, so it can never filter anything)', () => {
+  const r = res({ hasReview: true, reviewCount: 3 });
+  const out = selectReviewableReservations([r]);
   assert.equal(out.length, 1);
 });
 
-test('excludes a reservation with no checkIn that is not marked completed', () => {
-  const r = res({ guideId: GUIDE_ID, opStatus: 'Onaylandı', checkIn: null });
-  const out = selectEligibleGuideReviewReservations([r], GUIDE_ID, TODAY_ISO);
-  assert.equal(out.length, 0);
+test('a cancelled reservation still appears — this selector is a lookup tool, not an operational filter', () => {
+  const r = res({ opStatus: 'İptal' });
+  const out = selectReviewableReservations([r]);
+  assert.equal(out.length, 1);
 });
 
-test('sorts this-guide reservations before unassigned ones, before other-guide ones', () => {
-  const mine = res({ id: 'mine', guideId: GUIDE_ID, checkIn: '2026-09-01' });
-  const unassigned = res({ id: 'unassigned', guideId: null, checkIn: '2026-09-12' });
-  const other = res({ id: 'other', guideId: 'guide-2', checkIn: '2026-09-14' });
-  const out = selectEligibleGuideReviewReservations([other, unassigned, mine], GUIDE_ID, TODAY_ISO);
-  assert.deepEqual(out.map(r => r.id), ['mine', 'unassigned', 'other']);
+test('a reservation with no checkIn date still appears', () => {
+  const r = res({ checkIn: null, opStatus: 'Onaylandı' });
+  const out = selectReviewableReservations([r]);
+  assert.equal(out.length, 1);
 });
 
-test('within the same group, completed tours sort before non-completed, then newest first', () => {
-  const older = res({ id: 'older', guideId: GUIDE_ID, opStatus: 'Tamamlandı', checkIn: '2026-09-01' });
-  const newer = res({ id: 'newer', guideId: GUIDE_ID, opStatus: 'Tamamlandı', checkIn: '2026-09-05' });
-  const pastNotDone = res({ id: 'pastNotDone', guideId: GUIDE_ID, opStatus: 'Onaylandı', checkIn: '2026-09-10' });
-  const out = selectEligibleGuideReviewReservations([pastNotDone, older, newer], GUIDE_ID, TODAY_ISO);
-  assert.deepEqual(out.map(r => r.id), ['newer', 'older', 'pastNotDone']);
+test('the only exclusion is a record with no real reservation id', () => {
+  const valid = res({ id: 'valid-1' });
+  const out = selectReviewableReservations([valid, null, undefined, { id: '' }, { name: 'no id at all' }]);
+  assert.deepEqual(out.map(r => r.id), ['valid-1']);
 });
 
-test('returns an empty array when nothing is eligible', () => {
-  assert.deepEqual(selectEligibleGuideReviewReservations([], GUIDE_ID, TODAY_ISO), []);
-  const cancelled = res({ guideId: GUIDE_ID, opStatus: 'İptal' });
-  const future = res({ guideId: GUIDE_ID, opStatus: 'Onaylandı', checkIn: '2026-12-01' });
-  assert.deepEqual(selectEligibleGuideReviewReservations([cancelled, future], GUIDE_ID, TODAY_ISO), []);
+test('sorts newest tour date first by default (neutral, not guide-scoped)', () => {
+  const older = res({ id: 'older', checkIn: '2026-08-01' });
+  const newer = res({ id: 'newer', checkIn: '2026-09-20' });
+  const noDate = res({ id: 'noDate', checkIn: null });
+  const out = selectReviewableReservations([older, newer, noDate]);
+  assert.deepEqual(out.map(r => r.id), ['newer', 'older', 'noDate']);
+});
+
+test('returns an empty array for an empty/missing reservations list', () => {
+  assert.deepEqual(selectReviewableReservations([]), []);
+  assert.deepEqual(selectReviewableReservations(null), []);
+  assert.deepEqual(selectReviewableReservations(undefined), []);
 });
 
 // --- Dropdown option labels -------------------------------------------------
 
 test('formats the option label as reservation number · tour · date · language · customer name', () => {
-  const r = res({ resNumber: 'R-2026-0042', tour: 'Bosphorus Cruise', date: '10 Eyl 2026', tourLanguage: 'İtalyanca', name: 'Mario Rossi' });
-  assert.equal(formatGuideReviewReservationOption(r), 'R-2026-0042 · Bosphorus Cruise · 10 Eyl 2026 · İtalyanca · Mario Rossi');
+  const r = res({ resNumber: 'R-2026-0005', tour: 'Grand Bazaar Experience', date: '06.10.2026', tourLanguage: 'İtalyanca', name: 'Mario Rossi' });
+  assert.equal(formatGuideReviewReservationOption(r), 'R-2026-0005 · Grand Bazaar Experience · 06.10.2026 · İtalyanca · Mario Rossi');
 });
 
 test('omits the customer name segment entirely when no customer name is available', () => {
-  const r = res({ resNumber: 'R-2026-0042', tour: 'Bosphorus Cruise', date: '10 Eyl 2026', tourLanguage: 'İtalyanca', name: '' });
-  assert.equal(formatGuideReviewReservationOption(r), 'R-2026-0042 · Bosphorus Cruise · 10 Eyl 2026 · İtalyanca');
+  const r = res({ resNumber: 'R-2026-0005', tour: 'Grand Bazaar Experience', date: '06.10.2026', tourLanguage: 'İtalyanca', name: '' });
+  assert.equal(formatGuideReviewReservationOption(r), 'R-2026-0005 · Grand Bazaar Experience · 06.10.2026 · İtalyanca');
 });
 
-test('falls back to the raw id when resNumber is missing, and em-dash for missing tour/date/language', () => {
-  const r = res({ resNumber: '', id: 'raw-id-123', tour: '', date: '', tourLanguage: '', name: '' });
-  assert.equal(formatGuideReviewReservationOption(r), 'raw-id-123 · — · — · —');
-});
-
-// --- Static source checks: guide_id snapshot behavior + wiring ------------
+// --- Static source checks: real data source, guide_id snapshot behavior ---
 const SOURCE = fs.readFileSync(path.join(__dirname, '..', '..', 'DeseTourDashboard.jsx'), 'utf8');
 
 function extractFunctionBody(name, nextMarker) {
@@ -133,32 +123,40 @@ function extractFunctionBody(name, nextMarker) {
   return SOURCE.slice(idx, SOURCE.indexOf(nextMarker, idx));
 }
 
-test('the create payload always uses the guideId prop, never the selected reservation\'s own guideId', () => {
+test('the picker is built from the real "reservation" repo (useRepo), not a guide-scoped or mock-only subset', () => {
+  const body = extractFunctionBody('AddEditReviewModal', '\nfunction ReviewCard');
+  assert.match(body, /const \{ data: repoRes \} = useRepo\("reservation", "getAll"\);/);
+  assert.match(body, /selectReviewableReservations\(repoRes\)/);
+  assert.doesNotMatch(body, /DB\.reservations/, 'must never read the mock seed array directly');
+});
+
+test('selecting a reservation never mutates reservations.guide_id: the create payload always uses the guideId prop', () => {
   const body = extractFunctionBody('AddEditReviewModal', '\nfunction ReviewCard');
   assert.match(body, /await mutate\("create", \{ \.\.\.payload, resId: effectiveResId, guideId \}\)/);
   assert.doesNotMatch(body, /guideId:\s*selectedRes\.guideId/);
 });
 
-test('SupabaseReviewRepo.create never writes to the reservations table, only reservation_reviews', () => {
+test('SupabaseReviewRepo.create/update never write to the reservations table, only reservation_reviews', () => {
   const idx = SOURCE.indexOf("const SupabaseReviewRepo = {");
-  const body = SOURCE.slice(idx, SOURCE.indexOf('async update(id,p){', idx));
+  const endIdx = SOURCE.indexOf("const SupabaseGuideRepo = {", idx);
+  const body = SOURCE.slice(idx, endIdx);
   assert.match(body, /sb\.from\('reservation_reviews'\)\.insert/);
-  assert.doesNotMatch(body, /sb\.from\('reservations'\)\.update/);
+  assert.match(body, /sb\.from\('reservation_reviews'\)\.update/);
+  assert.doesNotMatch(body, /sb\.from\('reservations'\)\.(update|insert)/);
 });
 
-test('a warning is shown when the selected reservation is assigned to another guide, and the review still targets the open guide', () => {
+test('a warning is shown when the selected reservation is assigned to another guide, and selection is never blocked', () => {
   const body = extractFunctionBody('AddEditReviewModal', '\nfunction ReviewCard');
   assert.match(body, /const assignedToOtherGuide = !!\(selectedRes && selectedRes\.guideId && selectedRes\.guideId !== guideId\);/);
   assert.match(body, /\{assignedToOtherGuide && \(/);
+  // The warning is purely informational — nothing gates handleSubmit on it.
+  const submitIdx = body.indexOf('async function handleSubmit()');
+  const submitBody = body.slice(submitIdx, body.indexOf('\n  }', submitIdx));
+  assert.doesNotMatch(submitBody, /assignedToOtherGuide/);
 });
 
-test('the empty-state message no longer claims "assigned to this guide" and only renders when the eligible list is truly empty', () => {
+test('a search box exists to narrow the list as it grows', () => {
   const body = extractFunctionBody('AddEditReviewModal', '\nfunction ReviewCard');
-  assert.doesNotMatch(body, /Bu rehbere atanmış bir rezervasyon bulunamadı/);
-  assert.match(body, /\{guideReservations\.length===0 && \(/);
-});
-
-test('the picker is built from selectEligibleGuideReviewReservations, not a guideId-filtered list', () => {
-  const body = extractFunctionBody('AddEditReviewModal', '\nfunction ReviewCard');
-  assert.match(body, /selectEligibleGuideReviewReservations\(repoRes, guideId, _TODAY_ISO\)/);
+  assert.match(body, /const \[resSearch, setResSearch\] = useState\(""\);/);
+  assert.match(body, /FRow label="Rezervasyon Ara"/);
 });
