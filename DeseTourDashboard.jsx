@@ -1025,6 +1025,11 @@ const ReservationRepository = {
   getByCustomerId(customerId) {
     return DB.reservations.filter(r => r.customerId === customerId);
   },
+  // No demo-data passengers modeled yet — the Yolcular card simply shows
+  // its empty state for every mock/demo reservation.
+  getGuests(_resId) {
+    return [];
+  },
   create(data) {
     const id = 'R-' + new Date().getFullYear() + '-' + String(DB.reservations.length + 1).padStart(3, '0');
     const record = {
@@ -1472,6 +1477,14 @@ const ActivityRepository = {
     };
     DB.activityLogs.push(record);
     return record;
+  },
+  // No demo-data auto-ingested reservations modeled yet — the notification
+  // bell simply shows zero for every mock/demo session.
+  getReservationNotifications() {
+    return [];
+  },
+  markReservationNotificationRead(_activityLogId) {
+    return true;
   },
 };
 
@@ -5407,7 +5420,7 @@ function ReservationsPage({ onSelect }) {
     const srchOk = !search ||
       (r.name||'').toLowerCase().includes(search.toLowerCase()) ||
       r.tour.toLowerCase().includes(search.toLowerCase()) ||
-      r.id.toLowerCase().includes(search.toLowerCase());
+      (r.resNumber||r.id).toLowerCase().includes(search.toLowerCase());
     return tabOk && srchOk;
   });
 
@@ -5584,7 +5597,7 @@ function ReservationsPage({ onSelect }) {
                             fontFamily:"'DM Mono',monospace",
                             background:C.ivory, border:`1px solid ${C.borderLight}`,
                             padding:"3px 7px", borderRadius:5,
-                          }}>{r.id}</span>
+                          }}>{r.resNumber || r.id}</span>
                         </div>
                       </td>
                       {}
@@ -5642,7 +5655,7 @@ function ReservationsPage({ onSelect }) {
                         <span style={{fontSize:11,padding:"2px 7px",borderRadius:99,color:rsm.color,background:rsm.bg,fontFamily:"'DM Sans',sans-serif",fontWeight:500,flexShrink:0}}>{res.opStatus}</span>
                       </div>
                       <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-                        <span style={{fontSize:12,color:C.textFaint,fontFamily:"'DM Mono',monospace"}}>{res.id}</span>
+                        <span style={{fontSize:12,color:C.textFaint,fontFamily:"'DM Mono',monospace"}}>{res.resNumber || res.id}</span>
                         <span style={{fontSize:12,color:C.textMuted,fontFamily:"'DM Sans',sans-serif"}}>{res.date} · {res.pax} kişi</span>
                         <span style={{fontSize:11,padding:"2px 7px",borderRadius:99,color:rpm.color,background:rpm.bg,fontFamily:"'DM Sans',sans-serif",fontWeight:500}}>{res.payStatus}</span>
                       </div>
@@ -5927,6 +5940,10 @@ function ReservationDetailPage({ resId, onBack }) {
   // Real guest contact info — mapResFromDB has no phone/email/country of its
   // own (those live on the customer record), so this used to render blank.
   const { data:resCustomer } = useRepo("customer", "getById", _resRec?.customerId || null);
+  // Actual tour participants (reservation_guests) — deliberately a SEPARATE
+  // fetch from the customer above: the customer is the booking contact
+  // (who/what made the booking), these are the people actually traveling.
+  const { data:resGuests } = useRepo("reservation", "getGuests", resId);
   const { mutate:mutGuideAssign } = useRepoMutation("reservation");
   const [showAssignGuide, setShowAssignGuide] = useState(false);
   const [removingGuide, setRemovingGuide] = useState(false);
@@ -5969,7 +5986,7 @@ function ReservationDetailPage({ resId, onBack }) {
             fontSize:12, color:C.textFaint, fontFamily:"'DM Mono',monospace",
             background:C.ivory, border:`1px solid ${C.borderLight}`,
             padding:"3px 8px", borderRadius:5,
-          }}>{r.id}</span>
+          }}>{r.resNumber || r.id}</span>
           <div>
             <div style={{ fontSize:17, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif", lineHeight:1.2 }}>
               {resCustomer?.flag||"🌍"} {r.name}
@@ -6017,6 +6034,40 @@ function ReservationDetailPage({ resId, onBack }) {
 
           {}
           <RCard>
+            <RCardHead title="Yolcular"
+              right={
+                <span style={{ fontSize:10.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif" }}>
+                  {resGuests && resGuests.length > 0 ? `${resGuests.length} Kişi` : ""}
+                </span>
+              }
+            />
+            {!resGuests || resGuests.length === 0 ? (
+              <div style={{ padding:"18px 20px", fontSize:12.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", fontStyle:"italic" }}>
+                Bu rezervasyon için henüz yolcu bilgisi kaydedilmedi.
+              </div>
+            ) : (
+              <div style={{ padding:"6px 0" }}>
+                {resGuests.map((g, i) => (
+                  <div key={g.id || i} style={{
+                    display:"flex", alignItems:"center", gap:10,
+                    padding:"8px 20px",
+                  }}>
+                    <span style={{
+                      width:22, height:22, borderRadius:"50%", flexShrink:0,
+                      background:C.ivory, border:`1px solid ${C.borderLight}`,
+                      display:"flex", alignItems:"center", justifyContent:"center",
+                      fontSize:10.5, fontWeight:600, color:C.textMuted,
+                      fontFamily:"'DM Sans',sans-serif",
+                    }}>{i + 1}</span>
+                    <span style={{ fontSize:13, color:C.text, fontFamily:"'DM Sans',sans-serif" }}>{g.fullName}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </RCard>
+
+          {}
+          <RCard>
             <RCardHead title="Tur Bilgileri"/>
             {}
             <div style={{
@@ -6059,12 +6110,29 @@ function ReservationDetailPage({ resId, onBack }) {
             <RCardHead title="Ödeme Özeti"/>
             <div style={{ padding:"14px 20px 0" }}>
               {}
-              <div style={{
-                display:"flex", alignItems:"baseline", gap:8, marginBottom:14,
-                paddingBottom:14, borderBottom:`1px solid ${C.borderLight}`,
-              }}>
-                <span style={{ fontSize:32, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif" }}>{fmtMoney(r.total, r.currency)}</span>
-                <span style={{ fontSize:13, color:C.textFaint, fontFamily:"'DM Sans',sans-serif" }}>{r.currency}</span>
+              <div style={{ marginBottom:14, paddingBottom:14, borderBottom:`1px solid ${C.borderLight}` }}>
+                <div style={{ fontSize:10.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:3 }}>
+                  Net Tutar
+                </div>
+                <div style={{ display:"flex", alignItems:"baseline", gap:8 }}>
+                  <span style={{ fontSize:32, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif" }}>{fmtMoney(r.total, r.currency)}</span>
+                  <span style={{ fontSize:13, color:C.textFaint, fontFamily:"'DM Sans',sans-serif" }}>{r.currency}</span>
+                </div>
+                {}
+                {r.retailAmount != null && (
+                  <div style={{
+                    display:"flex", justifyContent:"space-between", alignItems:"center",
+                    marginTop:10, padding:"8px 10px", borderRadius:7,
+                    background:C.ivory, border:`1px solid ${C.borderLight}`,
+                  }}>
+                    <span style={{ fontSize:11.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif" }}>
+                      Satış Fiyatı <span style={{ color:C.textFaint, fontStyle:"italic" }}>(bilgi amaçlı)</span>
+                    </span>
+                    <span style={{ fontSize:13, fontWeight:600, color:C.textMid, fontFamily:"'DM Sans',sans-serif" }}>
+                      {fmtMoney(r.retailAmount, r.retailCurrency || r.currency)} {r.retailCurrency || r.currency}
+                    </span>
+                  </div>
+                )}
               </div>
               {}
               <div style={{ marginBottom:14 }}>
@@ -12598,6 +12666,12 @@ function mapResFromDB(r) {
     total:parseFloat(r.total_amount)||0, deposit:parseFloat(r.deposit_amount)||0,
     remaining:parseFloat(r.total_amount||0)-parseFloat(r.deposit_amount||0),
     currency:r.currency||'EUR', opNotes:r.notes||'', assigneeId:r.assigned_to||null,
+    // Civitatis (or any future channel) "Retail price" — informational only,
+    // never DeseTour's own revenue (that stays total/currency above) and
+    // never part of any payment-progress calculation. NULL for every
+    // reservation without a retail_amount (every manually-created booking).
+    retailAmount:r.retail_amount!=null?parseFloat(r.retail_amount):null,
+    retailCurrency:r.retail_currency||null,
     createdAt:r.created_at?r.created_at.split('T')[0]:'', _fromDB:true };
 }
 function mapPayFromDB(r) {
@@ -12783,6 +12857,11 @@ const SupabaseReservationRepo = {
   async getAll(f={}){const sb=getSB();if(!sb)return ReservationRepository.getAll(f);let q=sb.from('reservations').select('*,customer:customers(id,full_name,email,phone,nationality),tour:tours(id,name,category),guide:guides(id,full_name,status,phone)').order('check_in',{ascending:true});if(f.status)q=q.eq('status',_r2DB(f.status));if(f.payStatus)q=q.eq('payment_status',_p2DB(f.payStatus));if(f.customerId)q=q.eq('customer_id',f.customerId);if(f.search)q=q.or(`reservation_number.ilike.%${f.search}%,destination.ilike.%${f.search}%`);const{data,error}=await q;if(error)throw new Error(error.message);return(data||[]).map(mapResFromDB);},
   async getById(id){const sb=getSB();if(!sb)return ReservationRepository.getById(id);const{data,error}=await sb.from('reservations').select('*,customer:customers(*),tour:tours(*),guide:guides(id,full_name,status,phone,email)').eq('id',id).maybeSingle();if(error)throw new Error(error.message);return mapResFromDB(data);},
   async getByCustomerId(cid){const sb=getSB();if(!sb)return ReservationRepository.getByCustomerId(cid);const{data,error}=await sb.from('reservations').select('*').eq('customer_id',cid).order('check_in',{ascending:false});if(error)throw new Error(error.message);return(data||[]).map(mapResFromDB);},
+  // Named tour participants (e.g. Civitatis "Passenger information 1/2/…"),
+  // NEVER the booking contact — reservations.customer_id/customer is a
+  // separate concept entirely. Read from reservation_guests directly, names
+  // stored/returned exactly as recorded (never inferred from the customer).
+  async getGuests(resId){const sb=getSB();if(!sb)return ReservationRepository.getGuests?ReservationRepository.getGuests(resId):[];const{data,error}=await sb.from('reservation_guests').select('id,full_name,sort_order').eq('reservation_id',resId).order('sort_order',{ascending:true});if(error)throw new Error(error.message);return(data||[]).map(g=>({id:g.id,fullName:g.full_name,sortOrder:g.sort_order}));},
   async create(d){const sb=getSB();if(!sb)return ReservationRepository.create(d);let rn=`R-${new Date().getFullYear()}-${String(Date.now()).slice(-4)}`;try{const{data:ref}=await sb.rpc('next_ref_number',{prefix:'R',table_name:'reservations',number_col:'reservation_number'});if(ref)rn=ref;}catch(_){}const row={reservation_number:rn,lead_id:d.leadId||null,quote_id:d.quoteId||null,customer_id:d.customerId,tour_id:d.tourId||null,status:'pending_confirmation',payment_status:'pending',destination:d.tour||d.destination||'',check_in:d.checkIn||d.date||null,check_out:d.checkOut||d.date||null,check_in_time:d.time||null,pax_adult:parseInt(d.pax||d.paxAdult)||1,pax_child:parseInt(d.paxChild)||0,guide_name:d.guide||null,guide_id:d.guideId||null,vehicle_info:d.vehicle||null,driver_name:d.driver||null,pickup_location:d.pickup||null,pickup_time:d.pickupTime||null,tour_language:d.tourLanguage||null,total_amount:parseFloat(d.total)||0,currency:d.currency||'EUR',deposit_amount:parseFloat(d.deposit)||0,notes:d.opNotes||d.notes||null,assigned_to:d.assigneeId||null};const{data:c,error}=await sb.from('reservations').insert(row).select().single();if(error)throw new Error(error.message);await _sbLog('reservation',c.id,'created',`Rezervasyon: ${c.reservation_number}`);return mapResFromDB(c);},
   async update(id,p){const sb=getSB();if(!sb)return ReservationRepository.update(id,p);const fm={opStatus:'status',payStatus:'payment_status',guide:'guide_name',guideId:'guide_id',vehicle:'vehicle_info',driver:'driver_name',pickup:'pickup_location',opNotes:'notes',total:'total_amount',tourLanguage:'tour_language'};const row={};for(const[k,v]of Object.entries(p)){const col=fm[k]||k;if(col==='status')row[col]=_r2DB(v);else if(col==='payment_status')row[col]=_p2DB(v);else row[col]=v;}if(p.opStatus==='Tamamlandı')row.completed_at=new Date().toISOString();if(p.opStatus==='İptal')row.cancelled_at=new Date().toISOString();const{data:u,error}=await sb.from('reservations').update(row).eq('id',id).select().single();if(error)throw new Error(error.message);await _sbLog('reservation',id,'updated',`Güncellendi: ${Object.keys(p).join(', ')}`);return mapResFromDB(u);},
   async delete(id){const sb=getSB();if(!sb)return ReservationRepository.delete(id);const{error}=await sb.from('reservations').update({status:'cancelled',cancelled_at:new Date().toISOString()}).eq('id',id);if(error)throw new Error(error.message);return true;},
@@ -12953,6 +13032,23 @@ const SupabaseActivityRepo = {
   async getAll(f={}){const sb=getSB();if(!sb)return ActivityRepository.getAll(f);let q=sb.from('activity_logs').select('*,performer:staff_users!performed_by(id,full_name)').order('created_at',{ascending:false});if(f.entityType&&f.entityId)q=q.eq('entity_type',f.entityType).eq('entity_id',f.entityId);if(f.limit)q=q.limit(f.limit);const{data,error}=await q;if(error)throw new Error(error.message);return(data||[]).map(mapActivityFromDB);},
   async getByCustomerId(cid){const sb=getSB();if(!sb)return ActivityRepository.getAll({customerId:cid});const[{data:leads},{data:res},{data:pays}]=await Promise.all([sb.from('leads').select('id').eq('customer_id',cid),sb.from('reservations').select('id').eq('customer_id',cid),sb.from('payments').select('id').eq('customer_id',cid)]);const ids=[...((leads||[]).map(r=>r.id)),...((res||[]).map(r=>r.id)),...((pays||[]).map(r=>r.id)),cid];const{data,error}=await sb.from('activity_logs').select('*,performer:staff_users!performed_by(id,full_name)').in('entity_id',ids).order('created_at',{ascending:false}).limit(50);if(error)throw new Error(error.message);return(data||[]).map(mapActivityFromDB);},
   async create(d){const sb=getSB();if(!sb)return ActivityRepository.create(d);const row={entity_type:d.entityType,entity_id:d.entityId,action:d.action,description:d.description,old_value:d.oldValue||null,new_value:d.newValue||null,metadata:d.metadata||null,performed_by:d.performedBy||null};const{data:c,error}=await sb.from('activity_logs').insert(row).select().single();if(error)throw new Error(error.message);return mapActivityFromDB(c);},
+  // System-generated "new reservation" notifications only (auto_ingested
+  // Civitatis rows today; additively covers any future auto-ingestion
+  // source the same way). Embedding activity_log_reads(id) relies on ITS
+  // OWN RLS ("activity_log_reads: staff read own", staff_id = auth.uid())
+  // to scope the embedded rows to the CURRENT viewer only — no client-side
+  // staff filtering needed, and a guide session (whose own "activity_logs:
+  // guide read own" policy only permits performed_by = auth.uid(), never
+  // NULL) simply gets zero rows back here, already correct at the RLS
+  // layer without this method doing anything role-specific itself.
+  async getReservationNotifications(){const sb=getSB();if(!sb)return ActivityRepository.getReservationNotifications?ActivityRepository.getReservationNotifications():[];const{data,error}=await sb.from('activity_logs').select('id,entity_id,description,metadata,created_at,activity_log_reads(id)').eq('entity_type','reservation').eq('metadata->>auto_ingested','true').order('created_at',{ascending:false}).limit(30);if(error)throw new Error(error.message);return(data||[]).map(l=>({id:l.id,reservationId:l.entity_id,description:l.description,source:l.metadata?.source||null,externalBookingId:l.metadata?.external_booking_id||null,createdAt:l.created_at,isRead:(l.activity_log_reads||[]).length>0}));},
+  // Per-staff read receipt — INSERT only, staff_id must equal auth.uid()
+  // (enforced by "activity_log_reads: staff insert own"), and the table's
+  // own UNIQUE(activity_log_id, staff_id) constraint makes a repeat click
+  // harmless (23505 = unique_violation, treated as already-read success)
+  // rather than needing a SELECT-then-INSERT round trip. Never touches
+  // activity_logs itself, which stays append-only.
+  async markReservationNotificationRead(activityLogId){const sb=getSB();if(!sb)return ActivityRepository.markReservationNotificationRead?ActivityRepository.markReservationNotificationRead(activityLogId):true;const staffId=getAuthContext()?.staff?.id;if(!staffId)return false;const{error}=await sb.from('activity_log_reads').insert({activity_log_id:activityLogId,staff_id:staffId});if(error&&error.code!=='23505')throw new Error(error.message);return true;},
 };
 
 async function autoLog(entityType, entityId, action, description) {
@@ -16343,6 +16439,122 @@ function GlobalSearch() {
   );
 }
 
+// Bell icon path shared by the disabled (guide) and active states, so both
+// always render the exact same glyph.
+const _BELL_ICON_D = "M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0";
+
+// System reservation notifications (auto-ingested "Yeni Rezervasyon Geldi"
+// events today) — read via activity_logs/activity_log_reads, exactly the
+// tables the database already writes to; no new backend behavior. Guides
+// never see this at all (RLS on activity_logs already returns zero rows
+// for them — see SupabaseActivityRepo.getReservationNotifications — and
+// this component additionally never renders the bell for that role, so
+// there's nothing to click into an always-empty panel).
+function NotificationBell() {
+  const auth = useAuthContext();
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef(null);
+  const { data:notifs, loading } = useRepo("activity", "getReservationNotifications");
+  const { mutate:mutMarkRead } = useRepoMutation("activity");
+
+  useEffect(() => {
+    function onMouseDown(e) {
+      if (containerRef.current && !containerRef.current.contains(e.target)) setOpen(false);
+    }
+    document.addEventListener("mousedown", onMouseDown);
+    return () => document.removeEventListener("mousedown", onMouseDown);
+  }, []);
+
+  const eligible = !!auth.role && auth.role !== "Rehber";
+  if (!eligible) {
+    return (
+      <button disabled title="Bildirimler bu rol için kullanılamıyor" style={{
+        border:"none", background:"transparent", color:C.textMuted,
+        cursor:"not-allowed", padding:6, display:"flex",
+      }}>
+        <Ic d={_BELL_ICON_D} size={18} sw={1.6}/>
+      </button>
+    );
+  }
+
+  const list = notifs || [];
+  const unread = list.filter(n => !n.isRead);
+
+  async function handleSelect(n) {
+    setOpen(false);
+    if (!n.isRead) await mutMarkRead("markReservationNotificationRead", n.id);
+    if (n.reservationId) {
+      if (typeof NAV_REF.fn === 'function') NAV_REF.fn('/reservations/' + n.reservationId);
+      else { try { window.location.hash = '#/reservations/' + n.reservationId; } catch(_) {} }
+    }
+  }
+
+  return (
+    <div ref={containerRef} style={{position:"relative"}}>
+      <button onClick={()=>setOpen(o=>!o)} style={{
+        border:"none", background:"transparent",
+        color: unread.length > 0 ? C.gold : C.textMuted,
+        cursor:"pointer", padding:6, display:"flex", position:"relative",
+      }}>
+        <Ic d={_BELL_ICON_D} size={18} sw={1.6}/>
+        {unread.length > 0 && (
+          <span style={{
+            position:"absolute", top:1, right:1, minWidth:15, height:15, borderRadius:99,
+            background:C.red, color:C.white, fontSize:9.5, fontWeight:700, lineHeight:1,
+            display:"flex", alignItems:"center", justifyContent:"center", padding:"0 3px",
+            fontFamily:"'DM Sans',sans-serif", border:`1.5px solid ${C.white}`,
+          }}>{unread.length}</span>
+        )}
+      </button>
+      {open && (
+        <div style={{
+          position:"absolute", top:"calc(100% + 10px)", right:0, width:340,
+          background:C.white, border:`1px solid ${C.border}`, borderRadius:T.radiusSm,
+          boxShadow:"0 12px 32px rgba(13,27,62,0.16)", maxHeight:420, overflowY:"auto",
+          zIndex:100,
+        }}>
+          <div style={{
+            padding:"12px 14px", borderBottom:`1px solid ${C.borderLight}`,
+            display:"flex", justifyContent:"space-between", alignItems:"center",
+          }}>
+            <span style={{fontSize:12.5, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif"}}>Rezervasyon Bildirimleri</span>
+            {unread.length > 0 && (
+              <span style={{fontSize:11, color:C.gold, fontFamily:"'DM Sans',sans-serif", fontWeight:600}}>{unread.length} okunmadı</span>
+            )}
+          </div>
+          {loading ? (
+            <div style={{padding:"20px 14px"}}><LoadingState label="Yükleniyor…"/></div>
+          ) : list.length === 0 ? (
+            <div style={{padding:"24px 14px", textAlign:"center", fontSize:12.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>
+              Henüz bildirim yok.
+            </div>
+          ) : (
+            list.map(n => (
+              <div key={n.id} onClick={()=>handleSelect(n)} style={{
+                padding:"11px 14px", borderBottom:`1px solid ${C.borderLight}`, cursor:"pointer",
+                background: n.isRead ? C.white : C.goldPale,
+                display:"flex", gap:10, alignItems:"flex-start",
+              }}>
+                {!n.isRead && <span style={{width:6, height:6, borderRadius:"50%", background:C.gold, marginTop:5, flexShrink:0}}/>}
+                <div style={{flex:1, minWidth:0}}>
+                  <div style={{
+                    fontSize:12.5, fontWeight: n.isRead ? 500 : 600, color:C.text,
+                    fontFamily:"'DM Sans',sans-serif", lineHeight:1.4,
+                  }}>{n.description}</div>
+                  <div style={{fontSize:11, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:3, display:"flex", gap:6, flexWrap:"wrap"}}>
+                    {n.source && <span style={{textTransform:"capitalize"}}>{n.source}</span>}
+                    <span>{new Date(n.createdAt).toLocaleString('tr-TR', {day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit'})}</span>
+                  </div>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Thin persistent desktop top bar (search shell + notification + identity).
 function DesktopTopBar({ leftOffset }) {
   const auth = useAuthContext();
@@ -16356,12 +16568,7 @@ function DesktopTopBar({ leftOffset }) {
     }}>
       <GlobalSearch/>
       <div style={{display:"flex", alignItems:"center", gap:18, flexShrink:0}}>
-        <button disabled title="Bildirimler henüz aktif değil" style={{
-          border:"none", background:"transparent", color:C.textMuted,
-          cursor:"not-allowed", padding:6, display:"flex",
-        }}>
-          <Ic d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0" size={18} sw={1.6}/>
-        </button>
+        <NotificationBell/>
         <div style={{width:1, height:24, background:C.borderLight}}/>
         <div style={{display:"flex", alignItems:"center", gap:9}}>
           <div style={{width:32, height:32, borderRadius:"50%", flexShrink:0, background:C.goldPale, border:`1.5px solid ${C.gold}40`, display:"flex", alignItems:"center", justifyContent:"center"}}>
