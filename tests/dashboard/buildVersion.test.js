@@ -6,10 +6,13 @@ const path = require('path');
 const { execSync } = require('child_process');
 
 const {
-  MAJOR_VERSION,
-  getGitBuildNumber,
+  CRM_VERSION_FILE,
+  MAX_MINOR,
+  readCrmVersion,
+  formatCrmVersion,
+  incrementCrmVersion,
+  bumpCrmVersion,
   getGitCommitInfo,
-  formatVersionString,
   buildVersionMetadata,
 } = require('../../build-version');
 
@@ -17,21 +20,77 @@ const REPO_ROOT = path.join(__dirname, '..', '..');
 const { extractTestableFn } = require('./extractTestableFn');
 const formatBuildTimestampTR = extractTestableFn('formatBuildTimestampTR');
 
-// --- build metadata contains a version -------------------------------------
+// --- build metadata contains a version, read from crm-version.json ---------
 
-test('buildVersionMetadata produces a version string of the form "{major}.{build}"', () => {
+test('buildVersionMetadata produces a version string of the form "{major}.{minor}" (minor zero-padded), read from crm-version.json', () => {
+  const onDisk = readCrmVersion(REPO_ROOT);
   const meta = buildVersionMetadata({ cwd: REPO_ROOT, now: new Date('2026-09-23T11:52:00Z') });
-  assert.match(meta.version, /^\d+\.\d+$/);
-  assert.equal(meta.major, MAJOR_VERSION);
+  assert.match(meta.version, /^\d+\.\d{2}$/);
+  assert.equal(meta.version, formatCrmVersion(onDisk.major, onDisk.minor));
+  assert.equal(meta.major, onDisk.major);
+  assert.equal(meta.minor, onDisk.minor);
 });
 
-test('the version is never derived from Date.now() or a random number', () => {
-  // Two calls against the SAME commit, at different wall-clock instants,
-  // must produce the exact same version — proving it isn't time- or
-  // randomness-derived.
+test('the version is never derived from Date.now(), a random number, or git commit count — only from crm-version.json', () => {
+  // Two calls against the SAME crm-version.json, at different wall-clock
+  // instants, must produce the exact same version — proving it isn't
+  // time- or randomness-derived.
   const a = buildVersionMetadata({ cwd: REPO_ROOT, now: new Date('2026-01-01T00:00:00Z') });
   const b = buildVersionMetadata({ cwd: REPO_ROOT, now: new Date('2030-06-15T08:30:00Z') });
   assert.equal(a.version, b.version);
+});
+
+test('reading the version (buildVersionMetadata / readCrmVersion) never writes to crm-version.json', () => {
+  const before = fs.readFileSync(path.join(REPO_ROOT, CRM_VERSION_FILE), 'utf8');
+  buildVersionMetadata({ cwd: REPO_ROOT, now: new Date() });
+  readCrmVersion(REPO_ROOT);
+  const after = fs.readFileSync(path.join(REPO_ROOT, CRM_VERSION_FILE), 'utf8');
+  assert.equal(after, before, 'reading the version must never mutate crm-version.json — only bumpCrmVersion (the manual release step) may');
+});
+
+// --- the DeseTour release-counter rule: +1 minor, rollover at 50 -----------
+// Never semantic versioning — this is the internal release counter's own
+// deterministic rule, per crm-version.json.
+
+test('12.24 -> 12.25 (ordinary increment)', () => {
+  const next = incrementCrmVersion({ major: 12, minor: 24 });
+  assert.deepEqual(next, { major: 12, minor: 25 });
+  assert.equal(formatCrmVersion(next.major, next.minor), '12.25');
+});
+
+test('12.49 -> 12.50 (ordinary increment, right up to the rollover boundary)', () => {
+  const next = incrementCrmVersion({ major: 12, minor: 49 });
+  assert.deepEqual(next, { major: 12, minor: 50 });
+  assert.equal(formatCrmVersion(next.major, next.minor), '12.50');
+});
+
+test('12.50 -> 13.01 (rollover: major +1, minor resets to 01, never 13.00 or 12.51)', () => {
+  const next = incrementCrmVersion({ major: 12, minor: 50 });
+  assert.deepEqual(next, { major: 13, minor: 1 });
+  assert.equal(formatCrmVersion(next.major, next.minor), '13.01');
+});
+
+test('13.50 -> 14.01 (the same rollover rule applies again at the next boundary)', () => {
+  const next = incrementCrmVersion({ major: 13, minor: 50 });
+  assert.deepEqual(next, { major: 14, minor: 1 });
+  assert.equal(formatCrmVersion(next.major, next.minor), '14.01');
+});
+
+test('MAX_MINOR is 50 — the documented rollover boundary', () => {
+  assert.equal(MAX_MINOR, 50);
+});
+
+test('bumpCrmVersion reads, increments, and persists crm-version.json, then can be read back correctly', (t) => {
+  const original = fs.readFileSync(path.join(REPO_ROOT, CRM_VERSION_FILE), 'utf8');
+  t.after(() => fs.writeFileSync(path.join(REPO_ROOT, CRM_VERSION_FILE), original));
+
+  const before = readCrmVersion(REPO_ROOT);
+  const { previous, next } = bumpCrmVersion(REPO_ROOT);
+  assert.deepEqual(previous, before);
+  assert.deepEqual(next, incrementCrmVersion(before));
+
+  const reread = readCrmVersion(REPO_ROOT);
+  assert.deepEqual(reread, next, 'bumpCrmVersion must actually persist the new value to disk');
 });
 
 // --- build metadata contains a fixed build timestamp ------------------------
@@ -58,28 +117,34 @@ test('getGitCommitInfo degrades to nulls, never throws, outside a git repository
   assert.equal(info.shaShort, null);
 });
 
-test('getGitBuildNumber degrades to null, never throws, outside a git repository', () => {
-  assert.equal(getGitBuildNumber('/'), null);
+// --- the version can only ever advance via the explicit, manual release ----
+// step (npm run release / bump-crm-version.js) — never as a side effect of
+// tests, of an ordinary `node build.js`, or of Vercel's own buildCommand.
+
+const PACKAGE_JSON = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'package.json'), 'utf8'));
+const BUMP_SCRIPT = fs.readFileSync(path.join(REPO_ROOT, 'bump-crm-version.js'), 'utf8');
+const VERCEL_JSON = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'vercel.json'), 'utf8'));
+
+test('npm test never invokes the version-bump script, directly or indirectly', () => {
+  assert.doesNotMatch(PACKAGE_JSON.scripts.test, /bump-crm-version/);
+  assert.equal(PACKAGE_JSON.scripts.test, 'node --test');
 });
 
-// --- version metadata changes when the underlying build/revision changes ----
-
-test('formatVersionString changes when the build number changes', () => {
-  const a = formatVersionString(1, 74);
-  const b = formatVersionString(1, 75);
-  assert.notEqual(a, b);
-  assert.equal(a, '1.74');
-  assert.equal(b, '1.75');
+test('node build.js (what Vercel\'s buildCommand and every local dev/test build run) never invokes the version-bump script', () => {
+  const buildJs = fs.readFileSync(path.join(REPO_ROOT, 'build.js'), 'utf8');
+  assert.doesNotMatch(buildJs, /bump-crm-version/);
+  assert.doesNotMatch(buildJs, /bumpCrmVersion/);
+  assert.equal(PACKAGE_JSON.scripts.build, 'node build.js');
+  assert.equal(VERCEL_JSON.buildCommand, 'node build.js', 'Vercel\'s own production build must stay read-only w.r.t. the version — it only embeds whatever crm-version.json already says, exactly like every other build.js invocation');
 });
 
-test('a missing build number falls back to "{major}.0", never a random or time-based value', () => {
-  assert.equal(formatVersionString(1, null), '1.0');
+test('the release counter can only advance via bump-crm-version.js, which calls bumpCrmVersion — never writeCrmVersion directly, never a hand-edit', () => {
+  assert.match(BUMP_SCRIPT, /require\('\.\/build-version'\)/);
+  assert.match(BUMP_SCRIPT, /bumpCrmVersion\(\)/);
 });
 
-test('getGitBuildNumber reflects the real commit count of this repository (a deterministic, monotonic, git-derived sequence)', () => {
-  const build = getGitBuildNumber(REPO_ROOT);
-  const realCount = parseInt(execSync('git rev-list --count HEAD', { cwd: REPO_ROOT }).toString().trim(), 10);
-  assert.equal(build, realCount);
+test('"npm run release" is the one wired path that bumps the version and then builds with the new number', () => {
+  assert.equal(PACKAGE_JSON.scripts.release, 'node bump-crm-version.js && node build.js');
 });
 
 // --- formatBuildTimestampTR: renders the BUILD date, not the browser's current date --
@@ -149,4 +214,17 @@ test('the running build already produced a real, non-placeholder build-meta.js o
   assert.ok(fs.existsSync(metaPath), 'build-meta.js should exist after `node build.js` has run at least once');
   const content = fs.readFileSync(metaPath, 'utf8');
   assert.match(content, /window\.__DESETOUR_BUILD__ = \{.*"version":"[^"]+".*\}/);
+});
+
+// --- end-to-end: the footer renders exactly the canonical crm-version.json --
+
+test('the built app carries the SAME version currently in crm-version.json (the single canonical source), not a separately-owned copy', () => {
+  const { major, minor } = readCrmVersion(REPO_ROOT);
+  const expected = formatCrmVersion(major, minor);
+  const metaContent = fs.readFileSync(path.join(REPO_ROOT, 'build-meta.js'), 'utf8');
+  assert.match(metaContent, new RegExp(`"version":"${expected.replace('.', '\\.')}"`));
+  // The sidebar's own render prefixes it with "v" (SidebarVersionInfo's
+  // versionLabel), so the footer ends up showing e.g. "DeseTour CRM · v12.24".
+  const versionLabel = `v${expected}`;
+  assert.match(versionLabel, /^v\d+\.\d{2}$/);
 });

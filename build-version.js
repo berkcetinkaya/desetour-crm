@@ -2,79 +2,99 @@
 /**
  * build-version.js
  * ─────────────────────────────────────────────────────────────────────────
- * Produces the CRM's application version and build metadata, entirely at
- * BUILD time (invoked by build.js) — never at runtime, never manually
- * edited, never random, never Date.now()-as-a-version.
+ * The CRM's single canonical version source. The number itself
+ * (major.minor) lives in crm-version.json — NEVER hand-edited in the
+ * middle of a feature change — and this file is the only code that reads
+ * it, formats it, and (via bumpCrmVersion, used only by the separate
+ * bump-crm-version.js release script) advances it. build.js embeds the
+ * result into build-meta.js at build time; nothing else — app.js least of
+ * all — owns or duplicates the version number.
  *
- * VERSION FORMAT: "{major}.{build}", e.g. "1.74".
- *   - major: a small, rarely-changed constant below (MAJOR_VERSION). Like
- *     any project's semver major, it is bumped deliberately by a human for
- *     a real milestone/breaking change — that is standard practice, not
- *     the "manually maintained version string" this was built to avoid.
- *     What must never be hand-maintained is the part that changes on
- *     every deploy, which is:
- *   - build: the total number of commits reachable from HEAD
- *     (`git rev-list --count HEAD`). This is a deterministic, monotonic,
- *     git-derived build sequence — the exact "deterministic Git based
- *     build sequence" fallback this was asked to use instead of a
- *     persisted/incremented numeric counter (which would need either a
- *     database write on every build, purely to bump a number — rejected
- *     as unnecessary — or a commit made BY the build itself, which is
- *     itself a race condition/ordering hazard and was explicitly ruled
- *     out). Commit count requires no writes, no network call in the
- *     common case, and is trivially reproducible from any checkout of the
- *     same commit — two builds of the exact same commit always produce
- *     the exact same version number, and it only advances when the
- *     history genuinely does.
+ * VERSION FORMAT: "{major}.{minor}", minor always 2 digits, e.g. "12.24",
+ * "13.01". This is DeseTour's own internal release counter, not semver:
+ *   - minor increments by exactly 1 per intentional release.
+ *   - when minor would exceed 50, the release instead bumps major by 1
+ *     and resets minor to 01 (…12.50 -> 13.01 -> … -> 13.50 -> 14.01).
+ * See incrementCrmVersion below for the exact rule, and
+ * bump-crm-version.js for the one place that ever calls it for real.
  *
- * A CI/CD provider sometimes performs a SHALLOW clone for speed, which
- * would make `git rev-list --count HEAD` return a small, wrong, and
- * non-monotonic number. getGitBuildNumber() defends against this: it
- * checks `git rev-parse --is-shallow-repository` first and attempts a
- * best-effort `git fetch --unshallow` before counting. If that isn't
- * possible in a given environment (no network, no remote configured), it
- * still returns whatever count is available rather than crashing the
- * build — build.js's caller decides how to degrade (see formatVersionString).
+ * INCREMENTING IS NEVER AUTOMATIC: node build.js (what `npm run build`,
+ * Vercel's own buildCommand, and every local verification build during
+ * development all run) only READS crm-version.json — it never writes it.
+ * Running the test suite never touches this file either. The ONLY way
+ * the version advances is running `node bump-crm-version.js` (wired to
+ * `npm run release`) as a deliberate, one-time step before committing a
+ * real release — see that file's header for the full contract.
  *
- * The build TIMESTAMP is a separate concern from the version number: it is
- * `new Date()` read exactly ONCE, at build time, by buildVersionMetadata()
- * — never re-read at runtime/page-load, so refreshing the CRM tomorrow
- * cannot make "Son güncelleme" show tomorrow's date.
+ * The build TIMESTAMP is a separate concern from the version number: it
+ * is `new Date()` read exactly ONCE, at build time, by
+ * buildVersionMetadata() — never re-read at runtime/page-load, so
+ * refreshing the CRM tomorrow cannot make "Son güncelleme" show
+ * tomorrow's date.
  */
+const fs = require('fs');
+const path = require('path');
 const { execSync } = require('child_process');
 
-// Bumped deliberately, by a human, only for a real milestone — see the
-// file header above for why this does not conflict with "not manually
-// maintained": it is not what makes each deploy's version unique.
-const MAJOR_VERSION = 1;
+const CRM_VERSION_FILE = 'crm-version.json';
+
+// The release counter never lets minor exceed this — see
+// incrementCrmVersion.
+const MAX_MINOR = 50;
 
 function run(cmd, cwd) {
   return execSync(cmd, { cwd, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
 }
 
-// The deterministic build sequence number: total commits reachable from
-// HEAD. Returns null (never a fabricated/random number) if git information
-// genuinely cannot be determined at all — e.g. building outside a git
-// checkout.
-function getGitBuildNumber(cwd) {
-  try {
-    let isShallow = false;
-    try { isShallow = run('git rev-parse --is-shallow-repository', cwd) === 'true'; }
-    catch (_) { /* older git or not a repo — rev-list below will fail too and we return null */ }
-    if (isShallow) {
-      try { execSync('git fetch --unshallow --quiet', { cwd, stdio: 'ignore' }); }
-      catch (_) { /* best effort only — network or remote may be unavailable in this build environment */ }
-    }
-    const count = parseInt(run('git rev-list --count HEAD', cwd), 10);
-    return Number.isFinite(count) ? count : null;
-  } catch (e) {
-    return null;
+// Reads the canonical {major, minor} — never guessed, never defaulted:
+// a missing or malformed crm-version.json fails the build loudly rather
+// than silently inventing a version number.
+function readCrmVersion(cwd = process.cwd()) {
+  const filePath = path.join(cwd, CRM_VERSION_FILE);
+  const raw = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  if (!Number.isInteger(raw.major) || !Number.isInteger(raw.minor)) {
+    throw new Error(`${CRM_VERSION_FILE} must contain integer "major" and "minor" fields, got: ${JSON.stringify(raw)}`);
   }
+  return { major: raw.major, minor: raw.minor };
+}
+
+function writeCrmVersion(cwd, { major, minor }) {
+  const filePath = path.join(cwd, CRM_VERSION_FILE);
+  fs.writeFileSync(filePath, JSON.stringify({ major, minor }, null, 2) + '\n');
+}
+
+// "{major}.{minor}" with minor always zero-padded to 2 digits, e.g.
+// (12, 24) -> "12.24", (13, 1) -> "13.01", (12, 50) -> "12.50".
+function formatCrmVersion(major, minor) {
+  return `${major}.${String(minor).padStart(2, '0')}`;
+}
+
+// The one place the DeseTour release-counter rule is implemented:
+// minor+1 normally; once minor would exceed MAX_MINOR (50), major+1 and
+// minor resets to 1 instead. Never produces a minor of 0 or 51+, and
+// never produces "13.00" — the reset target is always 1 ("01").
+function incrementCrmVersion({ major, minor }) {
+  if (minor >= MAX_MINOR) {
+    return { major: major + 1, minor: 1 };
+  }
+  return { major, minor: minor + 1 };
+}
+
+// Reads, increments, and persists crm-version.json in one step — the
+// only function that actually advances the release counter. Called
+// exclusively by bump-crm-version.js (the deliberate, manual release
+// step), never by build.js or any test.
+function bumpCrmVersion(cwd = process.cwd()) {
+  const previous = readCrmVersion(cwd);
+  const next = incrementCrmVersion(previous);
+  writeCrmVersion(cwd, next);
+  return { previous, next };
 }
 
 // Git traceability: full SHA, short SHA, and branch (best-effort — a
 // detached-HEAD CI checkout may not have a symbolic branch name at all,
-// which is reported as null rather than a misleading guess).
+// which is reported as null rather than a misleading guess). Informational
+// only — no longer any part of the version number itself.
 function getGitCommitInfo(cwd) {
   let sha = null, shaShort = null, branch = null;
   try { sha = run('git rev-parse HEAD', cwd); } catch (_) {}
@@ -86,23 +106,16 @@ function getGitCommitInfo(cwd) {
   return { sha, shaShort, branch };
 }
 
-// "{major}.{build}" — e.g. "1.74". Falls back to "{major}.0" only when no
-// git build number could be determined at all (never Date.now(), never a
-// random number).
-function formatVersionString(major, buildNumber) {
-  return `${major}.${buildNumber != null ? buildNumber : 0}`;
-}
-
 // The full metadata object embedded into the build output. `now` and `cwd`
 // are injectable purely so this is deterministically testable — production
 // callers just use the defaults (build.js calls this with no arguments).
 function buildVersionMetadata({ cwd = process.cwd(), now = new Date() } = {}) {
-  const buildNumber = getGitBuildNumber(cwd);
+  const { major, minor } = readCrmVersion(cwd);
   const commit = getGitCommitInfo(cwd);
   return {
-    version: formatVersionString(MAJOR_VERSION, buildNumber),
-    major: MAJOR_VERSION,
-    build: buildNumber,
+    version: formatCrmVersion(major, minor),
+    major,
+    minor,
     buildTimestamp: now.toISOString(),
     commitSha: commit.sha,
     commitShaShort: commit.shaShort,
@@ -111,9 +124,13 @@ function buildVersionMetadata({ cwd = process.cwd(), now = new Date() } = {}) {
 }
 
 module.exports = {
-  MAJOR_VERSION,
-  getGitBuildNumber,
+  CRM_VERSION_FILE,
+  MAX_MINOR,
+  readCrmVersion,
+  writeCrmVersion,
+  formatCrmVersion,
+  incrementCrmVersion,
+  bumpCrmVersion,
   getGitCommitInfo,
-  formatVersionString,
   buildVersionMetadata,
 };
