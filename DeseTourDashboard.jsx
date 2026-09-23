@@ -5571,6 +5571,28 @@ function NewReservationModal({ onClose, onSuccess, customerId, customerName }) {
     </FormShell>
   );
 }
+
+// TESTABLE:formatReservationTourLabel:start
+// Presentation-only helper shared by every reservation-focused view
+// (Reservations list, Reservation Detail, Calendar) that shows a
+// reservation's tour name. Two Civitatis language variants of the same
+// product (e.g. a Spanish and an Italian "Grand Bazaar Experience") can
+// share the exact same tours.name, which makes them visually
+// indistinguishable even though reservations.tour_language (already
+// normalized — see api/_civitatis/languageMap.js's canonical vocabulary,
+// mirrored by this app's own LANGUAGE_NAME_BY_CODE) is correct. This
+// never touches tours.name, tour_id, or any stored data — it only
+// formats what the reservation already carries. Skips appending when the
+// tour name text already contains the language (case-insensitive), so a
+// tour name that already spells out its language is never shown twice.
+function formatReservationTourLabel(tourName, tourLanguage) {
+  const name = (tourName || '').trim();
+  if (!tourLanguage) return name;
+  if (name.toLowerCase().includes(String(tourLanguage).toLowerCase())) return name;
+  return `${name} · ${tourLanguage}`;
+}
+// TESTABLE:formatReservationTourLabel:end
+
 function ReservationsPage({ onSelect }) {
   const [showNewRes, setShowNewRes] = useState(false);
   const [activeTab, setActiveTab] = useState("Tümü");
@@ -5773,7 +5795,7 @@ function ReservationsPage({ onSelect }) {
                       </td>
                       {}
                       <td style={{ padding:"14px 12px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle", maxWidth:180 }}>
-                        <div style={{ fontSize:13, color:C.text, fontFamily:"'DM Sans',sans-serif", fontWeight:500, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{r.tour}</div>
+                        <div style={{ fontSize:13, color:C.text, fontFamily:"'DM Sans',sans-serif", fontWeight:500, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{formatReservationTourLabel(r.tour, r.tourLanguage)}</div>
                         <div style={{ fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:2 }}>{r.duration}</div>
                       </td>
                       {}
@@ -5817,7 +5839,7 @@ function ReservationsPage({ onSelect }) {
                   return (
                     <MobileCard onClick={()=>onSelect&&onSelect(res.id)}>
                       <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
-                        <div style={{fontSize:13.5,fontWeight:600,color:C.text,fontFamily:"'DM Sans',sans-serif"}}>{res.tour}</div>
+                        <div style={{fontSize:13.5,fontWeight:600,color:C.text,fontFamily:"'DM Sans',sans-serif"}}>{formatReservationTourLabel(res.tour, res.tourLanguage)}</div>
                         <span style={{fontSize:11,padding:"2px 7px",borderRadius:99,color:rsm.color,background:rsm.bg,fontFamily:"'DM Sans',sans-serif",fontWeight:500,flexShrink:0}}>{res.opStatus}</span>
                       </div>
                       <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
@@ -6158,7 +6180,7 @@ function ReservationDetailPage({ resId, onBack }) {
               {resCustomer?.flag||"🌍"} {r.name}
             </div>
             <div style={{ fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:2 }}>
-              {r.tour} · {r.date} · {r.time}
+              {formatReservationTourLabel(r.tour, r.tourLanguage)} · {r.date} · {r.time}
             </div>
           </div>
         </div>
@@ -6240,7 +6262,7 @@ function ReservationDetailPage({ resId, onBack }) {
               margin:"16px 16px 0", padding:"14px 16px",
               background:C.navy, borderRadius:10, marginBottom:0,
             }}>
-              <div style={{ fontSize:15, fontWeight:700, color:C.ivory, fontFamily:"'Playfair Display',serif", lineHeight:1.3 }}>{r.tour}</div>
+              <div style={{ fontSize:15, fontWeight:700, color:C.ivory, fontFamily:"'Playfair Display',serif", lineHeight:1.3 }}>{formatReservationTourLabel(r.tour, r.tourLanguage)}</div>
               <div style={{ fontSize:12, color:"rgba(248,245,238,0.55)", fontFamily:"'DM Sans',sans-serif", marginTop:4 }}>{r.date} · {r.time}</div>
             </div>
             <div style={{ height:10 }}/>
@@ -6562,7 +6584,7 @@ function EventCard({ ev, compact }) {
           <div style={{
             fontSize:11.5, color:C.textMid, fontFamily:"'DM Sans',sans-serif",
             marginBottom:6, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap",
-          }}>{ev.tour}</div>
+          }}>{formatReservationTourLabel(ev.tour, ev.tourLanguage)}</div>
 
           {}
           <div style={{ display:"flex", flexWrap:"wrap", gap:4, marginBottom:5 }}>
@@ -6595,7 +6617,7 @@ function EventCard({ ev, compact }) {
         <div style={{
           fontSize:11, color:C.textFaint, fontFamily:"'DM Sans',sans-serif",
           overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap",
-        }}>{ev.tour}</div>
+        }}>{formatReservationTourLabel(ev.tour, ev.tourLanguage)}</div>
       )}
     </div>
   );
@@ -6642,7 +6664,10 @@ function CalSidebar({ todayEvents, weekEvents }) {
                   {ev.flag} {ev.guest}
                 </div>
                 <div style={{ fontSize:11.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif" }}>
-                  {fmtHHMM(ev.date)} · {ev.tour.length > 22 ? ev.tour.slice(0,22)+"…" : ev.tour}
+                  {fmtHHMM(ev.date)} · {(() => {
+                    const label = formatReservationTourLabel(ev.tour, ev.tourLanguage);
+                    return label.length > 22 ? label.slice(0,22)+"…" : label;
+                  })()}
                 </div>
               </div>
             ))}
@@ -7076,6 +7101,10 @@ function useCalendarEvents() {
         flag:    r.flag || '🏳',
         pax:     parseInt(r.pax || r.paxAdult || 1),
         tour:    r.tour || r.destination || '—',
+        // Kept separate from `tour` (rather than pre-appended) so the
+        // existing tour-name truncation below still measures/slices the
+        // plain name, never the language suffix — see formatReservationTourLabel.
+        tourLanguage: r.tourLanguage || null,
         guide:   guideName,
         guideOk: !!guideName,
         payStatus: r.payStatus || null,
@@ -18314,7 +18343,7 @@ function MobileAgendaCard({ ev, onClick }) {
         {ev.opStatus && <MobileStatusChip label={ev.opStatus} tone={OP_TONE[ev.opStatus]||"neutral"}/>}
       </div>
       <div style={{ fontSize:14.5, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif" }}>{ev.flag} {ev.guest}</div>
-      <div style={{ fontSize:12.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", marginTop:2 }}>{ev.tour} · {ev.pax} kişi</div>
+      <div style={{ fontSize:12.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", marginTop:2 }}>{formatReservationTourLabel(ev.tour, ev.tourLanguage)} · {ev.pax} kişi</div>
       <div style={{ display:"flex", alignItems:"center", gap:6, marginTop:9, flexWrap:"wrap" }}>
         <MobileStatusChip label={ev.guideOk ? `Rehber: ${ev.guide}` : "Rehber Atanmadı"} tone={ev.guideOk?"good":"bad"}/>
         <MobileStatusChip label={ev.pickup || "Pickup Eksik"} tone={ev.pickup?"neutral":"warn"}/>
