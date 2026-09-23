@@ -9283,11 +9283,55 @@ function AddGuideModal({ onClose, guide }) {
   );
 }
 
+// TESTABLE:computeGuideRatingStats:start
+// "Ortalama Puan" / review count for a guide — the ONE calculation shared
+// by the Guides list (Rehberlerimiz) and Guide Detail's "Ortalama Puan"
+// performance stat, so the two can never diverge. Deliberately takes
+// `reviews` as a plain array rather than doing any guide filtering itself:
+// the caller is responsible for passing only this guide's own
+// reservation_reviews rows (via the review's guide_id snapshot — see
+// SupabaseReviewRepo.getByGuide/getAll — never guide_name, customer
+// notes, activity logs, or reservation notes). That keeps the guide/
+// review relationship in exactly one place (the repo query), and this
+// function's own math identical everywhere it's used. Counts every
+// review regardless of source (Civitatis, Google, Tripadvisor, Viator,
+// Musement, Airbnb Experiences, manually entered, …) — nothing here is
+// platform-specific; reservation_reviews.source_id is never inspected.
+// Preserves Guide Detail's original formula exactly (rating||0, divided
+// by the full review count) so extracting it here changes no existing
+// displayed value.
+function computeGuideRatingStats(reviews) {
+  const list = reviews || [];
+  if (!list.length) return { avgRating: null, reviewCount: 0 };
+  const avgRating = list.reduce((s, rv) => s + (rv.rating || 0), 0) / list.length;
+  return { avgRating, reviewCount: list.length };
+}
+// TESTABLE:computeGuideRatingStats:end
+
+// TESTABLE:formatGuideRatingLabel:start
+// Turkish-locale display for computeGuideRatingStats()'s output — "4,8"/
+// "5,0" (comma decimal, one place), never "0,0" for a guide with no
+// reviews (returns null so the caller shows its own restrained empty
+// state, e.g. "Henüz yok").
+function formatGuideRatingLabel(avgRating, reviewCount) {
+  if (avgRating == null || !reviewCount) return null;
+  return {
+    rating: avgRating.toLocaleString('tr-TR', { minimumFractionDigits: 1, maximumFractionDigits: 1 }),
+    countLabel: `${reviewCount} değerlendirme`,
+  };
+}
+// TESTABLE:formatGuideRatingLabel:end
+
 function GuidesPage({ onSelect }) {
   const { isMobile } = useBreakpoint();
   const { data:repoGuides, loading, error, reload }   = useRepo("guide", "getAll");
   const { data:repoRes }                              = useRepo("reservation", "getAll");
   const { data:repoGP }                                = useRepo("guidePayment", "getAll");
+  // Same source as Guide Detail's own review data (reservation_reviews via
+  // its guide_id snapshot) — never a separate rating system, never
+  // duplicated. Unfiltered getAll() here (not getByGuide) since this page
+  // needs every guide's reviews at once; grouped by guideId below.
+  const { data:repoReviews }                           = useRepo("review", "getAll");
   const [showAdd, setShowAdd]     = useState(false);
   const [search, setSearch]       = useState("");
   const [statusFilter, setStatusFilter] = useState("Tümü");
@@ -9296,11 +9340,12 @@ function GuidesPage({ onSelect }) {
   const guides = repoGuides || [];
   const reservations = repoRes || [];
   const guidePayments = repoGP || [];
+  const reviews = repoReviews || [];
   const todayISO = _TODAY_ISO;
 
   const statsByGuide = useMemo(() => {
     const map = {};
-    guides.forEach(g => { map[g.id] = { totalTours:0, upcoming:null, totalPaidEur:0, todayTour:false }; });
+    guides.forEach(g => { map[g.id] = { totalTours:0, upcoming:null, totalPaidEur:0, todayTour:false, reviews:[] }; });
     reservations.forEach(r => {
       if (!r.guideId || !map[r.guideId] || r.opStatus === "İptal") return;
       const s = map[r.guideId];
@@ -9315,8 +9360,19 @@ function GuidesPage({ onSelect }) {
       if (!p.guideId || !map[p.guideId] || p.status === "İptal" || p.currency !== "EUR") return;
       map[p.guideId].totalPaidEur += (p.amount||0);
     });
+    // Grouped strictly by each review's own guide_id snapshot — the same
+    // normalized relationship Guide Detail uses, never guide_name/notes.
+    reviews.forEach(rv => {
+      if (!rv.guideId || !map[rv.guideId]) return;
+      map[rv.guideId].reviews.push(rv);
+    });
+    guides.forEach(g => {
+      const { avgRating, reviewCount } = computeGuideRatingStats(map[g.id].reviews);
+      map[g.id].avgRating = avgRating;
+      map[g.id].reviewCount = reviewCount;
+    });
     return map;
-  }, [guides, reservations, guidePayments]);
+  }, [guides, reservations, guidePayments, reviews]);
 
   const filtered = guides.filter(g => {
     const stOk = statusFilter === "Tümü" || g.status === statusFilter;
@@ -9429,7 +9485,7 @@ function GuidesPage({ onSelect }) {
           <table className="rsp-table" style={{width:"100%", borderCollapse:"collapse"}}>
             <thead>
               <tr style={{borderBottom:`1px solid ${C.border}`, background:C.ivory}}>
-                {["Rehber","Diller","Telefon","Yaklaşan Tur","Toplam Tur","Toplam Ödeme","Durum",""].map((h,i)=>(
+                {["Rehber","Diller","Telefon","Yaklaşan Tur","Toplam Tur","Toplam Ödeme","Ortalama Puan","Durum",""].map((h,i)=>(
                   <th key={i} style={{
                     padding: i===0?"11px 16px 11px 22px":"11px 12px",
                     textAlign:"left", fontSize:10.5, fontWeight:600, color:C.textFaint,
@@ -9473,6 +9529,19 @@ function GuidesPage({ onSelect }) {
                       <span style={{fontSize:13.5, fontWeight:600, color:C.gold, fontFamily:"'Playfair Display',serif"}}>€{s.totalPaidEur.toLocaleString("tr-TR")}</span>
                     </td>
                     <td style={{padding:"14px 12px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle"}}>
+                      {(() => {
+                        const label = formatGuideRatingLabel(s.avgRating, s.reviewCount);
+                        return label ? (
+                          <div>
+                            <div style={{fontSize:13, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif"}}>
+                              <span style={{color:C.gold}}>★</span> {label.rating}
+                            </div>
+                            <div style={{fontSize:11, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:1}}>{label.countLabel}</div>
+                          </div>
+                        ) : <span style={{fontSize:12.5, color:C.textFaint}}>Henüz yok</span>;
+                      })()}
+                    </td>
+                    <td style={{padding:"14px 12px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle"}}>
                       <GuideStatusBadge status={g.status}/>
                     </td>
                     <td style={{padding:"14px 16px 14px 8px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle"}}>
@@ -9486,6 +9555,7 @@ function GuidesPage({ onSelect }) {
           <div className="rsp-cards"><MobileCardList items={filtered} renderCard={(g) => {
             const s = statsByGuide[g.id] || { totalTours:0, totalPaidEur:0 };
             const scm = GUIDE_STATUS_CFG[g.status]||{color:C.textMuted,bg:C.ivoryDark};
+            const ratingLabel = formatGuideRatingLabel(s.avgRating, s.reviewCount);
             return (
               <MobileCard key={g.id} onClick={()=>onSelect?onSelect(g.id):(NAV_REF.fn&&NAV_REF.fn('/guides/'+g.id))}>
                 <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
@@ -9495,6 +9565,9 @@ function GuidesPage({ onSelect }) {
                 <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
                   <span style={{fontSize:12,color:C.textMuted,fontFamily:"'DM Sans',sans-serif"}}>{(g.languageNames||[]).join(', ')||'—'}</span>
                   <span style={{fontSize:12,color:C.textMuted,fontFamily:"'DM Sans',sans-serif"}}>{s.totalTours} tur · €{s.totalPaidEur.toLocaleString('tr-TR')}</span>
+                  <span style={{fontSize:12,color:C.textMuted,fontFamily:"'DM Sans',sans-serif"}}>
+                    {ratingLabel ? <><span style={{color:C.gold}}>★</span> {ratingLabel.rating} · {ratingLabel.countLabel}</> : "Henüz yok"}
+                  </span>
                 </div>
               </MobileCard>
             );
@@ -9709,7 +9782,9 @@ function GuideDetailPage({ guideId, onBack }) {
   const perfGuests = completedRes.reduce((s,r)=>s+(r.pax||0)+(r.paxChild||0),0);
   const reviews = repoReviews || [];
   const reviewedTourCount = new Set(reviews.map(rv=>rv.resId).filter(Boolean)).size;
-  const avgRating = reviews.length ? (reviews.reduce((s,rv)=>s+(rv.rating||0),0) / reviews.length) : null;
+  // Same shared helper the Guides list ("Ortalama Puan" column) uses — see
+  // computeGuideRatingStats — so this page and that list can never diverge.
+  const { avgRating } = computeGuideRatingStats(reviews);
   const fiveStarCount = reviews.filter(rv=>rv.rating===5).length;
 
   const custById = new Map((repoCustomers||[]).map(c=>[c.id,c]));
