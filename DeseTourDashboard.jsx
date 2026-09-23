@@ -5071,21 +5071,63 @@ function StarPicker({ value, onChange }) {
   );
 }
 
-// resId/guideId are only used on create — guideId is the reservation's
-// CURRENT guide_id at the moment "Değerlendirme Ekle" is opened, captured
-// once as the review's permanent historical snapshot. Editing an existing
-// review never touches guide attribution: `review` supplies only display
-// values here, and the update payload below never includes guideId.
+// TESTABLE:selectEligibleGuideReviewReservations:start
+// Eligible reservations for the Guide Detail "Değerlendirme Ekle" picker.
+// Historical reservations frequently never had reservations.guide_id
+// recorded, so this is deliberately NOT scoped to guideId — it is scoped to
+// "did this tour plausibly already happen" (completed, or its tour date is
+// today or earlier) and "is it still a real booking" (not cancelled).
+// Reservations assigned to another guide are still included (never
+// silently excluded) — AddEditReviewModal warns on selection instead; see
+// the guide_id snapshot comment below for why that's safe. Sorted so the
+// most likely matches surface first: this guide's own reservations, then
+// unassigned ones, then reservations assigned to someone else, each group
+// newest-completed-first — same tiebreak this list always used.
+function selectEligibleGuideReviewReservations(reservations, guideId, todayISO) {
+  const rankOf = r => r.guideId === guideId ? 0 : (!r.guideId ? 1 : 2);
+  return (reservations || [])
+    .filter(r => r.opStatus !== "İptal" && (r.opStatus === "Tamamlandı" || (!!r.checkIn && r.checkIn.slice(0, 10) <= todayISO)))
+    .sort((a, b) => {
+      const ra = rankOf(a), rb = rankOf(b);
+      if (ra !== rb) return ra - rb;
+      const aDone = a.opStatus === "Tamamlandı" ? 0 : 1;
+      const bDone = b.opStatus === "Tamamlandı" ? 0 : 1;
+      if (aDone !== bDone) return aDone - bDone;
+      return (b.checkIn || "").localeCompare(a.checkIn || "");
+    });
+}
+// TESTABLE:selectEligibleGuideReviewReservations:end
+
+// TESTABLE:formatGuideReviewReservationOption:start
+// "reservation number · tour name · tour date · tour language · customer
+// name (when available)" — the exact label contract the picker promises.
+function formatGuideReviewReservationOption(r) {
+  const parts = [r.resNumber || r.id, r.tour || "—", r.date || "—", r.tourLanguage || "—"];
+  if (r.name) parts.push(r.name);
+  return parts.join(" · ");
+}
+// TESTABLE:formatGuideReviewReservationOption:end
+
+// resId/guideId are only used on create — guideId is ALWAYS the guide whose
+// Guide Detail page is open (the guideId prop), snapshotted once as the
+// review's permanent historical value — never the selected reservation's
+// own guide_id. This is what keeps it safe to let the "Rezervasyon / Tur"
+// picker list reservations with no guide_id, or even ones assigned to a
+// different guide: whichever reservation is picked, the review is recorded
+// for THIS guide, and reservations.guide_id itself is never read for that
+// decision and never written to — see mapReviewToDB/SupabaseReviewRepo,
+// which only ever insert/update reservation_reviews, never reservations.
+// Editing an existing review never touches guide attribution either:
+// `review` supplies only display values here, and the update payload below
+// never includes guideId.
 // Single reusable modal for both entry points (Reservation Detail and
 // Guide Detail) — same repository, same create/update payloads, no
 // duplicated review business logic. Reservation Detail always knows its
 // resId already and passes it in, so no picker renders there. Guide Detail
-// only knows guideId, so when resId is absent (and we're not editing) a
-// "Rezervasyon / Tur" picker appears first, scoped to that guide's own
-// real reservations — never a hand-built dataset. Whichever entry point is
-// used, guide_id is always the guideId prop (this guide, snapshotted once
-// at creation) — never re-derived from the reservation afterward.
-function AddEditReviewModal({ resId, guideId, review, onClose }) {
+// only knows guideId, so when resId is absent (and we're not editing) the
+// picker above appears, built from the real reservations repo — never a
+// hand-built dataset.
+function AddEditReviewModal({ resId, guideId, guideName, review, onClose }) {
   const isEdit = !!review;
   const needsResPicker = !isEdit && !resId;
   const { mutate, mutating } = useRepoMutation("review");
@@ -5101,17 +5143,14 @@ function AddEditReviewModal({ resId, guideId, review, onClose }) {
   const [error, setError] = useState("");
 
   const guideReservations = needsResPicker
-    ? (repoRes || [])
-        .filter(r => r.guideId === guideId && r.opStatus !== "İptal")
-        .sort((a,b) => {
-          const aDone = a.opStatus === "Tamamlandı" ? 0 : 1;
-          const bDone = b.opStatus === "Tamamlandı" ? 0 : 1;
-          if (aDone !== bDone) return aDone - bDone;
-          return (b.checkIn||"").localeCompare(a.checkIn||"");
-        })
+    ? selectEligibleGuideReviewReservations(repoRes, guideId, _TODAY_ISO)
     : [];
   const selectedRes = needsResPicker ? guideReservations.find(r=>r.id===selectedResId) : null;
   const effectiveResId = needsResPicker ? selectedResId : resId;
+  // Purely informational — the reservation's own guide_id is never read to
+  // decide whose review this is (always guideId, above) and is never
+  // written to, so this never blocks saving, it only surfaces the fact.
+  const assignedToOtherGuide = !!(selectedRes && selectedRes.guideId && selectedRes.guideId !== guideId);
 
   async function handleSubmit() {
     if (needsResPicker && !selectedResId) { setError("Rezervasyon / Tur seçilmelidir."); return; }
@@ -5133,15 +5172,15 @@ function AddEditReviewModal({ resId, guideId, review, onClose }) {
     <Modal title={isEdit ? "Değerlendirmeyi Düzenle" : "Değerlendirme Ekle"} onClose={onClose} onSubmit={handleSubmit} submitLabel={mutating?"Kaydediliyor…":"Kaydet"}>
       {needsResPicker && (
         <>
-          <FRow label="Rezervasyon / Tur" required full hint="Yalnızca bu rehbere atanmış gerçek rezervasyonlar listelenir; tamamlanmış turlar önce gösterilir.">
+          <FRow label="Rezervasyon / Tur" required full hint="Tamamlanmış veya geçmiş tarihli, iptal edilmemiş rezervasyonlar listelenir — rehber ataması eksik olsa bile. Bu rehberin kendi rezervasyonları önce gösterilir.">
             <FSelect value={selectedResId} onChange={setSelectedResId} options={[
               ["", "— Seçiniz —"],
-              ...guideReservations.map(r => [r.id, `${r.date} · ${r.tour || "—"} · ${r.name || "—"}`]),
+              ...guideReservations.map(r => [r.id, formatGuideReviewReservationOption(r)]),
             ]}/>
           </FRow>
           {guideReservations.length===0 && (
             <div style={{fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:-8, marginBottom:14}}>
-              Bu rehbere atanmış bir rezervasyon bulunamadı.
+              Değerlendirme eklenebilecek uygun bir rezervasyon bulunamadı.
             </div>
           )}
           {selectedRes && (
@@ -5150,9 +5189,24 @@ function AddEditReviewModal({ resId, guideId, review, onClose }) {
               background:C.ivory, border:`1px solid ${C.borderLight}`, borderRadius:8,
               fontSize:12, color:C.textMid, fontFamily:"'DM Sans',sans-serif",
             }}>
+              <span><b>Rezervasyon No:</b> {selectedRes.resNumber || selectedRes.id}</span>
               <span><b>Misafir:</b> {selectedRes.name || "—"}</span>
               <span><b>Tur:</b> {selectedRes.tour || "—"}</span>
               <span><b>Tarih:</b> {selectedRes.date || "—"}</span>
+              <span><b>Dil:</b> {selectedRes.tourLanguage || "—"}</span>
+            </div>
+          )}
+          {assignedToOtherGuide && (
+            <div style={{
+              display:"flex", alignItems:"flex-start", gap:8, padding:"10px 12px", marginBottom:14,
+              background:C.amberBg, border:`1px solid ${C.amber}66`, borderRadius:8,
+              fontSize:12, color:C.text, fontFamily:"'DM Sans',sans-serif", lineHeight:1.5,
+            }}>
+              <span style={{color:C.amber, flexShrink:0}}>⚠</span>
+              <span>
+                Bu rezervasyon şu anda <b>{selectedRes.assignedGuideName || "başka bir rehbere"}</b> atanmış.
+                Değerlendirme yine de <b>{guideName || "bu rehber"}</b> için kaydedilecek; rezervasyonun rehber ataması değişmeyecek.
+              </span>
             </div>
           )}
         </>
@@ -9493,7 +9547,7 @@ function GuideDetailPage({ guideId, onBack }) {
     <>
     {showEdit && <AddGuideModal guide={guide} onClose={()=>{ setShowEdit(false); reload&&reload(); }}/>}
     {showAddPayment && <AddGuidePaymentModal guideId={guide.id} onClose={()=>{ setShowAddPayment(false); reloadGP&&reloadGP(); }}/>}
-    {showAddReview && <AddEditReviewModal guideId={guide.id} onClose={()=>setShowAddReview(false)}/>}
+    {showAddReview && <AddEditReviewModal guideId={guide.id} guideName={guide.name} onClose={()=>setShowAddReview(false)}/>}
     <div style={{display:"flex", flexDirection:"column", gap:20}}>
 
       <div style={{
