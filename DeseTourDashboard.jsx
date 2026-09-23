@@ -10552,6 +10552,42 @@ const EMPTY_REPORT_METRICS = {
   guides: [], guidePayments: { paidEur:0, pendingEur:0 },
 };
 
+// TESTABLE:computeMonthlyReservationRevenue:start
+// "Bu Ay Beklenen Ciro" — the customer-facing SALES value of every
+// reservation whose TOUR takes place in the current calendar month.
+// Deliberately reservation-based, never payment-based: payments reflect
+// collection/payment state, reservations reflect booked sales, and this KPI
+// is the latter. Filtered by tour date (checkIn = reservations.check_in),
+// never by payment/created/due date, so a tour booked (and even paid) in an
+// earlier month still counts toward the month it actually runs in.
+// Cancelled reservations ("İptal") are excluded — they won't take place —
+// but already-completed tours earlier this month still count, since the
+// sale happened. Pure and dependency-free by design (only its parameters
+// and the built-in Date) so it can be extracted and unit-tested in
+// isolation from the rest of this browser-only, module-less file — see
+// tests/dashboard/monthlyRevenue.test.js.
+function computeMonthlyReservationRevenue(reservations, todayISO) {
+  const [y, moNum] = todayISO.split("-").map(Number);
+  const monthIdx = moNum - 1;
+  const startISO = `${y}-${String(monthIdx + 1).padStart(2, "0")}-01`;
+  const endDateObj = new Date(y, monthIdx + 1, 0);
+  const endISO = `${endDateObj.getFullYear()}-${String(endDateObj.getMonth() + 1).padStart(2, "0")}-${String(endDateObj.getDate()).padStart(2, "0")}`;
+  return (reservations || [])
+    .filter(r => {
+      if (!r.checkIn || r.opStatus === "İptal") return false;
+      const iso = r.checkIn.slice(0, 10);
+      return iso >= startISO && iso <= endISO;
+    })
+    // Customer-facing sales value: Civitatis reservations carry that
+    // separately as retail_amount (total_amount there is DeseTour's own net
+    // proceeds from Civitatis, not the sale price). Reservations without a
+    // retail_amount (every manual/non-Civitatis booking) have no such
+    // split — total_amount IS the customer-facing price there — so it's
+    // the safe fallback, not a blind default.
+    .reduce((s, r) => s + (r.retailAmount != null ? r.retailAmount : r.total), 0);
+}
+// TESTABLE:computeMonthlyReservationRevenue:end
+
 function calculateDashboardMetrics(leads, reservations, payments, tasks, reminders) {
   // When Supabase is active, use empty arrays (not DB mock) if data not loaded yet
   // This prevents KPIs briefly showing mock values then disappearing
@@ -10572,12 +10608,9 @@ function calculateDashboardMetrics(leads, reservations, payments, tasks, reminde
   const pendingTRY    = pendingPays.filter(p=>p.currency==="TRY")
     .reduce((s,p)=>s+parseFloat(p.amount||0), 0);
 
-  const monthPays  = filterByDateRange(_pays, "createdAt", "Bu Ay");
-  // Looked up against the real reservations passed into this function (not
-  // the global mock getReservationById/DB.reservations), so this stays
-  // correct against live Supabase data rather than an unrelated seed array.
-  const monthRevTRY = monthPays.filter(p=>p.currency==="TRY")
-    .reduce((s,p)=>{ const r=_res.find(rr=>rr.id===(p.resId||"")); return s+(r?r.total:parseFloat(p.amount||0)); },0);
+  // "Bu Ay Beklenen Ciro" — booked sales value of this month's tours, never
+  // derived from payments. See computeMonthlyReservationRevenue above.
+  const monthRevTRY = computeMonthlyReservationRevenue(_res, todayISO);
 
   const urgentItems = computeUrgent(_res, _pays, _rems);
   const recentActivities = DB.activityLogs.slice(-6).reverse();
