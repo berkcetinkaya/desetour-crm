@@ -9465,6 +9465,76 @@ function AddGuidePaymentModal({ guideId, onClose }) {
   );
 }
 
+// TESTABLE:computeGuideReservationStats:start
+// Guide Detail's reservation-derived KPIs — Toplam Tur / Toplam Misafir /
+// Bu Ay Tur — computed strictly from reservations.guide_id (the
+// authoritative assignment; never guide_name text, never customer notes,
+// never a derived/mock array), so a guide's numbers only ever reflect real,
+// currently-assigned reservations. Cancelled reservations don't count.
+// Pure and dependency-free (only its parameters) so it can never be
+// influenced by the mock DB.reservations seed array, even accidentally.
+function computeGuideReservationStats(reservations, guideId, todayISO) {
+  const guideRes = (reservations || []).filter(r => r && r.guideId === guideId && r.opStatus !== "İptal");
+  const totalTours = guideRes.length;
+  const totalGuests = guideRes.reduce((s, r) => s + (r.pax || 0) + (r.paxChild || 0), 0);
+  const [y, m] = (todayISO || '').split('-');
+  const monthPrefix = y && m ? `${y}-${m}` : '';
+  const thisMonthTours = monthPrefix ? guideRes.filter(r => (r.checkIn || '').startsWith(monthPrefix)).length : 0;
+  return { totalTours, totalGuests, thisMonthTours };
+}
+// TESTABLE:computeGuideReservationStats:end
+
+// TESTABLE:enrichGuideTourHistoryEntry:start
+// Builds one "Tur Geçmişi" card's worth of data from a real reservation
+// plus its already-loaded reviews/guests/source, kept apart on purpose:
+// contactName is the booking contact (reservations.customer_id/name) and
+// passengerNames are the actual reservation_guests — different concepts in
+// this CRM, both surfaced, neither inferred from the other.
+function enrichGuideTourHistoryEntry(r, { reviews, guests, sourceName } = {}) {
+  return {
+    id: r.id,
+    resNumber: r.resNumber || r.id,
+    tour: r.tour || '',
+    date: r.date || '',
+    checkIn: r.checkIn || '',
+    tourLanguage: r.tourLanguage || '',
+    sourceName: sourceName || '',
+    guestCount: (r.pax || 0) + (r.paxChild || 0),
+    contactName: r.name || '',
+    passengerNames: (guests || []).map(g => g.fullName).filter(Boolean),
+    opStatus: r.opStatus,
+    reviews: reviews || [],
+  };
+}
+// TESTABLE:enrichGuideTourHistoryEntry:end
+
+// TESTABLE:buildGuidePassengerHistory:start
+// "Misafir Geçmişi" — the actual PASSENGERS (reservation_guests) this
+// guide has guided, never the booking contact (reservations.customer_id/
+// name) — those are different concepts in this CRM, shown separately
+// inside each tour history card. A passenger's name is grouped (case/
+// whitespace-normalized) so the same person appearing on more than one of
+// this guide's tours is shown once, with every reservation they were on
+// still listed — never lost, never collapsed into an opaque count.
+function buildGuidePassengerHistory(reservations, guideId, guestsByResId) {
+  const guideRes = (reservations || []).filter(r => r && r.guideId === guideId && r.opStatus !== "İptal");
+  const byName = new Map();
+  guideRes.forEach(r => {
+    const guests = (guestsByResId && guestsByResId[r.id]) || [];
+    guests.forEach(g => {
+      const fullName = (g.fullName || '').trim();
+      if (!fullName) return;
+      const key = fullName.toLocaleLowerCase('tr');
+      if (!byName.has(key)) byName.set(key, { name: fullName, reservationIds: [], tourCount: 0 });
+      const entry = byName.get(key);
+      entry.reservationIds.push(r.id);
+      entry.tourCount++;
+    });
+  });
+  return Array.from(byName.values()).sort((a, b) => a.name.localeCompare(b.name, 'tr'));
+}
+// TESTABLE:buildGuidePassengerHistory:end
+
 function GuideDetailPage({ guideId, onBack }) {
   const { isMobile } = useBreakpoint();
   const _sp = safeParam(guideId);
@@ -9492,35 +9562,43 @@ function GuideDetailPage({ guideId, onBack }) {
   const [showEdit, setShowEdit]               = useState(false);
   const [showAddPayment, setShowAddPayment]   = useState(false);
   const [showAddReview, setShowAddReview]     = useState(false);
+  // Contextual "Değerlendirme Ekle" from a specific tour history row —
+  // separate from showAddReview (the generic, secondary action) so opening
+  // one never affects the other. Holds the reservation id it was opened
+  // for, which AddEditReviewModal receives as `resId` — skipping its own
+  // reservation picker entirely, since the tour is already known.
+  const [addReviewForResId, setAddReviewForResId] = useState(null);
   const canWriteReview = ["Yönetici","Operasyon"].includes(useAuthContext()?.role);
+
+  const allRes = repoRes || [];
+  const activeResIds = allRes.filter(r => r && r.guideId === guideId && r.opStatus !== "İptal").map(r => r.id);
+  // Actual per-tour passengers (reservation_guests) for every one of this
+  // guide's active reservations, fetched in one batched query — never the
+  // booking contact, never inferred, never a second guide-history system.
+  const { data:repoGuestsByRes } = useRepo("reservation", "getGuestsForReservations", activeResIds);
 
   if (loading) return <LoadingState label="Rehber profili yükleniyor…"/>;
   if (error)   return <ErrorState message={error} onRetry={()=>{}}/>;
   if (!guide)  return <div style={{padding:40,textAlign:"center",color:C.textFaint,fontFamily:"'DM Sans',sans-serif"}}>Rehber bulunamadı.</div>;
 
-  const allRes = repoRes || [];
   const guideRes = allRes.filter(r => r.guideId === guideId);
   const activeRes = guideRes.filter(r => r.opStatus !== "İptal");
   const todayISO = _TODAY_ISO;
   const upcoming = activeRes.filter(r => (r.checkIn||"") >= todayISO).sort((a,b)=>(a.checkIn||"").localeCompare(b.checkIn||""));
   const past     = activeRes.filter(r => (r.checkIn||"") < todayISO).sort((a,b)=>(b.checkIn||"").localeCompare(a.checkIn||""));
-  const thisMonthPrefix = `${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,"0")}`;
-  const thisMonthTours  = activeRes.filter(r => (r.checkIn||"").startsWith(thisMonthPrefix)).length;
-  const totalGuests     = activeRes.reduce((s,r)=>s+(r.pax||0)+(r.paxChild||0),0);
+  const guestsByResId = repoGuestsByRes || {};
+
+  // Toplam Tur / Toplam Misafir / Bu Ay Tur — all derived here, strictly
+  // from reservations.guide_id (see computeGuideReservationStats above).
+  const { totalTours, totalGuests, thisMonthTours } = computeGuideReservationStats(allRes, guideId, todayISO);
 
   const payments        = repoGP || [];
   const totalPaidEur    = payments.filter(p=>p.status==="Ödendi"  && p.currency==="EUR").reduce((s,p)=>s+(p.amount||0),0);
   const pendingPaidEur  = payments.filter(p=>p.status==="Bekliyor"&& p.currency==="EUR").reduce((s,p)=>s+(p.amount||0),0);
 
-  const customerMap = new Map();
-  activeRes.forEach(r => {
-    if (!r.customerId) return;
-    if (!customerMap.has(r.customerId)) customerMap.set(r.customerId, { id:r.customerId, name:r.name, tours:0, lastDate:r.checkIn });
-    const c = customerMap.get(r.customerId);
-    c.tours++;
-    if ((r.checkIn||"") > (c.lastDate||"")) c.lastDate = r.checkIn;
-  });
-  const customers = Array.from(customerMap.values()).sort((a,b)=>(b.lastDate||"").localeCompare(a.lastDate||""));
+  // "Misafir Geçmişi" — actual passengers, never the booking contact (see
+  // buildGuidePassengerHistory above).
+  const passengerHistory = buildGuidePassengerHistory(allRes, guideId, guestsByResId);
 
   // Performance summary — precise definitions per spec, computed from real
   // data only. "Toplam Tur"/"Toplam Misafir" here are deliberately scoped
@@ -9548,9 +9626,17 @@ function GuideDetailPage({ guideId, onBack }) {
     if (!reviewsByRes.has(rv.resId)) reviewsByRes.set(rv.resId, []);
     reviewsByRes.get(rv.resId).push(rv);
   });
+  // Each "Tur Geçmişi" row, fully enriched: reservation number, tour,
+  // date, language, booking source, guest count, booking contact, actual
+  // passengers (reservation_guests), and every review recorded for it.
+  const pastHistory = past.map(r => enrichGuideTourHistoryEntry(r, {
+    reviews: reviewsByRes.get(r.id),
+    guests: guestsByResId[r.id],
+    sourceName: resSourceName(r),
+  }));
 
   const KPIS = [
-    { label:"Toplam Tur",              val:activeRes.length, icon:"M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z M9 22V12h6v10", color:C.text,  bg:C.ivoryDark },
+    { label:"Toplam Tur",              val:totalTours, icon:"M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z M9 22V12h6v10", color:C.text,  bg:C.ivoryDark },
     { label:"Toplam Misafir",          val:totalGuests,       icon:"M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2 M23 21v-2a4 4 0 00-3-3.87 M16 3.13a4 4 0 010 7.75", color:C.blue,  bg:C.blueBg },
     { label:"Bu Ay Tur",               val:thisMonthTours,    icon:"M8 2v4M16 2v4M3 10h18M21 8a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2h14a2 2 0 002-2V8z", color:C.amber, bg:C.amberBg },
     { label:"Toplam Ödenen",           val:`€${totalPaidEur.toLocaleString("tr-TR")}`, icon:"M22 11.08V12a10 10 0 11-5.93-9.14 M22 4L12 14.01l-3-3", color:C.green, bg:C.greenBg },
@@ -9562,6 +9648,7 @@ function GuideDetailPage({ guideId, onBack }) {
     {showEdit && <AddGuideModal guide={guide} onClose={()=>{ setShowEdit(false); reload&&reload(); }}/>}
     {showAddPayment && <AddGuidePaymentModal guideId={guide.id} onClose={()=>{ setShowAddPayment(false); reloadGP&&reloadGP(); }}/>}
     {showAddReview && <AddEditReviewModal guideId={guide.id} guideName={guide.name} onClose={()=>setShowAddReview(false)}/>}
+    {addReviewForResId && <AddEditReviewModal resId={addReviewForResId} guideId={guide.id} guideName={guide.name} onClose={()=>setAddReviewForResId(null)}/>}
     <div style={{display:"flex", flexDirection:"column", gap:20}}>
 
       <div style={{
@@ -9642,9 +9729,11 @@ function GuideDetailPage({ guideId, onBack }) {
             ))}
           </GuideSectionCard>
 
-          <GuideSectionCard title={`Tur Geçmişi (${past.length})`}>
-            {past.length===0 ? <EmptyRow text="Geçmiş tur yok."/> : past.map(r=>(
-              <GuideTourHistoryRow key={r.id} r={r} sourceName={resSourceName(r)} reviews={reviewsByRes.get(r.id)}/>
+          <GuideSectionCard title={`Tur Geçmişi (${pastHistory.length})`}>
+            {pastHistory.length===0 ? <EmptyRow text="Geçmiş tur yok."/> : pastHistory.map(entry=>(
+              <GuideTourHistoryRow key={entry.id} entry={entry}
+                canAddReview={canWriteReview}
+                onAddReview={()=>setAddReviewForResId(entry.id)}/>
             ))}
           </GuideSectionCard>
 
@@ -9672,14 +9761,14 @@ function GuideDetailPage({ guideId, onBack }) {
             )}
           </GuideSectionCard>
 
-          <GuideSectionCard title={`Misafir Geçmişi (${customers.length})`}>
-            {customers.length===0 ? <EmptyRow text="Bu rehber henüz bir misafire atanmadı."/> : customers.map(c=>(
-              <div key={c.id} style={{display:"flex", alignItems:"center", justifyContent:"space-between", padding:"10px 0", borderBottom:`1px solid ${C.borderLight}`}}>
+          <GuideSectionCard title={`Misafir Geçmişi (${passengerHistory.length})`}>
+            {passengerHistory.length===0 ? <EmptyRow text="Bu rehberin turladığı bir yolcu kaydı yok."/> : passengerHistory.map(p=>(
+              <div key={p.name} style={{display:"flex", alignItems:"center", justifyContent:"space-between", padding:"10px 0", borderBottom:`1px solid ${C.borderLight}`}}>
                 <div>
-                  <div style={{fontSize:13, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif"}}>{c.name || "—"}</div>
-                  <div style={{fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:1}}>{c.tours} tur</div>
+                  <div style={{fontSize:13, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif"}}>{p.name}</div>
+                  <div style={{fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:1}}>{p.tourCount} tur</div>
                 </div>
-                <IDLink id={c.id} type="customer"/>
+                <IDLink id={p.reservationIds[0]} type="reservation"/>
               </div>
             ))}
           </GuideSectionCard>
@@ -9777,43 +9866,72 @@ function PerfStat({ label, value, empty }) {
   );
 }
 
-// Upgraded tour-history row for GuideDetailPage's "Tur Geçmişi" (real
-// tour_language + booking-source + review data — never derived via
-// reservation_id → reservations.guide_id, only via the review's own
-// guide_id snapshot passed in as `reviews`). Multiple reviews for one
-// reservation are rendered as separate compact star rows, never collapsed.
-function GuideTourHistoryRow({ r, sourceName, reviews }) {
-  const list = reviews || [];
+// Tour-history card for GuideDetailPage's "Tur Geçmişi", built from an
+// already-enriched entry (see enrichGuideTourHistoryEntry above). Groups,
+// top to bottom: Tour → Guests (booking contact AND actual passengers,
+// kept visually distinct — different concepts in this CRM) → Review(s) →
+// Rating, so staff can read a tour's complete history without jumping to
+// another page. Multiple reviews for one reservation are rendered as
+// separate cards, never collapsed to one — the schema supports more than
+// one legitimate review per reservation. "+ Değerlendirme Ekle" is always
+// offered (with or without existing reviews), and opens the review modal
+// already knowing this exact reservation — no re-searching required.
+function GuideTourHistoryRow({ entry, canAddReview, onAddReview }) {
+  const reviews = entry.reviews || [];
+  const passengers = entry.passengerNames || [];
   return (
-    <div style={{ padding:"12px 0", borderBottom:`1px solid ${C.borderLight}` }}>
+    <div style={{ padding:"14px 0", borderBottom:`1px solid ${C.borderLight}` }}>
       <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:10 }}>
         <div style={{minWidth:0, flex:1}}>
-          <div style={{fontSize:13, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{r.tour || "—"}</div>
-          <div style={{fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:1}}>{r.date} · {r.name || "—"} · {r.pax} kişi</div>
-          <div style={{fontSize:11, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:3, display:"flex", gap:10, flexWrap:"wrap"}}>
-            <span>Tur Dili: {r.tourLanguage || "Belirtilmemiş"}</span>
-            <span>Rezervasyon Kaynağı: {sourceName || "—"}</span>
+          <div style={{display:"flex", alignItems:"center", gap:8, flexWrap:"wrap"}}>
+            <span style={{fontSize:13.5, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif"}}>{entry.tour || "—"}</span>
+            <span style={{fontSize:11, color:C.textFaint, fontFamily:"'DM Mono',monospace"}}>{entry.resNumber}</span>
+          </div>
+          <div style={{fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:2}}>
+            {entry.date} · {entry.tourLanguage || "Dil belirtilmemiş"} · {entry.sourceName || "Kaynak belirtilmemiş"} · {entry.guestCount} Misafir
+          </div>
+          <div style={{fontSize:11.5, color:C.textMid, fontFamily:"'DM Sans',sans-serif", marginTop:6}}>
+            <b>Rezervasyon Sahibi:</b> {entry.contactName || "—"}
+          </div>
+          <div style={{fontSize:11.5, color:C.textMid, fontFamily:"'DM Sans',sans-serif", marginTop:2}}>
+            <b>Yolcular:</b> {passengers.length ? passengers.join(" + ") : "Kayıtlı yolcu yok"}
           </div>
         </div>
         <div style={{display:"flex", flexDirection:"column", alignItems:"flex-end", gap:6, flexShrink:0}}>
           <div style={{display:"flex", alignItems:"center", gap:8}}>
-            <StatusBadge status={r.opStatus}/>
-            <IDLink id={r.id} type="reservation"/>
+            <StatusBadge status={entry.opStatus}/>
+            <IDLink id={entry.id} type="reservation"/>
           </div>
-          {list.length > 0 ? (
-            <div style={{display:"flex", flexDirection:"column", alignItems:"flex-end", gap:3}}>
-              {list.map(rv => (
-                <div key={rv.id} style={{display:"flex", alignItems:"center", gap:6}}>
-                  <RatingStars rating={rv.rating} size={12}/>
-                  {rv.reviewText && <span style={{fontSize:11, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", maxWidth:160, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{rv.reviewText}</span>}
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div style={{fontSize:11, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>Puan: — · Değerlendirme yok</div>
+          {canAddReview && (
+            <button onClick={onAddReview} style={{
+              padding:"5px 10px", borderRadius:6, border:`1px solid ${C.border}`,
+              background:C.white, cursor:"pointer", color:C.text,
+              fontSize:11, fontWeight:500, fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap",
+            }}>+ Değerlendirme Ekle</button>
           )}
         </div>
       </div>
+      {reviews.length > 0 && (
+        <div style={{marginTop:10, display:"flex", flexDirection:"column", gap:8}}>
+          {reviews.map(rv => (
+            <div key={rv.id} style={{
+              padding:"8px 10px", background:C.ivory, border:`1px solid ${C.borderLight}`, borderRadius:8,
+            }}>
+              <div style={{display:"flex", alignItems:"center", justifyContent:"space-between", gap:8, flexWrap:"wrap"}}>
+                <div style={{display:"flex", alignItems:"center", gap:6}}>
+                  <RatingStars rating={rv.rating} size={12}/>
+                  <span style={{fontSize:11.5, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif"}}>{rv.rating!=null ? rv.rating : "—"}/5</span>
+                </div>
+                <span style={{fontSize:10.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>
+                  {[rv.sourceName, rv.reviewDate].filter(Boolean).join(" · ") || "—"}
+                </span>
+              </div>
+              {rv.reviewerName && <div style={{fontSize:11, color:C.textMid, fontFamily:"'DM Sans',sans-serif", marginTop:3}}>{rv.reviewerName}</div>}
+              {rv.reviewText && <div style={{fontSize:11.5, color:C.textMid, fontFamily:"'DM Sans',sans-serif", marginTop:3, lineHeight:1.5}}>{rv.reviewText}</div>}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -13046,6 +13164,25 @@ const SupabaseReservationRepo = {
   // separate concept entirely. Read from reservation_guests directly, names
   // stored/returned exactly as recorded (never inferred from the customer).
   async getGuests(resId){const sb=getSB();if(!sb)return ReservationRepository.getGuests?ReservationRepository.getGuests(resId):[];const{data,error}=await sb.from('reservation_guests').select('id,full_name,sort_order').eq('reservation_id',resId).order('sort_order',{ascending:true});if(error)throw new Error(error.message);return(data||[]).map(g=>({id:g.id,fullName:g.full_name,sortOrder:g.sort_order}));},
+  // Same reservation_guests data as getGuests, but for a whole SET of
+  // reservations in one query (e.g. every reservation a guide has led) —
+  // avoids N+1 requests when a page needs passengers for many reservations
+  // at once. Returns a plain { [reservationId]: [{id,fullName,sortOrder}] }
+  // map; a reservation with no rows simply has no key (never a fabricated
+  // empty array the caller might mistake for "confirmed zero passengers").
+  async getGuestsForReservations(resIds){
+    const sb=getSB();
+    const ids=(resIds||[]).filter(Boolean);
+    if(!sb||!ids.length) return {};
+    const{data,error}=await sb.from('reservation_guests').select('id,reservation_id,full_name,sort_order').in('reservation_id',ids).order('sort_order',{ascending:true});
+    if(error) throw new Error(error.message);
+    const map={};
+    (data||[]).forEach(g=>{
+      if(!map[g.reservation_id]) map[g.reservation_id]=[];
+      map[g.reservation_id].push({id:g.id, fullName:g.full_name, sortOrder:g.sort_order});
+    });
+    return map;
+  },
   async create(d){const sb=getSB();if(!sb)return ReservationRepository.create(d);let rn=`R-${new Date().getFullYear()}-${String(Date.now()).slice(-4)}`;try{const{data:ref}=await sb.rpc('next_ref_number',{prefix:'R',table_name:'reservations',number_col:'reservation_number'});if(ref)rn=ref;}catch(_){}const row={reservation_number:rn,lead_id:d.leadId||null,quote_id:d.quoteId||null,customer_id:d.customerId,tour_id:d.tourId||null,status:'pending_confirmation',payment_status:'pending',destination:d.tour||d.destination||'',check_in:d.checkIn||d.date||null,check_out:d.checkOut||d.date||null,check_in_time:d.time||null,pax_adult:parseInt(d.pax||d.paxAdult)||1,pax_child:parseInt(d.paxChild)||0,guide_name:d.guide||null,guide_id:d.guideId||null,vehicle_info:d.vehicle||null,driver_name:d.driver||null,pickup_location:d.pickup||null,pickup_time:d.pickupTime||null,tour_language:d.tourLanguage||null,total_amount:parseFloat(d.total)||0,currency:d.currency||'EUR',deposit_amount:parseFloat(d.deposit)||0,notes:d.opNotes||d.notes||null,assigned_to:d.assigneeId||null};const{data:c,error}=await sb.from('reservations').insert(row).select().single();if(error)throw new Error(error.message);await _sbLog('reservation',c.id,'created',`Rezervasyon: ${c.reservation_number}`);return mapResFromDB(c);},
   async update(id,p){const sb=getSB();if(!sb)return ReservationRepository.update(id,p);const fm={opStatus:'status',payStatus:'payment_status',guide:'guide_name',guideId:'guide_id',vehicle:'vehicle_info',driver:'driver_name',pickup:'pickup_location',opNotes:'notes',total:'total_amount',tourLanguage:'tour_language'};const row={};for(const[k,v]of Object.entries(p)){const col=fm[k]||k;if(col==='status')row[col]=_r2DB(v);else if(col==='payment_status')row[col]=_p2DB(v);else row[col]=v;}if(p.opStatus==='Tamamlandı')row.completed_at=new Date().toISOString();if(p.opStatus==='İptal')row.cancelled_at=new Date().toISOString();const{data:u,error}=await sb.from('reservations').update(row).eq('id',id).select().single();if(error)throw new Error(error.message);await _sbLog('reservation',id,'updated',`Güncellendi: ${Object.keys(p).join(', ')}`);return mapResFromDB(u);},
   async delete(id){const sb=getSB();if(!sb)return ReservationRepository.delete(id);const{error}=await sb.from('reservations').update({status:'cancelled',cancelled_at:new Date().toISOString()}).eq('id',id);if(error)throw new Error(error.message);return true;},
