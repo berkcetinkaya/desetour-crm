@@ -2355,7 +2355,7 @@ function KpiRow() {
     },
     {
       label:"Bekleyen Ödemeler",
-      value:`€${m.pendingEUR.toLocaleString("tr-TR",{maximumFractionDigits:0})}`,
+      value:`₺${m.pendingTRY.toLocaleString("tr-TR",{maximumFractionDigits:0})}`,
       sub:`${m.pendingPaysCount} rezervasyon`,
       icon:"M2 9a2 2 0 012-2h16a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V9zM2 13h20",
     },
@@ -2367,7 +2367,7 @@ function KpiRow() {
     },
     {
       label:"Bu Ay Beklenen Ciro",
-      value:`€${m.monthRevEUR.toLocaleString("tr-TR",{maximumFractionDigits:0})}`,
+      value:`₺${m.monthRevTRY.toLocaleString("tr-TR",{maximumFractionDigits:0})}`,
       sub:"Bu ay",
       icon:"M12 2v20M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6",
       accent:true,
@@ -10566,12 +10566,18 @@ function calculateDashboardMetrics(leads, reservations, payments, tasks, reminde
   const todayTours    = _res.filter(r => r.date===today || r.checkIn===todayISO);
   const upcomingRes   = _res.filter(r => !["Tamamlandı","İptal"].includes(r.opStatus));
   const pendingPays   = _pays.filter(p => ["Bekliyor","Kısmi Ödendi"].includes(p.status));
-  const pendingEUR    = pendingPays.filter(p=>p.currency==="EUR")
+  // DeseTour reports and operates in Turkish Lira, so pending-payment totals
+  // are summed from TRY-currency records only (mirrors the €/EUR filter this
+  // replaced — this KPI has never mixed currencies, only the currency was wrong).
+  const pendingTRY    = pendingPays.filter(p=>p.currency==="TRY")
     .reduce((s,p)=>s+parseFloat(p.amount||0), 0);
 
   const monthPays  = filterByDateRange(_pays, "createdAt", "Bu Ay");
-  const monthRevEUR = monthPays.filter(p=>p.currency==="EUR")
-    .reduce((s,p)=>{ const r=getReservationById(p.resId||""); return s+(r?r.total:parseFloat(p.amount||0)); },0);
+  // Looked up against the real reservations passed into this function (not
+  // the global mock getReservationById/DB.reservations), so this stays
+  // correct against live Supabase data rather than an unrelated seed array.
+  const monthRevTRY = monthPays.filter(p=>p.currency==="TRY")
+    .reduce((s,p)=>{ const r=_res.find(rr=>rr.id===(p.resId||"")); return s+(r?r.total:parseFloat(p.amount||0)); },0);
 
   const urgentItems = computeUrgent(_res, _pays, _rems);
   const recentActivities = DB.activityLogs.slice(-6).reverse();
@@ -10581,10 +10587,10 @@ function calculateDashboardMetrics(leads, reservations, payments, tasks, reminde
     todayTourCount: todayTours.length,
     todayTourPax:   todayTours.reduce((s,r)=>s+parseInt(r.pax||1),0),
     pendingPaysCount: pendingPays.length,
-    pendingEUR,
+    pendingTRY,
     upcomingRes:    upcomingRes.slice(0,5),
     upcomingCount:  upcomingRes.length,
-    monthRevEUR,
+    monthRevTRY,
     urgentItems,
     recentActivities,
   };
