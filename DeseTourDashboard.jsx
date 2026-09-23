@@ -5403,13 +5403,23 @@ function ReviewCard({ r }) {
 }
 
 /* -- NewReservationModal -------------------------------------------- */
-function NewReservationModal({ onClose, onSuccess }) {
+// customerId/customerName pre-select the booking customer when this modal
+// is opened FROM that customer's own profile (Customer Detail's "Yeni
+// Rezervasyon" quick action) — the exact same create() path every other
+// entry point already uses, never a second reservation form. When
+// customerId is present the customer field is shown as a fixed label
+// instead of a searchable <select>, so the customer whose profile is open
+// stays the one this reservation is created for; mutRes("create", ...)
+// still receives that real customer UUID as customerId exactly as it
+// always has, which SupabaseReservationRepo.create writes straight to
+// reservations.customer_id — no second customer record is ever created.
+function NewReservationModal({ onClose, onSuccess, customerId, customerName }) {
   const { isMobile } = useBreakpoint();
   const { mutate: mutRes } = useRepoMutation("reservation");
   const { data: custList } = useRepo("customer", "getAll");
   const { data: tourList } = useRepo("tour",     "getAll");
   const { data: guideList } = useRepo("guide",   "getAll");
-  const [custId,   setCustId]   = useState("");
+  const [custId,   setCustId]   = useState(customerId || "");
   const [tourId,   setTourId]   = useState("");
   const [guideId,  setGuideId]  = useState("");
   const [checkIn,  setCheckIn]  = useState("");
@@ -5475,12 +5485,21 @@ function NewReservationModal({ onClose, onSuccess }) {
       submitLabel="Rezervasyonu Kaydet" submitting={busy}>
       <FGrid>
         <FRow label="Musteri" required error={errs.custId}>
-          <select value={custId} onChange={e=>setCustId(e.target.value)}
-            style={{width:"100%",padding:"9px 10px",borderRadius:7,border:`1.5px solid ${errs.custId?C.red:C.border}`,fontSize:13.5,color:C.text,background:C.white}}>
-            <option value="">-- Musteri secin --</option>
-            {customers.map(c=><option key={c.id} value={c.id}>{c.name||c.full_name||c.id}</option>)}
-          </select>
-          {customers.length===0 && AppConfig.useSupabase && (
+          {customerId ? (
+            <div style={{
+              width:"100%", boxSizing:"border-box", padding:"9px 10px", borderRadius:7,
+              border:`1.5px solid ${C.border}`, fontSize:13.5, color:C.text, background:C.ivory,
+            }}>
+              {customerName || customers.find(c=>c.id===customerId)?.name || customerId}
+            </div>
+          ) : (
+            <select value={custId} onChange={e=>setCustId(e.target.value)}
+              style={{width:"100%",padding:"9px 10px",borderRadius:7,border:`1.5px solid ${errs.custId?C.red:C.border}`,fontSize:13.5,color:C.text,background:C.white}}>
+              <option value="">-- Musteri secin --</option>
+              {customers.map(c=><option key={c.id} value={c.id}>{c.name||c.full_name||c.id}</option>)}
+            </select>
+          )}
+          {!customerId && customers.length===0 && AppConfig.useSupabase && (
             <div style={{fontSize:12,color:C.amber,marginTop:4}}>Once bir musteri olusturun.</div>
           )}
         </FRow>
@@ -11763,6 +11782,7 @@ function GuestDetailPage({ guestId, onBack, onNavigate }) {
 
   const [activeTab, setActiveTab] = useState("genel");
   const [showEditGuest, setShowEditGuest] = useState(false);
+  const [showNewRes, setShowNewRes] = useState(false);
 
   const sm = GUEST_STATUS_CFG[(g||{}).status] || {};
 
@@ -11770,14 +11790,32 @@ function GuestDetailPage({ guestId, onBack, onNavigate }) {
   if (guestError)   return <ErrorState message={guestError} onRetry={()=>{}}/>;
   if (!g) return <div style={{padding:40,textAlign:"center",color:C.textFaint,fontFamily:"'DM Sans',sans-serif"}}>Misafir bulunamadı.</div>;
 
+  // Each action's onClick is wired to the exact existing component/flow
+  // that already does that job elsewhere in the CRM — never a new,
+  // customer-page-specific reimplementation. "Yeni Talep Oluştur" /
+  // "Yeni Teklif Oluştur" / "Görev Oluştur" are left as-is (no onClick):
+  // Leads/Quotes/Tasks were deliberately removed from this CRM's
+  // navigation in an earlier simplification pass and have no current
+  // creation flow to open — wiring them up would mean resurrecting a
+  // dropped workflow, which is out of scope here.
+  function handleQuickAction(key) {
+    if (key === "reservation") { setShowNewRes(true); return; }
+    if (key === "note") { setShowEditGuest(true); return; }
+    if (key === "whatsapp") {
+      if (!g.phone) { showToast("Bu misafir için telefon numarası kayıtlı değil."); return; }
+      const digits = g.phone.replace(/[^\d]/g, "");
+      window.open(`https://wa.me/${digits}`, "_blank", "noopener");
+    }
+  }
+
   const QUICK_ACTIONS = [
-    { label:"Yeni Talep Oluştur",       icon:"M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01", primary:true },
-    { label:"Yeni Teklif Oluştur",      icon:"M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z M14 2v6h6" },
-    { label:"Yeni Rezervasyon",         icon:"M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" },
-    { label:"Not Ekle",                 icon:"M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" },
-    { label:"Görev Oluştur",            icon:"M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" },
-    { label:"Hatırlatma Oluştur",       icon:"M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0" },
-    { label:"WhatsApp Gönder",          icon:"M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z", wa:true },
+    { key:"lead",        label:"Yeni Talep Oluştur",       icon:"M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01", primary:true },
+    { key:"quote",       label:"Yeni Teklif Oluştur",      icon:"M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z M14 2v6h6" },
+    { key:"reservation", label:"Yeni Rezervasyon",         icon:"M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" },
+    { key:"note",        label:"Not Ekle",                 icon:"M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" },
+    { key:"task",        label:"Görev Oluştur",            icon:"M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" },
+    { key:"reminder",    label:"Hatırlatma Oluştur",       icon:"M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0" },
+    { key:"whatsapp",    label:"WhatsApp Gönder",          icon:"M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z", wa:true },
   ];
 
   return (
@@ -12081,6 +12119,7 @@ function GuestDetailPage({ guestId, onBack, onNavigate }) {
               {QUICK_ACTIONS.map((a,i)=>{
                 return (
                   <button key={i}
+                    onClick={()=>handleQuickAction(a.key)}
                     onMouseEnter={e=>e.currentTarget.style.background=e.currentTarget.dataset.hover||C.ivory}
                     onMouseLeave={e=>e.currentTarget.style.background=""}
                     style={{
@@ -12132,6 +12171,13 @@ function GuestDetailPage({ guestId, onBack, onNavigate }) {
       </div>
 
       {showEditGuest && <EditGuestModal guest={g} onClose={()=>setShowEditGuest(false)}/>}
+      {showNewRes && (
+        <NewReservationModal
+          customerId={g.id} customerName={g.name}
+          onClose={()=>setShowNewRes(false)}
+          onSuccess={()=>setShowNewRes(false)}
+        />
+      )}
     </div>
   );
 }
