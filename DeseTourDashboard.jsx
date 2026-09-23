@@ -11357,7 +11357,7 @@ function GStatusBadge({ status, small }) {
   );
 }
 
-function GSection({ title, icon, children, noPad }) {
+function GSection({ title, icon, children, noPad, action }) {
   return (
     <div style={{background:C.white, border:`1px solid ${C.border}`, borderRadius:12, overflow:"hidden"}}>
       <div style={{
@@ -11368,6 +11368,7 @@ function GSection({ title, icon, children, noPad }) {
           <GIc d={icon} size={13} sw={1.8} color={C.goldLight}/>
         </div>
         <span style={{fontSize:14, fontWeight:600, color:C.text, fontFamily:"'Playfair Display',serif"}}>{title}</span>
+        {action && <div style={{marginLeft:"auto"}}>{action}</div>}
       </div>
       <div style={noPad ? {} : {padding:"16px 20px"}}>{children}</div>
     </div>
@@ -11496,6 +11497,7 @@ function GuestDetailPage({ guestId, onBack, onNavigate }) {
   } : (!AppConfig.useSupabase && MOCK_GUESTS ? (MOCK_GUESTS.find(x=>x.id===guestId)||MOCK_GUESTS[0]) : null));
 
   const [activeTab, setActiveTab] = useState("genel");
+  const [showEditGuest, setShowEditGuest] = useState(false);
 
   const sm = GUEST_STATUS_CFG[(g||{}).status] || {};
 
@@ -11626,7 +11628,14 @@ function GuestDetailPage({ guestId, onBack, onNavigate }) {
           {}
           {activeTab==="genel" && (
             <div style={{display:"flex", flexDirection:"column", gap:18}}>
-              <GSection title="Misafir Profili" icon="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2 M23 21v-2a4 4 0 00-3-3.87 M16 3.13a4 4 0 010 7.75">
+              <GSection title="Misafir Profili" icon="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2 M23 21v-2a4 4 0 00-3-3.87 M16 3.13a4 4 0 010 7.75"
+                action={
+                  <button onClick={()=>setShowEditGuest(true)} style={{
+                    padding:"7px 14px", borderRadius:7, border:`1px solid ${C.border}`,
+                    background:C.white, cursor:"pointer", color:C.text,
+                    fontFamily:"'DM Sans',sans-serif", fontSize:12, fontWeight:500,
+                  }}>Düzenle</button>
+                }>
                 <div style={{
                   background:`linear-gradient(160deg, ${C.navyDeep} 0%, ${C.navy} 100%)`,
                   margin:"-16px -20px 0", padding:"20px 20px 16px",
@@ -11856,6 +11865,8 @@ function GuestDetailPage({ guestId, onBack, onNavigate }) {
           </div>
         </div>
       </div>
+
+      {showEditGuest && <EditGuestModal guest={g} onClose={()=>setShowEditGuest(false)}/>}
     </div>
   );
 }
@@ -12483,6 +12494,53 @@ function NewGuestModal({ onClose }) {
   );
 }
 
+// Edits the EXISTING customer record in place (SupabaseCustomerRepo.update),
+// never creates a new one. "Durum" is intentionally limited to the two
+// values the real schema actually supports (customers.is_active) — the
+// other GUEST_STATUS_CFG labels ("Rezervasyonu Var", "Tekrar Gelen", …) are
+// derived/mock-only and have no backing column to save them to.
+function EditGuestModal({ onClose, guest }) {
+  const { isMobile } = useBreakpoint();
+  const [name,setName]=useState(guest?.name||"");
+  const [phone,setPhone]=useState(guest?.phone||"");
+  const [email,setEmail]=useState(guest?.email||"");
+  const [country,setCountry]=useState(guest?.country||"Türkiye");
+  const [lang,setLang]=useState(guest?.language||"Türkçe");
+  const [status,setStatus]=useState(guest?.status==="Arşiv"?"Arşiv":"Aktif");
+  const [errs,setErrs]=useState({});
+  const { mutate:mutCustG, mutating:guestMut } = useRepoMutation("customer");
+
+  async function handleSubmit() {
+    // Conservative: only validate email/phone FORMAT when non-empty — an
+    // empty phone or email must stay allowed (e.g. imported Civitatis
+    // customers commonly have neither), matching validate()'s own
+    // required-vs-format distinction.
+    const e = validate({name:{required:"Ad Soyad zorunludur"},email:{email:true},phone:{phone:true}},{name,email,phone});
+    setErrs(e); if (Object.keys(e).length) return;
+    const { error } = await mutCustG("update", guest.id, {
+      name, phone:phone||"", email:email||"", country, language:lang, status,
+    });
+    if (error) {
+      console.error('[EditGuestModal] customer update failed:', error);
+      showToast("Misafir güncellenemedi: " + error);
+      return;
+    }
+    showToast("Misafir bilgileri güncellendi ✓"); onClose();
+  }
+  return (
+    <FormShell isMobile={isMobile} title="Misafiri Düzenle" onClose={onClose} onSubmit={handleSubmit}
+      submitLabel="Kaydet" submitting={guestMut}>
+      <FGrid>
+        <FRow label="Ad Soyad" required error={errs.name}><FText value={name} onChange={setName} placeholder="Sarah Johnson"/></FRow>
+        <FRow label="Telefon" error={errs.phone}><FText value={phone} onChange={setPhone} placeholder="+90 555 000 0000" mono/></FRow>
+        <FRow label="E-posta" error={errs.email}><FText value={email} onChange={setEmail} placeholder="email@example.com" type="email"/></FRow>
+        <FRow label="Ülke"><FSelect value={country} onChange={setCountry} options={COUNTRY_OPTIONS.map(c=>[c.name,`${c.flag} ${c.name}`])}/></FRow>
+        <FRow label="Dil"><FSelect value={lang} onChange={setLang} options={LANGUAGE_OPTIONS}/></FRow>
+        <FRow label="Durum"><FSelect value={status} onChange={setStatus} options={["Aktif","Arşiv"]}/></FRow>
+      </FGrid>
+    </FormShell>
+  );
+}
 
 function NewReminderModal({ onClose }) {
   const [title,setTitle]=useState("");
@@ -12658,6 +12716,7 @@ function mapCustomerFromDB(r) {
     lastContact:r.updated_at?new Date(r.updated_at).toLocaleDateString('tr-TR',{day:'2-digit',month:'short',year:'numeric'}):'—',
     importType:r.import_type||'manual', _fromDB:true };
 }
+// TESTABLE:mapCustomerToDB:start
 function mapCustomerToDB(d) {
   const r={};
   if(d.name!=null)r.full_name=d.name; if(d.full_name!=null)r.full_name=d.full_name;
@@ -12666,8 +12725,13 @@ function mapCustomerToDB(d) {
   if(d.language!=null)r.language=d.language; if(d.notes!=null)r.notes=d.notes;
   if(d.tags!=null)r.tags=d.tags; if(d.sourceId!=null)r.source_id=d.sourceId;
   if(d.source_id!=null)r.source_id=d.source_id; if(d.importType!=null)r.import_type=d.importType;
+  // "Durum" — the real schema only carries an is_active boolean; every
+  // other GUEST_STATUS_CFG label ("Rezervasyonu Var", "Tekrar Gelen", …) is
+  // derived/mock-only display, not a stored value, so only Aktif/Arşiv map here.
+  if(d.status!=null)r.is_active=d.status!=='Arşiv';
   return r;
 }
+// TESTABLE:mapCustomerToDB:end
 const _S2A={'new':'Yeni','contacted':'Görüşüldü','quote_sent':'Teklif Gönderildi','quote_approved':'Teklif Onaylandı','won':'Onaylandı','lost':'İptal','on_hold':'Beklemede'};
 const _A2S={'Yeni':'new','Görüşüldü':'contacted','Teklif Hazırlanıyor':'contacted','Teklif Gönderildi':'quote_sent','Teklif Onaylandı':'quote_approved','Ödeme Bekleniyor':'quote_approved','Onaylandı':'won','İptal':'lost','Beklemede':'on_hold'};
 function _tAgo(d){const m=Math.floor((Date.now()-d)/60000);if(m<60)return m+'dk önce';const h=Math.floor(m/60);if(h<24)return h+'sa önce';const dy=Math.floor(h/24);if(dy<7)return dy+'g önce';return d.toLocaleDateString('tr-TR',{day:'2-digit',month:'short'});}
@@ -12892,7 +12956,7 @@ const SupabaseCustomerRepo = {
   async getById(id){const sb=getSB();if(!sb)return CustomerRepository.getById(id);const{data,error}=await sb.from('customers').select('*').eq('id',id).maybeSingle();if(error)throw new Error(error.message);return mapCustomerFromDB(data);},
   async findByContact({email,phone}){const sb=getSB();if(!sb)return CustomerRepository.findByContact({email,phone});if(!email&&!phone)return null;let q=sb.from('customers').select('*');if(email&&phone)q=q.or(`email.eq.${email},phone.eq.${phone}`);else if(email)q=q.eq('email',email);else q=q.eq('phone',phone);const{data}=await q.limit(1).maybeSingle();return mapCustomerFromDB(data);},
   async create(d){const sb=getSB();if(!sb)return CustomerRepository.create(d);const row=mapCustomerToDB(d);if(!row.full_name)row.full_name=d.name||'Bilinmiyor';row.is_active=true;row.import_type=d.importType||'manual';const{data:c,error}=await sb.from('customers').insert(row).select().single();if(error)throw new Error(error.message);try{await _sbLog('customer',c.id,'created',`Yeni misafir: ${c.full_name}`);}catch(_){}return mapCustomerFromDB(c);},
-  async update(id,p){const sb=getSB();if(!sb)return CustomerRepository.update(id,p);const row=mapCustomerToDB(p);const{data:u,error}=await sb.from('customers').update(row).eq('id',id).select().single();if(error)throw new Error(error.message);return mapCustomerFromDB(u);},
+  async update(id,p){const sb=getSB();if(!sb)return CustomerRepository.update(id,p);const row=mapCustomerToDB(p);const{data:u,error}=await sb.from('customers').update(row).eq('id',id).select().single();if(error)throw new Error(error.message);try{await _sbLog('customer',id,'updated',`Güncellendi: ${Object.keys(p).join(', ')}`);}catch(_){}return mapCustomerFromDB(u);},
   async delete(id){const sb=getSB();if(!sb)return CustomerRepository.delete(id);const{error}=await sb.from('customers').update({is_active:false}).eq('id',id);if(error)throw new Error(error.message);return true;},
 };
 
