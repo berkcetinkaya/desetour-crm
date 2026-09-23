@@ -2354,9 +2354,9 @@ function KpiRow() {
       accent:false,
     },
     {
-      label:"Bekleyen Ödemeler",
-      value:`₺${m.pendingTRY.toLocaleString("tr-TR",{maximumFractionDigits:0})}`,
-      sub:`${m.pendingPaysCount} rezervasyon`,
+      label:"Rehber Ataması Bekleyen",
+      value: kpiLoading ? '…' : String(m.unassignedGuideCount),
+      sub:"Atama bekleyen rezervasyon",
       icon:"M2 9a2 2 0 012-2h16a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V9zM2 13h20",
     },
     {
@@ -10588,6 +10588,23 @@ function computeMonthlyReservationRevenue(reservations, todayISO) {
 }
 // TESTABLE:computeMonthlyReservationRevenue:end
 
+// TESTABLE:computeUnassignedGuideUpcomingCount:start
+// "Rehber Ataması Bekleyen" — the number of upcoming, active reservations
+// that have no guide assigned yet (reservations.guide_id). "Upcoming" means
+// tour date (checkIn) today or later; "active" excludes cancelled ("İptal")
+// and already-completed ("Tamamlandı") reservations. Pure and
+// dependency-free (only its parameters) so it can be extracted and
+// unit-tested in isolation — see tests/dashboard/guideAssignment.test.js.
+function computeUnassignedGuideUpcomingCount(reservations, todayISO) {
+  return (reservations || []).filter(r => {
+    if (r.guideId) return false;
+    if (r.opStatus === "İptal" || r.opStatus === "Tamamlandı") return false;
+    if (!r.checkIn) return false;
+    return r.checkIn.slice(0, 10) >= todayISO;
+  }).length;
+}
+// TESTABLE:computeUnassignedGuideUpcomingCount:end
+
 function calculateDashboardMetrics(leads, reservations, payments, tasks, reminders) {
   // When Supabase is active, use empty arrays (not DB mock) if data not loaded yet
   // This prevents KPIs briefly showing mock values then disappearing
@@ -10601,16 +10618,13 @@ function calculateDashboardMetrics(leads, reservations, payments, tasks, reminde
 
   const todayTours    = _res.filter(r => r.date===today || r.checkIn===todayISO);
   const upcomingRes   = _res.filter(r => !["Tamamlandı","İptal"].includes(r.opStatus));
-  const pendingPays   = _pays.filter(p => ["Bekliyor","Kısmi Ödendi"].includes(p.status));
-  // DeseTour reports and operates in Turkish Lira, so pending-payment totals
-  // are summed from TRY-currency records only (mirrors the €/EUR filter this
-  // replaced — this KPI has never mixed currencies, only the currency was wrong).
-  const pendingTRY    = pendingPays.filter(p=>p.currency==="TRY")
-    .reduce((s,p)=>s+parseFloat(p.amount||0), 0);
 
   // "Bu Ay Beklenen Ciro" — booked sales value of this month's tours, never
   // derived from payments. See computeMonthlyReservationRevenue above.
   const monthRevTRY = computeMonthlyReservationRevenue(_res, todayISO);
+
+  // "Rehber Ataması Bekleyen" — see computeUnassignedGuideUpcomingCount above.
+  const unassignedGuideCount = computeUnassignedGuideUpcomingCount(_res, todayISO);
 
   const urgentItems = computeUrgent(_res, _pays, _rems);
   const recentActivities = DB.activityLogs.slice(-6).reverse();
@@ -10619,8 +10633,7 @@ function calculateDashboardMetrics(leads, reservations, payments, tasks, reminde
     todayTours,
     todayTourCount: todayTours.length,
     todayTourPax:   todayTours.reduce((s,r)=>s+parseInt(r.pax||1),0),
-    pendingPaysCount: pendingPays.length,
-    pendingTRY,
+    unassignedGuideCount,
     upcomingRes:    upcomingRes.slice(0,5),
     upcomingCount:  upcomingRes.length,
     monthRevTRY,

@@ -110,12 +110,6 @@ test('"Bu Ay Beklenen Ciro" KPI displays with the ₺ symbol and reads from mont
   assert.match(m[1], /^₺\$\{m\.monthRevTRY\.toLocaleString\("tr-TR"/);
 });
 
-test('"Bekleyen Ödemeler" KPI displays with the ₺ symbol and remains payment-based (reads from pendingTRY)', () => {
-  const m = SOURCE.match(/label:"Bekleyen Ödemeler",\s*\n\s*value:`([^`]+)`/);
-  assert.ok(m, 'could not find the "Bekleyen Ödemeler" KPI card definition');
-  assert.match(m[1], /^₺\$\{m\.pendingTRY\.toLocaleString\("tr-TR"/);
-});
-
 test('calculateDashboardMetrics computes monthRevTRY via computeMonthlyReservationRevenue, not from payments', () => {
   assert.match(SOURCE, /const monthRevTRY = computeMonthlyReservationRevenue\(_res, todayISO\);/);
 });
