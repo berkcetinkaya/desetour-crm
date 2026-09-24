@@ -649,7 +649,28 @@ function _dedupedLoadStaffData(userId,loadFn=loadStaffData){if(_inFlightStaffLoo
 // Supabase) but is overridable so this whole decision tree — including the
 // 12000ms timeout race — can be exercised deterministically in tests
 // without a real network call or a real 12-second wait.
-async function _resolveStaffState(s,loadFn=loadStaffData){if(!s?.user)return{session:s,staff:null,authLoading:false,staffQueryError:null,staffInactive:false};try{const{data,error}=await _withTimeout(_dedupedLoadStaffData(s.user.id,loadFn),12000,'Personel profili');if(error){console.error('[Auth] staff_users query returned an error (session kept):',error);return{session:s,staff:null,authLoading:false,staffQueryError:error.message||String(error),staffInactive:false};}if(data&&data.is_active===false){return{session:s,staff:null,authLoading:false,staffQueryError:null,staffInactive:true};}return{session:s,staff:data,authLoading:false,staffQueryError:null,staffInactive:false};}catch(e){console.error('[Auth] staff profile lookup threw (session kept):',e);return{session:s,staff:null,authLoading:false,staffQueryError:e.message,staffInactive:false};}}// TESTABLE:_resolveStaffState:end
+//
+// `isStale` is an optional zero-arg predicate, checked ONLY at the moment
+// this lookup actually settles (success or failure) — never at dispatch
+// time — so it reflects whether a NEWER resolution has already won by
+// then. It gates the two console.error calls below, never the returned
+// patch itself: staleness of the RESULT (which one gets applied to
+// _authCache) is decided entirely by the caller via _applyAuthResolution/
+// _computeAuthResolution, exactly as before. This exists because two
+// _resolveStaffState calls can legitimately share the SAME underlying
+// _dedupedLoadStaffData promise (or, in rarer cases, each start their own),
+// each wrapped in its OWN independent _withTimeout — so a call that is no
+// longer the latest-dispatched one can still settle (and, if it fails,
+// still throw/reject) well after a newer call has already resolved and
+// authorized the session. Left unguarded, that produces exactly the
+// production symptom this was added for: a "profile lookup threw (session
+// kept)" error logging out of nowhere, seconds after the real staff_users
+// request already succeeded and the app was already showing authenticated
+// content — technically harmless (the verified profile was never at risk),
+// but indistinguishable in the console from an active, current problem.
+// Defaults to "never stale" so every existing call site/test that doesn't
+// pass it behaves exactly as before.
+async function _resolveStaffState(s,loadFn=loadStaffData,isStale=()=>false){if(!s?.user)return{session:s,staff:null,authLoading:false,staffQueryError:null,staffInactive:false};try{const{data,error}=await _withTimeout(_dedupedLoadStaffData(s.user.id,loadFn),12000,'Personel profili');if(error){if(!isStale())console.error('[Auth] staff_users query returned an error (session kept):',error);return{session:s,staff:null,authLoading:false,staffQueryError:error.message||String(error),staffInactive:false};}if(data&&data.is_active===false){return{session:s,staff:null,authLoading:false,staffQueryError:null,staffInactive:true};}return{session:s,staff:data,authLoading:false,staffQueryError:null,staffInactive:false};}catch(e){if(!isStale())console.error('[Auth] staff profile lookup threw (session kept):',e);return{session:s,staff:null,authLoading:false,staffQueryError:e.message,staffInactive:false};}}// TESTABLE:_resolveStaffState:end
 // TESTABLE:_signInWithPassword:start
 // The actual Supabase Auth call login() makes, extracted so it's directly
 // testable with a fake `sb` (same dependency-injection style
@@ -714,7 +735,12 @@ async function login(email,password){const sb=getSB();if(!sb){const found=DB.sta
 const staffRefreshError=authState.staffRefreshError||null;const staffInactive=authState.staffInactive||false;// Re-runs only the staff_users lookup for the current session, without
 // dropping back to a full "Yükleniyor…" screen — used by the "Tekrar
 // Dene" button on the staff-query-failed screen.
-async function retryStaffLookup(){if(!session)return;const prevCache=_authCache;const prevUserId=prevCache?.session?.user?.id||null;const reqId=++_authReqSeq;const patch=await _resolveStaffState(session);if(!_applyAuthResolution(reqId,patch,prevCache,prevUserId))return;setAuthState(_authCache);_notifyAuthListeners();}useEffect(()=>{// Subscribe to future auth changes
+async function retryStaffLookup(){if(!session)return;const prevCache=_authCache;const prevUserId=prevCache?.session?.user?.id||null;const reqId=++_authReqSeq;// isStale is evaluated lazily, only if/when this lookup actually
+// rejects — by then a newer retry or auth event may already have won
+// (bumped _authReqSeq past this reqId), in which case this one logging
+// its own failure would be exactly the stale, already-superseded
+// console.error this mechanism exists to prevent.
+const patch=await _resolveStaffState(session,undefined,()=>reqId!==_authReqSeq);if(!_applyAuthResolution(reqId,patch,prevCache,prevUserId))return;setAuthState(_authCache);_notifyAuthListeners();}useEffect(()=>{// Subscribe to future auth changes
 const listener=state=>setAuthState({...state});_authListeners.push(listener);// If already loaded (navigated back), use cached state immediately
 if(_authCache&&!_authCache.authLoading){setAuthState({..._authCache});return()=>{_authListeners=_authListeners.filter(l=>l!==listener);};}const sb=getSB();if(!sb){const mockStaff=DB.staff[0]||{id:"STAFF-001",name:"Berk Çetinkaya",initials:"BÇ",email:"berk@desetour.com",role:"Yönetici",active:true};const newState={session:{user:{email:mockStaff.email,id:mockStaff.id}},staff:{...mockStaff,full_name:mockStaff.name},authLoading:false};_authCache=newState;setAuthState(newState);return()=>{_authListeners=_authListeners.filter(l=>l!==listener);};}// Bootstrap is driven SOLELY by onAuthStateChange — including its very
 // first callback, which supabase-js always fires once immediately after
@@ -739,15 +765,29 @@ if(_authCache&&!_authCache.authLoading){setAuthState({..._authCache});return()=>
 // (corrupted storage, a hung client), the app must not be stuck showing
 // "Yükleniyor…" forever — force-resolve to the login screen with an
 // error after the same 12000ms budget every other auth step uses.
-let bootstrapped=false;const bootTimer=setTimeout(()=>{if(bootstrapped)return;bootstrapped=true;const newState={session:null,staff:null,authLoading:false,authError:'Oturum kontrolü zaman aşımına uğradı (12000ms)'};_authCache=newState;setAuthState(newState);_notifyAuthListeners();},12000);const{data:{subscription}}=sb.auth.onAuthStateChange(async(ev,s)=>{bootstrapped=true;clearTimeout(bootTimer);const prevCache=_authCache;const prevUserId=prevCache?.session?.user?.id||null;const newUserId=s?.user?.id||null;// TOKEN_REFRESHED (and a duplicate INITIAL_SESSION firing right after
-// the first one already resolved) mean the same already-authenticated
-// user just received a new JWT — nothing about their staff_users row
-// changed as a side effect of that, so there is nothing to re-query.
-// Re-running the staff_users lookup on every background refresh is
-// exactly what let a purely transient timeout overwrite an
-// already-valid profile — skip the query entirely when identity
-// hasn't changed and a verified profile is already cached for it.
-if((ev==='TOKEN_REFRESHED'||ev==='INITIAL_SESSION')&&newUserId&&newUserId===prevUserId&&prevCache?.staff){_authCache={...prevCache,session:s};setAuthState(_authCache);_notifyAuthListeners();return;}const reqId=++_authReqSeq;// A different user signed in, or the session ended — never let a
+let bootstrapped=false;const bootTimer=setTimeout(()=>{if(bootstrapped)return;bootstrapped=true;const newState={session:null,staff:null,authLoading:false,authError:'Oturum kontrolü zaman aşımına uğradı (12000ms)'};_authCache=newState;setAuthState(newState);_notifyAuthListeners();},12000);const{data:{subscription}}=sb.auth.onAuthStateChange(async(ev,s)=>{bootstrapped=true;clearTimeout(bootTimer);const prevCache=_authCache;const prevUserId=prevCache?.session?.user?.id||null;const newUserId=s?.user?.id||null;// ANY repeat event for the SAME already-verified identity — not just
+// TOKEN_REFRESHED/INITIAL_SESSION, but also a duplicate SIGNED_IN
+// (Supabase re-broadcasts auth state across tabs via a storage/
+// BroadcastChannel listener — another tab refreshing or signing in
+// can re-fire an event here too), USER_UPDATED, or any other event
+// type — means the same already-authenticated user is still the
+// same user; nothing about their staff_users row changed as a side
+// effect of that, so there is nothing to re-query. This used to be
+// narrowed to just two event types, which left every OTHER repeat
+// event free to start a full second staff_users lookup — sequential
+// with, not concurrent with, the first one, so _dedupedLoadStaffData
+// (which only collapses requests that overlap in time) couldn't
+// catch it: a genuinely separate, later HTTP request, racing its own
+// independent 12000ms timer, whose failure (rare, but possible —
+// connection contention, an RLS check briefly slower than usual,
+// anything) logged "profile lookup threw (session kept)" seconds
+// after the FIRST request had already succeeded and authorized the
+// session — exactly the "HTTP 200 at ~777ms, yet a timeout logs
+// ~12s later" sequence seen in production. Widening this guard to
+// ANY event type removes the redundant request itself, for every
+// event Supabase can fire, not just two of them — the strongest
+// form of "one logical staff bootstrap per session."
+if(newUserId&&newUserId===prevUserId&&prevCache?.staff){_authCache={...prevCache,session:s};setAuthState(_authCache);_notifyAuthListeners();return;}const reqId=++_authReqSeq;// A different user signed in, or the session ended — never let a
 // previous user's cached profile leak into the new session, even
 // for the moment it takes the new lookup to resolve.
 if(newUserId!==prevUserId){_authCache={session:s,staff:null,authLoading:true,staffQueryError:null,staffRefreshError:null};setAuthState(_authCache);_notifyAuthListeners();}// `s` (null or a session) comes straight from the auth event itself —
@@ -756,8 +796,15 @@ if(newUserId!==prevUserId){_authCache={session:s,staff:null,authLoading:true,sta
 // unrelated insert) would look like a logout. _applyAuthResolution
 // additionally protects an already-verified same-user profile from
 // being erased by this failure, and discards this resolution outright
-// if a newer one has started since (see _computeAuthResolution).
-const patch=await _resolveStaffState(s);if(!_applyAuthResolution(reqId,patch,prevCache,prevUserId))return;setAuthState(_authCache);_notifyAuthListeners();});return()=>{clearTimeout(bootTimer);subscription?.unsubscribe?.();_authListeners=_authListeners.filter(l=>l!==listener);};},[]);// loadStaffData is now a module-level helper (defined below useAuth)
+// if a newer one has started since (see _computeAuthResolution). The
+// isStale check (evaluated only if this lookup fails, only once it
+// actually settles) additionally stops that discarded failure from
+// being logged as if it were current — see _resolveStaffState's own
+// comment for exactly why a stale rejection can still occur even
+// with the widened short-circuit above (a different-user switch, or
+// any two resolutions that happen to start close enough together to
+// both be in flight at once).
+const patch=await _resolveStaffState(s,undefined,()=>reqId!==_authReqSeq);if(!_applyAuthResolution(reqId,patch,prevCache,prevUserId))return;setAuthState(_authCache);_notifyAuthListeners();});return()=>{clearTimeout(bootTimer);subscription?.unsubscribe?.();_authListeners=_authListeners.filter(l=>l!==listener);};},[]);// loadStaffData is now a module-level helper (defined below useAuth)
 async function logout(){const sb=getSB();if(sb)await sb.auth.signOut();// Same pre-existing bug as login(): setSession()/setStaff() don't
 // exist here — fixed to go through updateAuth() like everything else.
 updateAuth({session:null,staff:null,authLoading:false,authError:null,staffQueryError:null});if(typeof NAV_REF.fn==='function')NAV_REF.fn('/login');}// staff_users lookup can legitimately come back empty even with a valid

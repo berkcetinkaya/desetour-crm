@@ -452,21 +452,32 @@ test('REGRESSION 1: initial authenticated page load performs one logical staff b
   assert.equal(result.data.full_name, 'Berk');
 });
 
-// 2. INITIAL_SESSION followed by SIGNED_IN for the SAME user/session must
-//    not create duplicate staff lookups — proven directly against the real
-//    onAuthStateChange handler body: TOKEN_REFRESHED/INITIAL_SESSION for an
-//    identity that hasn't changed, with an already-verified profile cached,
-//    short-circuits before reaching _resolveStaffState at all.
-test('REGRESSION 2: INITIAL_SESSION plus a same-user SIGNED_IN/TOKEN_REFRESHED does not create duplicate staff lookups — the handler short-circuits when identity is unchanged and a profile is already cached', () => {
+// 2. INITIAL_SESSION followed by SIGNED_IN (or ANY other repeat event) for
+//    the SAME user/session must not create duplicate staff lookups —
+//    proven directly against the real onAuthStateChange handler body: an
+//    identity that hasn't changed, with an already-verified profile
+//    cached, short-circuits before reaching _resolveStaffState at all,
+//    regardless of which event type triggered it. This guard used to be
+//    narrowed to only TOKEN_REFRESHED/INITIAL_SESSION — widened (see the
+//    fix's own comment in the handler) after live production evidence
+//    showed a genuine HTTP 200 staff_users response at ~777ms followed by
+//    a stale "profile lookup threw (session kept)" timeout ~12s later:
+//    proof that some OTHER, uncovered event type was starting a second,
+//    non-deduped, sequential lookup for an identity that was already
+//    verified.
+test('REGRESSION 2: a repeat auth event of ANY type (not just TOKEN_REFRESHED/INITIAL_SESSION) for an unchanged identity with an already-cached profile short-circuits before reaching _resolveStaffState at all', () => {
   const useAuthIdx = SOURCE.indexOf('function useAuth()');
-  const idx = SOURCE.indexOf("ev === 'TOKEN_REFRESHED' || ev === 'INITIAL_SESSION'", useAuthIdx);
+  const idx = SOURCE.indexOf('newUserId && newUserId === prevUserId && prevCache?.staff', useAuthIdx);
   assert.ok(idx !== -1, 'the same-identity short-circuit for repeated auth events was not found');
   const lineEnd = SOURCE.indexOf('\n', idx);
   const line = SOURCE.slice(SOURCE.lastIndexOf('if (', idx), lineEnd);
+  // The guard must NOT be narrowed back down to specific event-type checks
+  // (ev === '...') — it must apply to every event type Supabase can fire.
+  assert.doesNotMatch(line, /ev\s*===/, 'the short-circuit must not be gated on specific event types — any repeat event for an unchanged, already-verified identity must be covered');
   assert.match(line, /newUserId && newUserId === prevUserId && prevCache\?\.staff/);
   // And the short-circuit branch returns before ever reaching the
   // _resolveStaffState call further down in the same handler.
-  const resolveCallIdx = SOURCE.indexOf('_resolveStaffState(s)', idx);
+  const resolveCallIdx = SOURCE.indexOf('_resolveStaffState(s', idx);
   const returnIdx = SOURCE.indexOf('return;', idx);
   assert.ok(returnIdx !== -1 && returnIdx < resolveCallIdx, 'the short-circuit must return before the real staff lookup is ever started');
 });
@@ -601,4 +612,174 @@ test('REGRESSION 8c: login() and updateAuth() are module-level (defined before u
   assert.ok(loginIdx !== -1 && updateAuthIdx !== -1 && useAuthIdx !== -1);
   assert.ok(loginIdx < useAuthIdx, 'login() must be defined before/outside useAuth(), at module level');
   assert.ok(updateAuthIdx < useAuthIdx, 'updateAuth() must be defined before/outside useAuth(), at module level');
+});
+
+// ── Live production evidence round 2: Chrome Network, filtered to
+// "staff_users", showed the REAL query completing HTTP 200 in ~777ms —
+// disproving the earlier "the query itself is slow" theory. Yet the
+// console still later logged "[Auth] staff profile lookup threw (session
+// kept): ... zaman aşımına uğradı (12000ms)". Root cause, found by tracing
+// _resolveStaffState/_withTimeout/_dedupedLoadStaffData/onAuthStateChange
+// together rather than in isolation: the short-circuit that skips
+// re-querying staff_users for an unchanged, already-verified identity was
+// narrowed to exactly two Supabase event types (TOKEN_REFRESHED,
+// INITIAL_SESSION). ANY other repeat event for that same already-verified
+// user — a duplicate SIGNED_IN (Supabase re-broadcasts auth state across
+// browser tabs via a storage/BroadcastChannel listener), USER_UPDATED, or
+// anything else — fell through the guard and started a full second,
+// independent staff_users lookup, SEQUENTIAL with (not concurrent with)
+// the first one. Because _dedupedLoadStaffData only collapses requests
+// that overlap in time, a sequential second lookup gets its own real
+// network request and its own independent _withTimeout/12000ms timer. If
+// that SECOND request is ever slow or fails for any reason unrelated to
+// the first (rare, but not impossible), it settles up to 12 seconds after
+// it started — which can land well after the FIRST request already
+// succeeded and authorized the session — and logs a "profile lookup
+// threw" error that looks like an active problem but is actually a stale,
+// already-superseded echo. Fixed two ways: (1) the short-circuit now
+// covers ANY event type, not just two, removing the redundant request for
+// the routine case entirely; (2) _resolveStaffState now takes an
+// isStale() check (wired from the caller's reqId vs the live _authReqSeq)
+// that suppresses ONLY a stale rejection's console.error — a CURRENT
+// failure (the latest-dispatched resolution) still always logs. Both
+// changes are pure logging/request-count corrections: _computeAuthResolution
+// already guaranteed a stale result could never overwrite a verified
+// profile, and staffLinked (!!staff) already never becomes true from a
+// timeout — authorization was never at risk from this bug, only the
+// console was. ──────────────────────────────────────────────────────────
+
+test('PRODUCTION SEQUENCE: a staff lookup that resolves successfully at ~777ms logs nothing, even once the clock is advanced past the full 12000ms timeout budget — no dangling timer, no stale error, ever', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const originalConsoleError = console.error;
+  const logged = [];
+  console.error = (...args) => logged.push(args);
+  try {
+    const loadFn = (id) => new Promise((resolve) => {
+      setTimeout(() => resolve({ data: { id, full_name: 'Berk Çetinkaya', is_active: true }, error: null }), 777);
+    });
+    const promise = resolveStaffState(session('u-prod-777'), loadFn);
+    t.mock.timers.tick(777);
+    const result = await promise;
+    assert.equal(result.staffQueryError, null);
+    assert.equal(result.staff.full_name, 'Berk Çetinkaya');
+    // The exact reported sequence: the clock keeps running well past the
+    // 12000ms budget after the real response already came back.
+    t.mock.timers.tick(20000);
+    assert.equal(logged.length, 0, `no console.error may fire after a successful resolution, however long the clock later advances — got: ${JSON.stringify(logged)}`);
+  } finally {
+    console.error = originalConsoleError;
+    t.mock.timers.reset();
+  }
+});
+
+test('PRODUCTION SEQUENCE: a stale OLDER lookup that is still in flight when a NEWER lookup for a different identity already succeeded logs nothing when it eventually times out — the isStale() check suppresses only the superseded one', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const originalConsoleError = console.error;
+  const logged = [];
+  console.error = (...args) => logged.push(args);
+  try {
+    let latestReqId = 0;
+
+    // Call A: dispatched first (reqId 1), for a user whose lookup never
+    // settles within the budget — mirrors a stale/orphaned request that
+    // outlives whatever started it (e.g. a superseded session).
+    const reqIdA = ++latestReqId;
+    const hangingLoadFn = () => new Promise(() => {});
+    const promiseA = resolveStaffState(session('u-stale-A'), hangingLoadFn, () => reqIdA !== latestReqId);
+
+    // Call B: dispatched shortly after (reqId 2, a genuinely different,
+    // newer identity — e.g. the user that's actually signed in now) and
+    // resolves quickly, becoming the latest applied resolution.
+    const reqIdB = ++latestReqId;
+    const fastLoadFn = (id) => Promise.resolve({ data: { id, full_name: 'Yeni Kullanıcı', is_active: true }, error: null });
+    const promiseB = resolveStaffState(session('u-fresh-B'), fastLoadFn, () => reqIdB !== latestReqId);
+    const resultB = await promiseB;
+    assert.equal(resultB.staff.full_name, 'Yeni Kullanıcı');
+    assert.equal(logged.length, 0, 'the fast, current resolution must never log anything');
+
+    // Now the stale call's own 12000ms budget elapses.
+    t.mock.timers.tick(12000);
+    const resultA = await promiseA;
+    assert.match(resultA.staffQueryError, /zaman aşımına uğradı/);
+    assert.equal(logged.length, 0, 'a lookup that is no longer the latest dispatched request must not log its own late failure as if it were current');
+  } finally {
+    console.error = originalConsoleError;
+    t.mock.timers.reset();
+  }
+});
+
+test('PRODUCTION SEQUENCE (negative control): the SAME stale timeout DOES log when no isStale() check is supplied — proving the suppression above is a real, active guard, not a no-op', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const originalConsoleError = console.error;
+  const logged = [];
+  console.error = (...args) => logged.push(args);
+  try {
+    const hangingLoadFn = () => new Promise(() => {});
+    // No third argument — defaults to () => false, i.e. "never stale".
+    const promise = resolveStaffState(session('u-negative-control'), hangingLoadFn);
+    t.mock.timers.tick(12000);
+    const result = await promise;
+    assert.match(result.staffQueryError, /zaman aşımına uğradı/);
+    assert.equal(logged.length, 1, 'without an isStale() check, a genuinely current (or default-configured) failure must still log — this is what proves the guard in the test above is actually doing something, not passing by coincidence');
+  } finally {
+    console.error = originalConsoleError;
+    t.mock.timers.reset();
+  }
+});
+
+test('PRODUCTION SEQUENCE: a CURRENT failure (the latest-dispatched resolution) still logs normally — staleness suppression never hides a real, active problem', async (t) => {
+  const originalConsoleError = console.error;
+  const logged = [];
+  console.error = (...args) => logged.push(args);
+  try {
+    let latestReqId = 1;
+    const failing = async () => { throw new Error('genuinely down right now'); };
+    const result = await resolveStaffState(session('u-current-failure'), failing, () => 1 !== latestReqId);
+    assert.match(result.staffQueryError, /genuinely down right now/);
+    assert.equal(logged.length, 1, 'a failure that IS the latest-dispatched resolution must still be logged — "no legitimate current auth failure may be hidden"');
+  } finally {
+    console.error = originalConsoleError;
+  }
+});
+
+test('PRODUCTION SEQUENCE: the same deduplicated promise, consumed by two separate _resolveStaffState/_withTimeout wrappers, resolves both identically and logs nothing on success', async () => {
+  let loadCalls = 0;
+  const loadFn = async (id) => { loadCalls++; return { data: { id, full_name: 'Paylaşılan Profil', is_active: true }, error: null }; };
+  const originalConsoleError = console.error;
+  let loggedCount = 0;
+  console.error = () => { loggedCount++; };
+  try {
+    const [r1, r2] = await Promise.all([
+      resolveStaffState(session('u-shared-consumer'), loadFn, () => false),
+      resolveStaffState(session('u-shared-consumer'), loadFn, () => false),
+    ]);
+    assert.equal(loadCalls, 1, 'two concurrent consumers of the same user must still only trigger one real query');
+    assert.deepEqual(r1, r2, 'both independent _withTimeout wrappers around the same deduplicated promise must resolve to the same outcome');
+    assert.equal(loggedCount, 0);
+  } finally {
+    console.error = originalConsoleError;
+  }
+});
+
+test('the useAuth() mount effect\'s cleanup function is purely synchronous — it never awaits the in-flight staff lookup, so unmounting mid-lookup still immediately unsubscribes and removes the listener regardless of how long that lookup takes to settle', () => {
+  const useAuthIdx = SOURCE.indexOf('function useAuth()');
+  const effectIdx = SOURCE.indexOf('useEffect(() => {', useAuthIdx);
+  const effectEndIdx = SOURCE.indexOf('}, []);', effectIdx);
+  const body = SOURCE.slice(effectIdx, effectEndIdx);
+  const cleanups = body.match(/return \(\) => \{[^}]*\};/g) || [];
+  const realPathCleanup = cleanups[cleanups.length - 1];
+  assert.doesNotMatch(realPathCleanup, /await\b/, 'a cleanup function that awaited the in-flight lookup would delay unmount cleanup by up to 12 seconds');
+  assert.doesNotMatch(realPathCleanup, /\.then\(/, 'cleanup must not be gated on the lookup promise settling');
+});
+
+test('logout during an in-flight lookup: the stale lookup\'s eventual timeout is discarded outright by _computeAuthResolution once the SIGNED_OUT event has already bumped past its reqId — the logged-out state is never overwritten', () => {
+  // Mirrors the real onAuthStateChange handler's own sequencing: the
+  // in-flight lookup was dispatched under reqId 1; logout's own SIGNED_OUT
+  // event increments _authReqSeq to 2 (a different identity: newUserId
+  // becomes null) and applies its own resolution immediately (a null
+  // session resolves synchronously, no query). The stale lookup's patch,
+  // whenever it finally settles, carries reqId 1 — now stale.
+  const staleTimeoutPatch = { session: session('u-logout-race'), staff: null, staffQueryError: 'zaman aşımına uğradı (12000ms)' };
+  const result = computeAuthResolution(1, 2, staleTimeoutPatch, { session: null, staff: null, authLoading: false }, null);
+  assert.equal(result, null, 'a stale lookup settling after logout must never repopulate the cache with the logged-out user\'s profile');
 });
