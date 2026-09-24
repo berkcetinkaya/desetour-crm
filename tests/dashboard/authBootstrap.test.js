@@ -27,6 +27,7 @@ function extractCombined(names) {
 
 const resolveStaffState = extractCombined(['_withTimeout', '_resolveStaffState']);
 const computeAuthResolution = extractCombined(['_computeAuthResolution']);
+const signInWithPassword = extractCombined(['_signInWithPassword']);
 
 function session(userId) {
   return { user: { id: userId, email: `${userId}@desetour.com` } };
@@ -304,4 +305,107 @@ test('2. an authenticated admin with a valid, active staff record falls through 
   // !staffLinked held true.
   const afterProvider = AUTH_GUARD_BODY.slice(providerIdx);
   assert.doesNotMatch(afterProvider.slice(40), /^\s*if \(/, 'no further branching after the success path');
+});
+
+// ── _signInWithPassword: the real sign-in call, and how its failures are
+// reported — added while investigating a live report of a user (Auth
+// UUID confirmed, staff row confirmed valid/active/linked, last_sign_in_at
+// NULL) whose login fails even with a believed-correct password. Proves,
+// with the REAL implementation and an injectable fake `sb` (never a real
+// network call), exactly what reaches Supabase and exactly how a real
+// rejection differs from the request itself failing. ─────────────────────
+
+function fakeSb(signInImpl) {
+  return { auth: { signInWithPassword: signInImpl } };
+}
+
+test('email/password are sent to signInWithPassword exactly as given — no trim, no case change, no other transformation', async () => {
+  let received = null;
+  const sb = fakeSb(async (args) => { received = args; return { data: {}, error: null }; });
+  await signInWithPassword(sb, '  Deniz@Desetour.com ', 'MyP@ssw0rd ');
+  assert.deepEqual(received, { email: '  Deniz@Desetour.com ', password: 'MyP@ssw0rd ' });
+});
+
+test('a real Supabase rejection (wrong credentials, rate limit, etc.) returns the existing generic Turkish message, and logs the real error for diagnosis', async () => {
+  const realError = new Error('Invalid login credentials');
+  const originalConsoleError = console.error;
+  const logged = [];
+  console.error = (...args) => logged.push(args);
+  try {
+    const sb = fakeSb(async () => ({ data: null, error: realError }));
+    const result = await signInWithPassword(sb, 'deniz@desetour.com', 'wrongpass');
+    assert.deepEqual(result, { error: 'Hatalı email veya şifre.' });
+    assert.ok(logged.some(args => args.some(a => a === realError)), 'the real Supabase error object must be logged, not silently discarded');
+  } finally {
+    console.error = originalConsoleError;
+  }
+});
+
+test('a successful sign-in returns {error:null}, with nothing logged as an error', async () => {
+  const originalConsoleError = console.error;
+  let called = false;
+  console.error = () => { called = true; };
+  try {
+    const sb = fakeSb(async () => ({ data: { user: { id: 'u1' } }, error: null }));
+    const result = await signInWithPassword(sb, 'deniz@desetour.com', 'correct-password');
+    assert.deepEqual(result, { error: null });
+    assert.equal(called, false);
+  } finally {
+    console.error = originalConsoleError;
+  }
+});
+
+test('a request that never reaches Supabase (network failure, CORS, a paused/misconfigured project) is caught, never left to propagate uncaught, and reported with a DISTINCT message from a real credential rejection', async () => {
+  const networkError = new TypeError('Failed to fetch');
+  const originalConsoleError = console.error;
+  const logged = [];
+  console.error = (...args) => logged.push(args);
+  try {
+    const sb = fakeSb(async () => { throw networkError; });
+    const result = await signInWithPassword(sb, 'deniz@desetour.com', 'correct-password');
+    assert.notEqual(result.error, 'Hatalı email veya şifre.', 'a request failure must never be reported identically to a real credential rejection');
+    assert.match(result.error, /Bağlantı hatası/);
+    assert.ok(logged.some(args => args.some(a => a === networkError)));
+  } finally {
+    console.error = originalConsoleError;
+  }
+});
+
+test('REGRESSION: before this fix, a thrown/rejected signInWithPassword propagated uncaught out of login() — this proves it no longer does, so the login button can never stay stuck on "Giriş yapılıyor…" forever with no error shown', async () => {
+  const sb = fakeSb(async () => { throw new Error('boom'); });
+  await assert.doesNotReject(signInWithPassword(sb, 'x@desetour.com', 'y'));
+});
+
+// --- Static source checks -----------------------------------------------
+
+test('LoginPage.handleSubmit passes the raw controlled-input state through unmodified — no trim()/toLowerCase() applied to email or password before login() is called', () => {
+  const idx = SOURCE.indexOf('async function handleSubmit(e)');
+  assert.ok(idx !== -1);
+  const body = SOURCE.slice(idx, SOURCE.indexOf('\n  }', idx));
+  assert.match(body, /await login\(email, password\)/);
+  assert.doesNotMatch(body, /\.trim\(\)/);
+  assert.doesNotMatch(body, /\.toLowerCase\(\)/);
+});
+
+test('login() delegates to the real, extracted _signInWithPassword — one implementation, directly tested above, not a second inline copy', () => {
+  const idx = SOURCE.indexOf('async function login(email, password)');
+  const body = SOURCE.slice(idx, SOURCE.indexOf('\n  async function logout', idx));
+  assert.match(body, /return _signInWithPassword\(sb, email, password\);/);
+  assert.doesNotMatch(body, /sb\.auth\.signInWithPassword\(/, 'login() itself must not call signInWithPassword directly — only _signInWithPassword may');
+});
+
+test('the login <input> fields are standard controlled inputs (value + onChange) with type="email"/type="password", not defaultValue/uncontrolled — the standard React pattern browser autofill is expected to update correctly', () => {
+  const idx = SOURCE.indexOf('function LoginPage({ onLogin, connectionError })');
+  const body = SOURCE.slice(idx, SOURCE.indexOf('Giriş Yap', idx) + 20);
+  assert.match(body, /value=\{email\} onChange=\{e=>setEmail\(e\.target\.value\)\}/);
+  assert.match(body, /value=\{password\} onChange=\{e=>setPassword\(e\.target\.value\)\}/);
+});
+
+test('a forgot-password flow exists and uses Supabase\'s official resetPasswordForEmail for the EXISTING auth user — never account deletion/recreation', () => {
+  const idx = SOURCE.indexOf('async function handleReset()');
+  assert.ok(idx !== -1);
+  const body = SOURCE.slice(idx, SOURCE.indexOf('\n  async function handleSubmit', idx));
+  assert.match(body, /sb\.auth\.resetPasswordForEmail\(resetEmail,/);
+  assert.doesNotMatch(SOURCE, /auth\.admin\.deleteUser/);
+  assert.doesNotMatch(SOURCE, /auth\.admin\.createUser/);
 });

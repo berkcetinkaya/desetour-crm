@@ -13848,6 +13848,47 @@ async function _resolveStaffState(s, loadFn = loadStaffData) {
 }
 // TESTABLE:_resolveStaffState:end
 
+// TESTABLE:_signInWithPassword:start
+// The actual Supabase Auth call login() makes, extracted so it's directly
+// testable with a fake `sb` (same dependency-injection style
+// _resolveStaffState already uses for loadFn) instead of a real network
+// call. email/password are passed through to signInWithPassword exactly
+// as given — this function does no trimming, case-normalization, or any
+// other transformation; that is decided entirely by the caller (login()
+// passes through whatever handleSubmit read from React's controlled-input
+// state, itself untouched — see LoginPage).
+//
+// Two distinct failure shapes are deliberately kept apart, never
+// conflated into one message or one code path:
+//   - Supabase's own credential check actively rejects the request (a
+//     normal, non-throwing {error} response) — the REAL error (status/
+//     name/message) is logged for anyone debugging, but the user-facing
+//     message stays the existing generic "Hatalı email veya şifre.",
+//     unchanged, to avoid revealing whether an email exists at all.
+//   - the request itself never completed (network failure, CORS, a
+//     paused/misconfigured Supabase project, timeout) — signInWithPassword
+//     REJECTS/throws in this case. Before this fix that propagated
+//     uncaught out of login() and out of handleSubmit's un-try/catch'd
+//     `await login(...)`, leaving the login button stuck on "Giriş
+//     yapılıyor…" forever with no error ever shown — indistinguishable,
+//     to someone who typed a correct password, from the app simply
+//     hanging. Caught here and reported as a distinct, honest
+//     "Bağlantı hatası" message instead.
+async function _signInWithPassword(sb, email, password) {
+  try {
+    const { error } = await sb.auth.signInWithPassword({ email, password });
+    if (error) {
+      console.error('[Auth] signInWithPassword rejected:', error);
+      return { error: "Hatalı email veya şifre." };
+    }
+    return { error: null };
+  } catch (e) {
+    console.error('[Auth] signInWithPassword request failed (network/connection):', e);
+    return { error: "Bağlantı hatası. İnternet bağlantınızı kontrol edip tekrar deneyin." };
+  }
+}
+// TESTABLE:_signInWithPassword:end
+
 function useAuth() {
   const [authState, setAuthState] = useState(() => _authCache || {
     session: null, staff: null, authLoading: true
@@ -14017,9 +14058,7 @@ function useAuth() {
       }
       return { error:"Hatalı email veya şifre." };
     }
-    const { data, error } = await sb.auth.signInWithPassword({ email, password });
-    if (error) return { error: "Hatalı email veya şifre." };
-    return { error:null };
+    return _signInWithPassword(sb, email, password);
   }
 
   async function logout() {

@@ -630,6 +630,33 @@ function _applyAuthResolution(reqId,patch,prevCache,prevUserId){const next=_comp
 // 12000ms timeout race — can be exercised deterministically in tests
 // without a real network call or a real 12-second wait.
 async function _resolveStaffState(s,loadFn=loadStaffData){if(!s?.user)return{session:s,staff:null,authLoading:false,staffQueryError:null,staffInactive:false};try{const{data,error}=await _withTimeout(loadFn(s.user.id),12000,'Personel profili');if(error){console.error('[Auth] staff_users query returned an error (session kept):',error);return{session:s,staff:null,authLoading:false,staffQueryError:error.message||String(error),staffInactive:false};}if(data&&data.is_active===false){return{session:s,staff:null,authLoading:false,staffQueryError:null,staffInactive:true};}return{session:s,staff:data,authLoading:false,staffQueryError:null,staffInactive:false};}catch(e){console.error('[Auth] staff profile lookup threw (session kept):',e);return{session:s,staff:null,authLoading:false,staffQueryError:e.message,staffInactive:false};}}// TESTABLE:_resolveStaffState:end
+// TESTABLE:_signInWithPassword:start
+// The actual Supabase Auth call login() makes, extracted so it's directly
+// testable with a fake `sb` (same dependency-injection style
+// _resolveStaffState already uses for loadFn) instead of a real network
+// call. email/password are passed through to signInWithPassword exactly
+// as given — this function does no trimming, case-normalization, or any
+// other transformation; that is decided entirely by the caller (login()
+// passes through whatever handleSubmit read from React's controlled-input
+// state, itself untouched — see LoginPage).
+//
+// Two distinct failure shapes are deliberately kept apart, never
+// conflated into one message or one code path:
+//   - Supabase's own credential check actively rejects the request (a
+//     normal, non-throwing {error} response) — the REAL error (status/
+//     name/message) is logged for anyone debugging, but the user-facing
+//     message stays the existing generic "Hatalı email veya şifre.",
+//     unchanged, to avoid revealing whether an email exists at all.
+//   - the request itself never completed (network failure, CORS, a
+//     paused/misconfigured Supabase project, timeout) — signInWithPassword
+//     REJECTS/throws in this case. Before this fix that propagated
+//     uncaught out of login() and out of handleSubmit's un-try/catch'd
+//     `await login(...)`, leaving the login button stuck on "Giriş
+//     yapılıyor…" forever with no error ever shown — indistinguishable,
+//     to someone who typed a correct password, from the app simply
+//     hanging. Caught here and reported as a distinct, honest
+//     "Bağlantı hatası" message instead.
+async function _signInWithPassword(sb,email,password){try{const{error}=await sb.auth.signInWithPassword({email,password});if(error){console.error('[Auth] signInWithPassword rejected:',error);return{error:"Hatalı email veya şifre."};}return{error:null};}catch(e){console.error('[Auth] signInWithPassword request failed (network/connection):',e);return{error:"Bağlantı hatası. İnternet bağlantınızı kontrol edip tekrar deneyin."};}}// TESTABLE:_signInWithPassword:end
 function useAuth(){const[authState,setAuthState]=useState(()=>_authCache||{session:null,staff:null,authLoading:true});const session=authState.session;const staff=authState.staff;const authLoading=authState.authLoading;const authError=authState.authError||null;const staffQueryError=authState.staffQueryError||null;// A background refresh that failed while a verified profile from the
 // SAME user was already cached — never gates the app (staff/role stay
 // intact), but is kept visible separately rather than silently dropped.
@@ -685,7 +712,7 @@ async function login(email,password){const sb=getSB();if(!sb){const found=DB.sta
 // in a single authState object updated via updateAuth), so a mock
 // -mode login with the correct demo credentials threw a
 // ReferenceError instead of logging in.
-updateAuth({staff:mockUser,session:{user:{email:found.email,id:found.id}},authLoading:false,authError:null,staffQueryError:null});return{error:null};}return{error:"Hatalı email veya şifre."};}const{data,error}=await sb.auth.signInWithPassword({email,password});if(error)return{error:"Hatalı email veya şifre."};return{error:null};}async function logout(){const sb=getSB();if(sb)await sb.auth.signOut();// Same pre-existing bug as login(): setSession()/setStaff() don't
+updateAuth({staff:mockUser,session:{user:{email:found.email,id:found.id}},authLoading:false,authError:null,staffQueryError:null});return{error:null};}return{error:"Hatalı email veya şifre."};}return _signInWithPassword(sb,email,password);}async function logout(){const sb=getSB();if(sb)await sb.auth.signOut();// Same pre-existing bug as login(): setSession()/setStaff() don't
 // exist here — fixed to go through updateAuth() like everything else.
 updateAuth({session:null,staff:null,authLoading:false,authError:null,staffQueryError:null});if(typeof NAV_REF.fn==='function')NAV_REF.fn('/login');}// staff_users lookup can legitimately come back empty even with a valid
 // session — staff_users.id must equal the Supabase Auth user's own id
