@@ -579,14 +579,39 @@ return perms?perms.includes(page):false;}// Returns { data, error }. Deliberatel
 // bad column, etc.) — the caller must branch on `error`, not just on
 // whether `data` is falsy, or a real failure looks identical to a
 // genuinely-missing profile.
-async function loadStaffData(userId){const sb=getSB();if(!sb)return{data:null,error:null};const{data,error}=await sb.from('staff_users').select('*').eq('id',userId).maybeSingle();if(error)console.error('[Auth] staff_users query failed for',userId,':',error);return{data:data||null,error:error||null};}// TESTABLE:_withTimeout:start
+async function loadStaffData(userId){const sb=getSB();if(!sb)return{data:null,error:null};const{data,error}=await sb.from('staff_users').select('*').eq('id',userId).maybeSingle();if(error)console.error('[Auth] staff_users query failed for',userId,':',error);return{data:data||null,error:error||null};}// TESTABLE:_authDiag:start
+// TEMPORARY diagnostic tracing for the "staff profile timeout despite a
+// fast HTTP 200" production investigation — every helper here is a pure
+// side-effect logger, never a decision point: nothing in this block reads
+// a Promise's value, changes what runs, or alters timing (no added
+// awaits/timers). Every entry point below takes an optional diagId that
+// defaults to null/undefined, and every call site guards with
+// `if (diagId) ...`, so passing nothing (as every pre-existing caller and
+// test does) is 100% behaviorally identical to before this block existed.
+// Logs only: a short deterministic correlation id (authdiag-N, not
+// Math.random — reproducible ordering across a run), elapsed ms from one
+// shared performance.now() origin, the Supabase auth event type, a
+// MAXIMUM 6-character user-id tail, and internal counters (reqId/
+// _authReqSeq). Never logs tokens, sessions, headers, passwords, keys,
+// full UUIDs, emails, or any customer/staff data. Every line is prefixed
+// [AUTH-DIAG] so it can be grepped, filtered, and removed in one pass
+// once the production trace is collected.
+let _authDiagSeq=0;const _authDiagOrigin=typeof performance!=='undefined'?performance.now():Date.now();function _authDiagNextId(){return`authdiag-${++_authDiagSeq}`;}function _authDiagNow(){const now=typeof performance!=='undefined'?performance.now():Date.now();return Math.round(now-_authDiagOrigin);}function _authDiagUserTail(userId){return userId?String(userId).slice(-6):null;}function _authDiagLog(diagId,...rest){console.debug('[AUTH-DIAG]',diagId,...rest);}// TESTABLE:_authDiag:end
+// TESTABLE:_withTimeout:start
 // A hung Supabase call (paused project, unreachable network, bad API key)
 // must not leave the app stuck in authLoading forever. Race any session
 // check against a deterministic timeout so the auth flow always finishes.
 // The losing side's timer is always cleared once the race settles (whether
 // `promise` won or the timeout did) — otherwise every FAST, successful call
 // still leaves a dangling `ms`-long timer behind for no reason.
-function _withTimeout(promise,ms,label){let timer;const timeout=new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error(`${label||'İşlem'} zaman aşımına uğradı (${ms}ms)`)),ms);});return Promise.race([promise,timeout]).finally(()=>clearTimeout(timer));}// TESTABLE:_withTimeout:end
+//
+// `diagId` is optional, temporary diagnostic-only wiring (see _authDiag
+// above) — tags every log from THIS specific race with `'race'` so it's
+// never confused with the `'load'`/`'dedup'` tags logged by
+// _dedupedLoadStaffData for the (possibly different) promise `promise`
+// wraps. Defaults to undefined; every existing 3-arg call site/test is
+// unaffected.
+function _withTimeout(promise,ms,label,diagId){if(diagId)_authDiagLog(diagId,'race','START','ms',ms,'t',_authDiagNow());let timer;const timeout=new Promise((_,reject)=>{timer=setTimeout(()=>{if(diagId)_authDiagLog(diagId,'race','TIMER-FIRED','t',_authDiagNow());reject(new Error(`${label||'İşlem'} zaman aşımına uğradı (${ms}ms)`));},ms);});return Promise.race([promise,timeout]).finally(()=>{clearTimeout(timer);if(diagId)_authDiagLog(diagId,'race','SETTLED','t',_authDiagNow());});}// TESTABLE:_withTimeout:end
 // Module-level auth cache — survives re-renders and page navigation
 let _authCache=null;let _authListeners=[];function _notifyAuthListeners(){_authListeners.forEach(fn=>fn(_authCache));}// Monotonic token for every in-flight staff-profile resolution. A resolution
 // started before a newer one (e.g. two overlapping auth events during
@@ -630,7 +655,13 @@ function _applyAuthResolution(reqId,patch,prevCache,prevUserId){const next=_comp
 // fresh read — this only ever collapses genuinely CONCURRENT requests,
 // never serves a stale cached result to a later, separate lookup.
 let _inFlightStaffLookup=null;// { userId, promise } | null
-function _dedupedLoadStaffData(userId,loadFn=loadStaffData){if(_inFlightStaffLookup&&_inFlightStaffLookup.userId===userId){return _inFlightStaffLookup.promise;}const promise=loadFn(userId).finally(()=>{if(_inFlightStaffLookup&&_inFlightStaffLookup.promise===promise){_inFlightStaffLookup=null;}});_inFlightStaffLookup={userId,promise};return promise;}// TESTABLE:_dedupedLoadStaffData:end
+// `diagId` is optional, temporary diagnostic-only wiring (see _authDiag
+// above) — tags every log from here with `'dedup'` (the cached/shared
+// promise this function returns) or `'load'` (the raw loadFn(userId)
+// promise BEFORE `.finally()` wraps it) so the two are never conflated in
+// the trace, even though they settle together. Defaults to undefined;
+// every existing 2-arg call site/test is unaffected.
+function _dedupedLoadStaffData(userId,loadFn=loadStaffData,diagId){if(_inFlightStaffLookup&&_inFlightStaffLookup.userId===userId){if(diagId)_authDiagLog(diagId,'dedup','JOIN-EXISTING','t',_authDiagNow());return _inFlightStaffLookup.promise;}if(diagId){_authDiagLog(diagId,'dedup','NEW-REQUEST','t',_authDiagNow());_authDiagLog(diagId,'load','START','t',_authDiagNow());}const promise=loadFn(userId).finally(()=>{if(diagId)_authDiagLog(diagId,'load','SETTLED','t',_authDiagNow());if(_inFlightStaffLookup&&_inFlightStaffLookup.promise===promise){_inFlightStaffLookup=null;}});_inFlightStaffLookup={userId,promise};return promise;}// TESTABLE:_dedupedLoadStaffData:end
 // TESTABLE:_resolveStaffState:start
 // Resolves { session, staff, staffQueryError, staffInactive } for a given
 // Supabase auth session. Genuinely different outcomes are kept apart so
@@ -670,7 +701,14 @@ function _dedupedLoadStaffData(userId,loadFn=loadStaffData){if(_inFlightStaffLoo
 // but indistinguishable in the console from an active, current problem.
 // Defaults to "never stale" so every existing call site/test that doesn't
 // pass it behaves exactly as before.
-async function _resolveStaffState(s,loadFn=loadStaffData,isStale=()=>false){if(!s?.user)return{session:s,staff:null,authLoading:false,staffQueryError:null,staffInactive:false};try{const{data,error}=await _withTimeout(_dedupedLoadStaffData(s.user.id,loadFn),12000,'Personel profili');if(error){if(!isStale())console.error('[Auth] staff_users query returned an error (session kept):',error);return{session:s,staff:null,authLoading:false,staffQueryError:error.message||String(error),staffInactive:false};}if(data&&data.is_active===false){return{session:s,staff:null,authLoading:false,staffQueryError:null,staffInactive:true};}return{session:s,staff:data,authLoading:false,staffQueryError:null,staffInactive:false};}catch(e){if(!isStale())console.error('[Auth] staff profile lookup threw (session kept):',e);return{session:s,staff:null,authLoading:false,staffQueryError:e.message,staffInactive:false};}}// TESTABLE:_resolveStaffState:end
+//
+// `diagId` is optional, temporary diagnostic-only wiring (see _authDiag
+// above), threaded into both _dedupedLoadStaffData and _withTimeout so
+// every log from one logical lookup — dispatch, dedup decision, the raw
+// load, the timeout race, and the final outcome — carries the same id.
+// Defaults to undefined; every existing 1/2/3-arg call site/test is
+// unaffected (the diagId param is purely additive).
+async function _resolveStaffState(s,loadFn=loadStaffData,isStale=()=>false,diagId){if(!s?.user)return{session:s,staff:null,authLoading:false,staffQueryError:null,staffInactive:false};if(diagId)_authDiagLog(diagId,'resolve','DISPATCH','userTail',_authDiagUserTail(s.user.id),'t',_authDiagNow());try{const{data,error}=await _withTimeout(_dedupedLoadStaffData(s.user.id,loadFn,diagId),12000,'Personel profili',diagId);if(error){const stale=isStale();if(diagId)_authDiagLog(diagId,'resolve','ERROR','stale',stale,'t',_authDiagNow());if(!stale)console.error('[Auth] staff_users query returned an error (session kept):',error);return{session:s,staff:null,authLoading:false,staffQueryError:error.message||String(error),staffInactive:false};}if(data&&data.is_active===false){if(diagId)_authDiagLog(diagId,'resolve','INACTIVE','t',_authDiagNow());return{session:s,staff:null,authLoading:false,staffQueryError:null,staffInactive:true};}if(diagId)_authDiagLog(diagId,'resolve','SUCCESS','t',_authDiagNow());return{session:s,staff:data,authLoading:false,staffQueryError:null,staffInactive:false};}catch(e){const stale=isStale();if(diagId)_authDiagLog(diagId,'resolve','TIMEOUT-OR-THROW','stale',stale,'t',_authDiagNow());if(!stale)console.error('[Auth] staff profile lookup threw (session kept):',e);return{session:s,staff:null,authLoading:false,staffQueryError:e.message,staffInactive:false};}}// TESTABLE:_resolveStaffState:end
 // TESTABLE:_signInWithPassword:start
 // The actual Supabase Auth call login() makes, extracted so it's directly
 // testable with a fake `sb` (same dependency-injection style
@@ -735,12 +773,12 @@ async function login(email,password){const sb=getSB();if(!sb){const found=DB.sta
 const staffRefreshError=authState.staffRefreshError||null;const staffInactive=authState.staffInactive||false;// Re-runs only the staff_users lookup for the current session, without
 // dropping back to a full "Yükleniyor…" screen — used by the "Tekrar
 // Dene" button on the staff-query-failed screen.
-async function retryStaffLookup(){if(!session)return;const prevCache=_authCache;const prevUserId=prevCache?.session?.user?.id||null;const reqId=++_authReqSeq;// isStale is evaluated lazily, only if/when this lookup actually
+async function retryStaffLookup(){if(!session)return;const prevCache=_authCache;const prevUserId=prevCache?.session?.user?.id||null;const reqId=++_authReqSeq;const diagId=_authDiagNextId();_authDiagLog(diagId,'event','RETRY','userTail',_authDiagUserTail(session?.user?.id),'reqId',reqId,'authReqSeq',_authReqSeq,'t',_authDiagNow());// isStale is evaluated lazily, only if/when this lookup actually
 // rejects — by then a newer retry or auth event may already have won
 // (bumped _authReqSeq past this reqId), in which case this one logging
 // its own failure would be exactly the stale, already-superseded
 // console.error this mechanism exists to prevent.
-const patch=await _resolveStaffState(session,undefined,()=>reqId!==_authReqSeq);if(!_applyAuthResolution(reqId,patch,prevCache,prevUserId))return;setAuthState(_authCache);_notifyAuthListeners();}useEffect(()=>{// Subscribe to future auth changes
+const patch=await _resolveStaffState(session,undefined,()=>reqId!==_authReqSeq,diagId);const applied=_applyAuthResolution(reqId,patch,prevCache,prevUserId);_authDiagLog(diagId,'apply',applied?'APPLIED':'DISCARDED-STALE','reqId',reqId,'authReqSeq',_authReqSeq,'t',_authDiagNow());if(!applied)return;setAuthState(_authCache);_notifyAuthListeners();}useEffect(()=>{// Subscribe to future auth changes
 const listener=state=>setAuthState({...state});_authListeners.push(listener);// If already loaded (navigated back), use cached state immediately
 if(_authCache&&!_authCache.authLoading){setAuthState({..._authCache});return()=>{_authListeners=_authListeners.filter(l=>l!==listener);};}const sb=getSB();if(!sb){const mockStaff=DB.staff[0]||{id:"STAFF-001",name:"Berk Çetinkaya",initials:"BÇ",email:"berk@desetour.com",role:"Yönetici",active:true};const newState={session:{user:{email:mockStaff.email,id:mockStaff.id}},staff:{...mockStaff,full_name:mockStaff.name},authLoading:false};_authCache=newState;setAuthState(newState);return()=>{_authListeners=_authListeners.filter(l=>l!==listener);};}// Bootstrap is driven SOLELY by onAuthStateChange — including its very
 // first callback, which supabase-js always fires once immediately after
@@ -765,7 +803,7 @@ if(_authCache&&!_authCache.authLoading){setAuthState({..._authCache});return()=>
 // (corrupted storage, a hung client), the app must not be stuck showing
 // "Yükleniyor…" forever — force-resolve to the login screen with an
 // error after the same 12000ms budget every other auth step uses.
-let bootstrapped=false;const bootTimer=setTimeout(()=>{if(bootstrapped)return;bootstrapped=true;const newState={session:null,staff:null,authLoading:false,authError:'Oturum kontrolü zaman aşımına uğradı (12000ms)'};_authCache=newState;setAuthState(newState);_notifyAuthListeners();},12000);const{data:{subscription}}=sb.auth.onAuthStateChange(async(ev,s)=>{bootstrapped=true;clearTimeout(bootTimer);const prevCache=_authCache;const prevUserId=prevCache?.session?.user?.id||null;const newUserId=s?.user?.id||null;// ANY repeat event for the SAME already-verified identity — not just
+let bootstrapped=false;const bootTimer=setTimeout(()=>{if(bootstrapped)return;bootstrapped=true;const newState={session:null,staff:null,authLoading:false,authError:'Oturum kontrolü zaman aşımına uğradı (12000ms)'};_authCache=newState;setAuthState(newState);_notifyAuthListeners();},12000);const{data:{subscription}}=sb.auth.onAuthStateChange(async(ev,s)=>{bootstrapped=true;clearTimeout(bootTimer);const prevCache=_authCache;const prevUserId=prevCache?.session?.user?.id||null;const newUserId=s?.user?.id||null;const diagId=_authDiagNextId();_authDiagLog(diagId,'event',ev,'userTail',_authDiagUserTail(newUserId),'t',_authDiagNow());// ANY repeat event for the SAME already-verified identity — not just
 // TOKEN_REFRESHED/INITIAL_SESSION, but also a duplicate SIGNED_IN
 // (Supabase re-broadcasts auth state across tabs via a storage/
 // BroadcastChannel listener — another tab refreshing or signing in
@@ -787,7 +825,7 @@ let bootstrapped=false;const bootTimer=setTimeout(()=>{if(bootstrapped)return;bo
 // ANY event type removes the redundant request itself, for every
 // event Supabase can fire, not just two of them — the strongest
 // form of "one logical staff bootstrap per session."
-if(newUserId&&newUserId===prevUserId&&prevCache?.staff){_authCache={...prevCache,session:s};setAuthState(_authCache);_notifyAuthListeners();return;}const reqId=++_authReqSeq;// A different user signed in, or the session ended — never let a
+if(newUserId&&newUserId===prevUserId&&prevCache?.staff){_authDiagLog(diagId,'shortcircuit','SKIPPED-ALREADY-VERIFIED','t',_authDiagNow());_authCache={...prevCache,session:s};setAuthState(_authCache);_notifyAuthListeners();return;}const reqId=++_authReqSeq;_authDiagLog(diagId,'reqId',reqId,'authReqSeq',_authReqSeq,'t',_authDiagNow());// A different user signed in, or the session ended — never let a
 // previous user's cached profile leak into the new session, even
 // for the moment it takes the new lookup to resolve.
 if(newUserId!==prevUserId){_authCache={session:s,staff:null,authLoading:true,staffQueryError:null,staffRefreshError:null};setAuthState(_authCache);_notifyAuthListeners();}// `s` (null or a session) comes straight from the auth event itself —
@@ -804,7 +842,7 @@ if(newUserId!==prevUserId){_authCache={session:s,staff:null,authLoading:true,sta
 // with the widened short-circuit above (a different-user switch, or
 // any two resolutions that happen to start close enough together to
 // both be in flight at once).
-const patch=await _resolveStaffState(s,undefined,()=>reqId!==_authReqSeq);if(!_applyAuthResolution(reqId,patch,prevCache,prevUserId))return;setAuthState(_authCache);_notifyAuthListeners();});return()=>{clearTimeout(bootTimer);subscription?.unsubscribe?.();_authListeners=_authListeners.filter(l=>l!==listener);};},[]);// loadStaffData is now a module-level helper (defined below useAuth)
+const patch=await _resolveStaffState(s,undefined,()=>reqId!==_authReqSeq,diagId);const applied=_applyAuthResolution(reqId,patch,prevCache,prevUserId);_authDiagLog(diagId,'apply',applied?'APPLIED':'DISCARDED-STALE','reqId',reqId,'authReqSeq',_authReqSeq,'t',_authDiagNow());if(!applied)return;setAuthState(_authCache);_notifyAuthListeners();});return()=>{clearTimeout(bootTimer);subscription?.unsubscribe?.();_authListeners=_authListeners.filter(l=>l!==listener);};},[]);// loadStaffData is now a module-level helper (defined below useAuth)
 async function logout(){const sb=getSB();if(sb)await sb.auth.signOut();// Same pre-existing bug as login(): setSession()/setStaff() don't
 // exist here — fixed to go through updateAuth() like everything else.
 updateAuth({session:null,staff:null,authLoading:false,authError:null,staffQueryError:null});if(typeof NAV_REF.fn==='function')NAV_REF.fn('/login');}// staff_users lookup can legitimately come back empty even with a valid

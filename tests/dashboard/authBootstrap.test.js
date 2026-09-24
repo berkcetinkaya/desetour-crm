@@ -25,7 +25,7 @@ function extractCombined(names) {
   return new Function(`${body}\nreturn ${lastName};`)();
 }
 
-const resolveStaffState = extractCombined(['_withTimeout', '_dedupedLoadStaffData', '_resolveStaffState']);
+const resolveStaffState = extractCombined(['_authDiag', '_withTimeout', '_dedupedLoadStaffData', '_resolveStaffState']);
 const computeAuthResolution = extractCombined(['_computeAuthResolution']);
 const signInWithPassword = extractCombined(['_signInWithPassword']);
 
@@ -75,7 +75,7 @@ test('_withTimeout clears its internal timer once the race settles (no dangling 
   global.setTimeout = (fn, ms) => { scheduledId = realSetTimeout(fn, ms); return scheduledId; };
   global.clearTimeout = (id) => { clearedIds.push(id); return realClearTimeout(id); };
   try {
-    const withTimeout = extractCombined(['_withTimeout']);
+    const withTimeout = extractCombined(['_authDiag', '_withTimeout']);
     const result = await withTimeout(Promise.resolve('ok'), 5000, 'x');
     assert.equal(result, 'ok');
     assert.ok(scheduledId !== null, 'a timer should have been scheduled');
@@ -195,7 +195,7 @@ test('the staff_users lookup is keyed by the authenticated Supabase user id (the
 });
 
 test('the 12000ms staff-profile timeout is unchanged', () => {
-  assert.match(SOURCE, /_withTimeout\(_dedupedLoadStaffData\(s\.user\.id, loadFn\), 12000, 'Personel profili'\)/);
+  assert.match(SOURCE, /_withTimeout\(_dedupedLoadStaffData\(s\.user\.id, loadFn, diagId\), 12000, 'Personel profili', diagId\)/);
 });
 
 // ── AuthGuard render-branch ordering: the actual proof for the "transient
@@ -782,4 +782,214 @@ test('logout during an in-flight lookup: the stale lookup\'s eventual timeout is
   const staleTimeoutPatch = { session: session('u-logout-race'), staff: null, staffQueryError: 'zaman aşımına uğradı (12000ms)' };
   const result = computeAuthResolution(1, 2, staleTimeoutPatch, { session: null, staff: null, authLoading: false }, null);
   assert.equal(result, null, 'a stale lookup settling after logout must never repopulate the cache with the logged-out user\'s profile');
+});
+
+// ── [AUTH-DIAG] temporary diagnostic instrumentation — added to collect
+// one clean, correlated production trace of the "staff_users returns 200
+// in ~1s, yet a timeout logs ~12s later" sequence, without yet changing
+// any auth/timeout/dedup/retry behavior. Every test below either (a)
+// proves the instrumentation is behaviorally inert — the exact same
+// scenario, run once with a diagId and once without, must produce
+// byte-identical results — or (b) proves the diagnostic OUTPUT itself is
+// correct, deterministic, and free of anything sensitive. This extraction
+// includes '_authDiag' so diagId can actually be exercised; the resolveStaffState
+// used by every earlier test in this file already includes it too (see
+// the top of this file), so those 52 pre-existing tests already prove the
+// instrumentation changes nothing when diagId is omitted, as every real
+// production call site... except now diagId IS always passed there. These
+// tests instead prove diagId-passed and diagId-omitted are equivalent.
+const diagResolveStaffState = extractCombined(['_authDiag', '_withTimeout', '_dedupedLoadStaffData', '_resolveStaffState']);
+
+function captureDebug() {
+  const original = console.debug;
+  const lines = [];
+  console.debug = (...args) => lines.push(args);
+  return { lines, restore: () => { console.debug = original; } };
+}
+
+test('[AUTH-DIAG] _authDiagNextId() produces deterministic, incrementing ids (authdiag-1, authdiag-2, authdiag-3, …), never Math.random-based', () => {
+  // extractCombined(['_authDiag']) returns the LAST name in the list per
+  // its own convention (see extractCombined above) — here that's
+  // _authDiagLog, not the id generator, so reach _authDiagNextId via a
+  // dedicated `new Function` over the same block instead.
+  const block = SOURCE.slice(SOURCE.indexOf('// TESTABLE:_authDiag:start'), SOURCE.indexOf('// TESTABLE:_authDiag:end'));
+  // eslint-disable-next-line no-new-func
+  const nextId = new Function(`${block}\nreturn _authDiagNextId;`)();
+  assert.equal(nextId(), 'authdiag-1');
+  assert.equal(nextId(), 'authdiag-2');
+  assert.equal(nextId(), 'authdiag-3');
+});
+
+test('[AUTH-DIAG] diagnostic ids increment deterministically within one lifecycle', () => {
+  const idx = SOURCE.indexOf('function _authDiagNextId()');
+  assert.ok(idx !== -1);
+  const line = SOURCE.slice(idx, SOURCE.indexOf('\n', idx) + 40);
+  assert.match(line, /authdiag-\$\{\+\+_authDiagSeq\}/, 'the id must be a deterministic incrementing counter, not Math.random()');
+  assert.doesNotMatch(SOURCE.slice(idx, idx + 200), /Math\.random/);
+});
+
+test('[AUTH-DIAG] every diagnostic line is prefixed exactly "[AUTH-DIAG]"', () => {
+  const idx = SOURCE.indexOf('function _authDiagLog(diagId, ...rest)');
+  assert.ok(idx !== -1);
+  const line = SOURCE.slice(idx, SOURCE.indexOf('\n', idx) + 5);
+  assert.match(line, /console\.debug\('\[AUTH-DIAG\]', diagId, \.\.\.rest\)/);
+});
+
+test('[AUTH-DIAG] user id tail is truncated to a maximum of 6 characters and never logs the full id', () => {
+  const idx = SOURCE.indexOf('function _authDiagUserTail(userId)');
+  assert.ok(idx !== -1);
+  const line = SOURCE.slice(idx, SOURCE.indexOf('\n', idx) + 5);
+  assert.match(line, /\.slice\(-6\)/);
+});
+
+test('[AUTH-DIAG] a full successful resolution logs only primitives (id, tags, numbers, a <=6-char user tail) — never the session object, tokens, or full user id', async () => {
+  const cap = captureDebug();
+  try {
+    const fullUserId = 'aaaaaaaa-bbbb-cccc-dddd-ffffffffffff';
+    const loadFn = async (id) => ({ data: { id, full_name: 'Berk Çetinkaya', is_active: true }, error: null });
+    const diagId = 'authdiag-test-success';
+    const result = await diagResolveStaffState(session(fullUserId), loadFn, () => false, diagId);
+    assert.equal(result.staff.full_name, 'Berk Çetinkaya');
+    assert.ok(cap.lines.length > 0, 'a successful resolution with a diagId must produce diagnostic output');
+    for (const line of cap.lines) {
+      assert.equal(line[0], '[AUTH-DIAG]');
+      assert.equal(line[1], diagId);
+      const serialized = JSON.stringify(line);
+      assert.doesNotMatch(serialized, /aaaaaaaa-bbbb-cccc-dddd-ffffffffffff/, 'the full user id must never appear in a diagnostic line');
+      assert.doesNotMatch(serialized, /@desetour\.com/, 'no email may appear in a diagnostic line');
+      assert.doesNotMatch(serialized, /"session"/i);
+      assert.doesNotMatch(serialized, /Bearer /i, 'no auth header/token may appear in a diagnostic line');
+    }
+    // The 6-char tail of the full id above:
+    const flat = JSON.stringify(cap.lines);
+    assert.match(flat, /ffffff/, 'the (safe, <=6-char) user tail should still appear somewhere, proving correlation data is present, just truncated');
+  } finally {
+    cap.restore();
+  }
+});
+
+test('[AUTH-DIAG] passing a diagId does not change the returned result for a successful lookup — instrumentation is behaviorally inert', async () => {
+  const loadFn = async (id) => ({ data: { id, full_name: 'Berk', role: 'admin', is_active: true }, error: null });
+  const withoutDiag = await resolveStaffState(session('u-diag-parity-1'), loadFn);
+  const withDiag = await diagResolveStaffState(session('u-diag-parity-1'), loadFn, () => false, 'authdiag-parity-1');
+  assert.deepEqual(withoutDiag, withDiag);
+});
+
+test('[AUTH-DIAG] passing a diagId does not change fail-closed timeout behavior — staff still never becomes truthy, and the same error text is produced', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  try {
+    const neverResolves = () => new Promise(() => {});
+    const withoutDiag = resolveStaffState(session('u-diag-parity-timeout-a'), neverResolves);
+    const withDiag = diagResolveStaffState(session('u-diag-parity-timeout-b'), neverResolves, () => false, 'authdiag-parity-timeout');
+    t.mock.timers.tick(12000);
+    const [r1, r2] = await Promise.all([withoutDiag, withDiag]);
+    assert.equal(r1.staff, null);
+    assert.equal(r2.staff, null, 'a diagId must never cause a timeout to authorize an unverified user');
+    assert.match(r1.staffQueryError, /zaman aşımına uğradı \(12000ms\)/);
+    assert.match(r2.staffQueryError, /zaman aşımına uğradı \(12000ms\)/);
+  } finally {
+    t.mock.timers.reset();
+  }
+});
+
+test('[AUTH-DIAG] passing a diagId does not change stale-result console.error suppression', async () => {
+  const originalConsoleError = console.error;
+  const errLogged = [];
+  console.error = (...args) => errLogged.push(args);
+  const cap = captureDebug();
+  try {
+    const hangingLoadFn = () => new Promise(() => {});
+    // Never awaited to completion within this test (would need fake timers
+    // for that) — this only proves the isStale() wiring/behavior itself,
+    // matching the existing "negative control" test's pattern, but with a
+    // diagId also present to prove it doesn't interfere with the gate.
+    const failing = async () => { throw new Error('boom'); };
+    const result = await diagResolveStaffState(session('u-diag-stale-check'), failing, () => true, 'authdiag-stale-check');
+    assert.match(result.staffQueryError, /boom/);
+    assert.equal(errLogged.length, 0, 'isStale()=true must still suppress console.error even when a diagId is present');
+    assert.ok(cap.lines.some(l => l.includes('TIMEOUT-OR-THROW')), 'the diagnostic trace must still record the outcome even when the user-facing console.error is suppressed');
+  } finally {
+    console.error = originalConsoleError;
+    cap.restore();
+  }
+});
+
+test('[AUTH-DIAG] passing a diagId does not change request deduplication — still exactly one real query for two concurrent callers', async () => {
+  const cap = captureDebug();
+  try {
+    let calls = 0;
+    const loadFn = async (id) => { calls++; return { data: { id, full_name: 'Paylaşılan', is_active: true }, error: null }; };
+    const [r1, r2] = await Promise.all([
+      diagResolveStaffState(session('u-diag-dedup'), loadFn, () => false, 'authdiag-dedup-a'),
+      diagResolveStaffState(session('u-diag-dedup'), loadFn, () => false, 'authdiag-dedup-b'),
+    ]);
+    assert.equal(calls, 1, 'a diagId must never affect the underlying dedup — still exactly one real query');
+    assert.deepEqual(r1, r2);
+    const flat = JSON.stringify(cap.lines);
+    assert.match(flat, /NEW-REQUEST/);
+    assert.match(flat, /JOIN-EXISTING/);
+  } finally {
+    cap.restore();
+  }
+});
+
+test('[AUTH-DIAG] the trace distinguishes the three promise stages (load / dedup / race) with explicit tags, not a single undifferentiated log', async () => {
+  const cap = captureDebug();
+  try {
+    const loadFn = async (id) => ({ data: { id, full_name: 'X', is_active: true }, error: null });
+    await diagResolveStaffState(session('u-diag-tags'), loadFn, () => false, 'authdiag-tags');
+    const flat = cap.lines.map(l => l.join(' ')).join('\n');
+    assert.match(flat, /\bload\b/, 'the raw loadStaffData promise stage must be tagged distinctly');
+    assert.match(flat, /\bdedup\b/, 'the deduplicated cached promise stage must be tagged distinctly');
+    assert.match(flat, /\brace\b/, 'the _withTimeout race promise stage must be tagged distinctly');
+    assert.match(flat, /\bresolve\b/, 'the overall _resolveStaffState outcome must also be tagged');
+  } finally {
+    cap.restore();
+  }
+});
+
+test('[AUTH-DIAG] elapsed-ms values come from one shared performance.now()-based origin and are non-negative, monotonic integers', async () => {
+  const cap = captureDebug();
+  try {
+    const loadFn = async (id) => ({ data: { id, full_name: 'X', is_active: true }, error: null });
+    await diagResolveStaffState(session('u-diag-elapsed'), loadFn, () => false, 'authdiag-elapsed');
+    const times = [];
+    for (const line of cap.lines) {
+      const tIdx = line.indexOf('t');
+      if (tIdx !== -1 && typeof line[tIdx + 1] === 'number') times.push(line[tIdx + 1]);
+    }
+    assert.ok(times.length >= 3, 'expected multiple timestamped diagnostic lines');
+    for (const t of times) {
+      assert.ok(Number.isInteger(t) && t >= 0, `elapsed ms must be a non-negative integer, got ${t}`);
+    }
+    for (let i = 1; i < times.length; i++) {
+      assert.ok(times[i] >= times[i - 1], 'elapsed ms must be non-decreasing across one lookup\'s own lifecycle');
+    }
+  } finally {
+    cap.restore();
+  }
+});
+
+test('[AUTH-DIAG] the onAuthStateChange handler logs the real Supabase event type, reqId, and current _authReqSeq — not a placeholder', () => {
+  const useAuthIdx = SOURCE.indexOf('function useAuth()');
+  const handlerIdx = SOURCE.indexOf('onAuthStateChange(async (ev, s) => {', useAuthIdx);
+  assert.ok(handlerIdx !== -1);
+  const handlerEnd = SOURCE.indexOf('});', SOURCE.indexOf('_notifyAuthListeners();', handlerIdx));
+  const body = SOURCE.slice(handlerIdx, handlerEnd);
+  assert.match(body, /_authDiagLog\(diagId, 'event', ev, 'userTail', _authDiagUserTail\(newUserId\), 't', _authDiagNow\(\)\)/);
+  assert.match(body, /_authDiagLog\(diagId, 'reqId', reqId, 'authReqSeq', _authReqSeq, 't', _authDiagNow\(\)\)/);
+  assert.match(body, /_authDiagLog\(diagId, 'apply', applied \? 'APPLIED' : 'DISCARDED-STALE'/);
+});
+
+test('[AUTH-DIAG] retryStaffLookup also emits a correlated trace tagged RETRY, reusing the exact same _resolveStaffState/diagId wiring as the mount-effect path', () => {
+  const idx = SOURCE.indexOf('async function retryStaffLookup()');
+  assert.ok(idx !== -1);
+  const body = SOURCE.slice(idx, SOURCE.indexOf('\n  useEffect(() => {', idx));
+  assert.match(body, /_authDiagLog\(diagId, 'event', 'RETRY'/);
+  assert.match(body, /_resolveStaffState\(session, undefined, \(\) => reqId !== _authReqSeq, diagId\)/);
+});
+
+test('[AUTH-DIAG] diagnostic helpers never reference session, token, password, or key-shaped identifiers in their own source', () => {
+  const block = SOURCE.slice(SOURCE.indexOf('// TESTABLE:_authDiag:start'), SOURCE.indexOf('// TESTABLE:_authDiag:end'));
+  assert.doesNotMatch(block, /\baccess_token\b|\brefresh_token\b|\bpassword\b|\bsupabaseKey\b|Authorization/i);
 });
