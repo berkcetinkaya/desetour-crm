@@ -800,11 +800,15 @@ test('logout during an in-flight lookup: the stale lookup\'s eventual timeout is
 // tests instead prove diagId-passed and diagId-omitted are equivalent.
 const diagResolveStaffState = extractCombined(['_authDiag', '_withTimeout', '_dedupedLoadStaffData', '_resolveStaffState']);
 
+// _authDiagLog uses console.log (not console.debug) specifically because
+// Chrome DevTools filters console.debug under its "Verbose" level, which
+// is OFF by default — exactly the bug this round's investigation found
+// and fixed. Capture console.log accordingly.
 function captureDebug() {
-  const original = console.debug;
+  const original = console.log;
   const lines = [];
-  console.debug = (...args) => lines.push(args);
-  return { lines, restore: () => { console.debug = original; } };
+  console.log = (...args) => lines.push(args);
+  return { lines, restore: () => { console.log = original; } };
 }
 
 test('[AUTH-DIAG] _authDiagNextId() produces deterministic, incrementing ids (authdiag-1, authdiag-2, authdiag-3, …), never Math.random-based', () => {
@@ -832,7 +836,12 @@ test('[AUTH-DIAG] every diagnostic line is prefixed exactly "[AUTH-DIAG]"', () =
   const idx = SOURCE.indexOf('function _authDiagLog(diagId, ...rest)');
   assert.ok(idx !== -1);
   const line = SOURCE.slice(idx, SOURCE.indexOf('\n', idx) + 5);
-  assert.match(line, /console\.debug\('\[AUTH-DIAG\]', diagId, \.\.\.rest\)/);
+  assert.match(line, /console\.log\('\[AUTH-DIAG\]', diagId, \.\.\.rest\)/);
+  // console.debug specifically must NOT be used — it is filtered by
+  // Chrome DevTools' "Verbose" log level (off by default), which is
+  // exactly why production showed zero [AUTH-DIAG] lines despite the
+  // instrumentation actually running.
+  assert.doesNotMatch(line, /console\.debug/);
 });
 
 test('[AUTH-DIAG] user id tail is truncated to a maximum of 6 characters and never logs the full id', () => {
@@ -992,4 +1001,111 @@ test('[AUTH-DIAG] retryStaffLookup also emits a correlated trace tagged RETRY, r
 test('[AUTH-DIAG] diagnostic helpers never reference session, token, password, or key-shaped identifiers in their own source', () => {
   const block = SOURCE.slice(SOURCE.indexOf('// TESTABLE:_authDiag:start'), SOURCE.indexOf('// TESTABLE:_authDiag:end'));
   assert.doesNotMatch(block, /\baccess_token\b|\brefresh_token\b|\bpassword\b|\bsupabaseKey\b|Authorization/i);
+});
+
+// ── Round 2: production ran v12.31 (confirmed via window.__DESETOUR_BUILD__),
+// the legacy 12000ms timeout still logged, but ZERO [AUTH-DIAG] lines
+// appeared despite the instrumentation from a786ab0 genuinely being
+// present in that exact build (verified: app.js byte-identical to a fresh
+// compile of this source, and grepping app.js for "[AUTH-DIAG]",
+// "authdiag-", "NEW-REQUEST", "TIMER-FIRED", "SKIPPED-ALREADY-VERIFIED"
+// all matched). Root cause: _authDiagLog used console.debug(), which
+// Chrome's DevTools Console filters under its "Verbose" log level — OFF
+// by default in most browser profiles — while console.error (the legacy
+// line) is a different, always-shown level. No code defect in the auth
+// bootstrap itself; the trace was firing all along, just invisible. Two
+// repository-wide searches independently confirmed there is no second
+// useAuth()/onAuthStateChange/createClient/bootstrap implementation and
+// no _resolveStaffState call site missing diagId (both real call sites —
+// the mount effect and retryStaffLookup — pass it). Fixed by switching to
+// console.log (never level-gated in any major browser) and adding an
+// UNCONDITIONAL (never `if (diagId)`-gated) trace line immediately before
+// each of the two legacy console.error calls, so this exact contradiction
+// — a visible console.error with zero preceding trace — can never recur
+// for this function, regardless of any future caller. ──────────────────
+
+test('[AUTH-DIAG] the unconditional trace before the timeout/throw console.error fires even when diagId is completely omitted — proving the legacy line can never again log with zero preceding trace', async () => {
+  const cap = captureDebug();
+  const originalConsoleError = console.error;
+  const errLogged = [];
+  console.error = (...args) => errLogged.push(args);
+  try {
+    const failing = async () => { throw new Error('boom-no-diagid'); };
+    // Called exactly like every pre-786ab0/pre-diagnostic caller would —
+    // no loadFn override needed here beyond failing, no isStale, no diagId.
+    const result = await resolveStaffState(session('u-no-diagid'), failing);
+    assert.match(result.staffQueryError, /boom-no-diagid/);
+    assert.equal(errLogged.length, 1, 'the legacy console.error must still fire normally with no diagId');
+    const unconditional = cap.lines.filter(l => l.includes('UNCONDITIONAL'));
+    assert.equal(unconditional.length, 1, 'the unconditional trace must fire exactly once, with or without a diagId');
+    assert.ok(unconditional[0].includes('(none)'), 'a missing diagId must be reported explicitly as "(none)", never silently omitted');
+  } finally {
+    console.error = originalConsoleError;
+    cap.restore();
+  }
+});
+
+test('[AUTH-DIAG] the unconditional trace distinguishes a real _withTimeout timeout (wrapperTimedOut:true) from a genuine underlying throw (wrapperTimedOut:false)', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const cap = captureDebug();
+  try {
+    const neverResolves = () => new Promise(() => {});
+    const promise = resolveStaffState(session('u-unconditional-timeout'), neverResolves);
+    t.mock.timers.tick(12000);
+    await promise;
+    const line = cap.lines.find(l => l.includes('UNCONDITIONAL') && l.includes('timeout-or-throw'));
+    assert.ok(line, 'expected an unconditional timeout-or-throw trace line');
+    const flagIdx = line.indexOf('wrapperTimedOut');
+    assert.equal(line[flagIdx + 1], true, 'a real 12000ms _withTimeout firing must report wrapperTimedOut:true');
+  } finally {
+    cap.restore();
+    t.mock.timers.reset();
+  }
+});
+
+test('[AUTH-DIAG] a genuine network/query throw (not a timeout) reports wrapperTimedOut:false in the unconditional trace', async () => {
+  const cap = captureDebug();
+  try {
+    const failing = async () => { throw new Error('ECONNRESET'); };
+    await resolveStaffState(session('u-unconditional-throw'), failing);
+    const line = cap.lines.find(l => l.includes('UNCONDITIONAL') && l.includes('timeout-or-throw'));
+    assert.ok(line);
+    const flagIdx = line.indexOf('wrapperTimedOut');
+    assert.equal(line[flagIdx + 1], false, 'a genuine (non-timeout) throw must report wrapperTimedOut:false, distinguishing it from a real 12000ms timeout');
+  } finally {
+    cap.restore();
+  }
+});
+
+test('[AUTH-DIAG] the unconditional trace before the query-error console.error also fires unconditionally, reporting authReqSeq safely even when it is out of scope', async () => {
+  const cap = captureDebug();
+  const originalConsoleError = console.error;
+  console.error = () => {};
+  try {
+    const erroring = async () => ({ data: null, error: { message: 'RLS denied' } });
+    await resolveStaffState(session('u-unconditional-query-error'), erroring);
+    const line = cap.lines.find(l => l.includes('UNCONDITIONAL') && l.includes('query-error'));
+    assert.ok(line, 'expected an unconditional query-error trace line');
+    const seqIdx = line.indexOf('authReqSeq');
+    // resolveStaffState's extraction here does not include the module
+    // scope that declares _authReqSeq, so the defensive typeof-guard must
+    // report null rather than throwing a ReferenceError.
+    assert.equal(line[seqIdx + 1], null);
+  } finally {
+    console.error = originalConsoleError;
+    cap.restore();
+  }
+});
+
+test('[AUTH-DIAG] no code path in the whole repository can emit "[Auth] staff profile lookup threw" without the unconditional trace line immediately preceding it', () => {
+  const block = extractFunctionBody('_resolveStaffState', '\n// TESTABLE:_resolveStaffState:end');
+  const legacyIdx = block.indexOf("console.error('[Auth] staff profile lookup threw");
+  assert.ok(legacyIdx !== -1);
+  const before = block.slice(0, legacyIdx);
+  const unconditionalIdx = before.lastIndexOf("console.log('[AUTH-DIAG]', 'UNCONDITIONAL', 'timeout-or-throw'");
+  assert.ok(unconditionalIdx !== -1, 'the unconditional trace must appear before the legacy console.error');
+  // Nothing but the isStale()-gated diag call and the unconditional trace
+  // itself may sit between them — no other branch/return can slip in.
+  const between = before.slice(unconditionalIdx);
+  assert.doesNotMatch(between.slice(between.indexOf(';') + 1), /return\s*\{/, 'no return statement may separate the unconditional trace from the legacy console.error it guards');
 });

@@ -13774,7 +13774,16 @@ function _authDiagNow() {
   return Math.round(now - _authDiagOrigin);
 }
 function _authDiagUserTail(userId) { return userId ? String(userId).slice(-6) : null; }
-function _authDiagLog(diagId, ...rest) { console.debug('[AUTH-DIAG]', diagId, ...rest); }
+// console.log, NOT console.debug — Chrome DevTools' Console panel filters
+// console.debug() under its "Verbose" log level, which is OFF by default
+// in most browser profiles (unlike "Errors", always shown), while
+// console.error stays fully visible either way. That mismatch alone can
+// make an entire trace of console.debug calls invisible while the
+// existing console.error a few lines below still prints normally — the
+// exact "zero [AUTH-DIAG] lines, but the legacy timeout still logs"
+// contradiction this fix addresses. console.log has no such level gate in
+// any major browser.
+function _authDiagLog(diagId, ...rest) { console.log('[AUTH-DIAG]', diagId, ...rest); }
 // TESTABLE:_authDiag:end
 
 // TESTABLE:_withTimeout:start
@@ -13953,6 +13962,10 @@ async function _resolveStaffState(s, loadFn = loadStaffData, isStale = () => fal
     if (error) {
       const stale = isStale();
       if (diagId) _authDiagLog(diagId, 'resolve', 'ERROR', 'stale', stale, 't', _authDiagNow());
+      // Unconditional (never gated on diagId) — a permanent safety net so
+      // this exact legacy console.error can never again fire with zero
+      // preceding trace, whatever future call site invokes this function.
+      console.log('[AUTH-DIAG]', 'UNCONDITIONAL', 'query-error', 'diagId', diagId || '(none)', 'authReqSeq', (typeof _authReqSeq !== 'undefined' ? _authReqSeq : null), 'userTail', _authDiagUserTail(s.user.id), 'stale', stale, 't', _authDiagNow());
       if (!stale) console.error('[Auth] staff_users query returned an error (session kept):', error);
       return { session:s, staff:null, authLoading:false, staffQueryError: error.message || String(error), staffInactive:false };
     }
@@ -13965,6 +13978,14 @@ async function _resolveStaffState(s, loadFn = loadStaffData, isStale = () => fal
   } catch(e) {
     const stale = isStale();
     if (diagId) _authDiagLog(diagId, 'resolve', 'TIMEOUT-OR-THROW', 'stale', stale, 't', _authDiagNow());
+    // Unconditional (never gated on diagId) — same safety net as above,
+    // placed immediately before the exact legacy line production keeps
+    // showing, so a captured trace can never come up empty for it again.
+    // wrapperTimedOut distinguishes "_withTimeout's own 12000ms timer
+    // fired" from "the underlying load promise itself rejected/threw" —
+    // the timeout branch's Error always carries this exact Turkish text
+    // (see _withTimeout above), a genuine query/network throw never does.
+    console.log('[AUTH-DIAG]', 'UNCONDITIONAL', 'timeout-or-throw', 'diagId', diagId || '(none)', 'authReqSeq', (typeof _authReqSeq !== 'undefined' ? _authReqSeq : null), 'userTail', _authDiagUserTail(s.user.id), 'stale', stale, 'wrapperTimedOut', /zaman aşımına uğradı/.test(e.message || ''), 't', _authDiagNow());
     if (!stale) console.error('[Auth] staff profile lookup threw (session kept):', e);
     return { session:s, staff:null, authLoading:false, staffQueryError: e.message, staffInactive:false };
   }

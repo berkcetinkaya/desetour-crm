@@ -596,7 +596,16 @@ async function loadStaffData(userId){const sb=getSB();if(!sb)return{data:null,er
 // full UUIDs, emails, or any customer/staff data. Every line is prefixed
 // [AUTH-DIAG] so it can be grepped, filtered, and removed in one pass
 // once the production trace is collected.
-let _authDiagSeq=0;const _authDiagOrigin=typeof performance!=='undefined'?performance.now():Date.now();function _authDiagNextId(){return`authdiag-${++_authDiagSeq}`;}function _authDiagNow(){const now=typeof performance!=='undefined'?performance.now():Date.now();return Math.round(now-_authDiagOrigin);}function _authDiagUserTail(userId){return userId?String(userId).slice(-6):null;}function _authDiagLog(diagId,...rest){console.debug('[AUTH-DIAG]',diagId,...rest);}// TESTABLE:_authDiag:end
+let _authDiagSeq=0;const _authDiagOrigin=typeof performance!=='undefined'?performance.now():Date.now();function _authDiagNextId(){return`authdiag-${++_authDiagSeq}`;}function _authDiagNow(){const now=typeof performance!=='undefined'?performance.now():Date.now();return Math.round(now-_authDiagOrigin);}function _authDiagUserTail(userId){return userId?String(userId).slice(-6):null;}// console.log, NOT console.debug — Chrome DevTools' Console panel filters
+// console.debug() under its "Verbose" log level, which is OFF by default
+// in most browser profiles (unlike "Errors", always shown), while
+// console.error stays fully visible either way. That mismatch alone can
+// make an entire trace of console.debug calls invisible while the
+// existing console.error a few lines below still prints normally — the
+// exact "zero [AUTH-DIAG] lines, but the legacy timeout still logs"
+// contradiction this fix addresses. console.log has no such level gate in
+// any major browser.
+function _authDiagLog(diagId,...rest){console.log('[AUTH-DIAG]',diagId,...rest);}// TESTABLE:_authDiag:end
 // TESTABLE:_withTimeout:start
 // A hung Supabase call (paused project, unreachable network, bad API key)
 // must not leave the app stuck in authLoading forever. Race any session
@@ -708,7 +717,17 @@ function _dedupedLoadStaffData(userId,loadFn=loadStaffData,diagId){if(_inFlightS
 // load, the timeout race, and the final outcome — carries the same id.
 // Defaults to undefined; every existing 1/2/3-arg call site/test is
 // unaffected (the diagId param is purely additive).
-async function _resolveStaffState(s,loadFn=loadStaffData,isStale=()=>false,diagId){if(!s?.user)return{session:s,staff:null,authLoading:false,staffQueryError:null,staffInactive:false};if(diagId)_authDiagLog(diagId,'resolve','DISPATCH','userTail',_authDiagUserTail(s.user.id),'t',_authDiagNow());try{const{data,error}=await _withTimeout(_dedupedLoadStaffData(s.user.id,loadFn,diagId),12000,'Personel profili',diagId);if(error){const stale=isStale();if(diagId)_authDiagLog(diagId,'resolve','ERROR','stale',stale,'t',_authDiagNow());if(!stale)console.error('[Auth] staff_users query returned an error (session kept):',error);return{session:s,staff:null,authLoading:false,staffQueryError:error.message||String(error),staffInactive:false};}if(data&&data.is_active===false){if(diagId)_authDiagLog(diagId,'resolve','INACTIVE','t',_authDiagNow());return{session:s,staff:null,authLoading:false,staffQueryError:null,staffInactive:true};}if(diagId)_authDiagLog(diagId,'resolve','SUCCESS','t',_authDiagNow());return{session:s,staff:data,authLoading:false,staffQueryError:null,staffInactive:false};}catch(e){const stale=isStale();if(diagId)_authDiagLog(diagId,'resolve','TIMEOUT-OR-THROW','stale',stale,'t',_authDiagNow());if(!stale)console.error('[Auth] staff profile lookup threw (session kept):',e);return{session:s,staff:null,authLoading:false,staffQueryError:e.message,staffInactive:false};}}// TESTABLE:_resolveStaffState:end
+async function _resolveStaffState(s,loadFn=loadStaffData,isStale=()=>false,diagId){if(!s?.user)return{session:s,staff:null,authLoading:false,staffQueryError:null,staffInactive:false};if(diagId)_authDiagLog(diagId,'resolve','DISPATCH','userTail',_authDiagUserTail(s.user.id),'t',_authDiagNow());try{const{data,error}=await _withTimeout(_dedupedLoadStaffData(s.user.id,loadFn,diagId),12000,'Personel profili',diagId);if(error){const stale=isStale();if(diagId)_authDiagLog(diagId,'resolve','ERROR','stale',stale,'t',_authDiagNow());// Unconditional (never gated on diagId) — a permanent safety net so
+// this exact legacy console.error can never again fire with zero
+// preceding trace, whatever future call site invokes this function.
+console.log('[AUTH-DIAG]','UNCONDITIONAL','query-error','diagId',diagId||'(none)','authReqSeq',typeof _authReqSeq!=='undefined'?_authReqSeq:null,'userTail',_authDiagUserTail(s.user.id),'stale',stale,'t',_authDiagNow());if(!stale)console.error('[Auth] staff_users query returned an error (session kept):',error);return{session:s,staff:null,authLoading:false,staffQueryError:error.message||String(error),staffInactive:false};}if(data&&data.is_active===false){if(diagId)_authDiagLog(diagId,'resolve','INACTIVE','t',_authDiagNow());return{session:s,staff:null,authLoading:false,staffQueryError:null,staffInactive:true};}if(diagId)_authDiagLog(diagId,'resolve','SUCCESS','t',_authDiagNow());return{session:s,staff:data,authLoading:false,staffQueryError:null,staffInactive:false};}catch(e){const stale=isStale();if(diagId)_authDiagLog(diagId,'resolve','TIMEOUT-OR-THROW','stale',stale,'t',_authDiagNow());// Unconditional (never gated on diagId) — same safety net as above,
+// placed immediately before the exact legacy line production keeps
+// showing, so a captured trace can never come up empty for it again.
+// wrapperTimedOut distinguishes "_withTimeout's own 12000ms timer
+// fired" from "the underlying load promise itself rejected/threw" —
+// the timeout branch's Error always carries this exact Turkish text
+// (see _withTimeout above), a genuine query/network throw never does.
+console.log('[AUTH-DIAG]','UNCONDITIONAL','timeout-or-throw','diagId',diagId||'(none)','authReqSeq',typeof _authReqSeq!=='undefined'?_authReqSeq:null,'userTail',_authDiagUserTail(s.user.id),'stale',stale,'wrapperTimedOut',/zaman aşımına uğradı/.test(e.message||''),'t',_authDiagNow());if(!stale)console.error('[Auth] staff profile lookup threw (session kept):',e);return{session:s,staff:null,authLoading:false,staffQueryError:e.message,staffInactive:false};}}// TESTABLE:_resolveStaffState:end
 // TESTABLE:_signInWithPassword:start
 // The actual Supabase Auth call login() makes, extracted so it's directly
 // testable with a fake `sb` (same dependency-injection style
