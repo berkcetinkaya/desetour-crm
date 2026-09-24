@@ -798,8 +798,27 @@ async function retryStaffLookup(){if(!session)return;const prevCache=_authCache;
 // its own failure would be exactly the stale, already-superseded
 // console.error this mechanism exists to prevent.
 const patch=await _resolveStaffState(session,undefined,()=>reqId!==_authReqSeq,diagId);const applied=_applyAuthResolution(reqId,patch,prevCache,prevUserId);_authDiagLog(diagId,'apply',applied?'APPLIED':'DISCARDED-STALE','reqId',reqId,'authReqSeq',_authReqSeq,'t',_authDiagNow());if(!applied)return;setAuthState(_authCache);_notifyAuthListeners();}useEffect(()=>{// Subscribe to future auth changes
-const listener=state=>setAuthState({...state});_authListeners.push(listener);// If already loaded (navigated back), use cached state immediately
-if(_authCache&&!_authCache.authLoading){setAuthState({..._authCache});return()=>{_authListeners=_authListeners.filter(l=>l!==listener);};}const sb=getSB();if(!sb){const mockStaff=DB.staff[0]||{id:"STAFF-001",name:"Berk Çetinkaya",initials:"BÇ",email:"berk@desetour.com",role:"Yönetici",active:true};const newState={session:{user:{email:mockStaff.email,id:mockStaff.id}},staff:{...mockStaff,full_name:mockStaff.name},authLoading:false};_authCache=newState;setAuthState(newState);return()=>{_authListeners=_authListeners.filter(l=>l!==listener);};}// Bootstrap is driven SOLELY by onAuthStateChange — including its very
+const listener=state=>setAuthState({...state});_authListeners.push(listener);// If already loaded (navigated back), paint the cached state immediately
+// — but this is ONLY ever a fast-paint hint, never a reason to skip
+// subscribing below. The cache can be genuinely stale: AuthGuard fully
+// unmounts (tearing down its subscription) whenever the route is
+// /login or /reset-password, and LoginPage's login() deliberately
+// never mounts useAuth() (see login()'s own comment — that was the
+// fix for a DIFFERENT race). That means a fresh sign-in can complete
+// with ZERO onAuthStateChange listeners registered anywhere, leaving
+// _authCache holding the PREVIOUS session's settled, logged-out value
+// right up until this exact mount. Returning early here used to skip
+// creating a new subscription entirely whenever that stale cache
+// happened to already be "settled" (authLoading:false) — meaning a
+// fresh, valid login right after a logout would never receive
+// INITIAL_SESSION at all, and the user stayed stuck on the login
+// screen with no path forward. Always (re)subscribing below costs
+// nothing extra when the cache WAS still accurate: the existing
+// same-user/already-verified short-circuit inside the
+// onAuthStateChange handler still avoids any redundant staff_users
+// query in that case — it just now runs via a live event instead of
+// this early bail-out.
+if(_authCache&&!_authCache.authLoading){setAuthState({..._authCache});}const sb=getSB();if(!sb){const mockStaff=DB.staff[0]||{id:"STAFF-001",name:"Berk Çetinkaya",initials:"BÇ",email:"berk@desetour.com",role:"Yönetici",active:true};const newState={session:{user:{email:mockStaff.email,id:mockStaff.id}},staff:{...mockStaff,full_name:mockStaff.name},authLoading:false};_authCache=newState;setAuthState(newState);return()=>{_authListeners=_authListeners.filter(l=>l!==listener);};}// Bootstrap is driven SOLELY by onAuthStateChange — including its very
 // first callback, which supabase-js always fires once immediately after
 // subscribing (event INITIAL_SESSION) with whatever session is already
 // persisted in storage, without needing a fresh network round-trip.

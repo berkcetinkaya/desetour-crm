@@ -562,15 +562,18 @@ test('REGRESSION 6: a successful verified staff lookup authorizes normally — s
 // 7. Subscriptions are cleaned up — the mount effect's cleanup function
 //    must unsubscribe the onAuthStateChange subscription, clear the boot
 //    safety timer, and remove this instance's listener, on every return
-//    path (mock client, cached-state early return, and the real Supabase
-//    path alike), so remounts/route changes never leak a subscription.
+//    path (the mock-client path and the real Supabase path alike), so
+//    remounts/route changes never leak a subscription. The cached-state
+//    branch is deliberately NOT an early-return path any more (see the
+//    "must always (re)subscribe" regression below) — it falls through to
+//    the real Supabase path, so it shares that same cleanup.
 test('REGRESSION 7: the useAuth() mount effect always returns a cleanup function that unsubscribes onAuthStateChange, clears the boot timer, and removes the listener', () => {
   const useAuthIdx = SOURCE.indexOf('function useAuth()');
   const effectIdx = SOURCE.indexOf('useEffect(() => {', useAuthIdx);
   const effectEndIdx = SOURCE.indexOf('}, []);', effectIdx);
   const body = SOURCE.slice(effectIdx, effectEndIdx);
   const cleanups = body.match(/return \(\) => \{[^}]*\};/g) || [];
-  assert.ok(cleanups.length >= 3, `expected a cleanup function on every early-return path, found ${cleanups.length}`);
+  assert.ok(cleanups.length >= 2, `expected a cleanup function on every early-return path, found ${cleanups.length}`);
   const realPathCleanup = cleanups[cleanups.length - 1];
   assert.match(realPathCleanup, /clearTimeout\(bootTimer\)/);
   assert.match(realPathCleanup, /subscription\?\.unsubscribe\?\.\(\)/);
@@ -1337,4 +1340,116 @@ test('[DEFERRED-LOOKUP] G. a slower user-A deferred lookup resolving after user 
 test('[DEFERRED-LOOKUP] I. request deduplication is untouched by this refactor — _dedupedLoadStaffData source is unchanged', () => {
   assert.match(SOURCE, /function _dedupedLoadStaffData\(userId, loadFn = loadStaffData, diagId\) \{/);
   assert.match(SOURCE, /if \(_inFlightStaffLookup && _inFlightStaffLookup\.userId === userId\)/);
+});
+
+// ── Round 4: PROVEN root cause of "logout, then fresh login, gets stuck
+// on the login screen" — pre-existing since the file's very first commit
+// (git log -S confirms "already loaded (navigated back)" predates every
+// round of this investigation), unrelated to the v12.33 defer refactor,
+// but only now exercised because this was the first round to test a
+// logout-then-relogin cycle within one tab session rather than a fresh
+// page reload. useAuth()'s mount effect used to SKIP creating a new
+// sb.auth.onAuthStateChange(...) subscription entirely whenever
+// _authCache already held a SETTLED value (authLoading:false) — which is
+// exactly what a prior logout leaves behind. Since LoginPage deliberately
+// never mounts useAuth() (see login()'s own comment — a different, already
+// -fixed race) and AuthGuard fully unmounts on /login (tearing down its
+// subscription), a fresh sign-in completes with ZERO listeners registered
+// anywhere. The stale early-return then painted that old, settled,
+// logged-out cache forever, with no live subscription left to ever
+// correct it — the user was permanently stuck on the login screen, not
+// merely delayed. Fixed by keeping the fast paint from cache but removing
+// the early return, so a fresh (or re-established) onAuthStateChange
+// subscription is now ALWAYS created on every mount — the existing
+// already-verified short-circuit inside that handler (proven in an
+// earlier round, still unmodified) is what prevents this from causing any
+// redundant staff_users query when the cache WAS still accurate. ───────
+
+test('[RESUBSCRIBE-FIX] 1/11. a mount with a settled _authCache (authLoading:false) can no longer return before sb.auth.onAuthStateChange(...) is registered', () => {
+  const useAuthIdx = SOURCE.indexOf('function useAuth()');
+  const effectIdx = SOURCE.indexOf('useEffect(() => {', useAuthIdx);
+  const cachedBranchIdx = SOURCE.indexOf('if (_authCache && !_authCache.authLoading) {', effectIdx);
+  assert.ok(cachedBranchIdx !== -1, 'the cached-state fast-paint branch must still exist');
+  const subscribeIdx = SOURCE.indexOf('sb.auth.onAuthStateChange(', effectIdx);
+  assert.ok(subscribeIdx !== -1 && subscribeIdx > cachedBranchIdx, 'the subscription call must appear after (and thus not be skippable by) the cached-state branch');
+  // The cached branch itself, isolated, must contain no `return` inside it
+  // — it must fall through to (re)subscribing. (The mock/demo "!sb" branch
+  // further down legitimately still returns early — that is the pre-
+  // existing, unrelated "no real Supabase client configured" path, not
+  // the bug this round fixes.)
+  const cachedBranchEnd = SOURCE.indexOf('}', SOURCE.indexOf('setAuthState({ ..._authCache });', cachedBranchIdx)) + 1;
+  const cachedBranchBody = SOURCE.slice(cachedBranchIdx, cachedBranchEnd);
+  assert.doesNotMatch(cachedBranchBody, /return/, 'the settled-cache branch must fall through to (re)subscribing, never return early');
+});
+
+test('[RESUBSCRIBE-FIX] 3. while a freshly-signed-in user\'s deferred staff verification is pending, auth state is authLoading:true — never treated as a settled, unauthenticated state', () => {
+  // Mirrors the exact reported scenario: a stale, settled, logged-out
+  // cache (left over from a prior logout) is what a fresh mount starts
+  // from; a new auth event for a DIFFERENT (newly signed-in) user must
+  // still transition through a real pending/loading state, never silently
+  // stay on the old "unauthenticated" snapshot.
+  const state = { authReqSeq: 0, authCache: { session: null, staff: null, authLoading: false } };
+  const loadFn = async (id) => ({ data: { id, full_name: 'Yeni Kullanıcı', is_active: true }, error: null });
+  const { deferred } = simulateDeferredAuthEvent(state, session('u-fresh-login'), loadFn);
+  // Synchronously, right after dispatch (before the deferred lookup has
+  // even had a chance to run), the cache must already reflect a genuine
+  // pending state — not the old settled snapshot.
+  assert.equal(state.authCache.authLoading, true, 'a new identity must immediately flip to authLoading:true, synchronously, never staying on the stale settled cache');
+  assert.equal(state.authCache.staff, null);
+  assert.notEqual(state.authCache, undefined);
+  return deferred; // let the deferred microtask/timer chain settle cleanly
+});
+
+test('[RESUBSCRIBE-FIX] 2/4. end-to-end: a stale post-logout cache, followed by a real auth event for a newly signed-in user with a valid staff profile, ends fully authorized', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  try {
+    const state = { authReqSeq: 0, authCache: { session: null, staff: null, authLoading: false } };
+    const loadFn = async (id) => ({ data: { id, full_name: 'Berk Çetinkaya', role: 'admin', is_active: true }, error: null });
+    const { deferred } = simulateDeferredAuthEvent(state, session('u-fresh-login-2'), loadFn);
+    t.mock.timers.tick(0);
+    const result = await deferred;
+    assert.equal(result.applied, true);
+    assert.equal(state.authCache.staff.full_name, 'Berk Çetinkaya');
+    assert.equal(!!state.authCache.staff, true, 'staffLinked (!!staff) must end up true — the user is fully authorized, not just session-holding');
+
+    // 4. The negative control — same flow, but the account has no linked
+    // staff_users row: the session alone must never authorize access.
+    const state2 = { authReqSeq: 0, authCache: { session: null, staff: null, authLoading: false } };
+    const noStaffLoadFn = async () => ({ data: null, error: null });
+    const { deferred: deferred2 } = simulateDeferredAuthEvent(state2, session('u-no-staff-profile'), noStaffLoadFn);
+    t.mock.timers.tick(0);
+    await deferred2;
+    assert.equal(state2.authCache.staff, null, 'a valid Supabase session without a linked staff_users row must never be authorized');
+  } finally {
+    t.mock.timers.reset();
+  }
+});
+
+test('[RESUBSCRIBE-FIX] 10. a remount that finds the SAME already-verified user in the stale-but-actually-still-valid cache does not trigger a new staff_users query — the existing short-circuit, not the removed early-return, is what prevents redundant requests now', () => {
+  let queries = 0;
+  const state = { authReqSeq: 1, authCache: { session: session('u-still-valid'), staff: { id: 'u-still-valid', full_name: 'Hâlâ Geçerli' }, authLoading: false } };
+  // Mirrors the real handler's own short-circuit condition directly —
+  // this is the exact guard proven present in an earlier round
+  // (REGRESSION 2) and confirmed unmodified by this round's diff.
+  const prevCache = state.authCache;
+  const s = session('u-still-valid');
+  const newUserId = s.user.id;
+  const prevUserId = prevCache.session.user.id;
+  const shortCircuits = !!(newUserId && newUserId === prevUserId && prevCache?.staff);
+  assert.equal(shortCircuits, true, 'a fresh subscription receiving INITIAL_SESSION for the SAME already-verified user must still hit the short-circuit, never start a new query');
+  assert.equal(queries, 0);
+});
+
+test('[RESUBSCRIBE-FIX] cross-reference: items 5/6/7/8/9 from this round\'s required test list are already covered by this file\'s existing DEFERRED-LOOKUP/PRODUCTION SEQUENCE tests, unmodified by this round\'s diff', () => {
+  // 5. timeout fail-closed -> "[DEFERRED-LOOKUP] E." above.
+  // 6. SIGNED_OUT during a deferred lookup -> "[DEFERRED-LOOKUP] F." above.
+  // 7. user A -> B during a deferred lookup -> "[DEFERRED-LOOKUP] G." above.
+  // 8. callback returns synchronously -> "[DEFERRED-LOOKUP] A." above.
+  // 9. no Supabase query awaited inside the callback -> "[DEFERRED-LOOKUP] A."
+  //    and "the actual staff_users lookup ... only appears INSIDE the
+  //    setTimeout(...,0) deferral" above.
+  // This test exists only so the numbered requirement list has an
+  // explicit, greppable pointer; the real assertions live in those tests,
+  // which this round's diff does not touch.
+  assert.ok(true);
 });

@@ -14131,10 +14131,28 @@ function useAuth() {
     const listener = (state) => setAuthState({ ...state });
     _authListeners.push(listener);
 
-    // If already loaded (navigated back), use cached state immediately
+    // If already loaded (navigated back), paint the cached state immediately
+    // — but this is ONLY ever a fast-paint hint, never a reason to skip
+    // subscribing below. The cache can be genuinely stale: AuthGuard fully
+    // unmounts (tearing down its subscription) whenever the route is
+    // /login or /reset-password, and LoginPage's login() deliberately
+    // never mounts useAuth() (see login()'s own comment — that was the
+    // fix for a DIFFERENT race). That means a fresh sign-in can complete
+    // with ZERO onAuthStateChange listeners registered anywhere, leaving
+    // _authCache holding the PREVIOUS session's settled, logged-out value
+    // right up until this exact mount. Returning early here used to skip
+    // creating a new subscription entirely whenever that stale cache
+    // happened to already be "settled" (authLoading:false) — meaning a
+    // fresh, valid login right after a logout would never receive
+    // INITIAL_SESSION at all, and the user stayed stuck on the login
+    // screen with no path forward. Always (re)subscribing below costs
+    // nothing extra when the cache WAS still accurate: the existing
+    // same-user/already-verified short-circuit inside the
+    // onAuthStateChange handler still avoids any redundant staff_users
+    // query in that case — it just now runs via a live event instead of
+    // this early bail-out.
     if (_authCache && !_authCache.authLoading) {
       setAuthState({ ..._authCache });
-      return () => { _authListeners = _authListeners.filter(l => l !== listener); };
     }
 
     const sb = getSB();
