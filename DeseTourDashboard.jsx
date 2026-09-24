@@ -5050,6 +5050,22 @@ function GuideChip({ name }) {
   );
 }
 
+// TESTABLE:assignReservationGuide:start
+// The ONE persistence path for reservations.guide_id/guide_name — every
+// guide-assignment surface (this modal's own submit, Operasyon
+// Bilgileri's "Kaldır" button, the Reservation List's inline Rehber-
+// column popover, and Reservation Detail's "Rehber Ata" quick action,
+// which just opens this same modal) calls this same function, which
+// calls the same useRepoMutation("reservation") -> SupabaseReservationRepo
+// .update(id, {guideId, guide}) already proven here. guideId=null removes
+// the assignment — the existing, already-supported behavior — never a
+// new backend behavior invented for any of these surfaces.
+async function assignReservationGuide(mutate, resId, guideId, guides) {
+  const guide = guideId ? (guides||[]).find(g => g.id === guideId) : null;
+  return mutate("update", resId, { guideId: guideId || null, guide: guide?.name || null });
+}
+// TESTABLE:assignReservationGuide:end
+
 function AssignGuideModal({ r, onClose }) {
   const { mutate, mutating } = useRepoMutation("reservation");
   const { data:guideList } = useRepo("guide", "getAll");
@@ -5065,8 +5081,7 @@ function AssignGuideModal({ r, onClose }) {
   }, [guideId]);
 
   async function handleSubmit() {
-    const guide = guides.find(g=>g.id===guideId);
-    await mutate("update", r.id, { guideId: guideId||null, guide: guide?.name||null });
+    await assignReservationGuide(mutate, r.id, guideId||null, guides);
     onClose();
   }
 
@@ -5089,6 +5104,101 @@ function AssignGuideModal({ r, onClose }) {
         </div>
       )}
     </Modal>
+  );
+}
+
+// Compact inline guide-assignment popover for the Reservation List's
+// Rehber column — clicking the cell (whether it shows a guide's name or
+// the red "Atanmadı" state) opens this instead of requiring a trip to
+// Reservation Detail. Persists through the exact same
+// assignReservationGuide() -> useRepoMutation("reservation") path as
+// AssignGuideModal (Operasyon Bilgileri) — never a second mutation.
+// `guides` is the active-guide list, fetched ONCE by the parent
+// ReservationsPage and shared across every row (useRepo's own fetch-cache
+// already dedupes this against any other "guide"/"getAll" caller too).
+function GuideAssignCell({ r, guides }) {
+  const [open, setOpen] = useState(false);
+  const { mutate, mutating } = useRepoMutation("reservation");
+  const ref = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onDoc(e) { if (ref.current && !ref.current.contains(e.target)) setOpen(false); }
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [open]);
+
+  async function pick(guideId) {
+    const { error } = await assignReservationGuide(mutate, r.id, guideId, guides);
+    // On failure: do NOT close, do NOT touch local state — `r.guide`/
+    // `r.guideId` come straight from the still-unchanged repo data, so the
+    // previously-assigned guide (or lack of one) is preserved automatically.
+    if (error) { showToast("Rehber atanamadı: " + error); return; }
+    setOpen(false);
+  }
+
+  return (
+    // stopPropagation here covers every click inside (the trigger AND the
+    // popover, both rendered as children of this same element) — the
+    // table row's own onClick (row navigation) never sees these clicks.
+    <div ref={ref} style={{ position:"relative", display:"inline-block" }} onClick={e => e.stopPropagation()}>
+      <div
+        onClick={() => !mutating && setOpen(o => !o)}
+        style={{ cursor: mutating ? "default" : "pointer", opacity: mutating ? 0.6 : 1, display:"flex", alignItems:"center", gap:6 }}
+      >
+        <GuideChip name={r.guide}/>
+        {mutating && <span style={{ fontSize:11, color:C.textFaint, fontFamily:"'DM Sans',sans-serif" }}>…</span>}
+      </div>
+      {open && (
+        <div style={{
+          position:"absolute", top:"calc(100% + 6px)", left:0, zIndex:40, minWidth:230,
+          background:C.white, border:`1px solid ${C.border}`, borderRadius:10,
+          boxShadow:"0 10px 28px rgba(13,27,62,0.18)", padding:6,
+          maxHeight:280, overflowY:"auto",
+        }}>
+          {guides.length === 0 && (
+            <div style={{ padding:"10px", fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif" }}>Aktif rehber yok.</div>
+          )}
+          {guides.map(g => {
+            const isCurrent = g.id === r.guideId;
+            return (
+              <div key={g.id}
+                onClick={() => !mutating && pick(g.id)}
+                style={{
+                  display:"flex", alignItems:"center", justifyContent:"space-between", gap:8,
+                  padding:"8px 10px", borderRadius:7, cursor: mutating ? "default" : "pointer",
+                  background: isCurrent ? C.ivory : "transparent",
+                }}
+                onMouseEnter={e=>{ if(!mutating) e.currentTarget.style.background = C.ivory; }}
+                onMouseLeave={e=>{ e.currentTarget.style.background = isCurrent ? C.ivory : "transparent"; }}
+              >
+                <div>
+                  <div style={{ fontSize:13, color:C.text, fontFamily:"'DM Sans',sans-serif", fontWeight: isCurrent?600:400 }}>{g.name}</div>
+                  {(g.languageNames||[]).length > 0 && (
+                    <div style={{ fontSize:11, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:1 }}>{g.languageNames.join(', ')}</div>
+                  )}
+                </div>
+                {isCurrent && <RIc d="M20 6L9 17l-5-5" size={13} sw={2.2} color={C.green}/>}
+              </div>
+            );
+          })}
+          {r.guideId && (
+            <>
+              <div style={{ height:1, background:C.borderLight, margin:"6px 4px" }}/>
+              <div
+                onClick={() => !mutating && pick(null)}
+                style={{
+                  padding:"8px 10px", borderRadius:7, cursor: mutating ? "default" : "pointer",
+                  fontSize:12.5, color:C.red, fontFamily:"'DM Sans',sans-serif",
+                }}
+                onMouseEnter={e=>e.currentTarget.style.background=C.redBg}
+                onMouseLeave={e=>e.currentTarget.style.background="transparent"}
+              >Atamayı Kaldır</div>
+            </>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -5599,6 +5709,10 @@ function ReservationsPage({ onSelect }) {
   const [search, setSearch]       = useState("");
   const { data:repoRes, loading:resLoading, error:resError, reload:reloadRes }
     = useRepo("reservation", "getAll");
+  // Fetched ONCE here and shared across every row's GuideAssignCell —
+  // same active-guide filter AssignGuideModal already uses.
+  const { data:guideListForAssign } = useRepo("guide", "getAll");
+  const activeGuidesForAssign = (guideListForAssign||[]).filter(g=>g.status!=="Pasif");
 
   const TABS = ["Tümü", "Hazırlanıyor", "Onaylandı", "Tur Günü", "Tamamlandı", "İptal"];
 
@@ -5812,7 +5926,7 @@ function ReservationsPage({ onSelect }) {
                       </td>
                       {}
                       <td style={{ padding:"14px 12px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle" }}>
-                        <GuideChip name={r.guide}/>
+                        <GuideAssignCell r={r} guides={activeGuidesForAssign}/>
                       </td>
                       {}
                       <td style={{ padding:"14px 12px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle" }}>
@@ -6058,7 +6172,7 @@ const RES_ACTIONS = [
   { label:"Turu Tamamlandı Olarak İşaretle", icon:"M22 11.08V12a10 10 0 11-5.93-9.14 M22 4L12 14.01l-3-3", green:true },
 ];
 
-function ResQuickActions({ res }) {
+function ResQuickActions({ res, onAssignGuide }) {
   const [opStatus, setOpStatus] = useState(res?.opStatus || "Hazırlanıyor");
 
   function handleOdemeEkle() {
@@ -6083,11 +6197,18 @@ function ResQuickActions({ res }) {
         {RES_ACTIONS.map((a, i) => {
           const isOdeme = a.label === "Ödeme Kaydı Ekle";
           const isTamamlandi = a.green;
+          // "Rehber Ata" invokes the EXACT SAME guide-assignment UI already
+          // used by Operasyon Bilgileri — onAssignGuide is the parent's
+          // own setShowAssignGuide(true), opening the one shared
+          // AssignGuideModal instance. Never a second modal/mutation.
+          const isGuideAssign = a.label === "Rehber Ata";
+          const label = isGuideAssign ? (res?.guideId ? "Rehberi Değiştir" : "Rehber Ata") : a.label;
+          const onClick = isGuideAssign ? onAssignGuide : isOdeme ? handleOdemeEkle : isTamamlandi ? handleTamamlandi : undefined;
           return (
             <button key={i}
               onMouseEnter={e=>e.currentTarget.style.background=C.ivory}
               onMouseLeave={e=>e.currentTarget.style.background="transparent"}
-              onClick={isOdeme ? handleOdemeEkle : isTamamlandi ? handleTamamlandi : undefined}
+              onClick={onClick}
               style={{
                 display:"flex", alignItems:"center", gap:10,
                 width:"100%", padding:"10px 12px",
@@ -6101,7 +6222,7 @@ function ResQuickActions({ res }) {
                 textAlign:"left", transition:"background .12s",
               }}>
               <RIc d={a.icon} size={14} sw={a.primary?2:1.6}/>
-              {a.label}
+              {label}
             </button>
           );
         })}
@@ -6392,7 +6513,7 @@ function ReservationDetailPage({ resId, onBack }) {
                 {r.guideId && (
                   <button disabled={removingGuide} onClick={async()=>{
                     setRemovingGuide(true);
-                    await mutGuideAssign("update", r.id, { guideId:null, guide:null });
+                    await assignReservationGuide(mutGuideAssign, r.id, null, null);
                     setRemovingGuide(false);
                   }} style={{
                     padding:"4px 8px", borderRadius:6, border:`1px solid ${C.border}`,
@@ -6429,7 +6550,7 @@ function ReservationDetailPage({ resId, onBack }) {
 
         {}
         <div style={{ display:"flex", flexDirection:"column", gap:18 }}>
-          <ResQuickActions res={r}/>
+          <ResQuickActions res={r} onAssignGuide={()=>setShowAssignGuide(true)}/>
 
           {}
           <RCard>
