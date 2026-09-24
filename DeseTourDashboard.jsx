@@ -13811,6 +13811,40 @@ function _applyAuthResolution(reqId, patch, prevCache, prevUserId) {
   return true;
 }
 
+// TESTABLE:_dedupedLoadStaffData:start
+// At most ONE in-flight staff_users lookup per auth user id, shared across
+// every useAuth() instance/subscription that might exist at once — not
+// just within a single one (the reqId/_computeAuthResolution machinery
+// above already protects which RESULT wins when two resolutions overlap,
+// but does nothing to stop the SECOND one from firing a fully redundant
+// Postgres query in the first place). Two overlapping resolutions for the
+// SAME user (e.g. a duplicate SIGNED_IN/INITIAL_SESSION pair, or — the
+// real production case this was added for — a brief window where both
+// LoginPage's and a freshly-mounted AuthGuard's onAuthStateChange
+// subscriptions are alive at once during the login→dashboard transition)
+// now share the SAME network request instead of both separately querying
+// staff_users and competing for the same connection/bandwidth budget —
+// exactly the contention that pushes a lookup past the 12000ms budget.
+// Cleared as soon as the in-flight promise SETTLES (success or failure),
+// via .finally(), so the very next lookup for that user always gets a
+// fresh read — this only ever collapses genuinely CONCURRENT requests,
+// never serves a stale cached result to a later, separate lookup.
+let _inFlightStaffLookup = null; // { userId, promise } | null
+
+function _dedupedLoadStaffData(userId, loadFn = loadStaffData) {
+  if (_inFlightStaffLookup && _inFlightStaffLookup.userId === userId) {
+    return _inFlightStaffLookup.promise;
+  }
+  const promise = loadFn(userId).finally(() => {
+    if (_inFlightStaffLookup && _inFlightStaffLookup.promise === promise) {
+      _inFlightStaffLookup = null;
+    }
+  });
+  _inFlightStaffLookup = { userId, promise };
+  return promise;
+}
+// TESTABLE:_dedupedLoadStaffData:end
+
 // TESTABLE:_resolveStaffState:start
 // Resolves { session, staff, staffQueryError, staffInactive } for a given
 // Supabase auth session. Genuinely different outcomes are kept apart so
@@ -13832,7 +13866,7 @@ function _applyAuthResolution(reqId, patch, prevCache, prevUserId) {
 async function _resolveStaffState(s, loadFn = loadStaffData) {
   if (!s?.user) return { session:s, staff:null, authLoading:false, staffQueryError:null, staffInactive:false };
   try {
-    const { data, error } = await _withTimeout(loadFn(s.user.id), 12000, 'Personel profili');
+    const { data, error } = await _withTimeout(_dedupedLoadStaffData(s.user.id, loadFn), 12000, 'Personel profili');
     if (error) {
       console.error('[Auth] staff_users query returned an error (session kept):', error);
       return { session:s, staff:null, authLoading:false, staffQueryError: error.message || String(error), staffInactive:false };
@@ -13889,6 +13923,60 @@ async function _signInWithPassword(sb, email, password) {
 }
 // TESTABLE:_signInWithPassword:end
 
+// Module-level, not per-hook-instance: writes the shared _authCache and
+// notifies every currently-registered listener (every mounted useAuth()
+// instance). Has no dependency on any particular component's state, so
+// it never needed to live inside useAuth() itself — moved out (along with
+// login() below) specifically so a component that only needs to trigger a
+// sign-in (LoginPage) never has to mount a full useAuth() instance just to
+// reach it. See login()'s own comment for why that mattered.
+function updateAuth(patch) {
+  _authCache = { ...(_authCache || { session:null, staff:null, authLoading:true }), ...patch };
+  _notifyAuthListeners();
+}
+
+// Module-level (not inside useAuth()) for the same reason updateAuth is:
+// LoginPage only ever needed this one function out of the whole hook, but
+// calling useAuth() to reach it meant LoginPage mounted its OWN
+// onAuthStateChange subscription and staff-profile bootstrap, entirely
+// separate from AuthGuard's. On a successful sign-in, Supabase fires
+// SIGNED_IN to every currently-subscribed listener — including LoginPage's
+// — which started its own _resolveStaffState(...) staff_users query.
+// handleSubmit does not wait for that: it calls onLogin()/navigate()
+// immediately once signInWithPassword itself resolves, which unmounts
+// LoginPage (running its cleanup — unsubscribing its listener, but NOT
+// cancelling that already-in-flight query, which keeps running) and mounts
+// AuthGuard for the first time, whose own fresh useAuth() instance
+// subscribes again and receives INITIAL_SESSION for the now-signed-in
+// user — starting a SECOND, fully independent staff_users query for the
+// SAME user while the first one is often still in flight. Two concurrent
+// queries competing for the same connection/bandwidth budget is exactly
+// what previously pushed a lookup past the 12000ms budget (the same class
+// of contention commit 478f3b6 already fixed once, for a different pair
+// of call sites — see that commit and _dedupedLoadStaffData below, which
+// now also protects any other overlapping resolution for the same user
+// regardless of which component triggered it). LoginPage calling this
+// plain module-level function instead removes the extra subscription
+// entirely, by construction: it never starts a staff lookup of its own,
+// so there is nothing to race AuthGuard's.
+async function login(email, password) {
+  const sb = getSB();
+  if (!sb) {
+    const found = DB.staff.find(s => s.email === email);
+    if (found && password === "demo") {
+      const mockUser = { ...found, full_name:found.name };
+      updateAuth({
+        staff: mockUser,
+        session: { user:{ email:found.email, id:found.id } },
+        authLoading: false, authError:null, staffQueryError:null,
+      });
+      return { error:null };
+    }
+    return { error:"Hatalı email veya şifre." };
+  }
+  return _signInWithPassword(sb, email, password);
+}
+
 function useAuth() {
   const [authState, setAuthState] = useState(() => _authCache || {
     session: null, staff: null, authLoading: true
@@ -13916,11 +14004,6 @@ function useAuth() {
     const patch = await _resolveStaffState(session);
     if (!_applyAuthResolution(reqId, patch, prevCache, prevUserId)) return;
     setAuthState(_authCache);
-    _notifyAuthListeners();
-  }
-
-  function updateAuth(patch) {
-    _authCache = { ...(_authCache || { session:null, staff:null, authLoading:true }), ...patch };
     _notifyAuthListeners();
   }
 
@@ -14038,29 +14121,6 @@ function useAuth() {
 
   // loadStaffData is now a module-level helper (defined below useAuth)
 
-  async function login(email, password) {
-    const sb = getSB();
-    if (!sb) {
-      const found = DB.staff.find(s => s.email === email);
-      if (found && password === "demo") {
-        const mockUser = { ...found, full_name:found.name };
-        // Pre-existing bug fixed here: this used to call setStaff()/
-        // setSession(), neither of which exist in this hook (state lives
-        // in a single authState object updated via updateAuth), so a mock
-        // -mode login with the correct demo credentials threw a
-        // ReferenceError instead of logging in.
-        updateAuth({
-          staff: mockUser,
-          session: { user:{ email:found.email, id:found.id } },
-          authLoading: false, authError:null, staffQueryError:null,
-        });
-        return { error:null };
-      }
-      return { error:"Hatalı email veya şifre." };
-    }
-    return _signInWithPassword(sb, email, password);
-  }
-
   async function logout() {
     const sb = getSB();
     if (sb) await sb.auth.signOut();
@@ -14125,7 +14185,12 @@ function LoginPage({ onLogin, connectionError }) {
   const [resetEmail, setResetEmail] = useState("");
   const [resetBusy,  setResetBusy]  = useState(false);
   const [resetError, setResetError] = useState("");
-  const { login } = useAuth();
+  // Deliberately NOT useAuth() — LoginPage only ever needs the plain
+  // login() action, and calling the full hook here used to mount a SECOND,
+  // independent onAuthStateChange subscription/staff-profile bootstrap
+  // racing AuthGuard's own — see login()'s own comment for the exact
+  // mechanism. login() is a module-level function precisely so this
+  // component can reach it without subscribing to anything.
 
   async function handleReset() {
     const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;

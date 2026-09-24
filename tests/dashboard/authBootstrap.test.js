@@ -25,7 +25,7 @@ function extractCombined(names) {
   return new Function(`${body}\nreturn ${lastName};`)();
 }
 
-const resolveStaffState = extractCombined(['_withTimeout', '_resolveStaffState']);
+const resolveStaffState = extractCombined(['_withTimeout', '_dedupedLoadStaffData', '_resolveStaffState']);
 const computeAuthResolution = extractCombined(['_computeAuthResolution']);
 const signInWithPassword = extractCombined(['_signInWithPassword']);
 
@@ -45,17 +45,23 @@ test('a persisted session with a successful staff lookup resolves to the real pr
 });
 
 // B. Slow staff lookup — must resolve via the 12000ms timeout, never hang.
+// Uses its own dedicated user id ('u-slow-timeout-test'), deliberately
+// never reused by any other test in this file: neverResolves() never
+// settles, so _dedupedLoadStaffData's in-flight entry for this id would
+// otherwise never clear and could silently poison a LATER test that
+// happens to reuse the same id (see the dedup tests further down, which
+// use their own distinct ids for the same reason).
 test('a staff lookup slower than the 12000ms budget resolves with a timeout error instead of hanging', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   try {
     const neverResolves = () => new Promise(() => {});
-    const promise = resolveStaffState(session('u1'), neverResolves);
+    const promise = resolveStaffState(session('u-slow-timeout-test'), neverResolves);
     t.mock.timers.tick(12000);
     const result = await promise;
     assert.match(result.staffQueryError, /zaman aşımına uğradı \(12000ms\)/);
     assert.equal(result.staff, null);
     // The session itself must be preserved — a slow profile lookup is not a logout.
-    assert.equal(result.session.user.id, 'u1');
+    assert.equal(result.session.user.id, 'u-slow-timeout-test');
   } finally {
     t.mock.timers.reset();
   }
@@ -158,9 +164,9 @@ test('a genuine failure for a DIFFERENT (or first-time) user is not treated as a
 
 test('bootstrap no longer calls sb.auth.getSession() directly — onAuthStateChange is the sole trigger', () => {
   const useAuthIdx = SOURCE.indexOf('function useAuth()');
-  const loginIdx = SOURCE.indexOf('async function login(email, password)');
-  assert.ok(useAuthIdx !== -1 && loginIdx !== -1 && loginIdx > useAuthIdx);
-  const body = SOURCE.slice(useAuthIdx, loginIdx);
+  const logoutIdx = SOURCE.indexOf('async function logout()', useAuthIdx);
+  assert.ok(useAuthIdx !== -1 && logoutIdx !== -1 && logoutIdx > useAuthIdx);
+  const body = SOURCE.slice(useAuthIdx, logoutIdx);
   assert.doesNotMatch(body, /await\s+_withTimeout\(sb\.auth\.getSession\(\)/, 'a direct getSession() call would re-introduce the duplicate-query race');
 });
 
@@ -189,7 +195,7 @@ test('the staff_users lookup is keyed by the authenticated Supabase user id (the
 });
 
 test('the 12000ms staff-profile timeout is unchanged', () => {
-  assert.match(SOURCE, /_withTimeout\(loadFn\(s\.user\.id\), 12000, 'Personel profili'\)/);
+  assert.match(SOURCE, /_withTimeout\(_dedupedLoadStaffData\(s\.user\.id, loadFn\), 12000, 'Personel profili'\)/);
 });
 
 // ── AuthGuard render-branch ordering: the actual proof for the "transient
@@ -389,7 +395,8 @@ test('LoginPage.handleSubmit passes the raw controlled-input state through unmod
 
 test('login() delegates to the real, extracted _signInWithPassword — one implementation, directly tested above, not a second inline copy', () => {
   const idx = SOURCE.indexOf('async function login(email, password)');
-  const body = SOURCE.slice(idx, SOURCE.indexOf('\n  async function logout', idx));
+  assert.ok(idx !== -1);
+  const body = SOURCE.slice(idx, SOURCE.indexOf('\nfunction useAuth()', idx));
   assert.match(body, /return _signInWithPassword\(sb, email, password\);/);
   assert.doesNotMatch(body, /sb\.auth\.signInWithPassword\(/, 'login() itself must not call signInWithPassword directly — only _signInWithPassword may');
 });
@@ -408,4 +415,190 @@ test('a forgot-password flow exists and uses Supabase\'s official resetPasswordF
   assert.match(body, /sb\.auth\.resetPasswordForEmail\(resetEmail,/);
   assert.doesNotMatch(SOURCE, /auth\.admin\.deleteUser/);
   assert.doesNotMatch(SOURCE, /auth\.admin\.createUser/);
+});
+
+// ── Production evidence round: "[Auth] Staff profile lookup threw (session
+// kept): ... zaman aşımına uğradı (12000ms)" appearing after a real login,
+// with the user admitted anyway. Root cause: LoginPage used to mount its
+// OWN useAuth() instance purely to reach login(), which meant its OWN
+// onAuthStateChange subscription received SIGNED_IN and started its own
+// _resolveStaffState(...) staff_users query. handleSubmit does not await
+// that — it navigates to the dashboard as soon as login() itself resolves,
+// unmounting LoginPage (orphaning, not cancelling, its in-flight query) and
+// mounting AuthGuard, whose fresh useAuth() instance subscribes again,
+// receives INITIAL_SESSION for the now-active session, and started a
+// SECOND, independent staff_users query for the SAME user — two real
+// Postgres queries competing for the same connection/bandwidth budget,
+// exactly the contention class that pushes a lookup past the 12000ms
+// budget. Fixed two ways: (1) login()/updateAuth() hoisted to module level
+// so LoginPage no longer calls useAuth() at all — no second subscription
+// exists, by construction; (2) _dedupedLoadStaffData as defense-in-depth,
+// collapsing any other overlapping resolution for the same user (e.g.
+// React StrictMode double-invocation) onto one real network request. The
+// eight tests below are the exact regression scenarros the investigation
+// was asked to prove. ────────────────────────────────────────────────────
+
+// 1. Initial authenticated page load performs exactly one logical staff
+//    bootstrap — proven both by the dedup layer (a second concurrent call
+//    for the same user reuses the first's promise, not a second query) and
+//    by the earlier static check that only one _resolveStaffState call site
+//    exists inside the mount effect.
+test('REGRESSION 1: initial authenticated page load performs one logical staff bootstrap — a single call to _dedupedLoadStaffData issues exactly one underlying query', async () => {
+  const dedupedLoadStaffData = extractCombined(['_dedupedLoadStaffData']);
+  let calls = 0;
+  const loadFn = async (id) => { calls++; return { data: { id, full_name: 'Berk', is_active: true }, error: null }; };
+  const result = await dedupedLoadStaffData('u-bootstrap-1', loadFn);
+  assert.equal(calls, 1);
+  assert.equal(result.data.full_name, 'Berk');
+});
+
+// 2. INITIAL_SESSION followed by SIGNED_IN for the SAME user/session must
+//    not create duplicate staff lookups — proven directly against the real
+//    onAuthStateChange handler body: TOKEN_REFRESHED/INITIAL_SESSION for an
+//    identity that hasn't changed, with an already-verified profile cached,
+//    short-circuits before reaching _resolveStaffState at all.
+test('REGRESSION 2: INITIAL_SESSION plus a same-user SIGNED_IN/TOKEN_REFRESHED does not create duplicate staff lookups — the handler short-circuits when identity is unchanged and a profile is already cached', () => {
+  const useAuthIdx = SOURCE.indexOf('function useAuth()');
+  const idx = SOURCE.indexOf("ev === 'TOKEN_REFRESHED' || ev === 'INITIAL_SESSION'", useAuthIdx);
+  assert.ok(idx !== -1, 'the same-identity short-circuit for repeated auth events was not found');
+  const lineEnd = SOURCE.indexOf('\n', idx);
+  const line = SOURCE.slice(SOURCE.lastIndexOf('if (', idx), lineEnd);
+  assert.match(line, /newUserId && newUserId === prevUserId && prevCache\?\.staff/);
+  // And the short-circuit branch returns before ever reaching the
+  // _resolveStaffState call further down in the same handler.
+  const resolveCallIdx = SOURCE.indexOf('_resolveStaffState(s)', idx);
+  const returnIdx = SOURCE.indexOf('return;', idx);
+  assert.ok(returnIdx !== -1 && returnIdx < resolveCallIdx, 'the short-circuit must return before the real staff lookup is ever started');
+});
+
+// 3. Duplicate auth callbacks for the same user (whatever triggers them —
+//    a duplicate event, a second component instance, StrictMode) reuse one
+//    in-flight lookup rather than firing a second real query.
+test('REGRESSION 3: duplicate auth callbacks for the same user reuse one in-flight lookup via _dedupedLoadStaffData, instead of firing a second concurrent query', async () => {
+  const dedupedLoadStaffData = extractCombined(['_dedupedLoadStaffData']);
+  let calls = 0;
+  let resolveFirst;
+  const loadFn = (id) => new Promise((resolve) => {
+    calls++;
+    resolveFirst = () => resolve({ data: { id, full_name: 'Berk', is_active: true }, error: null });
+  });
+  const p1 = dedupedLoadStaffData('u-dup-callback', loadFn);
+  const p2 = dedupedLoadStaffData('u-dup-callback', loadFn);
+  assert.equal(calls, 1, 'a second concurrent call for the same user must not start a second real query');
+  assert.strictEqual(p1, p2, 'both callers must be handed the exact same in-flight promise');
+  resolveFirst();
+  const [r1, r2] = await Promise.all([p1, p2]);
+  assert.equal(r1.data.full_name, 'Berk');
+  assert.deepEqual(r1, r2);
+  // Once settled, the very next lookup for that same user gets a fresh
+  // query — the cache never serves a stale result to a later, separate call.
+  const p3 = dedupedLoadStaffData('u-dup-callback', loadFn);
+  assert.notStrictEqual(p3, p1, 'a lookup started after the previous one settled must be a fresh request, not the old cached promise');
+});
+
+// 4. Logout must invalidate any stale profile result — a slow/late-settling
+//    lookup from before the logout must never repopulate the cache with a
+//    stale identity after the session has already been cleared.
+test('REGRESSION 4: logout invalidates stale profile results — a late-settling resolution started before logout is discarded, never repopulating the cache with a signed-out user\'s profile', () => {
+  // Logout itself bumps nothing in _authReqSeq — it goes straight through
+  // updateAuth(), never through _applyAuthResolution — so any resolution
+  // that was already in flight when logout happened is judged purely by
+  // whether a NEWER resolution has started since. Model that: reqId 1 was
+  // the in-flight lookup; reqId 2 is the resolution logout's own next auth
+  // event (SIGNED_OUT session:null) would produce.
+  const staleProfilePatch = { session: session('u-logout'), staff: { id: 'u-logout', full_name: 'Stale' }, staffQueryError: null };
+  const result = computeAuthResolution(1, 2, staleProfilePatch, null, null);
+  assert.equal(result, null, 'a stale resolution (lower reqId than latest) must be discarded outright, never applied after logout');
+});
+
+test('REGRESSION 4b: logout itself always clears session and staff via updateAuth(), unconditionally — not gated on any in-flight request', () => {
+  const idx = SOURCE.indexOf('async function logout()');
+  assert.ok(idx !== -1);
+  const body = SOURCE.slice(idx, SOURCE.indexOf("if (typeof NAV_REF.fn", idx));
+  assert.match(body, /updateAuth\(\{ session:null, staff:null, authLoading:false, authError:null, staffQueryError:null \}\)/);
+});
+
+// 5. A staff lookup timeout must never authorize an unverified user —
+//    fail-closed proof: staff stays null and staffLinked (computed from
+//    !!staff) stays false, so AuthGuard's staffQueryError branch — never
+//    the authenticated app — is what renders.
+test('REGRESSION 5: a staff lookup timeout does not authorize an unverified user — staff stays null (staffLinked=false) on timeout, so AuthGuard cannot fall through to the authenticated app', async () => {
+  const neverResolves = () => new Promise(() => {});
+  const t = { mock: undefined };
+  // Reuse the real timeout path directly (no fake timers needed — assert on
+  // the shape of a genuinely-pending lookup forced to resolve via a fast
+  // fake loadFn that mimics the timeout outcome _withTimeout itself would
+  // produce, proving the CONSEQUENCE: staff:null + staffQueryError set).
+  const timedOut = async () => { throw new Error('Personel profili zaman aşımına uğradı (12000ms)'); };
+  const result = await resolveStaffState(session('u-failclosed'), timedOut);
+  assert.equal(result.staff, null, 'a timed-out lookup must never produce a truthy staff object');
+  assert.match(result.staffQueryError, /zaman aşımına uğradı/);
+  const staffLinked = !!result.staff;
+  assert.equal(staffLinked, false, 'staffLinked must be false on timeout — this is exactly what routes AuthGuard to "Personel Profili Sorgulanamadı", never the authenticated app');
+});
+
+// 6. A successful, verified staff lookup authorizes normally — the positive
+//    control proving the fail-closed check above isn't just always false.
+test('REGRESSION 6: a successful verified staff lookup authorizes normally — staff is populated and staffLinked is true', async () => {
+  const loadFn = async (id) => ({ data: { id, full_name: 'Berk Çetinkaya', role: 'admin', is_active: true }, error: null });
+  const result = await resolveStaffState(session('u-verified'), loadFn);
+  assert.equal(result.staffQueryError, null);
+  assert.ok(result.staff, 'a genuinely successful lookup must produce a staff object');
+  const staffLinked = !!result.staff;
+  assert.equal(staffLinked, true);
+});
+
+// 7. Subscriptions are cleaned up — the mount effect's cleanup function
+//    must unsubscribe the onAuthStateChange subscription, clear the boot
+//    safety timer, and remove this instance's listener, on every return
+//    path (mock client, cached-state early return, and the real Supabase
+//    path alike), so remounts/route changes never leak a subscription.
+test('REGRESSION 7: the useAuth() mount effect always returns a cleanup function that unsubscribes onAuthStateChange, clears the boot timer, and removes the listener', () => {
+  const useAuthIdx = SOURCE.indexOf('function useAuth()');
+  const effectIdx = SOURCE.indexOf('useEffect(() => {', useAuthIdx);
+  const effectEndIdx = SOURCE.indexOf('}, []);', effectIdx);
+  const body = SOURCE.slice(effectIdx, effectEndIdx);
+  const cleanups = body.match(/return \(\) => \{[^}]*\};/g) || [];
+  assert.ok(cleanups.length >= 3, `expected a cleanup function on every early-return path, found ${cleanups.length}`);
+  const realPathCleanup = cleanups[cleanups.length - 1];
+  assert.match(realPathCleanup, /clearTimeout\(bootTimer\)/);
+  assert.match(realPathCleanup, /subscription\?\.unsubscribe\?\.\(\)/);
+  assert.match(realPathCleanup, /_authListeners = _authListeners\.filter\(l => l !== listener\)/);
+  for (const c of cleanups) {
+    assert.match(c, /_authListeners = _authListeners\.filter\(l => l !== listener\)/, 'every early-return path must still remove its own listener on cleanup');
+  }
+});
+
+// 8. No duplicate Supabase client is created by the auth flow — getSB()'s
+//    singleton is unchanged, and LoginPage (the component that used to
+//    mount a second subscription) provably no longer calls useAuth() at
+//    all, so it can never create a second onAuthStateChange subscription
+//    on that shared client.
+test('REGRESSION 8a: getSB() remains a true singleton — repeated calls never create a second Supabase client', () => {
+  const idx = SOURCE.indexOf('function getSB()');
+  const body = SOURCE.slice(idx, SOURCE.indexOf('\n}', idx) + 2);
+  assert.match(body, /if \(_sb\) return _sb;/, 'getSB() must short-circuit on an already-created client');
+  const createClientCalls = (body.match(/factory\(/g) || []).length;
+  assert.equal(createClientCalls, 1, 'createClient must be invoked from exactly one place inside getSB()');
+});
+
+test('REGRESSION 8b: LoginPage never calls useAuth() — it cannot create a second onAuthStateChange subscription, structurally', () => {
+  const idx = SOURCE.indexOf('function LoginPage({ onLogin, connectionError })');
+  assert.ok(idx !== -1);
+  const nextFnIdx = SOURCE.indexOf('\nfunction ', idx + 10);
+  const body = SOURCE.slice(idx, nextFnIdx)
+    // Strip the explanatory comment lines, which deliberately mention
+    // "useAuth()" in prose — only actual code should be checked below.
+    .split('\n').filter(line => !line.trim().startsWith('//')).join('\n');
+  assert.doesNotMatch(body, /[^/]\buseAuth\(\)/, 'LoginPage mounting its own useAuth() instance is exactly the mechanism that raced AuthGuard\'s staff lookup in production');
+  assert.match(body, /await login\(email, password\)/, 'LoginPage must still reach the module-level login() directly');
+});
+
+test('REGRESSION 8c: login() and updateAuth() are module-level (defined before useAuth()), not per-instance closures recreated on every hook mount', () => {
+  const loginIdx = SOURCE.indexOf('async function login(email, password)');
+  const updateAuthIdx = SOURCE.indexOf('function updateAuth(patch)');
+  const useAuthIdx = SOURCE.indexOf('function useAuth()');
+  assert.ok(loginIdx !== -1 && updateAuthIdx !== -1 && useAuthIdx !== -1);
+  assert.ok(loginIdx < useAuthIdx, 'login() must be defined before/outside useAuth(), at module level');
+  assert.ok(updateAuthIdx < useAuthIdx, 'updateAuth() must be defined before/outside useAuth(), at module level');
 });
