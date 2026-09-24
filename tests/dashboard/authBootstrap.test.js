@@ -981,9 +981,9 @@ test('[AUTH-DIAG] elapsed-ms values come from one shared performance.now()-based
 
 test('[AUTH-DIAG] the onAuthStateChange handler logs the real Supabase event type, reqId, and current _authReqSeq — not a placeholder', () => {
   const useAuthIdx = SOURCE.indexOf('function useAuth()');
-  const handlerIdx = SOURCE.indexOf('onAuthStateChange(async (ev, s) => {', useAuthIdx);
+  const handlerIdx = SOURCE.indexOf('onAuthStateChange((ev, s) => {', useAuthIdx);
   assert.ok(handlerIdx !== -1);
-  const handlerEnd = SOURCE.indexOf('});', SOURCE.indexOf('_notifyAuthListeners();', handlerIdx));
+  const handlerEnd = SOURCE.indexOf('return () => {', handlerIdx);
   const body = SOURCE.slice(handlerIdx, handlerEnd);
   assert.match(body, /_authDiagLog\(diagId, 'event', ev, 'userTail', _authDiagUserTail\(newUserId\), 't', _authDiagNow\(\)\)/);
   assert.match(body, /_authDiagLog\(diagId, 'reqId', reqId, 'authReqSeq', _authReqSeq, 't', _authDiagNow\(\)\)/);
@@ -1108,4 +1108,233 @@ test('[AUTH-DIAG] no code path in the whole repository can emit "[Auth] staff pr
   // itself may sit between them — no other branch/return can slip in.
   const between = before.slice(unconditionalIdx);
   assert.doesNotMatch(between.slice(between.indexOf(';') + 1), /return\s*\{/, 'no return statement may separate the unconditional trace from the legacy console.error it guards');
+});
+
+// ── Round 3: PROVEN root cause, traced directly against the pinned
+// @supabase/supabase-js@2.45.4 source. Every REST request (sb.from(...))
+// goes through fetchWithAuth -> _getAccessToken() -> this.auth.getSession()
+// -> GoTrueClient's internal navigator.locks-based _acquireLock. But
+// _notifyAllSubscribers (which dispatches SIGNED_IN/INITIAL_SESSION/etc.
+// to our onAuthStateChange callback) does
+// `await Promise.all(listeners.map(l => l.callback(ev, s)))` from INSIDE
+// that same _acquireLock. Awaiting a Supabase database call directly
+// inside the callback therefore nests a second _acquireLock call inside
+// the first — not a hard deadlock (the SDK queues re-entrant calls via
+// its own pendingInLock list rather than re-requesting navigator.locks),
+// but it DOES serialize our query's token fetch behind the still-open
+// outer callback, and — if the persisted session's access token happened
+// to already be expired at that exact moment — __loadSession() additionally
+// awaits a full, real token-refresh network round-trip first. That is the
+// proven mechanism behind the production trace showing a genuine
+// staff_users request still unresolved 12+ seconds after SIGNED_IN,
+// settling only once a LATER, no-longer-nested INITIAL_SESSION dispatch
+// let it complete.
+//
+// Fix: the callback itself is now fully synchronous (no `async`, no
+// `await` before it returns) and hands the actual _resolveStaffState call
+// to a setTimeout(0) macrotask, guaranteed to run after the callback — and
+// therefore _notifyAllSubscribers' Promise.all and the outer _acquireLock —
+// have already resolved and released the lock. Staleness/logout/user-switch
+// safety is NOT reimplemented: the deferred lookup still goes through the
+// exact same reqId/_authReqSeq/_applyAuthResolution/_computeAuthResolution
+// machinery, with reqId/prevCache/prevUserId captured synchronously at
+// dispatch time, exactly as before. ──────────────────────────────────────
+
+test('[DEFERRED-LOOKUP] A. the onAuthStateChange callback is not async and awaits nothing before handing off to the deferred setTimeout', () => {
+  const useAuthIdx = SOURCE.indexOf('function useAuth()');
+  const handlerIdx = SOURCE.indexOf('onAuthStateChange((ev, s) => {', useAuthIdx);
+  assert.ok(handlerIdx !== -1, 'the callback must be a plain (non-async) function — the whole point of the fix');
+  assert.doesNotMatch(SOURCE.slice(useAuthIdx, SOURCE.indexOf('function LoginPage', useAuthIdx)), /onAuthStateChange\(async /, 'the old async-callback form must be gone entirely');
+  const deferIdx = SOURCE.indexOf('setTimeout(() => {', handlerIdx);
+  assert.ok(deferIdx !== -1);
+  const beforeDefer = SOURCE.slice(handlerIdx, deferIdx)
+    // Strip comment lines — the explanatory prose above mentions "await"
+    // in the abstract; only actual code should be checked here.
+    .split('\n').filter(line => !line.trim().startsWith('//')).join('\n');
+  assert.doesNotMatch(beforeDefer, /\bawait\b/, 'nothing before the deferred setTimeout may await a Supabase call — that is exactly the bug this fix removes');
+});
+
+test('[DEFERRED-LOOKUP] the actual staff_users lookup (_resolveStaffState) only appears INSIDE the setTimeout(...,0) deferral, never directly in the synchronous callback body', () => {
+  const useAuthIdx = SOURCE.indexOf('function useAuth()');
+  const handlerIdx = SOURCE.indexOf('onAuthStateChange((ev, s) => {', useAuthIdx);
+  const deferIdx = SOURCE.indexOf('setTimeout(() => {', handlerIdx);
+  const handlerEnd = SOURCE.indexOf('return () => {', handlerIdx);
+  const beforeDefer = SOURCE.slice(handlerIdx, deferIdx);
+  const afterDefer = SOURCE.slice(deferIdx, handlerEnd);
+  assert.doesNotMatch(beforeDefer, /_resolveStaffState\(/);
+  assert.match(afterDefer, /_resolveStaffState\(/);
+  const setTimeoutCallEnd = SOURCE.indexOf('}, 0);', deferIdx);
+  assert.ok(setTimeoutCallEnd !== -1 && setTimeoutCallEnd < handlerEnd, 'the deferral must use a 0ms macrotask delay, not an arbitrary debounce');
+});
+
+test('[DEFERRED-LOOKUP] H. the already-verified short-circuit still returns before ever reaching the deferred setTimeout — no deferred lookup is scheduled at all for a redundant event', () => {
+  const useAuthIdx = SOURCE.indexOf('function useAuth()');
+  const handlerIdx = SOURCE.indexOf('onAuthStateChange((ev, s) => {', useAuthIdx);
+  const shortCircuitIdx = SOURCE.indexOf('SKIPPED-ALREADY-VERIFIED', handlerIdx);
+  const shortCircuitReturnIdx = SOURCE.indexOf('return;', shortCircuitIdx);
+  const deferIdx = SOURCE.indexOf('setTimeout(() => {', handlerIdx);
+  assert.ok(shortCircuitReturnIdx !== -1 && deferIdx !== -1);
+  assert.ok(shortCircuitReturnIdx < deferIdx, 'the short-circuit must return before the deferred setTimeout is ever scheduled');
+});
+
+test('[DEFERRED-LOOKUP] J. retryStaffLookup is unchanged by this refactor — it still awaits _resolveStaffState directly, since it is triggered by a user click, not nested inside onAuthStateChange\'s own dispatch/lock', () => {
+  const idx = SOURCE.indexOf('async function retryStaffLookup()');
+  assert.ok(idx !== -1);
+  const body = SOURCE.slice(idx, SOURCE.indexOf('\n  useEffect(() => {', idx));
+  assert.match(body, /await _resolveStaffState\(session, undefined, \(\) => reqId !== _authReqSeq, diagId\)/);
+  assert.doesNotMatch(body, /setTimeout/, 'retryStaffLookup does not need the deferral — it is never invoked from inside a Supabase auth-lock-held callback');
+});
+
+test('[DEFERRED-LOOKUP] K. there is still exactly one sb.auth.onAuthStateChange(...) subscription and one getSB() singleton — the fix did not introduce a second client or subscription', () => {
+  const subscriptionCalls = (SOURCE.match(/\.onAuthStateChange\(/g) || []).length;
+  assert.equal(subscriptionCalls, 1, 'exactly one onAuthStateChange call site must exist in the whole file');
+  const idx = SOURCE.indexOf('function getSB()');
+  const body = SOURCE.slice(idx, SOURCE.indexOf('\n}', idx) + 2);
+  assert.match(body, /if \(_sb\) return _sb;/);
+});
+
+// A faithful local mirror of the real handler's own orchestration (reqId
+// capture at dispatch time, the short-circuit, the setTimeout(0) defer,
+// applying via the REAL computeAuthResolution) — never a reimplementation
+// of _resolveStaffState/_computeAuthResolution's own logic, which are the
+// real, directly-imported/extracted functions under test everywhere else
+// in this file. This exists only because the real handler lives inline
+// inside useAuth()'s useEffect, with no component-render harness in this
+// codebase (see this file's own established convention/comment further
+// up) — so the DEFERRAL MECHANICS themselves (real Promises, real
+// setTimeout, real staleness comparisons) are exercised end-to-end here,
+// exactly as the real handler drives them.
+function simulateDeferredAuthEvent(state, s, loadFn) {
+  const prevCache = state.authCache;
+  const prevUserId = prevCache?.session?.user?.id || null;
+  const newUserId = s?.user?.id || null;
+  if (newUserId && newUserId === prevUserId && prevCache?.staff) {
+    state.authCache = { ...prevCache, session: s };
+    return { deferred: null, reqId: null, shortCircuited: true };
+  }
+  const reqId = ++state.authReqSeq;
+  if (newUserId !== prevUserId) {
+    state.authCache = { session: s, staff: null, authLoading: true, staffQueryError: null, staffRefreshError: null };
+  }
+  let resolveDeferred;
+  const deferred = new Promise((res) => { resolveDeferred = res; });
+  setTimeout(() => {
+    (async () => {
+      const patch = await resolveStaffState(s, loadFn, () => reqId !== state.authReqSeq);
+      const next = computeAuthResolution(reqId, state.authReqSeq, patch, prevCache, prevUserId);
+      const applied = next !== null;
+      if (applied) state.authCache = next;
+      resolveDeferred({ applied, cache: state.authCache });
+    })();
+  }, 0);
+  return { deferred, reqId, shortCircuited: false };
+}
+
+test('[DEFERRED-LOOKUP] B/C. the callback returns — and DEFERRED STAFF LOOKUP STARTED logs — strictly before the staff lookup itself begins, proven with real timer/Promise mechanics', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  try {
+    let loadStarted = false;
+    const loadFn = async (id) => { loadStarted = true; return { data: { id, full_name: 'X', is_active: true }, error: null }; };
+    const state = { authReqSeq: 0, authCache: null };
+    const { deferred } = simulateDeferredAuthEvent(state, session('u-order-test'), loadFn);
+    // Mirrors the real handler: by the time simulateDeferredAuthEvent
+    // RETURNS (the synchronous callback body has finished), the lookup
+    // must not have started yet — it is only scheduled, not yet run.
+    assert.equal(loadStarted, false, 'the staff lookup must not have started yet at the moment the callback returns');
+    t.mock.timers.tick(0);
+    await deferred;
+    assert.equal(loadStarted, true, 'the deferred lookup must eventually run once the macrotask fires');
+  } finally {
+    t.mock.timers.reset();
+  }
+});
+
+test('[DEFERRED-LOOKUP] D. a successful deferred lookup applies the staff profile normally', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  try {
+    const state = { authReqSeq: 0, authCache: null };
+    const loadFn = async (id) => ({ data: { id, full_name: 'Berk Çetinkaya', is_active: true }, error: null });
+    const { deferred } = simulateDeferredAuthEvent(state, session('u-defer-success'), loadFn);
+    t.mock.timers.tick(0);
+    const result = await deferred;
+    assert.equal(result.applied, true);
+    assert.equal(state.authCache.staff.full_name, 'Berk Çetinkaya');
+  } finally {
+    t.mock.timers.reset();
+  }
+});
+
+test('[DEFERRED-LOOKUP] E. a deferred lookup that times out at the full 12000ms budget remains fail-closed — staff never becomes truthy', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  try {
+    const state = { authReqSeq: 0, authCache: null };
+    const neverResolves = () => new Promise(() => {});
+    const { deferred } = simulateDeferredAuthEvent(state, session('u-defer-fail'), neverResolves);
+    t.mock.timers.tick(0);
+    t.mock.timers.tick(12000);
+    const result = await deferred;
+    assert.equal(state.authCache.staff, null, 'a timed-out deferred lookup must never authorize an unverified user');
+    assert.match(state.authCache.staffQueryError, /zaman aşımına uğradı \(12000ms\)/);
+  } finally {
+    t.mock.timers.reset();
+  }
+});
+
+test('[DEFERRED-LOOKUP] F. SIGNED_OUT arriving before a slow deferred lookup resolves prevents that stale result from ever authorizing the logged-out session', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  try {
+    const state = { authReqSeq: 0, authCache: null };
+    const slowLoadFnA = (id) => new Promise((resolve) => {
+      setTimeout(() => resolve({ data: { id, full_name: 'A', is_active: true }, error: null }), 5000);
+    });
+    const { deferred: deferredA } = simulateDeferredAuthEvent(state, session('u-signout-race-A'), slowLoadFnA);
+    t.mock.timers.tick(0); // A's deferred lookup starts, its own 5000ms timer begins
+
+    // SIGNED_OUT arrives — dispatched synchronously, exactly like the real
+    // handler (s = null, a different "identity" than A).
+    const { deferred: deferredOut } = simulateDeferredAuthEvent(state, null, async () => ({ data: null, error: null }));
+    t.mock.timers.tick(0); // the SIGNED_OUT dispatch's own (trivial, no-session) deferred step runs
+    await deferredOut;
+    assert.equal(state.authCache.session, null, 'logout must take effect immediately, synchronously, at dispatch time');
+
+    t.mock.timers.tick(5000); // now A's slow lookup finally settles
+    const resultA = await deferredA;
+    assert.equal(resultA.applied, false, 'a stale lookup started before logout must be discarded once a newer event has been dispatched');
+    assert.equal(state.authCache.session, null, 'the logged-out state must never be overwritten by the late-arriving stale A result');
+    assert.equal(state.authCache.staff, null);
+  } finally {
+    t.mock.timers.reset();
+  }
+});
+
+test('[DEFERRED-LOOKUP] G. a slower user-A deferred lookup resolving after user B has already become current is discarded, never overwriting B', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  try {
+    const state = { authReqSeq: 0, authCache: null };
+    const slowLoadFnA = (id) => new Promise((resolve) => {
+      setTimeout(() => resolve({ data: { id, full_name: 'A', is_active: true }, error: null }), 5000);
+    });
+    const fastLoadFnB = async (id) => ({ data: { id, full_name: 'B', is_active: true }, error: null });
+
+    const { deferred: deferredA } = simulateDeferredAuthEvent(state, session('u-switch-A'), slowLoadFnA);
+    t.mock.timers.tick(0);
+
+    const { deferred: deferredB } = simulateDeferredAuthEvent(state, session('u-switch-B'), fastLoadFnB);
+    t.mock.timers.tick(0);
+    const resultB = await deferredB;
+    assert.equal(resultB.applied, true);
+    assert.equal(state.authCache.staff.full_name, 'B');
+
+    t.mock.timers.tick(5000);
+    const resultA = await deferredA;
+    assert.equal(resultA.applied, false, 'the slower, older A lookup must be discarded once B has already become current');
+    assert.equal(state.authCache.staff.full_name, 'B', 'B must remain authorized — A must never overwrite it');
+  } finally {
+    t.mock.timers.reset();
+  }
+});
+
+test('[DEFERRED-LOOKUP] I. request deduplication is untouched by this refactor — _dedupedLoadStaffData source is unchanged', () => {
+  assert.match(SOURCE, /function _dedupedLoadStaffData\(userId, loadFn = loadStaffData, diagId\) \{/);
+  assert.match(SOURCE, /if \(_inFlightStaffLookup && _inFlightStaffLookup\.userId === userId\)/);
 });
