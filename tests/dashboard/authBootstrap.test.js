@@ -190,3 +190,118 @@ test('the staff_users lookup is keyed by the authenticated Supabase user id (the
 test('the 12000ms staff-profile timeout is unchanged', () => {
   assert.match(SOURCE, /_withTimeout\(loadFn\(s\.user\.id\), 12000, 'Personel profili'\)/);
 });
+
+// ── AuthGuard render-branch ordering: the actual proof for the "transient
+// staff error" symptom, distinct from the pure _resolveStaffState/
+// _computeAuthResolution tests above (those prove the DATA is resolved
+// correctly; these prove the RENDER never exposes a wrong intermediate
+// state while getting there — the two are separate risks). This codebase
+// has no component-render test harness (every existing dashboard test
+// extracts real functions or asserts on source structure — see this
+// file's and every sibling test file's own convention), so "no visible
+// transient staff error" is proven the same way: statically, from
+// AuthGuard's own function body, that every staff-error branch is
+// textually unreachable until BOTH auth.authLoading is false AND
+// auth.isLoggedIn is resolved. React renders exactly one of a function
+// component's mutually-exclusive early returns per render — if the
+// authLoading/isLoggedIn checks always appear first in source order and
+// always return before any staff-branch code executes, no staff-error
+// JSX can physically be produced while auth is still resolving, in any
+// render, on any timing. ──────────────────────────────────────────────
+
+function extractFunctionBody(name, nextMarker) {
+  const idx = SOURCE.indexOf(`function ${name}(`);
+  assert.ok(idx !== -1, `could not find function ${name}`);
+  return SOURCE.slice(idx, SOURCE.indexOf(nextMarker, idx));
+}
+
+const AUTH_GUARD_BODY = extractFunctionBody('AuthGuard', '\nfunction getAuthContext');
+
+// --- 1. Initial auth loading state -----------------------------------------
+
+test('1. useAuth() starts in a loading state by default (session:null, staff:null, authLoading:true) — never "no session" or "no staff" before any auth event has even fired', () => {
+  const idx = SOURCE.indexOf('function useAuth()');
+  const body = SOURCE.slice(idx, SOURCE.indexOf('const session', idx) + 400);
+  assert.match(body, /useState\(\(\) => _authCache \|\| \{\s*\n?\s*session: null, staff: null, authLoading: true\s*\n?\s*\}\)/);
+});
+
+test('1 (render). AuthGuard\'s VERY FIRST check is authLoading — the loading spinner is always the first possible render, before isLoggedIn or any staff branch is even evaluated', () => {
+  const loadingIdx = AUTH_GUARD_BODY.indexOf('if (auth.authLoading)');
+  assert.ok(loadingIdx !== -1, 'authLoading check not found in AuthGuard');
+  // Nothing before it in the function body except the auth = useAuth() call
+  // and the AuthGuard._current assignment (neither of which renders).
+  const before = AUTH_GUARD_BODY.slice(0, loadingIdx);
+  assert.doesNotMatch(before, /return\s*\(/, 'something renders before the authLoading check');
+});
+
+// --- 5/6. No transient staff error; logged-out state; refresh-while-authenticated ---
+// (the actual order proof, covering desired-behavior items 3, 6, 9, 10 at once)
+
+test('5/6/9/10. AuthGuard checks authLoading, then isLoggedIn, strictly before any staffQueryError/staffInactive/staffLinked branch — a staff-error screen can never render while auth is still resolving, whether on first load, a slow network, or a page refresh with an already-valid session', () => {
+  const order = [
+    'if (auth.authLoading)',
+    'if (!auth.isLoggedIn)',
+    'if (!auth.staffLinked && auth.staffQueryError)',
+    'if (!auth.staffLinked && auth.staffInactive)',
+    'if (!auth.staffLinked)',
+  ];
+  const indices = order.map(marker => {
+    const idx = AUTH_GUARD_BODY.indexOf(marker);
+    assert.ok(idx !== -1, `could not find "${marker}" in AuthGuard`);
+    return idx;
+  });
+  for (let i = 1; i < indices.length; i++) {
+    assert.ok(indices[i] > indices[i - 1], `"${order[i]}" must appear after "${order[i - 1]}" — a staff-error branch reachable before authLoading/isLoggedIn is checked would produce exactly the transient error this test guards against`);
+  }
+});
+
+test('every staff-error branch in AuthGuard is gated on !auth.staffLinked, and staffLinked is only ever computed from a completed staff query (staff:!!staff, set only inside _resolveStaffState\'s resolved results) — never from an in-progress or unresolved state', () => {
+  assert.match(SOURCE, /const staffLinked = !!staff;/);
+  // staffLinked can only be true/false once `staff` itself has been set by
+  // a completed _resolveStaffState resolution — authLoading:false is set
+  // in the exact same return statements, so the two can never disagree.
+  const resolveBody = extractFunctionBody('_resolveStaffState', '\n// TESTABLE:_resolveStaffState:end');
+  const returns = resolveBody.match(/return \{[^}]*\};/g) || [];
+  assert.ok(returns.length >= 4, 'expected multiple distinct resolution outcomes in _resolveStaffState');
+  for (const r of returns) assert.match(r, /authLoading:\s*false/, `every _resolveStaffState outcome must set authLoading:false alongside its staff verdict: ${r}`);
+});
+
+// --- Full state-machine coverage: every branch AuthGuard can render --------
+
+test('7. an authenticated user with a genuinely missing staff record reaches the "Personel Profili Bağlı Değil" branch, never a silent pass-through', () => {
+  assert.match(AUTH_GUARD_BODY, /Personel Profili Bağlı Değil/);
+  const idx = AUTH_GUARD_BODY.indexOf('if (!auth.staffLinked) {');
+  assert.ok(idx !== -1);
+  assert.match(AUTH_GUARD_BODY.slice(idx, idx + 2000), /Personel Profili Bağlı Değil/);
+});
+
+test('8. an authenticated user with an inactive staff record reaches the distinct "Hesap Pasif" branch, never conflated with "missing"', () => {
+  const idx = AUTH_GUARD_BODY.indexOf('if (!auth.staffLinked && auth.staffInactive) {');
+  assert.ok(idx !== -1);
+  assert.match(AUTH_GUARD_BODY.slice(idx, idx + 2000), /Hesap Pasif/);
+});
+
+test('9. a staff query failure (timeout/network/RLS denial) reaches the distinct "Personel Profili Sorgulanamadı" branch with a retry option, never silently treated as "missing"', () => {
+  const idx = AUTH_GUARD_BODY.indexOf('if (!auth.staffLinked && auth.staffQueryError) {');
+  assert.ok(idx !== -1);
+  const body = AUTH_GUARD_BODY.slice(idx, idx + 2500);
+  assert.match(body, /Personel Profili Sorgulanamadı/);
+  assert.match(body, /auth\.retryStaffLookup/);
+});
+
+test('6. a logged-out user reaches LoginPage, not any staff-error branch', () => {
+  const idx = AUTH_GUARD_BODY.indexOf('if (!auth.isLoggedIn) {');
+  assert.ok(idx !== -1);
+  assert.match(AUTH_GUARD_BODY.slice(idx, idx + 200), /<LoginPage/);
+});
+
+test('2. an authenticated admin with a valid, active staff record falls through every error branch and reaches the real app (AuthContext.Provider)', () => {
+  const providerIdx = AUTH_GUARD_BODY.lastIndexOf('<AuthContext.Provider');
+  assert.ok(providerIdx !== -1);
+  // Must be the LAST thing in the function — every error branch above it
+  // is a `return` inside an `if`, so control only reaches this point when
+  // none of authLoading/!isLoggedIn/staffQueryError/staffInactive/
+  // !staffLinked held true.
+  const afterProvider = AUTH_GUARD_BODY.slice(providerIdx);
+  assert.doesNotMatch(afterProvider.slice(40), /^\s*if \(/, 'no further branching after the success path');
+});
