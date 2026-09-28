@@ -47,6 +47,8 @@ const CIVITATIS_LANGUAGE_TO_CODE = {
   'italiano': 'it',
   'español': 'es',
   'espanol': 'es', // accent-stripped variant, seen in some plain-text exports
+  'português': 'pt',
+  'portugues': 'pt', // accent-stripped variant, seen in some plain-text exports
 };
 
 function normalizeKey(raw) {

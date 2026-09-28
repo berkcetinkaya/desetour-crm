@@ -161,20 +161,67 @@ function findLabelValue(lines, label) {
 
 const FULL_NAME_LABEL_BARE = /^Full name:?$/i;
 const FULL_NAME_LABEL_LINE = /^Full name:?\s*(.*)$/i;
+// Alternate real-world passenger name shape: TWO separate sub-labels,
+// "Name" and "Last Name", each independently either inline
+// ("Name: CARLOS ROBERTO") or with its value on the next line ("Name" /
+// "CARLOS ROBERTO") — distinct from the single "Full name" sub-label
+// above. The two values are concatenated ("Name" + " " + "Last Name") to
+// form one fullName, e.g. "CARLOS ROBERTO" + "LARRUBIA" ->
+// "CARLOS ROBERTO LARRUBIA".
+const PASSENGER_NAME_SUB_LABEL_BARE = /^Name:?$/i;
+const PASSENGER_NAME_SUB_LABEL_LINE = /^Name:?\s*(.*)$/i;
+const PASSENGER_LAST_NAME_SUB_LABEL_BARE = /^Last Name:?$/i;
+const PASSENGER_LAST_NAME_SUB_LABEL_LINE = /^Last Name:?\s*(.*)$/i;
+
+// Literal parser label TEXT that must NEVER itself become a passenger
+// fullName value. This is the exact bug a real Civitatis message
+// triggered: a bare "Name" sub-label line, misread by an earlier layout
+// assumption as if it were itself the value, produced
+// passengers:[{fullName:"Name"},...]. Checked as the final gate before
+// ANY fullName is accepted, on every code path below — inline capture,
+// next-line capture, and the no-sub-label fallback alike — regardless of
+// which shape produced the candidate text.
+const RESERVED_PASSENGER_LABEL_VALUES = new Set(['name', 'last name', 'full name', 'surname']);
+function isReservedLabelValue(text) {
+  return RESERVED_PASSENGER_LABEL_VALUES.has(String(text == null ? '' : text).trim().toLowerCase());
+}
+
+/** Reads one sub-label's value starting at lines[idx], tolerating both
+ * "Label: value" (same line) and bare "Label" / "Label:" alone (value on
+ * the next line) shapes — mirrors the tolerance every other label in
+ * this parser already gets. Returns { value, nextIdx } when lines[idx]
+ * matches this sub-label at all (value may itself be null if no usable
+ * value follows); returns null if lines[idx] does not match the label.
+ * Never filters for reserved-label text itself — callers apply
+ * isReservedLabelValue to the result. */
+function readSubLabelValue(lines, idx, bareRe, lineRe) {
+  if (idx >= lines.length) return null;
+  const m = lineRe.exec(lines[idx]);
+  if (!m) return null;
+  const inline = m[1].trim();
+  if (inline) return { value: inline, nextIdx: idx + 1 };
+  const next = lines[idx + 1];
+  if (next !== undefined && !isKnownLabelLine(next) && !bareRe.test(next)) {
+    return { value: next, nextIdx: idx + 2 };
+  }
+  return { value: null, nextIdx: idx + 1 };
+}
 
 /** Passenger blocks: "Passenger information N:" (or the shorter
- * "Passenger N:") then either the name directly on the SAME line
- * ("Passenger 1: JOHN DOE" — a real-world variant with no "Full name"
- * sub-label at all), or a "Full name" sub-label (with or without a
- * trailing colon, and with the name either on the same line or the next
- * line — both real layouts are observed depending on plain-text vs.
- * HTML-table-derived extraction) followed by the name, or (tolerated
- * variant) the name directly on the line following the bare passenger
- * label with no "Full name" sub-label. Returned in the order
- * encountered, sort_order is 0-based position among passengers found —
- * never re-derived from the Civitatis "N" itself, which is display
- * numbering, not guaranteed to start at 1 or be contiguous. Supports any
- * number of repeated "Passenger [information] N:" sections. */
+ * "Passenger N:") then one of three real shapes: the name directly on
+ * the SAME line ("Passenger 1: JOHN DOE" — no sub-label at all); a
+ * "Full name" sub-label (same-line or next-line value); or separate
+ * "Name" + "Last Name" sub-labels (each same-line or next-line,
+ * concatenated into one fullName — see PASSENGER_NAME_SUB_LABEL_LINE
+ * above); or (tolerated variant) the name directly on the line following
+ * the bare passenger label with no sub-label at all. Returned in the
+ * order encountered, sort_order is 0-based position among passengers
+ * found — never re-derived from the Civitatis "N" itself, which is
+ * display numbering, not guaranteed to start at 1 or be contiguous.
+ * Supports any number of repeated "Passenger [information] N:" sections.
+ * A candidate fullName that is itself literal label text (isReservedLabelValue)
+ * is NEVER pushed — that passenger is skipped rather than recorded with
+ * garbage data. */
 function extractPassengers(lines) {
   const passengers = [];
   for (let i = 0; i < lines.length; i++) {
@@ -182,27 +229,57 @@ function extractPassengers(lines) {
     if (!passengerMatch) continue;
     const inlineName = passengerMatch[2].trim();
     if (inlineName && !FULL_NAME_LABEL_BARE.test(inlineName)) {
-      passengers.push({ fullName: inlineName, sortOrder: passengers.length });
+      if (!isReservedLabelValue(inlineName)) {
+        passengers.push({ fullName: inlineName, sortOrder: passengers.length });
+      }
       continue;
     }
+
     let cursor = i + 1;
     if (cursor < lines.length) {
       const m = FULL_NAME_LABEL_LINE.exec(lines[cursor]);
       if (m) {
         const inline = m[1].trim();
         if (inline) {
-          passengers.push({ fullName: inline, sortOrder: passengers.length });
+          if (!isReservedLabelValue(inline)) {
+            passengers.push({ fullName: inline, sortOrder: passengers.length });
+          }
           continue;
         }
         cursor++; // "Full name:" alone -> the value is on the next line
+        const nameLine = lines[cursor];
+        if (
+          nameLine !== undefined
+          && !isKnownLabelLine(nameLine)
+          && !PASSENGER_LABEL_LINE.test(nameLine)
+          && !FULL_NAME_LABEL_BARE.test(nameLine)
+          && !isReservedLabelValue(nameLine)
+        ) {
+          passengers.push({ fullName: nameLine, sortOrder: passengers.length });
+        }
+        continue;
       }
     }
+
+    const nameSub = readSubLabelValue(lines, cursor, PASSENGER_NAME_SUB_LABEL_BARE, PASSENGER_NAME_SUB_LABEL_LINE);
+    if (nameSub) {
+      const lastSub = readSubLabelValue(lines, nameSub.nextIdx, PASSENGER_LAST_NAME_SUB_LABEL_BARE, PASSENGER_LAST_NAME_SUB_LABEL_LINE);
+      const nameValue = nameSub.value && !isReservedLabelValue(nameSub.value) ? nameSub.value : null;
+      const lastNameValue = lastSub && lastSub.value && !isReservedLabelValue(lastSub.value) ? lastSub.value : null;
+      const combined = [nameValue, lastNameValue].filter(Boolean).join(' ').trim();
+      if (combined && !isReservedLabelValue(combined)) {
+        passengers.push({ fullName: combined, sortOrder: passengers.length });
+      }
+      continue;
+    }
+
     const nameLine = lines[cursor];
     if (
       nameLine !== undefined
       && !isKnownLabelLine(nameLine)
       && !PASSENGER_LABEL_LINE.test(nameLine)
       && !FULL_NAME_LABEL_BARE.test(nameLine)
+      && !isReservedLabelValue(nameLine)
     ) {
       passengers.push({ fullName: nameLine, sortOrder: passengers.length });
     }
@@ -350,15 +427,42 @@ function extractGuestCounts(peopleLine) {
   return { adultCount, childCount };
 }
 
-/** "4,800 TL" -> { amount: 4800, currency: 'TL' }. Comma is a thousands
- * separator here (Civitatis's own formatting), not a decimal mark. */
+// Recognized leading currency symbols -> ISO currency code. Deterministic
+// lookup only — never a heuristic/guessed mapping. Extend only when a
+// new symbol has actually been observed in a real Civitatis email.
+const CURRENCY_SYMBOL_TO_CODE = {
+  '€': 'EUR',
+};
+
+/** "4,800 TL" -> { amount: 4800, currency: 'TL' } (trailing currency
+ * CODE — comma is a thousands separator here, Civitatis's own
+ * formatting, not a decimal mark). "€ 205.40" -> { amount: 205.40,
+ * currency: 'EUR' } (leading currency SYMBOL, mapped via
+ * CURRENCY_SYMBOL_TO_CODE — decimal point, no thousands separator
+ * observed in this form). Exactly one of the two shapes must match;
+ * anything else (unrecognized symbol, both/neither present) returns
+ * null/null rather than guessing. */
 function parseMoneyLine(raw) {
   if (!raw) return { amount: null, currency: null };
-  const m = /^([\d,]+(?:\.\d+)?)\s*([A-Za-z]{2,3})$/.exec(raw.trim());
-  if (!m) return { amount: null, currency: null };
-  const amount = parseFloat(m[1].replace(/,/g, ''));
-  if (!Number.isFinite(amount)) return { amount: null, currency: null };
-  return { amount, currency: m[2].toUpperCase() };
+  const text = raw.trim();
+
+  const trailingCode = /^([\d,]+(?:\.\d+)?)\s*([A-Za-z]{2,3})$/.exec(text);
+  if (trailingCode) {
+    const amount = parseFloat(trailingCode[1].replace(/,/g, ''));
+    if (!Number.isFinite(amount)) return { amount: null, currency: null };
+    return { amount, currency: trailingCode[2].toUpperCase() };
+  }
+
+  const leadingSymbol = /^([^\s\d])\s*([\d,]+(?:\.\d+)?)$/.exec(text);
+  if (leadingSymbol) {
+    const code = CURRENCY_SYMBOL_TO_CODE[leadingSymbol[1]];
+    if (!code) return { amount: null, currency: null };
+    const amount = parseFloat(leadingSymbol[2].replace(/,/g, ''));
+    if (!Number.isFinite(amount)) return { amount: null, currency: null };
+    return { amount, currency: code };
+  }
+
+  return { amount: null, currency: null };
 }
 
 /**
@@ -461,13 +565,27 @@ function parseCivitatisEmail(message) {
     else date = dateResult.isoDate;
   }
 
+  // HOUR is OPTIONAL: a Civitatis product that never states a check-in
+  // hour (e.g. "Bosforo y Barrio Sultanahmet") is a legitimate booking,
+  // not a parse failure — time stays null and NOTHING is pushed to
+  // reasons. A HOUR field that IS present but does not match a
+  // recognized time pattern is a different situation entirely (still
+  // fails closed, exactly as before) — the three possible states are
+  // distinguished via timeStatus so downstream layers (the write RPC)
+  // can tell "intentionally unknown" apart from "malformed": 'absent'
+  // (valid, time stays null), 'parsed' (valid, time is the parsed
+  // HH:MM), 'invalid' (fails closed, ok:false, never reaches the RPC).
   let time = null;
-  if (!hourRaw) {
-    reasons.push('missing "Hour:" field');
-  } else {
+  let timeStatus = 'absent';
+  if (hourRaw) {
     const timeResult = parseCivitatisTime(hourRaw);
-    if (!timeResult.ok) reasons.push(timeResult.reason);
-    else time = timeResult.time;
+    if (!timeResult.ok) {
+      reasons.push(timeResult.reason);
+      timeStatus = 'invalid';
+    } else {
+      time = timeResult.time;
+      timeStatus = 'parsed';
+    }
   }
 
   const { adultCount, childCount } = extractGuestCounts(peopleRaw);
@@ -512,6 +630,7 @@ function parseCivitatisEmail(message) {
     languageCode,
     date,
     time,
+    timeStatus,
     durationRaw,
     adultCount,
     childCount,

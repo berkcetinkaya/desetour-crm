@@ -14,6 +14,16 @@ function fmtMoney(v, currency) {
   return sym + n.toLocaleString("tr-TR", { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 }
 function safeNum(v) { const n = parseFloat(v); return isNaN(n) ? 0 : n; }
+// A reservation's check-in time is genuinely unknown when the source
+// (e.g. a Civitatis booking whose email states no "Hour:" field at all)
+// never provided one — NEVER fabricated as a fixed clock time like
+// "09:00". mapResFromDB (and every other reservation-shaped mapper)
+// passes such a reservation through with time:null; every place that
+// renders a time value to a user calls fmtResTime so the reservation
+// still appears (with an honest placeholder), rather than showing a
+// fabricated time or silently vanishing.
+const UNKNOWN_TIME_LABEL = "Saat belirtilmedi";
+function fmtResTime(t) { return t || UNKNOWN_TIME_LABEL; }
 /* Safe percentage helpers: never produce NaN/%NaN/Infinity. Zero (or
    invalid) denominator → 0, per the project-wide convention. */
 function safePctNum(numerator, denominator) {
@@ -2572,7 +2582,7 @@ function TodayTours() {
     ? todayList.map(r => {
         const pm = _payMeta[r.payStatus] || { color:C.textFaint, bg:C.ivoryDark };
         return {
-          time: r.time, customer: r.name || r.tour, tour: r.tour, pax: r.pax,
+          time: fmtResTime(r.time), customer: r.name || r.tour, tour: r.tour, pax: r.pax,
           flag: "🌍", resId: r.id,
           payStatus: r.payStatus, payColor: pm.color, payBg: pm.bg,
           guideStatus: r.guide ? "Rehber Atandı" : "Rehber Atanmadı",
@@ -5915,7 +5925,7 @@ function ReservationsPage({ onSelect }) {
                       {}
                       <td style={{ padding:"14px 12px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle" }}>
                         <div style={{ fontSize:13, fontWeight:600, color:C.navy, fontFamily:"'Playfair Display',serif" }}>{r.date}</div>
-                        <div style={{ fontSize:12, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", marginTop:2 }}>⏰ {r.time}</div>
+                        <div style={{ fontSize:12, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", marginTop:2 }}>⏰ {fmtResTime(r.time)}</div>
                       </td>
                       {}
                       <td style={{ padding:"14px 12px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle" }}>
@@ -6301,7 +6311,7 @@ function ReservationDetailPage({ resId, onBack }) {
               {resCustomer?.flag||"🌍"} {r.name}
             </div>
             <div style={{ fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:2 }}>
-              {formatReservationTourLabel(r.tour, r.tourLanguage)} · {r.date} · {r.time}
+              {formatReservationTourLabel(r.tour, r.tourLanguage)} · {r.date} · {fmtResTime(r.time)}
             </div>
           </div>
         </div>
@@ -6384,11 +6394,11 @@ function ReservationDetailPage({ resId, onBack }) {
               background:C.navy, borderRadius:10, marginBottom:0,
             }}>
               <div style={{ fontSize:15, fontWeight:700, color:C.ivory, fontFamily:"'Playfair Display',serif", lineHeight:1.3 }}>{formatReservationTourLabel(r.tour, r.tourLanguage)}</div>
-              <div style={{ fontSize:12, color:"rgba(248,245,238,0.55)", fontFamily:"'DM Sans',sans-serif", marginTop:4 }}>{r.date} · {r.time}</div>
+              <div style={{ fontSize:12, color:"rgba(248,245,238,0.55)", fontFamily:"'DM Sans',sans-serif", marginTop:4 }}>{r.date} · {fmtResTime(r.time)}</div>
             </div>
             <div style={{ height:10 }}/>
             <RInfoRow label="Tarih"       value={r.date} icon="M8 2v4M16 2v4M3 10h18M21 8a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2h14a2 2 0 002-2V8z"/>
-            <RInfoRow label="Saat"        value={r.time} icon="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+            <RInfoRow label="Saat"        value={fmtResTime(r.time)} icon="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
             <div style={{ padding:"10px 20px", display:"flex", gap:8, alignItems:"center", borderBottom:`1px solid ${C.borderLight}` }}>
               <span style={{ fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", minWidth:130, display:"flex", alignItems:"center", gap:5 }}>
                 <RIc d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2 M23 21v-2a4 4 0 00-3-3.87 M16 3.13a4 4 0 010 7.75" size={12} sw={1.5}/>
@@ -6685,8 +6695,8 @@ function EventCard({ ev, compact }) {
         fontFamily:"'DM Mono',monospace", marginBottom: compact ? 3 : 5,
         letterSpacing:"0.04em",
       }}>
-        {fmtHHMM(ev.date)}
-        {!compact && <span style={{ fontWeight:400, opacity:0.65 }}> – {ev.endHour}:00</span>}
+        {ev.timeKnown ? fmtHHMM(ev.date) : UNKNOWN_TIME_LABEL}
+        {!compact && ev.timeKnown && <span style={{ fontWeight:400, opacity:0.65 }}> – {ev.endHour}:00</span>}
       </div>
 
       {}
@@ -6785,7 +6795,7 @@ function CalSidebar({ todayEvents, weekEvents }) {
                   {ev.flag} {ev.guest}
                 </div>
                 <div style={{ fontSize:11.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif" }}>
-                  {fmtHHMM(ev.date)} · {(() => {
+                  {ev.timeKnown ? fmtHHMM(ev.date) : UNKNOWN_TIME_LABEL} · {(() => {
                     const label = formatReservationTourLabel(ev.tour, ev.tourLanguage);
                     return label.length > 22 ? label.slice(0,22)+"…" : label;
                   })()}
@@ -6848,10 +6858,10 @@ function CalSidebar({ todayEvents, weekEvents }) {
                   display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center",
                 }}>
                   <span style={{ fontSize:11, fontWeight:700, color:C.white, lineHeight:1, fontFamily:"'DM Mono',monospace" }}>
-                    {fmtHHMM(ev.date).split(":")[0]}
+                    {ev.timeKnown ? fmtHHMM(ev.date).split(":")[0] : "--"}
                   </span>
                   <span style={{ fontSize:8, color:C.goldLight, lineHeight:1, fontFamily:"'DM Mono',monospace" }}>
-                    :{fmtHHMM(ev.date).split(":")[1]}
+                    :{ev.timeKnown ? fmtHHMM(ev.date).split(":")[1] : "--"}
                   </span>
                 </div>
                 <div style={{ flex:1, minWidth:0 }}>
@@ -7144,7 +7154,7 @@ function MonthlyView({ monthStart, events, onSelectDay, isMobile }) {
                         overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap",
                         cursor:"pointer",
                       }}>
-                        {fmtHHMM(ev.date).slice(0,5)} {ev.flag} {ev.guest.split(" ")[0]}
+                        {ev.timeKnown ? fmtHHMM(ev.date).slice(0,5) : "—:—"} {ev.flag} {ev.guest.split(" ")[0]}
                       </div>
                     );
                   })}
@@ -7211,12 +7221,27 @@ function useCalendarEvents() {
     const raw = r.checkIn || r.travelStart || r.check_in || r.date || null;
     if (!raw) return null;
     try {
+      // The literal "T09:00:00" appended here is NOT a claim about this
+      // reservation's actual check-in time — it is a fixed anchor used
+      // only so `new Date(...)` parses a date-only string (e.g.
+      // "2026-10-26") consistently, regardless of the browser's local
+      // timezone. Every event, whether its real check-in time is known
+      // or not, is built from this same fixed anchor and — per the
+      // existing grid architecture (WeeklyView/DailyView key events by
+      // dateObj.getHours()) — lands in the same 09:00 grid row. That
+      // grid-positioning behavior is unchanged here (an existing
+      // simplification, not something this fix redesigns); `timeKnown`
+      // below only controls whether EventCard's visible LABEL shows a
+      // real clock time or an honest "unknown" placeholder — it never
+      // invents a displayed time for a reservation whose Hour was never
+      // provided.
       const dateObj = new Date(raw + (raw.includes('T') ? '' : 'T09:00:00'));
       if (isNaN(dateObj.getTime())) return null;
       const guideName = r.guide || r.guideName || null;
       return {
         id:      r.id,
         date:    dateObj,
+        timeKnown: !!r.time,
         endHour: Math.min((dateObj.getHours() || 9) + parseInt(r.duration || 4), 22),
         guest:   r.name || r.customer || r.contactName || '—',
         flag:    r.flag || '🏳',
@@ -13309,7 +13334,7 @@ function mapResFromDB(r) {
     quoteId:r.quote_id||null, customerId:r.customer_id||null, tourId:r.tour_id||null,
     name:c?.full_name||'', tour:r.destination||r.tour?.name||'',
     date:r.check_in?new Date(r.check_in).toLocaleDateString('tr-TR',{day:'2-digit',month:'short',year:'numeric'}):'—',
-    checkIn:r.check_in||null, checkOut:r.check_out||null, time:r.check_in_time||'09:00',
+    checkIn:r.check_in||null, checkOut:r.check_out||null, time:r.check_in_time||null,
     pax:r.pax_adult||1, paxChild:r.pax_child||0,
     guide:r.guide_name||'', guideId:r.guide_id||null, assignedGuideName:r.guide?.full_name||'', vehicle:r.vehicle_info||'', driver:r.driver_name||'',
     pickup:r.pickup_location||'', pickupTime:r.pickup_time||'—',
@@ -18267,7 +18292,7 @@ function MobileHomePage({ navigate }) {
         ) : todaysTours.map((t,i)=>(
           <MobileEntityCard key={t.id||i} onClick={()=>navigate('/reservations/'+t.id)}>
             <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:8, marginBottom:6 }}>
-              <span style={{ fontSize:14, fontWeight:700, color:C.navy, fontFamily:"'Playfair Display',serif" }}>{t.time||"—"}</span>
+              <span style={{ fontSize:14, fontWeight:700, color:C.navy, fontFamily:"'Playfair Display',serif" }}>{fmtResTime(t.time)}</span>
               <MobileStatusChip label={t.payStatus||"—"} tone={PAY_TONE[t.payStatus]||"neutral"}/>
             </div>
             <div style={{ fontSize:14, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif" }}>{t.name || t.customer || "—"}</div>
@@ -18416,7 +18441,7 @@ function MobileReservationsPage({ onSelect }) {
               style={{ borderLeft: !r.guide||r.payStatus==="Bekliyor" ? `3px solid ${C.red}` : `3px solid ${C.green}` }}>
               <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:8, marginBottom:6 }}>
                 <div style={{ display:"flex", alignItems:"baseline", gap:8 }}>
-                  <span style={{ fontSize:14, fontWeight:700, color:C.navy, fontFamily:"'Playfair Display',serif" }}>{r.time||r.date||"—"}</span>
+                  <span style={{ fontSize:14, fontWeight:700, color:C.navy, fontFamily:"'Playfair Display',serif" }}>{fmtResTime(r.time)}</span>
                 </div>
                 <MobileStatusChip label={r.opStatus||"—"} tone={OP_TONE[r.opStatus]||"neutral"}/>
               </div>
@@ -18782,7 +18807,7 @@ function MobileAgendaCard({ ev, onClick }) {
   return (
     <MobileEntityCard onClick={onClick} style={{ borderLeft:`4px solid ${col.border}` }}>
       <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:8, marginBottom:6 }}>
-        <span style={{ fontSize:15, fontWeight:700, color:C.navy, fontFamily:"'Playfair Display',serif" }}>{fmtHHMM(ev.date)}</span>
+        <span style={{ fontSize:15, fontWeight:700, color:C.navy, fontFamily:"'Playfair Display',serif" }}>{ev.timeKnown ? fmtHHMM(ev.date) : UNKNOWN_TIME_LABEL}</span>
         {ev.opStatus && <MobileStatusChip label={ev.opStatus} tone={OP_TONE[ev.opStatus]||"neutral"}/>}
       </div>
       <div style={{ fontSize:14.5, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif" }}>{ev.flag} {ev.guest}</div>
@@ -19321,7 +19346,7 @@ function MobileReservationDetailPage({ resId, onBack }) {
         <div style={{ fontSize:13, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", marginTop:3 }}>{r.tour}</div>
         <div style={{ display:"flex", alignItems:"center", gap:6, marginTop:10, flexWrap:"wrap" }}>
           <MobileStatusChip label={`📅 ${r.date}`} tone="neutral"/>
-          <MobileStatusChip label={`🕐 ${r.time}`} tone="neutral"/>
+          <MobileStatusChip label={`🕐 ${fmtResTime(r.time)}`} tone="neutral"/>
           <MobileStatusChip label={`${r.pax} kişi`} tone="neutral"/>
         </div>
       </MobileEntityCard>

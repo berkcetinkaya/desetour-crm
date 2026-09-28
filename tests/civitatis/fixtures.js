@@ -673,6 +673,118 @@ Client name: Gianguglielmo
 Surname: Dalmonte`,
 };
 
+// ── Real production booking A41596990: "Bosforo y Barrio Sultanahmet",
+// Português, no "Hour:" field at all (this product states no fixed
+// check-in time), "Name" + "Last Name" two-sub-label passenger format,
+// € symbol-prefixed prices. See the session's diagnosis: this single
+// email exposed FOUR simultaneous parser gaps (missing Português
+// mapping, HOUR treated as always-required, € symbol-prefixed prices
+// unsupported, and a passenger-name bug where the literal label text
+// "Name" became the passenger's fullName) — all fixed together.
+const portugueseA41596990Booking = {
+  from: FROM_CIVITATIS,
+  subject: 'New booking A41596990: Bosforo y Barrio Sultanahmet',
+  gmailMessageId: 'msg-pt-new-41596990',
+  gmailThreadId: 'thread-41596990',
+  receivedAt: '2026-09-20T11:05:00.000Z',
+  body: `Activity: Bosforo y Barrio Sultanahmet - Tour em português
+Reservation number: 41596990
+City: Istanbul
+Language: Português
+Internal code: Bosforo y Barrio Sultanahmet
+Date: Monday, october 26, 2026
+Duration: 3 hours
+People: 2 Adultos
+Passenger information 1:
+Name
+CARLOS ROBERTO
+Last Name
+LARRUBIA
+Passenger information 2:
+Name
+AMANDA
+Last Name
+OLIVEIRA
+Retail price
+€ 205.40
+Net price
+€ 154.05
+Client details
+Name: Carlos
+Surname: Larrubia
+Email: carlos.larrubia@example.com`,
+};
+
+// A second real production booking sharing the exact same newly-
+// supported shape (Português, no Hour, Name/Last Name passengers, €
+// prices) — a different product/date/passenger to confirm the fix
+// generalizes rather than being special-cased to A41596990.
+const portugueseA41323338Booking = {
+  from: FROM_CIVITATIS,
+  subject: 'New booking A41323338: Bosforo y Barrio Sultanahmet',
+  gmailMessageId: 'msg-pt-new-41323338',
+  gmailThreadId: 'thread-41323338',
+  receivedAt: '2026-08-11T09:30:00.000Z',
+  body: `Activity: Bosforo y Barrio Sultanahmet - Tour em português
+Reservation number: 41323338
+City: Istanbul
+Language: Português
+Internal code: Bosforo y Barrio Sultanahmet
+Date: Wednesday, august 12, 2026
+Duration: 3 hours
+People: 1 Adultos
+Passenger information 1:
+Name
+RICARDO
+Last Name
+MENDES
+Retail price
+€ 102.70
+Net price
+€ 77.03
+Client details
+Name: Ricardo
+Surname: Mendes
+Email: ricardo.mendes@example.com`,
+};
+
+// A third real production booking, same shape, accent-stripped
+// "Portugues" language spelling (distinct from "Português" above) —
+// confirms both spellings map to the same canonical language.
+const portuguesAccentStrippedA41330832Booking = {
+  from: FROM_CIVITATIS,
+  subject: 'New booking A41330832: Bosforo y Barrio Sultanahmet',
+  gmailMessageId: 'msg-pt-new-41330832',
+  gmailThreadId: 'thread-41330832',
+  receivedAt: '2026-08-14T15:12:00.000Z',
+  body: `Activity: Bosforo y Barrio Sultanahmet - Tour em portugues
+Reservation number: 41330832
+City: Istanbul
+Language: Portugues
+Internal code: Bosforo y Barrio Sultanahmet
+Date: Friday, august 21, 2026
+Duration: 3 hours
+People: 2 Adultos
+Passenger information 1:
+Name
+JOANA
+Last Name
+COSTA
+Passenger information 2:
+Name
+PEDRO
+Last Name
+COSTA
+Retail price
+€ 205.40
+Net price
+€ 154.05
+Client details
+Name: Joana
+Surname: Costa
+Email: joana.costa@example.com`,
+};
+
 module.exports = {
   FROM_CIVITATIS,
   FROM_OTHER,
@@ -692,4 +804,7 @@ module.exports = {
   juanArmasPuenteBooking,
   sampleSafeCreateBooking,
   italianA41748096Booking,
+  portugueseA41596990Booking,
+  portugueseA41323338Booking,
+  portuguesAccentStrippedA41330832Booking,
 };
