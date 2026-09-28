@@ -51,15 +51,36 @@
  *      zero backfill.
  *   3. Once ANY language-specific row exists for this product, a
  *      generic row for the same product is NEVER used as a fallback for
- *      a language that has no explicit row of its own — that would
- *      silently misattribute exactly the booking this feature exists to
- *      route correctly. That case fails closed (needs_review) instead.
+ *      a language that has no explicit row of its own — that case fails
+ *      closed AND is flagged `provisionable: true` (see below) instead
+ *      of silently misattributing the booking.
  * A booking with no bookingLanguage available (should not occur in
  * practice — the parser already routes a missing/unrecognized language
  * to needs_review before this is ever called) is treated the same as
  * "no language-specific row can be selected for it": safe only via the
- * generic fallback in (2), fails closed if any language-specific row
+ * generic fallback in (2), fails closed (never provisionable — there is
+ * no language to provision a tour for) if any language-specific row
  * exists for the product.
+ *
+ * `provisionable` (present, `true` or `false`, on every `matched:false`
+ * result): identifies the two decision-table branches the approved
+ * Civitatis auto-provisioning architecture allows a caller to
+ * automatically create a new language-specific CRM tour + tour_channels
+ * mapping for, instead of only ever failing closed:
+ *   - the product has zero tour_channels rows for this source at all
+ *     (candidates.length === 0 below), or
+ *   - the product has language-specific row(s), but none for this exact
+ *     booking_language (case 3 above).
+ * Every OTHER `matched:false` result (ambiguous product+language,
+ * ambiguous generic-only, missing internal code, missing bookingLanguage
+ * with language-specific rows present) is `provisionable: false` — these
+ * remain permanently fail-closed; a human must resolve the
+ * misconfiguration, never an automatic guess. This function itself never
+ * creates anything — it only classifies; see api/_civitatis/writeAdapter.js
+ * and public.ingest_civitatis_booking's own Step 2a for where a
+ * `provisionable: true` result actually leads to tour creation, gated by
+ * a transaction-scoped advisory lock keyed on the exact (source,
+ * external_product_id, booking_language) identity.
  *
  * @param {string|null} internalCode
  * @param {string} civitatisSourceId
@@ -71,15 +92,20 @@
  */
 function matchTourChannel({ internalCode, civitatisSourceId, bookingLanguage, tourChannels }) {
   if (!internalCode) {
-    return { matched: false, method: 'exact_external_product_id', tour: null, tourChannelId: null, reason: 'no Internal code parsed from the email' };
+    return { matched: false, provisionable: false, method: 'exact_external_product_id', tour: null, tourChannelId: null, reason: 'no Internal code parsed from the email' };
   }
   const candidates = (tourChannels || []).filter(
     tc => tc.source_id === civitatisSourceId && tc.external_product_id === internalCode
   );
   if (candidates.length === 0) {
+    // Product does not exist in any language yet — the approved
+    // auto-provisioning decision table's third row: a caller MAY
+    // automatically create a new language-specific tour + mapping for
+    // this exact (source, external_product_id, booking_language)
+    // identity instead of waiting on a human. See the file header.
     return {
-      matched: false, method: 'exact_external_product_id', tour: null, tourChannelId: null,
-      reason: `no tour_channels row has external_product_id exactly "${internalCode}" for the Civitatis source — an operator must set this on the correct tour's Civitatis sales-channel row (or a new one) before this booking can be created`,
+      matched: false, provisionable: true, method: 'exact_external_product_id', tour: null, tourChannelId: null,
+      reason: `no tour_channels row has external_product_id exactly "${internalCode}" for the Civitatis source — eligible for automatic language-specific tour provisioning (no existing mapping in any language)`,
     };
   }
 
@@ -92,21 +118,31 @@ function matchTourChannel({ internalCode, civitatisSourceId, bookingLanguage, to
     // generically, for ANY language, including one that has no
     // language-specific row of its own: see precedence rule 3 above.
     if (!bookingLanguage) {
+      // No language to key a new mapping on — never provisionable.
       return {
-        matched: false, method: 'exact_external_product_id_and_language', tour: null, tourChannelId: null,
+        matched: false, provisionable: false, method: 'exact_external_product_id_and_language', tour: null, tourChannelId: null,
         reason: `tour_channels has language-specific mapping(s) for external_product_id "${internalCode}" but no booking language was available on this reservation to select one — needs manual resolution`,
       };
     }
     const exact = languageSpecific.filter(tc => tc.booking_language === bookingLanguage);
     if (exact.length === 0) {
+      // Product exists, but not for this exact language — the approved
+      // auto-provisioning decision table's second row: eligible for
+      // automatic creation of a new language-specific tour + mapping,
+      // never a silent fallback to a generic or a differently-languaged
+      // row.
       return {
-        matched: false, method: 'exact_external_product_id_and_language', tour: null, tourChannelId: null,
-        reason: `no tour_channels row maps external_product_id "${internalCode}" + booking_language "${bookingLanguage}" — language-specific mapping(s) exist for this product but not for this language, and a generic mapping is never used once language-specific mappings exist for it; an operator must add the missing language-specific mapping before this booking can be created`,
+        matched: false, provisionable: true, method: 'exact_external_product_id_and_language', tour: null, tourChannelId: null,
+        reason: `no tour_channels row maps external_product_id "${internalCode}" + booking_language "${bookingLanguage}" — language-specific mapping(s) exist for this product but not for this language, and a generic mapping is never used once language-specific mappings exist for it; eligible for automatic language-specific tour provisioning`,
       };
     }
     if (exact.length > 1) {
+      // Ambiguous configuration — never provisionable; guessing which of
+      // several conflicting existing mappings to use would be exactly
+      // the silent misattribution this whole precedence rule exists to
+      // prevent.
       return {
-        matched: false, method: 'exact_external_product_id_and_language', tour: null, tourChannelId: null,
+        matched: false, provisionable: false, method: 'exact_external_product_id_and_language', tour: null, tourChannelId: null,
         reason: `${exact.length} tour_channels rows share external_product_id "${internalCode}" and booking_language "${bookingLanguage}" for the Civitatis source — ambiguous, needs manual resolution`,
       };
     }
@@ -116,8 +152,9 @@ function matchTourChannel({ internalCode, civitatisSourceId, bookingLanguage, to
   // No language-specific row exists for this product at all — identical
   // to this function's behavior before booking_language existed.
   if (generic.length > 1) {
+    // Ambiguous configuration — never provisionable.
     return {
-      matched: false, method: 'exact_external_product_id', tour: null, tourChannelId: null,
+      matched: false, provisionable: false, method: 'exact_external_product_id', tour: null, tourChannelId: null,
       reason: `${generic.length} tour_channels rows share external_product_id "${internalCode}" for the Civitatis source — ambiguous, needs manual resolution`,
     };
   }

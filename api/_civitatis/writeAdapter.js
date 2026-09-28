@@ -65,9 +65,19 @@ const KNOWN_RPC_RESULTS = new Set([
  * Builds the exact parameter object public.ingest_civitatis_booking(...)
  * expects for ONE parsed Civitatis event (one Gmail message).
  *
- * @param {{parsedEvent: object, rawBody: string|null, civitatisSourceId: string, tourId: string, customerId: string|null}} args
+ * @param {{parsedEvent: object, rawBody: string|null, civitatisSourceId: string, tourId: string|null, customerId: string|null, autoProvisionTour?: boolean, civitatisInternalCode?: string|null, civitatisLanguageCode?: string|null}} args
+ *   tourId is null for a booking whose tour_channels match did not
+ *   resolve (fail-closed OR provisionable — see matchTourChannel's
+ *   `provisionable` flag) — the RPC decides what to do next from
+ *   autoProvisionTour. civitatisInternalCode/civitatisLanguageCode are
+ *   the SAME mergedState.internalCode/languageCode values
+ *   planCivitatisIngestion already used to make that eligibility
+ *   decision (constant across every call in one booking's chain, never
+ *   re-derived per individual event), passed through regardless of
+ *   autoProvisionTour so a fail-closed needs_review row still records
+ *   what product/language was involved, for later manual resolution.
  */
-function buildRpcPayload({ parsedEvent, rawBody, civitatisSourceId, tourId, customerId }) {
+function buildRpcPayload({ parsedEvent, rawBody, civitatisSourceId, tourId, customerId, autoProvisionTour = false, civitatisInternalCode = null, civitatisLanguageCode = null }) {
   return {
     p_gmail_message_id: parsedEvent.gmailMessageId,
     p_gmail_thread_id: parsedEvent.gmailThreadId,
@@ -106,17 +116,43 @@ function buildRpcPayload({ parsedEvent, rawBody, civitatisSourceId, tourId, cust
     // attempt). See tests/civitatis/writeAdapter.test.js's REGRESSION
     // test for the reproduction.
     p_passengers: parsedEvent.passengers || [],
+    // Civitatis tour auto-provisioning (see the RPC's Step 2a and
+    // matching.js's `provisionable` flag) — p_auto_provision_tour is
+    // only ever true for the two approved decision-table branches
+    // (product entirely unmapped, or missing this exact language
+    // variant); every other unmatched case reaches the RPC with this
+    // false, so it records a persisted, retryable needs_review row
+    // without attempting to create anything.
+    p_auto_provision_tour: !!autoProvisionTour,
+    p_civitatis_internal_code: civitatisInternalCode,
+    p_civitatis_language_code: civitatisLanguageCode,
   };
 }
 
 /**
  * Plans (never writes) the full set of RPC calls a batch of already-
  * fetched Gmail messages would produce, applying the EXACT SAME safety
- * gate dryRun.js's own outcome classification already applies:
+ * gate dryRun.js's own outcome classification already applies, PLUS the
+ * approved Civitatis tour auto-provisioning decision table:
  *   - a booking whose event chain has any parse failure -> ineligible
- *   - no exact tour_channels match -> ineligible (never fuzzy)
+ *     (never reaches the RPC at all — a parse failure has nothing
+ *     dependable to record)
+ *   - no exact tour_channels match, genuinely ambiguous/unresolvable
+ *     (ambiguous mapping, unrecognized/missing language, missing
+ *     internal code) -> STILL eligible (tourId:null,
+ *     autoProvisionTour:false) — sent to the RPC so a permanent,
+ *     retryable email_ingestions row is recorded instead of being
+ *     silently skipped
+ *   - no exact tour_channels match, but matchTourChannel flagged it
+ *     `provisionable` (product entirely unmapped, or missing this exact
+ *     language variant) -> eligible (tourId:null,
+ *     autoProvisionTour:true) — the RPC resolves or creates the tour
+ *     itself, inside its own transaction
  *   - an unlinked legacy reservation strong-signal match -> ineligible
- *     (POSSIBLE_EXISTING_MATCH; requires manual confirmation)
+ *     (POSSIBLE_EXISTING_MATCH; requires manual confirmation) — only
+ *     ever checked once a tour is actually resolved (never for a
+ *     provisioning booking, which cannot have a pre-existing legacy
+ *     reservation for a tour that does not exist yet)
  *   - an email/phone contact conflict (two different existing
  *     customers) -> ineligible (POSSIBLE_EXISTING_MATCH)
  *   - an exact-normalized-name customer candidate with no email/phone
@@ -193,17 +229,49 @@ async function planCivitatisIngestion({ messages, repo }) {
       bookingLanguage: mergedState.tourLanguage,
       tourChannels,
     });
-    if (!tourMatch.matched) {
-      plans.push({ externalBookingId, eligible: false, reason: tourMatch.reason });
+
+    if (!tourMatch.matched && !tourMatch.provisionable) {
+      // Genuinely fail-closed tour-matching (ambiguous mapping,
+      // unrecognized/missing language, or the defensive missing-
+      // internal-code case) — this booking is NO LONGER silently
+      // skipped. It is still sent to the RPC (tourId:null,
+      // auto-provisioning NOT requested), so a permanent, retryable
+      // email_ingestions row is recorded (the RPC's own field
+      // validation routes it to needs_review) instead of this booking
+      // depending indefinitely on Gmail rediscovery with zero persisted
+      // trace. See public.ingest_civitatis_booking's Step 2b.
+      plans.push({
+        externalBookingId, eligible: true, tourId: null, autoProvisionTour: false, customerId: null,
+        tourMatchReason: tourMatch.reason,
+        calls: items.map(it => buildRpcPayload({
+          parsedEvent: it.parsed, rawBody: it.rawBody, civitatisSourceId: civitatisSource.id,
+          tourId: null, customerId: null, autoProvisionTour: false,
+          civitatisInternalCode: mergedState.internalCode, civitatisLanguageCode: mergedState.languageCode,
+        })),
+      });
       continue;
     }
 
+    // Resolved (an exact existing mapping) or null (provisionable — the
+    // RPC will resolve/create the tour itself, inside its own
+    // transaction, under a lock keyed on the exact (source,
+    // external_product_id, booking_language) identity — see Step 2a).
+    // Never both: tourMatch.matched and tourMatch.provisionable are
+    // mutually exclusive by construction in matchTourChannel.
+    const resolvedTourId = tourMatch.matched ? tourMatch.tour.id : null;
+    const autoProvisionTour = !tourMatch.matched; // i.e. tourMatch.provisionable === true here
+
     const existingLinked = await repo.findReservationByExternalBooking({ sourceId: civitatisSource.id, externalBookingId });
 
-    if (!existingLinked) {
-      const candidateReservations = await repo.findCandidateLegacyReservations({ tourId: tourMatch.tour.id });
+    if (!existingLinked && resolvedTourId) {
+      // Legacy-reservation matching is inherently tour-scoped — a
+      // provisioning booking (resolvedTourId still null; its tour does
+      // not exist yet) cannot possibly have a pre-existing unlinked
+      // reservation to match against, so this step is skipped rather
+      // than attempted against a null tour id.
+      const candidateReservations = await repo.findCandidateLegacyReservations({ tourId: resolvedTourId });
       const legacyMatch = findPossibleExistingReservation(
-        { tourId: tourMatch.tour.id, checkIn: mergedState.date, checkInTime: mergedState.time, totalGuestCount: mergedState.totalGuestCount },
+        { tourId: resolvedTourId, checkIn: mergedState.date, checkInTime: mergedState.time, totalGuestCount: mergedState.totalGuestCount },
         candidateReservations
       );
       if (legacyMatch.possible) {
@@ -244,14 +312,18 @@ async function planCivitatisIngestion({ messages, repo }) {
     plans.push({
       externalBookingId,
       eligible: true,
-      tourId: tourMatch.tour.id,
+      tourId: resolvedTourId,
+      autoProvisionTour,
       customerId, // null means "the RPC should create one"
       calls: items.map(it => buildRpcPayload({
         parsedEvent: it.parsed,
         rawBody: it.rawBody,
         civitatisSourceId: civitatisSource.id,
-        tourId: tourMatch.tour.id,
+        tourId: resolvedTourId,
         customerId,
+        autoProvisionTour,
+        civitatisInternalCode: mergedState.internalCode,
+        civitatisLanguageCode: mergedState.languageCode,
       })),
     });
   }

@@ -198,7 +198,15 @@ function decorateCallResult(call, eventType) {
 }
 
 /** Dry-run reporting: exactly what WOULD be sent to the RPC, in the
- * exact order writeAdapter would send it, without ever calling it. */
+ * exact order writeAdapter would send it, without ever calling it.
+ * Surfaces tourId/autoProvisionTour at the booking level (unchanged
+ * across every call in one booking's chain) so an operator using this
+ * endpoint's dry-run mode to verify a specific booking — e.g. per-
+ * booking recovery via ?externalBookingId=... before flipping to
+ * write=true — can see, without guessing, whether it will resolve
+ * against an already-existing tour mapping, auto-provision a new one,
+ * or (tourId:null, autoProvisionTour:false) still require a human to
+ * resolve an ambiguous/unrecognized-language mapping first. */
 function buildDryRunResults(plan) {
   return plan.plans.map(entry => {
     if (!entry.eligible) {
@@ -208,6 +216,9 @@ function buildDryRunResults(plan) {
       externalBookingId: entry.externalBookingId,
       skipped: false,
       stoppedEarly: false,
+      tourId: entry.tourId,
+      autoProvisionTour: !!entry.autoProvisionTour,
+      tourMatchReason: entry.tourMatchReason || null,
       calls: entry.calls.map(c => ({
         gmailMessageId: c.p_gmail_message_id,
         eventType: c.p_event_type,

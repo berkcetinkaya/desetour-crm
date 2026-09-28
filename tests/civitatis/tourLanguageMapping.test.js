@@ -122,6 +122,72 @@ test('E. an unknown external_product_id still fails closed exactly as before —
   assert.match(match.reason, /no tour_channels row has external_product_id exactly/);
 });
 
+// ── Tour auto-provisioning: `provisionable` decision-table coverage ────────
+
+test('provisionable: a product with ZERO tour_channels rows in any language is flagged provisionable', () => {
+  const match = matchTourChannel({
+    internalCode: 'Brand New Product', civitatisSourceId: SOURCE_ID, bookingLanguage: 'İtalyanca',
+    tourChannels: [SPANISH_ROW, ITALIAN_ROW], // rows exist, but for a DIFFERENT product
+  });
+  assert.equal(match.matched, false);
+  assert.equal(match.provisionable, true);
+});
+
+test('provisionable: a product with language-specific mappings for OTHER languages, but not this one, is flagged provisionable', () => {
+  const match = matchTourChannel({
+    internalCode: PRODUCT, civitatisSourceId: SOURCE_ID, bookingLanguage: 'Portekizce',
+    tourChannels: [SPANISH_ROW, ITALIAN_ROW], // Spanish + Italian exist, Portuguese does not
+  });
+  assert.equal(match.matched, false);
+  assert.equal(match.provisionable, true);
+});
+
+test('NOT provisionable: an ambiguous product+language mapping (>1 row) never auto-provisions', () => {
+  const match = matchTourChannel({
+    internalCode: PRODUCT, civitatisSourceId: SOURCE_ID, bookingLanguage: 'İtalyanca',
+    tourChannels: [ITALIAN_ROW, DUPLICATE_ITALIAN_ROW],
+  });
+  assert.equal(match.matched, false);
+  assert.equal(match.provisionable, false);
+});
+
+test('NOT provisionable: more than one generic (language-agnostic) row for the same product never auto-provisions', () => {
+  const secondGeneric = { ...GENERIC_ROW, id: 'tc-generic-2', tour_id: 'tour-grand-bazaar-generic-2' };
+  const match = matchTourChannel({
+    internalCode: PRODUCT, civitatisSourceId: SOURCE_ID, bookingLanguage: 'İtalyanca',
+    tourChannels: [GENERIC_ROW, secondGeneric],
+  });
+  assert.equal(match.matched, false);
+  assert.equal(match.provisionable, false);
+});
+
+test('NOT provisionable: missing Internal code never auto-provisions (there is nothing to name the new tour or key its mapping)', () => {
+  const match = matchTourChannel({
+    internalCode: null, civitatisSourceId: SOURCE_ID, bookingLanguage: 'İtalyanca',
+    tourChannels: [SPANISH_ROW, ITALIAN_ROW],
+  });
+  assert.equal(match.matched, false);
+  assert.equal(match.provisionable, false);
+});
+
+test('NOT provisionable: language-specific mappings exist for the product but no bookingLanguage was available at all', () => {
+  const match = matchTourChannel({
+    internalCode: PRODUCT, civitatisSourceId: SOURCE_ID, bookingLanguage: null,
+    tourChannels: [SPANISH_ROW, ITALIAN_ROW],
+  });
+  assert.equal(match.matched, false);
+  assert.equal(match.provisionable, false);
+});
+
+test('an already-matched product (exact product+language row exists) has no need for provisionable — matched:true short-circuits', () => {
+  const match = matchTourChannel({
+    internalCode: PRODUCT, civitatisSourceId: SOURCE_ID, bookingLanguage: 'İspanyolca',
+    tourChannels: [SPANISH_ROW, ITALIAN_ROW],
+  });
+  assert.equal(match.matched, true);
+  assert.equal(match.provisionable, undefined);
+});
+
 // ── F. Backward compatibility: existing single-mapping products ────────────
 
 test('F. a product with only a generic (no booking_language) row keeps matching exactly as before, for any language', () => {
@@ -205,6 +271,30 @@ test('C, end-to-end (dry run): a recognized language with NO explicit mapping (o
   assert.equal(booking.outcome, OUTCOME.NEEDS_REVIEW);
   assert.equal(booking.tourMatch.matched, false);
   assert.match(booking.reasons[0], /İspanyolca/);
+});
+
+// ── Tour auto-provisioning, end-to-end through the real write-planning
+// pipeline (not just the pure matchTourChannel unit above): a product
+// already mapped in Italian, booked in Spanish (a language it has never
+// been mapped in before), must plan as an auto-provisioning call —
+// tourId:null, autoProvisionTour:true — carrying the exact
+// product/language identity the RPC needs to create the new Spanish
+// tour, never silently reusing the existing Italian one.
+test('end-to-end (write planning): a product mapped ONLY in Italian, booked in Spanish, plans as auto-provisioning (tourId:null, autoProvisionTour:true), never reusing the Italian tour', async () => {
+  const repo = createFakeRepo(repoWithLanguageMappings({ tourChannels: [ITALIAN_ROW] }));
+  const plan = await planCivitatisIngestion({ messages: [F.spanishNewBooking], repo });
+  assert.equal(plan.ok, true);
+  assert.equal(plan.plans.length, 1);
+  const entry = plan.plans[0];
+  assert.equal(entry.eligible, true);
+  assert.equal(entry.tourId, null, 'never falls back to the existing Italian tour');
+  assert.equal(entry.autoProvisionTour, true);
+  const call = entry.calls[0];
+  assert.equal(call.p_tour_id, null);
+  assert.equal(call.p_auto_provision_tour, true);
+  assert.equal(call.p_civitatis_internal_code, PRODUCT);
+  assert.equal(call.p_tour_language, 'İspanyolca');
+  assert.equal(call.p_civitatis_language_code, 'es');
 });
 
 // ── G. Booking modification: must keep updating the SAME reservation, never duplicate ──

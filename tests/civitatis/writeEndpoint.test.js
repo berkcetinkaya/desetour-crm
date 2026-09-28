@@ -175,6 +175,34 @@ test('write disabled (writeModeActive:false): zero RPC calls, even for an otherw
   assert.equal(outcome.results[0].calls[0].rpcResult, null);
 });
 
+// ── Dry-run visibility for tour auto-provisioning recovery checks ───────
+test('dry-run mode surfaces tourId/autoProvisionTour at the booking level, so a recovery check can confirm auto-provisioning will fire before write=true', async () => {
+  const repo = createFakeRepo(baseRepoOptions({ tourChannels: [] })); // entirely unmapped product
+  const outcome = await handler.runCivitatisWriteOrchestration({
+    messages: [F.italianNewBooking],
+    repo,
+    externalBookingId: '41629692',
+    writeModeActive: false,
+    rpcCaller: null,
+  });
+  assert.equal(outcome.results[0].skipped, false);
+  assert.equal(outcome.results[0].tourId, null);
+  assert.equal(outcome.results[0].autoProvisionTour, true);
+});
+
+test('dry-run mode reports an already-matched booking with autoProvisionTour:false and its resolved tourId', async () => {
+  const repo = createFakeRepo(baseRepoOptions());
+  const outcome = await handler.runCivitatisWriteOrchestration({
+    messages: [F.italianNewBooking],
+    repo,
+    externalBookingId: '41629692',
+    writeModeActive: false,
+    rpcCaller: null,
+  });
+  assert.equal(outcome.results[0].tourId, 'tour-grand-bazaar');
+  assert.equal(outcome.results[0].autoProvisionTour, false);
+});
+
 test('write disabled: the HTTP handler never constructs a real rpcCaller at all (rpcCaller stays null)', async () => {
   // Mirrors exactly what the real handler does: only build a real
   // rpcCaller when writeModeActive is true.
@@ -260,8 +288,13 @@ test('POSSIBLE_EXISTING_MATCH (exact normalized name) never reaches the RPC, eve
   assert.ok(outcome.results[0].reason.includes('POSSIBLE_EXISTING_MATCH'));
 });
 
-// ── NEEDS_REVIEW never reaches RPC ────────────────────────────────────────
-test('NEEDS_REVIEW (no tour_channels match) never reaches the RPC, even with write mode active', async () => {
+// ── An entirely unmapped product now reaches the RPC (auto-provisioning) ──
+// (Superseded assumption from before the tour auto-provisioning change: a
+// tour_channels: [] repo no longer means NEEDS_REVIEW-and-skip — it means
+// "eligible for automatic language-specific tour creation" per
+// matching.js's `provisionable` flag. See the companion ambiguous-mapping
+// test below for a tour-matching case that DOES still skip the RPC.)
+test('an entirely unmapped product (no tour_channels rows in any language) reaches the RPC with write mode active, requesting auto-provisioning', async () => {
   const repo = createFakeRepo(baseRepoOptions({ tourChannels: [] }));
   const rpcCaller = makeSpyRpcCaller([{ result: 'created' }]);
   const outcome = await handler.runCivitatisWriteOrchestration({
@@ -271,8 +304,30 @@ test('NEEDS_REVIEW (no tour_channels match) never reaches the RPC, even with wri
     writeModeActive: true,
     rpcCaller,
   });
-  assert.equal(rpcCaller.calls.length, 0);
-  assert.equal(outcome.results[0].skipped, true);
+  assert.equal(rpcCaller.calls.length, 1);
+  assert.equal(outcome.results[0].skipped, false);
+  assert.equal(rpcCaller.calls[0].p_tour_id, null);
+  assert.equal(rpcCaller.calls[0].p_auto_provision_tour, true);
+});
+
+// ── Genuinely fail-closed tour-matching (ambiguous) still skips creating
+// anything, but IS still sent to the RPC (per the item-9 persistent-
+// recording fix) with auto-provisioning explicitly NOT requested ───────────
+test('an AMBIGUOUS tour_channels mapping reaches the RPC too, but with auto-provisioning NOT requested', async () => {
+  const duplicateRow = { ...GRAND_BAZAAR_TOUR_CHANNEL, id: 'tc-2', tour_id: 'tour-grand-bazaar-2' };
+  const repo = createFakeRepo(baseRepoOptions({ tourChannels: [GRAND_BAZAAR_TOUR_CHANNEL, duplicateRow] }));
+  const rpcCaller = makeSpyRpcCaller([{ result: 'manual_review_required' }]);
+  const outcome = await handler.runCivitatisWriteOrchestration({
+    messages: [F.italianNewBooking],
+    repo,
+    externalBookingId: null,
+    writeModeActive: true,
+    rpcCaller,
+  });
+  assert.equal(rpcCaller.calls.length, 1);
+  assert.equal(outcome.results[0].skipped, false);
+  assert.equal(rpcCaller.calls[0].p_tour_id, null);
+  assert.equal(rpcCaller.calls[0].p_auto_provision_tour, false);
 });
 
 // ── PARSE_ERROR never reaches RPC ─────────────────────────────────────────

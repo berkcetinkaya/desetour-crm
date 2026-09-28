@@ -162,12 +162,39 @@ test('a booking that would classify as POSSIBLE_EXISTING_MATCH via exact normali
   assert.ok(plan.plans[0].reason.includes('POSSIBLE_EXISTING_MATCH'));
 });
 
-// 16. NEEDS_REVIEW never plans a write
-test('a booking that would classify as NEEDS_REVIEW (no tour_channels match) is never eligible', async () => {
+// 16. An entirely unmapped product is now ELIGIBLE for auto-provisioning
+// (tour_channels: [] means the product has zero rows in any language —
+// matchTourChannel's `provisionable: true` case), not silently skipped.
+test('a booking whose product has no tour_channels mapping in any language is still eligible, planned as an auto-provisioning call (tourId:null, autoProvisionTour:true)', async () => {
   const repo = createFakeRepo(baseRepoOptions({ tourChannels: [] }));
   const plan = await planCivitatisIngestion({ messages: [F.italianNewBooking], repo });
-  assert.equal(plan.plans[0].eligible, false);
-  assert.ok(plan.plans[0].reason.includes('tour_channels'));
+  assert.equal(plan.plans[0].eligible, true);
+  assert.equal(plan.plans[0].tourId, null);
+  assert.equal(plan.plans[0].autoProvisionTour, true);
+  const call = plan.plans[0].calls[0];
+  assert.equal(call.p_tour_id, null);
+  assert.equal(call.p_auto_provision_tour, true);
+  assert.equal(call.p_civitatis_internal_code, 'Grand Bazaar Experience');
+  assert.equal(call.p_civitatis_language_code, 'it');
+});
+
+// A genuinely fail-closed tour-matching case (ambiguous mapping) is
+// still eligible now too — but with auto-provisioning NOT requested, so
+// the RPC records a persisted, retryable needs_review row instead of
+// creating anything. This is the item-9 fix: a valid parsed booking no
+// longer leaves zero trace in email_ingestions merely because its tour
+// couldn't be resolved.
+test('a booking with an AMBIGUOUS tour_channels mapping (multiple rows for the same product) is still eligible (sent to the RPC), but with auto-provisioning NOT requested', async () => {
+  const duplicateRow = { ...GRAND_BAZAAR_TOUR_CHANNEL, id: 'tc-2', tour_id: 'tour-grand-bazaar-2' };
+  const repo = createFakeRepo(baseRepoOptions({ tourChannels: [GRAND_BAZAAR_TOUR_CHANNEL, duplicateRow] }));
+  const plan = await planCivitatisIngestion({ messages: [F.italianNewBooking], repo });
+  assert.equal(plan.plans[0].eligible, true);
+  assert.equal(plan.plans[0].tourId, null);
+  assert.equal(plan.plans[0].autoProvisionTour, false);
+  assert.ok(plan.plans[0].tourMatchReason.includes('ambiguous'));
+  const call = plan.plans[0].calls[0];
+  assert.equal(call.p_tour_id, null);
+  assert.equal(call.p_auto_provision_tour, false);
 });
 
 // 16 (NEEDS_REVIEW via missing Internal code / any parse failure in the chain)
@@ -272,9 +299,20 @@ test('a booking already linked to a reservation via external_booking_id is still
 });
 
 // ── executeCivitatisIngestionPlan: never calls rpcCaller for ineligible entries ──
+// (Note: an unmapped/ambiguous tour_channels match is no longer
+// "ineligible" as of the tour auto-provisioning change — it is now sent
+// to the RPC. The genuinely-still-ineligible category exercised here is
+// POSSIBLE_EXISTING_MATCH, which remains a JS-layer-only gate the RPC
+// never even sees.)
 test('executeCivitatisIngestionPlan never invokes rpcCaller for an ineligible (manual-review) booking', async () => {
-  const repo = createFakeRepo(baseRepoOptions({ tourChannels: [] })); // forces NEEDS_REVIEW
+  const repo = createFakeRepo(baseRepoOptions({
+    reservations: [{
+      id: 'res-legacy-1', source_id: null, external_booking_id: null, tour_id: 'tour-grand-bazaar',
+      check_in: '2026-11-02', check_in_time: '09:00:00', pax_adult: 2, pax_child: 0,
+    }],
+  })); // forces POSSIBLE_EXISTING_MATCH via unlinked legacy reservation
   const plan = await planCivitatisIngestion({ messages: [F.italianNewBooking], repo });
+  assert.equal(plan.plans[0].eligible, false);
   const rpcCaller = makeFakeRpcCaller([{ result: 'created' }]);
   const results = await executeCivitatisIngestionPlan(plan, rpcCaller);
   assert.equal(rpcCaller.calls.length, 0);
