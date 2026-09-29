@@ -1755,6 +1755,69 @@ const MetricsService = {
   },
 };
 
+// ── CRM Güncellemeleri (product changelog) ──────────────────────────────
+// See crmChangelog.js for the actual release data and the full release
+// convention (read it before adding a new entry). window.CRM_CHANGELOG is
+// already populated by the time this script runs — crmChangelog.js is a
+// plain <script> loaded before app.js, exactly like build-meta.js (see
+// index.html) — but the fallback to [] keeps this file safe even if that
+// ever changes (an empty changelog renders an empty state, never a crash).
+const CRM_CHANGELOG = (typeof window !== 'undefined' && window.CRM_CHANGELOG) || [];
+const CRM_CHANGELOG_CATEGORIES = (typeof window !== 'undefined' && window.CRM_CHANGELOG_CATEGORIES) || [];
+
+// localStorage-only "has the user seen the latest release" tracking —
+// informational UX only, deliberately NOT synced across devices/Supabase
+// (see crmChangelog.js's header for the full rationale). Every access is
+// guarded: localStorage can be unavailable (private browsing, disabled
+// site data) or throw on write (quota) — this must never crash the app.
+const CRM_CHANGELOG_LAST_SEEN_KEY = 'desetour_crm_last_seen_version';
+
+function getLastSeenChangelogVersion() {
+  try { return localStorage.getItem(CRM_CHANGELOG_LAST_SEEN_KEY); } catch (_) { return null; }
+}
+
+// TESTABLE:hasUnseenChangelogUpdate:start
+function hasUnseenChangelogUpdate(latestVersion, lastSeenVersion) {
+  return !!latestVersion && lastSeenVersion !== latestVersion;
+}
+// TESTABLE:hasUnseenChangelogUpdate:end
+
+// A tiny, dedicated pub-sub — deliberately separate from Store/useStore
+// (which also clears the entire live-repo fetch cache on every notify()),
+// so marking the changelog as viewed never forces an unrelated app-wide
+// data refetch. Lets every mounted "CRM Güncellemeleri" indicator react
+// immediately once ChangelogPage marks the latest version as viewed, with
+// no full page reload.
+const ChangelogViewedStore = (() => {
+  const listeners = new Set();
+  return {
+    subscribe(fn) { listeners.add(fn); return () => listeners.delete(fn); },
+    notify()      { listeners.forEach(fn => fn()); },
+  };
+})();
+
+function markChangelogViewed() {
+  const latest = CRM_CHANGELOG[0];
+  if (!latest) return;
+  try { localStorage.setItem(CRM_CHANGELOG_LAST_SEEN_KEY, latest.version); } catch (_) {}
+  ChangelogViewedStore.notify();
+}
+
+// Shared by every "CRM Güncellemeleri" nav entry (desktop sidebar, mobile
+// drawer, mobile More page) — one hook, one source of truth for whether
+// the gold "Yeni" indicator should show.
+function useHasNewChangelogUpdate() {
+  const [seen, setSeen] = useState(getLastSeenChangelogVersion);
+  useEffect(() => ChangelogViewedStore.subscribe(() => setSeen(getLastSeenChangelogVersion())), []);
+  const latestVersion = CRM_CHANGELOG[0] ? CRM_CHANGELOG[0].version : null;
+  return hasUnseenChangelogUpdate(latestVersion, seen);
+}
+
+// A restrained "announcement" glyph — deliberately distinct from the
+// existing notification bell (NotificationBell), since this is a product
+// changelog, not an operational alert.
+const CHANGELOG_NAV_ICON = "M3 11v2a1 1 0 001 1h3l4 4V6L7 10H4a1 1 0 00-1 1z M15 8a3 3 0 010 8 M18 5a7 7 0 010 14";
+
 // NAV_TOP/NAV_BOT badges default to null (no badge shown). Real counts are
 // computed from live repo data inside Sidebar/SidebarInner and merged in at
 // render time — never hardcode a badge number here, and never fall back to
@@ -1900,6 +1963,58 @@ function NavItem({ item, currentBase }) {
   );
 }
 
+// The "CRM Güncellemeleri" nav entry — deliberately its own component
+// rather than a NAV_SETTINGS/NAV_BOT array item, since it carries a
+// version subtitle and a "Yeni" indicator that no other nav item needs.
+// Shared by the desktop sidebar and the mobile drawer so both stay in
+// sync with zero duplicated markup.
+function ChangelogNavRow({ currentBase, onNavigate, collapsed }) {
+  const hasNewUpdate = useHasNewChangelogUpdate();
+  const buildVersion = (typeof window !== 'undefined' && window.__DESETOUR_BUILD__ && window.__DESETOUR_BUILD__.version) || (CRM_CHANGELOG[0] && CRM_CHANGELOG[0].version) || null;
+  const on = currentBase === "changelog";
+  return (
+    <button
+      onClick={()=>{ markChangelogViewed(); onNavigate(); }}
+      title={collapsed ? "CRM Güncellemeleri" : undefined}
+      style={{
+        display:"flex", alignItems:"center", gap:10, width:"100%",
+        padding: collapsed ? "9px 0" : "9px 14px",
+        justifyContent: collapsed ? "center" : "flex-start",
+        border:"none", borderRadius:7, marginBottom:2,
+        background: on ? "rgba(184,151,58,0.13)" : "transparent",
+        color: on ? C.goldLight : "rgba(248,245,238,0.6)",
+        cursor:"pointer", textAlign:"left",
+        borderLeft: collapsed ? "3px solid transparent" : (on ? "3px solid "+C.goldLight : "3px solid transparent"),
+        transition:"background 0.12s, color 0.12s",
+      }}>
+      <span style={{flexShrink:0, position:"relative", display:"inline-flex"}}>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
+          stroke="currentColor" strokeWidth={on ? 2 : 1.6}
+          strokeLinecap="round" strokeLinejoin="round">
+          <path d={CHANGELOG_NAV_ICON}/>
+        </svg>
+        {hasNewUpdate && (
+          <span style={{position:"absolute", top:-3, right:-3, width:6, height:6, borderRadius:"50%", background:C.goldLight, border:"1.5px solid "+C.navyDeep}}/>
+        )}
+      </span>
+      {!collapsed && (
+        <span style={{flex:1, minWidth:0}}>
+          <span style={{display:"block", fontSize:13, fontWeight:on?500:400, fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap"}}>CRM Güncellemeleri</span>
+          {buildVersion && (
+            <span style={{display:"block", fontSize:9.5, color:"rgba(248,245,238,0.35)", fontFamily:"'DM Sans',sans-serif", marginTop:1}}>v{buildVersion}</span>
+          )}
+        </span>
+      )}
+      {!collapsed && hasNewUpdate && (
+        <span style={{
+          fontSize:9, fontWeight:600, color:C.navyDeep, background:C.goldLight,
+          padding:"2px 6px", borderRadius:99, flexShrink:0, letterSpacing:"0.02em",
+        }}>Yeni</span>
+      )}
+    </button>
+  );
+}
+
 function SidebarInner({ currentBase, onNavItem, liveBadges }) {
   const auth = useAuthContext();
   const role = auth.role;
@@ -1997,6 +2112,9 @@ function SidebarInner({ currentBase, onNavItem, liveBadges }) {
               <span style={{fontSize:13, fontWeight:currentBase===it.id?500:400, fontFamily:"'DM Sans',sans-serif", flex:1, whiteSpace:"nowrap"}}>{it.label}</span>
             </button>
           ))}
+          {canAccess(role, "changelog") && (
+            <ChangelogNavRow currentBase={currentBase} onNavigate={()=>handleItemClick("changelog")}/>
+          )}
         </div>
       </nav>
 
@@ -2235,6 +2353,9 @@ function Sidebar({ currentBase, collapsed, onToggle, mobileOpen, onMobileClose }
       <div style={{height:1, background:"rgba(255,255,255,0.07)", margin:"12px 18px"}}/>
       <nav style={{padding:"0 10px", display:"flex", flexDirection:"column", gap:2}}>
         {NAV_SETTINGS.map(it=><NavItem key={it.id} item={{...withLiveBadge(it),_collapsed:collapsed}} currentBase={currentBase}/>)}
+        {canAccess(auth.role, "changelog") && (
+          <ChangelogNavRow currentBase={currentBase} onNavigate={()=>{ if (typeof NAV_REF.fn === 'function') NAV_REF.fn('/changelog'); }} collapsed={collapsed}/>
+        )}
       </nav>
       <div style={{flex:1}}/>
       <div style={{
@@ -10934,6 +11055,145 @@ function SettingsPage() {
   );
 }
 
+/* ══════════════════════════════════════════════════════════════════════
+   CRM GÜNCELLEMELERİ — the permanent, user-facing product changelog.
+   See crmChangelog.js for the actual release data and the release
+   convention every future entry must follow. This is deliberately NOT a
+   technical Git history: no commit hashes, no migration/RPC names, no
+   internal bug detail — a polished editorial record of what shipped and
+   why it matters operationally.
+   ══════════════════════════════════════════════════════════════════════ */
+
+// TESTABLE:formatChangelogDateTR:start
+// "2026-09-28" -> "28 Eylül 2026". Takes the fixed release date string,
+// never new Date() with no argument — a changelog entry's date never
+// depends on when the page happens to be viewed.
+function formatChangelogDateTR(isoDate) {
+  if (!isoDate) return '';
+  const d = new Date(isoDate + 'T00:00:00');
+  if (isNaN(d.getTime())) return '';
+  return d.toLocaleDateString('tr-TR', { day:'numeric', month:'long', year:'numeric' });
+}
+// TESTABLE:formatChangelogDateTR:end
+
+const CHANGELOG_CATEGORY_STYLE = {
+  'Yeni Özellik': { color: '#2E7D52', bg: '#EBF5EF' },
+  'Otomasyon':    { color: '#1A6FAE', bg: '#E8F2FB' },
+  'Operasyon':    { color: '#1B2D4F', bg: 'rgba(27,45,79,0.08)' },
+  'İyileştirme':  { color: '#8A6D1F', bg: '#F5EDD4' },
+  'Arayüz':       { color: '#6B3FA0', bg: '#F3EEF9' },
+  'Altyapı':      { color: '#4A5568', bg: '#EDE9DF' },
+};
+
+function ChangelogCategoryBadge({ label }) {
+  const meta = CHANGELOG_CATEGORY_STYLE[label] || { color: C.textMid, bg: C.ivoryDark };
+  return <Pill label={label} color={meta.color} bg={meta.bg} small/>;
+}
+
+function ChangelogReleaseCard({ entry, isLatest, isMobile }) {
+  const [showTech, setShowTech] = useState(false);
+  return (
+    <div style={{
+      background:C.white, border:`1px solid ${C.border}`, borderRadius:T.radius,
+      padding: isMobile ? "20px" : "26px 30px",
+      boxShadow:T.shadowSoft, position:"relative",
+    }}>
+      {isLatest && (
+        <div style={{
+          position:"absolute", top: isMobile ? 16 : 22, right: isMobile ? 18 : 26,
+          fontSize:9.5, fontWeight:600, letterSpacing:"0.08em", textTransform:"uppercase",
+          color:C.gold, fontFamily:"'DM Sans',sans-serif",
+        }}>Güncel Sürüm</div>
+      )}
+      <div style={{display:"flex", alignItems:"baseline", gap:10, flexWrap:"wrap", marginBottom:7}}>
+        <span style={{fontFamily:"'DM Mono',monospace", fontSize:13.5, fontWeight:600, color:C.gold}}>v{entry.version}</span>
+        <span style={{fontSize:12.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>{formatChangelogDateTR(entry.date)}</span>
+      </div>
+      <h3 style={{margin:0, fontSize: isMobile?17:19, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif", marginBottom:9, lineHeight:1.25, paddingRight: isLatest ? 90 : 0}}>{entry.title}</h3>
+      <p style={{margin:0, fontSize:13.5, color:C.textMid, fontFamily:"'DM Sans',sans-serif", lineHeight:1.6, marginBottom:15}}>{entry.summary}</p>
+      {entry.categories && entry.categories.length > 0 && (
+        <div style={{display:"flex", flexWrap:"wrap", gap:6, marginBottom:16}}>
+          {entry.categories.map(c=><ChangelogCategoryBadge key={c} label={c}/>)}
+        </div>
+      )}
+      {entry.highlights && entry.highlights.length > 0 && (
+        <ul style={{margin:0, padding:0, listStyle:"none", display:"flex", flexDirection:"column", gap:8, marginBottom:16}}>
+          {entry.highlights.map((h,i)=>(
+            <li key={i} style={{display:"flex", gap:9, fontSize:13, color:C.text, fontFamily:"'DM Sans',sans-serif", lineHeight:1.5}}>
+              <span style={{color:C.gold, flexShrink:0}}>•</span>
+              <span>{h}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {entry.technicalNote && (
+        <div style={{marginBottom:14}}>
+          <button onClick={()=>setShowTech(s=>!s)} style={{
+            background:"none", border:"none", cursor:"pointer", padding:0,
+            fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif",
+            display:"flex", alignItems:"center", gap:4,
+          }}>
+            {showTech ? "Teknik notu gizle" : "Teknik not"}
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"
+              style={{transform: showTech?"rotate(180deg)":"none", transition:"transform .15s"}}>
+              <path d="M6 9l6 6 6-6"/>
+            </svg>
+          </button>
+          {showTech && (
+            <p style={{margin:"8px 0 0", fontSize:12, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", lineHeight:1.55, fontStyle:"italic"}}>{entry.technicalNote}</p>
+          )}
+        </div>
+      )}
+      <div style={{fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", paddingTop:13, borderTop:`1px solid ${C.borderLight}`}}>
+        {entry.author} tarafından geliştirildi
+      </div>
+    </div>
+  );
+}
+
+function ChangelogPage() {
+  const { isMobile } = useBreakpoint();
+  // Deep-link-safe: marks the latest version as viewed the moment this
+  // page mounts, regardless of how the user got here (nav row click,
+  // direct URL, browser back/forward) — see crmChangelog.js's header for
+  // the full localStorage contract.
+  useEffect(() => { markChangelogViewed(); }, []);
+  const buildVersion = (typeof window !== 'undefined' && window.__DESETOUR_BUILD__ && window.__DESETOUR_BUILD__.version) || (CRM_CHANGELOG[0] && CRM_CHANGELOG[0].version) || null;
+
+  return (
+    <div style={{display:"flex", flexDirection:"column", gap:0}}>
+      {}
+      <div style={{
+        background:`linear-gradient(135deg, ${C.navyDeep} 0%, ${C.navy} 100%)`,
+        borderRadius:12, padding: isMobile ? "26px 20px" : "40px 44px",
+        marginBottom: isMobile ? 18 : 26,
+      }}>
+        <div style={{display:"inline-flex", alignItems:"center", gap:7, padding:"4px 11px", borderRadius:99, background:"rgba(201,168,76,0.18)", marginBottom:15}}>
+          <span style={{width:5,height:5,borderRadius:"50%",background:C.goldLight}}/>
+          <span style={{fontSize:10.5, fontWeight:600, letterSpacing:"0.06em", textTransform:"uppercase", color:C.goldLight, fontFamily:"'DM Sans',sans-serif"}}>v{buildVersion || '—'}</span>
+        </div>
+        <h1 style={{margin:0, fontSize: isMobile?23:32, fontWeight:700, color:C.ivory, fontFamily:"'Playfair Display',serif", marginBottom:11, lineHeight:1.15}}>CRM Güncellemeleri</h1>
+        <p style={{margin:0, maxWidth:580, fontSize: isMobile?13:14.5, color:"rgba(248,245,238,0.72)", fontFamily:"'DM Sans',sans-serif", lineHeight:1.65}}>
+          Dese Tour Operasyon Merkezi'nin gelişim geçmişi. Yeni özellikler, otomasyonlar ve operasyonel iyileştirmeler.
+        </p>
+      </div>
+
+      {}
+      {CRM_CHANGELOG.length === 0 ? (
+        <div style={{background:C.white, border:`1px solid ${C.border}`, borderRadius:12, padding:"60px 30px", textAlign:"center"}}>
+          <div style={{fontSize:13.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>Henüz yayınlanmış bir güncelleme kaydı yok.</div>
+        </div>
+      ) : (
+        <div style={{display:"flex", flexDirection:"column", gap: isMobile?14:20, maxWidth:760}}>
+          {CRM_CHANGELOG.map((entry,i)=>(
+            <ChangelogReleaseCard key={entry.version} entry={entry} isLatest={i===0} isMobile={isMobile}/>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function calculateReportMetrics(period, reservations, payments, customers, sources, guides, guidePayments) {
   const _res     = reservations ?? [];
   const _pays    = payments     ?? [];
@@ -13866,9 +14126,9 @@ function DataSourceBadge() {
 // Customer, or Messages page.
 const ROLE_PERMISSIONS = {
   "Yönetici": null, // null = all pages
-  "Satış":    ["dashboard","customers","reservations","guides","leads","quotes","reminders","messages","reports","more"],
-  "Operasyon":["dashboard","reservations","calendar","tours","guides","leads","quotes","reminders","payments","reports","more"],
-  "Rehber":   ["dashboard","calendar","reservations","more"],
+  "Satış":    ["dashboard","customers","reservations","guides","leads","quotes","reminders","messages","reports","more","changelog"],
+  "Operasyon":["dashboard","reservations","calendar","tours","guides","leads","quotes","reminders","payments","reports","more","changelog"],
+  "Rehber":   ["dashboard","calendar","reservations","more","changelog"],
 };
 
 function canAccess(role, page) {
@@ -14819,7 +15079,7 @@ function LoginPage({ onLogin, connectionError }) {
         )}
 
         <div style={{textAlign:"center", marginTop:20, fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>
-          Dese Tour Operasyon Merkezi v1.0
+          Dese Tour Operasyon Merkezi{(typeof window !== 'undefined' && window.__DESETOUR_BUILD__ && window.__DESETOUR_BUILD__.version) ? ` v${window.__DESETOUR_BUILD__.version}` : ''}
         </div>
       </div>
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
@@ -17729,6 +17989,7 @@ function PageRouter({ base, param, isMobile, navigate }) {
   if (base === "reminders") return <RemindersPage/>;
   if (base === "reports")   return <ReportsPage/>;
   if (base === "settings")  return <SettingsPage/>;
+  if (base === "changelog") return <ChangelogPage/>;
   if (base === "messages")  return <MessagesPage/>;
 
   return <NotFound404/>;
@@ -18089,7 +18350,7 @@ const MOBILE_PAGE_TITLES = {
   dashboard:"Bugün", leads:"Talep", customers:"Misafirler", quotes:"Teklif",
   reservations:"Rezervasyonlar", calendar:"Takvim", tours:"Turlar", guides:"Rehberlerimiz",
   payments:"Ödemeler", reminders:"Hatırlatmalar", reports:"Raporlar", settings:"Ayarlar",
-  messages:"Mesajlar", more:"Diğer",
+  messages:"Mesajlar", more:"Diğer", changelog:"CRM Güncellemeleri",
 };
 const BOTTOM_NAV_ITEMS = [
   { id:"dashboard",    label:"Bugün",     icon:"M3 9.5L12 3l9 6.5V20a1 1 0 01-1 1H4a1 1 0 01-1-1V9.5z M9 21V12h6v9" },
@@ -18142,7 +18403,10 @@ function MobileMorePage({ navigate }) {
     { id:"messages",   label:"Mesajlar",       icon:"M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" },
     { id:"reports",    label:"Raporlar",       icon:"M18 20V10M12 20V4M6 20v-6" },
     { id:"settings",   label:"Ayarlar",        icon:"M12 15a3 3 0 100-6 3 3 0 000 6z M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" },
+    { id:"changelog",  label:"CRM Güncellemeleri", icon:CHANGELOG_NAV_ICON },
   ].filter(it => canAccess(auth.role, it.id));
+  const hasNewChangelogUpdate = useHasNewChangelogUpdate();
+  const currentBuildVersion = (typeof window !== 'undefined' && window.__DESETOUR_BUILD__ && window.__DESETOUR_BUILD__.version) || (CRM_CHANGELOG[0] && CRM_CHANGELOG[0].version) || null;
 
   return (
     <div style={{ display:"flex", flexDirection:"column", gap:22, paddingBottom:20 }}>
@@ -18163,20 +18427,34 @@ function MobileMorePage({ navigate }) {
 
       {}
       <MobileEntityCard style={{ padding:0, overflow:"hidden" }}>
-        {ALL_ITEMS.map((it,i)=>(
-          <button key={it.id} onClick={()=>navigate('/'+it.id)} style={{
-            width:"100%", display:"flex", alignItems:"center", gap:12,
-            padding:"14px 16px", border:"none", background:"transparent", cursor:"pointer",
-            borderBottom: i<ALL_ITEMS.length-1 ? `1px solid ${C.borderLight}` : "none",
-            textAlign:"left",
-          }}>
-            <div style={{ width:32, height:32, borderRadius:8, flexShrink:0, background:C.ivory, display:"flex", alignItems:"center", justifyContent:"center" }}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.navy} strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d={it.icon}/></svg>
-            </div>
-            <span style={{ flex:1, fontSize:14.5, color:C.text, fontFamily:"'DM Sans',sans-serif" }}>{it.label}</span>
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={C.textFaint} strokeWidth="2" strokeLinecap="round"><path d="M9 18l6-6-6-6"/></svg>
-          </button>
-        ))}
+        {ALL_ITEMS.map((it,i)=>{
+          const isChangelog = it.id === "changelog";
+          return (
+            <button key={it.id} onClick={()=>{ if (isChangelog) markChangelogViewed(); navigate('/'+it.id); }} style={{
+              width:"100%", display:"flex", alignItems:"center", gap:12,
+              padding:"14px 16px", border:"none", background:"transparent", cursor:"pointer",
+              borderBottom: i<ALL_ITEMS.length-1 ? `1px solid ${C.borderLight}` : "none",
+              textAlign:"left",
+            }}>
+              <div style={{ width:32, height:32, borderRadius:8, flexShrink:0, background:C.ivory, display:"flex", alignItems:"center", justifyContent:"center", position:"relative" }}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.navy} strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d={it.icon}/></svg>
+                {isChangelog && hasNewChangelogUpdate && (
+                  <span style={{ position:"absolute", top:-1, right:-1, width:8, height:8, borderRadius:"50%", background:C.goldLight, border:`1.5px solid ${C.white}` }}/>
+                )}
+              </div>
+              <span style={{ flex:1, minWidth:0 }}>
+                <span style={{ display:"block", fontSize:14.5, color:C.text, fontFamily:"'DM Sans',sans-serif" }}>{it.label}</span>
+                {isChangelog && currentBuildVersion && (
+                  <span style={{ display:"block", fontSize:11, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:1 }}>v{currentBuildVersion}</span>
+                )}
+              </span>
+              {isChangelog && hasNewChangelogUpdate && (
+                <span style={{ fontSize:9.5, fontWeight:600, color:"#8A6D1F", background:C.goldPale, padding:"2px 7px", borderRadius:99, flexShrink:0 }}>Yeni</span>
+              )}
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={C.textFaint} strokeWidth="2" strokeLinecap="round"><path d="M9 18l6-6-6-6"/></svg>
+            </button>
+          );
+        })}
       </MobileEntityCard>
 
       {}
@@ -18191,7 +18469,7 @@ function MobileMorePage({ navigate }) {
       </button>
 
       <div style={{ textAlign:"center", fontSize:11, color:C.textFaint, fontFamily:"'DM Sans',sans-serif" }}>
-        Dese Tour Operasyon Merkezi · v1.0
+        Dese Tour Operasyon Merkezi{currentBuildVersion ? ` · v${currentBuildVersion}` : ''}
       </div>
     </div>
   );

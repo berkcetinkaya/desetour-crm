@@ -55,5 +55,6 @@ const indexPath = './index.html';
 let html = fs.readFileSync(indexPath, 'utf8');
 html = cacheBustScriptTag(html, 'app.js', result.code);
 html = cacheBustScriptTag(html, 'build-meta.js', buildMetaCode);
+html = cacheBustScriptTag(html, 'crmChangelog.js', fs.readFileSync('./crmChangelog.js', 'utf8'));
 fs.writeFileSync(indexPath, html);
 console.log('[build] Done.');
