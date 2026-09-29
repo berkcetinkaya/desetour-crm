@@ -785,6 +785,67 @@ Surname: Costa
 Email: joana.costa@example.com`,
 };
 
+// A fourth real production booking family (A38807986, A39762643,
+// A39984703, A40446421, A40466869) — same Português/no-fixed-time shape
+// as the three above, but the Hour field here is PRESENT rather than
+// absent, holding Civitatis's own placeholder sentence "See more
+// information in the voucher" instead of a clock time. Confirmed
+// verbatim from real production evidence for A40466869: the Activity,
+// Language, Internal code, Hour, People, Retail price, and Net price
+// lines below are the EXACT real production values. Reservation number,
+// City, Date, passenger names, and Client details were NOT part of that
+// evidence — those fields are synthetic minimal completions (clearly
+// distinct placeholder names/dates, never asserted as the real booking's
+// actual values) needed only so the rest of parseCivitatisEmail's
+// required-field checks can be satisfied, isolating this fixture's
+// purpose to proving the Hour-placeholder rule alone reaches ok:true.
+const portugueseA40466869HourPlaceholderBooking = {
+  from: FROM_CIVITATIS,
+  subject: 'New booking A40466869: Estambul Historica',
+  gmailMessageId: 'msg-pt-new-40466869',
+  gmailThreadId: 'thread-40466869',
+  receivedAt: '2026-07-02T08:40:00.000Z',
+  body: `Activity: Visita guiada pela Istambul imprescindível
+Reservation number: 40466869
+City: Istanbul
+Language: Português
+Internal code: Estambul Historica
+Date: Sunday, july 5, 2026
+Hour: See more information in the voucher
+People: 5 Adults
+Passenger information 1:
+Name
+TEST
+Last Name
+PASSENGER1
+Passenger information 2:
+Name
+TEST
+Last Name
+PASSENGER2
+Passenger information 3:
+Name
+TEST
+Last Name
+PASSENGER3
+Passenger information 4:
+Name
+TEST
+Last Name
+PASSENGER4
+Passenger information 5:
+Name
+TEST
+Last Name
+PASSENGER5
+Retail price: €683.30
+Net price: €512.48
+Client details
+Name: Test
+Surname: Contact
+Email: test.contact@example.com`,
+};
+
 module.exports = {
   FROM_CIVITATIS,
   FROM_OTHER,
@@ -807,4 +868,5 @@ module.exports = {
   portugueseA41596990Booking,
   portugueseA41323338Booking,
   portuguesAccentStrippedA41330832Booking,
+  portugueseA40466869HourPlaceholderBooking,
 };

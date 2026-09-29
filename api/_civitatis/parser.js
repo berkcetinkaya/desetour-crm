@@ -50,6 +50,14 @@ const LABEL_NAMES = {
 const SIMPLE_LABEL_LIST = Object.values(LABEL_NAMES);
 const CLIENT_DETAILS_LABEL = 'Client details';
 
+// Civitatis's own documented placeholder for "this product has no fixed
+// structured check-in time" — semantically identical to the Hour field
+// being entirely absent. WHITELISTED, exact match only (after
+// whitespace/case normalization) — never a generic "any unrecognized
+// Hour prose means no time" rule. Lowercase because the comparison site
+// always lowercases hourRaw before comparing.
+const HOUR_NO_FIXED_TIME_PLACEHOLDER = 'see more information in the voucher';
+
 function escapeRegExp(text) {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -575,16 +583,41 @@ function parseCivitatisEmail(message) {
   // can tell "intentionally unknown" apart from "malformed": 'absent'
   // (valid, time stays null), 'parsed' (valid, time is the parsed
   // HH:MM), 'invalid' (fails closed, ok:false, never reaches the RPC).
+  //
+  // Civitatis has ONE further documented case: the Hour field is
+  // PRESENT but its exact value is its own placeholder sentence stating
+  // there is no fixed structured time ("See more information in the
+  // voucher" — confirmed verbatim on real production booking
+  // A40466869, "Estambul Historica" / Português). Semantically this
+  // means the SAME thing as an absent Hour field, so it is treated
+  // identically: time stays null, timeStatus stays 'absent', nothing is
+  // pushed to reasons, and parseCivitatisTime is never even called for
+  // it. This is a WHITELIST match against this one known, exact
+  // Civitatis sentence (case/whitespace-normalized only — collapsing
+  // internal whitespace runs and comparing case-insensitively, never a
+  // fuzzy/substring/keyword match), never a general "any unrecognized
+  // Hour text means no time" rule — any OTHER non-time text in the Hour
+  // field still falls through to parseCivitatisTime below and still
+  // fails closed exactly as before. This value is read ONLY from the
+  // structured "Hour:" label (via hourRaw = findLabelValue(...) above) —
+  // never inferred from pickup-point text, voucher prose, the activity
+  // description, or any other field.
   let time = null;
   let timeStatus = 'absent';
   if (hourRaw) {
-    const timeResult = parseCivitatisTime(hourRaw);
-    if (!timeResult.ok) {
-      reasons.push(timeResult.reason);
-      timeStatus = 'invalid';
+    const normalizedHour = hourRaw.trim().replace(/\s+/g, ' ').toLowerCase();
+    if (normalizedHour === HOUR_NO_FIXED_TIME_PLACEHOLDER) {
+      // Same as an absent Hour field — time/timeStatus stay at their
+      // 'absent' defaults, no reason pushed.
     } else {
-      time = timeResult.time;
-      timeStatus = 'parsed';
+      const timeResult = parseCivitatisTime(hourRaw);
+      if (!timeResult.ok) {
+        reasons.push(timeResult.reason);
+        timeStatus = 'invalid';
+      } else {
+        time = timeResult.time;
+        timeStatus = 'parsed';
+      }
     }
   }
 
