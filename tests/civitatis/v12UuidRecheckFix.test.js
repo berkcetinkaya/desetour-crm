@@ -32,7 +32,19 @@ const v11 = fs.readFileSync(V11_PATH, 'utf8');
 const v12 = fs.readFileSync(V12_PATH, 'utf8');
 const v12Rollback = fs.existsSync(V12_ROLLBACK_PATH) ? fs.readFileSync(V12_ROLLBACK_PATH, 'utf8') : null;
 
-const V12_SIGNATURE = 'text, text, timestamp with time zone, text, text, text, uuid, text, uuid, text, date, time without time zone, integer, integer, numeric, text, numeric, text, uuid, text, text, text, jsonb, boolean, text, text';
+// Expected 26 parameter type names, in declaration order, as they must
+// appear inside the preflight's regtype[] array literal — the STRUCTURAL
+// (type-OID) form, immune to whether Postgres would render any given
+// type as an alias ("timestamptz") or its full SQL-standard spelling
+// ("timestamp with time zone") when reconstructing a human-readable
+// signature string; these are two different textual spellings of the
+// exact same underlying type, and the preflight now compares OIDs, not
+// text, so either spelling is equally correct here.
+const V12_EXPECTED_ARG_TYPES = [
+  'text', 'text', 'timestamptz', 'text', 'text', 'text', 'uuid', 'text', 'uuid', 'text',
+  'date', 'time', 'integer', 'integer', 'numeric', 'text', 'numeric', 'text', 'uuid',
+  'text', 'text', 'text', 'jsonb', 'boolean', 'text', 'text',
+];
 
 // ── A. File exists, is a forward-only migration, never edits V11 ───────
 
@@ -167,9 +179,67 @@ test('V12 function signature is exactly the same 26 parameters, same names/types
   assert.equal(v12Sig, v11Sig, 'the CREATE OR REPLACE FUNCTION parameter list must be byte-for-byte identical between V11 and V12');
 });
 
-test('V12 preflight confirms the pre-existing signature exists (structural safety check) before CREATE OR REPLACE runs', () => {
-  assert.match(v12, /pg_get_function_identity_arguments\(p\.oid\) =\s*\n?\s*'text, text, timestamp with time zone/);
-  assert.ok(v12.includes(V12_SIGNATURE), 'preflight must check the exact 26-parameter identity signature');
+// ── D2. Preflight uses STRUCTURAL catalog validation, not a fragile
+// formatted-string comparison — regression coverage for the real
+// production preflight failure (attempted 2026-09-29): the earlier
+// revision compared pg_get_function_identity_arguments(p.oid) — which
+// includes each parameter's NAME alongside its type when the function
+// has named parameters, as every V10/V11/V12 parameter does — against a
+// hand-written literal of bare type names with no parameter names at
+// all. That comparison could never be true against the real, correctly-
+// signatured, genuinely-live function: a false negative, not a real
+// signature mismatch. Fixed by comparing pg_proc.proargtypes (an
+// oidvector of argument type OIDs — the same representation Postgres's
+// own overload resolution uses) to a computed regtype[]::oid[] array,
+// which is immune to parameter names, whitespace, and type-spelling
+// aliases (uuid; timestamptz vs "timestamp with time zone"; time vs
+// "time without time zone" all resolve to the same OID either way).
+
+test('V12 preflight no longer uses the fragile pg_get_function_identity_arguments formatted-string comparison', () => {
+  // The migration's own explanatory comment legitimately NAMES
+  // pg_get_function_identity_arguments when documenting why the earlier
+  // approach was wrong — that's prose, not live SQL. This assertion is
+  // scoped to non-comment lines only, proving the function is no longer
+  // actually CALLED anywhere in the live preflight query.
+  const liveOccurrences = v12.split('\n').filter(line => {
+    const trimmed = line.trim();
+    return trimmed.includes('pg_get_function_identity_arguments') && !trimmed.startsWith('--');
+  });
+  assert.deepEqual(liveOccurrences, [],
+    `the preflight must not CALL pg_get_function_identity_arguments as live SQL — proven to false-negative against a real, correctly-signatured, named-parameter function in production. Found: ${JSON.stringify(liveOccurrences)}`);
+});
+
+test('V12 preflight uses a structural proargtypes/regtype[] OID comparison, immune to parameter names and type-spelling aliases', () => {
+  const preflightIdx = v12.indexOf("p.proname = 'ingest_civitatis_booking'", v12.indexOf('DO $$'));
+  const preflightBlock = v12.slice(preflightIdx, v12.indexOf('RAISE EXCEPTION', preflightIdx));
+
+  assert.match(preflightBlock, /AND p\.pronargs = 26/);
+  assert.match(preflightBlock, /AND p\.proargtypes::oid\[\] = ARRAY\[/);
+  assert.match(preflightBlock, /\]::regtype\[\]::oid\[\]/);
+
+  // The exact 26 expected types, in order, inside the array literal —
+  // whichever equivalent spelling was used, they must resolve to the
+  // real types. Extract the ARRAY[...] literal and confirm each expected
+  // type name (as a bare token) appears, in order, ignoring which alias
+  // was chosen for timestamptz/time.
+  const arrayLiteralMatch = preflightBlock.match(/ARRAY\[([\s\S]*?)\]::regtype\[\]/);
+  assert.ok(arrayLiteralMatch, 'expected an ARRAY[...]::regtype[] literal in the preflight');
+  const literalTypes = arrayLiteralMatch[1]
+    .split(',')
+    .map(s => s.trim().replace(/^'|'$/g, ''));
+  assert.equal(literalTypes.length, 26, `expected exactly 26 types in the preflight's regtype[] literal, found ${literalTypes.length}`);
+
+  // Normalize both sides (accept either spelling of timestamp/time) and
+  // compare position-by-position against the known-correct V10/V11/V12
+  // signature.
+  const normalize = (t) => t === 'timestamp with time zone' ? 'timestamptz'
+    : t === 'time without time zone' ? 'time'
+    : t;
+  assert.deepEqual(literalTypes.map(normalize), V12_EXPECTED_ARG_TYPES,
+    'the preflight\'s expected-type array must match the known-correct V10/V11/V12 signature exactly, in order');
+});
+
+test('the structural check runs and passes BEFORE CREATE OR REPLACE FUNCTION, same as before', () => {
   const createIdx = v12.indexOf('CREATE OR REPLACE FUNCTION public.ingest_civitatis_booking(');
   const preflightIdx = v12.indexOf('V12 PREFLIGHT PASSED');
   assert.ok(preflightIdx > -1 && preflightIdx < createIdx, 'preflight must run and pass BEFORE CREATE OR REPLACE FUNCTION');

@@ -144,14 +144,50 @@ BEGIN
   -- same name. This is a structural safety check, not a behavioral one
   -- — it does not and cannot verify V11's specific check_in_time fix is
   -- present, only that the expected function/signature exists at all.
+  --
+  -- STRUCTURAL type-OID comparison against pg_proc.proargtypes, NOT a
+  -- formatted-string comparison against pg_get_function_identity_arguments().
+  -- An earlier revision of this exact check compared
+  -- pg_get_function_identity_arguments(p.oid) to a hand-written literal
+  -- string of bare type names ('text, text, timestamp with time zone,
+  -- ...') and was PROVEN WRONG in a live production preflight attempt:
+  -- when a function's parameters are named (as every parameter of
+  -- ingest_civitatis_booking is, e.g. p_gmail_message_id), Postgres's
+  -- reconstructed identity-arguments string includes those NAMES
+  -- alongside each type ("p_gmail_message_id text, p_gmail_thread_id
+  -- text, ..."), never bare types alone — so a name-free literal could
+  -- never equal the real function's identity-arguments string, and the
+  -- exact-match check failed closed against the correctly-signatured,
+  -- genuinely-live V11 function every single time, not only when the
+  -- signature had actually drifted. That failure mode is a FALSE
+  -- NEGATIVE bug in the preflight check itself, not evidence of any real
+  -- signature mismatch.
+  --
+  -- proargtypes is an oidvector of the function's INPUT argument type
+  -- OIDs, in declaration order — the same representation Postgres's own
+  -- overload resolution uses internally to identify a function, entirely
+  -- independent of parameter names, whitespace, or which of several
+  -- equivalent spellings a type has (uuid, timestamptz vs "timestamp
+  -- with time zone", time vs "time without time zone" all resolve to the
+  -- exact same underlying type OID regardless of which spelling is
+  -- written on either side of this comparison). Casting a computed
+  -- regtype[] of the expected 26 types to oid[], and proargtypes itself
+  -- to oid[], makes this a plain OID-array equality check — nothing
+  -- fragile about formatting or naming remains, and it fails closed
+  -- exactly the same way: any real difference in argument count, order,
+  -- or types still makes this NOT EXISTS.
   IF NOT EXISTS (
     SELECT 1
       FROM pg_proc p
       JOIN pg_namespace n ON n.oid = p.pronamespace
      WHERE n.nspname = 'public'
        AND p.proname = 'ingest_civitatis_booking'
-       AND pg_get_function_identity_arguments(p.oid) =
-         'text, text, timestamp with time zone, text, text, text, uuid, text, uuid, text, date, time without time zone, integer, integer, numeric, text, numeric, text, uuid, text, text, text, jsonb, boolean, text, text'
+       AND p.pronargs = 26
+       AND p.proargtypes::oid[] = ARRAY[
+             'text', 'text', 'timestamptz', 'text', 'text', 'text', 'uuid', 'text', 'uuid', 'text',
+             'date', 'time', 'integer', 'integer', 'numeric', 'text', 'numeric', 'text', 'uuid',
+             'text', 'text', 'text', 'jsonb', 'boolean', 'text', 'text'
+           ]::regtype[]::oid[]
   ) THEN
     RAISE EXCEPTION 'V12 PREFLIGHT FAILED: public.ingest_civitatis_booking with the expected 26-parameter V10/V11 signature was not found. Confirm V11 is live before applying V12. Aborting before touching the function — no function was dropped or replaced.';
   END IF;
