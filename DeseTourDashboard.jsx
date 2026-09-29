@@ -7,12 +7,28 @@ function fmtNum(v, decimals) {
   if (isNaN(n)) return "—";
   return n.toLocaleString("tr-TR", { minimumFractionDigits: decimals||0, maximumFractionDigits: decimals||0 });
 }
+// TESTABLE:fmtMoney:start
+// Currency SYMBOL lookup — never a hardcoded "default to €". TRY and TL
+// both mean Turkish Lira (TRY is the ISO code used by manually-created
+// reservations/payments; TL is the literal label Civitatis's own email
+// text uses, carried through verbatim by api/_civitatis/parser.js into
+// reservations.currency/retail_currency — see parseMoneyLine). Before
+// this fix, any currency other than the literal strings "TRY"/"USD"/"GBP"
+// silently fell back to "€" — so a genuine "TL" reservation rendered as
+// "€7.200" (a fabricated Euro symbol) with "TL" only appearing because a
+// caller happened to print the currency code separately right next to
+// it, producing the visibly wrong "€7.200 TL". An amount whose currency
+// code isn't recognized at all gets NO symbol (never a guessed one) —
+// every real currency this app actually uses (EUR/TRY/TL/USD/GBP) is
+// listed explicitly below.
+const CURRENCY_SYMBOLS = { EUR: "€", TRY: "₺", TL: "₺", USD: "$", GBP: "£" };
 function fmtMoney(v, currency) {
   const n = parseFloat(v);
   if (isNaN(n)) return "—";
-  const sym = currency === "TRY" ? "₺" : currency === "USD" ? "$" : currency === "GBP" ? "£" : "€";
+  const sym = CURRENCY_SYMBOLS[currency] || "";
   return sym + n.toLocaleString("tr-TR", { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 }
+// TESTABLE:fmtMoney:end
 function safeNum(v) { const n = parseFloat(v); return isNaN(n) ? 0 : n; }
 // A reservation's check-in time is genuinely unknown when the source
 // (e.g. a Civitatis booking whose email states no "Hour:" field at all)
@@ -6179,10 +6195,33 @@ function RInfoRow({ label, value, mono, bold, alert, icon }) {
   );
 }
 
-function StatusStepper({ current }) {
-  const steps = ["Hazırlanıyor","Rehber Atandı","Hazır","Tamamlandı"];
-  const cancelledIndex = -1;
-  const currentIdx = steps.indexOf(current);
+// TESTABLE:computeReservationProgressIndex:start
+const RESERVATION_PROGRESS_STEPS = ["Hazırlanıyor","Rehber Atandı","Hazır","Tamamlandı"];
+
+// The stepper's displayed stage is never taken purely from the stored
+// opStatus string: opStatus and guide assignment are two independently
+// written fields (assignReservationGuide only ever writes
+// {guideId, guide} — see its own definition — it never touches
+// opStatus), so a reservation can have a REAL assigned guide while
+// opStatus itself is still literally "Hazırlanıyor". This derives the
+// stepper's index from BOTH real signals without ever writing a new
+// status back: if a guide is assigned, "Rehber Atandı" is guaranteed to
+// read as reached (at least the active stage), on top of whatever
+// opStatus itself already indicates. Math.max means this can only ever
+// move the displayed stage FORWARD relative to opStatus alone, never
+// backward — an already-"Hazır"/"Tamamlandı" reservation is always
+// reported at its own (later) stage, exactly as before; nothing here can
+// regress a completed reservation's display.
+function computeReservationProgressIndex(opStatus, hasGuide) {
+  const statusIdx = RESERVATION_PROGRESS_STEPS.indexOf(opStatus);
+  const guideIdx = hasGuide ? RESERVATION_PROGRESS_STEPS.indexOf("Rehber Atandı") : -1;
+  return Math.max(statusIdx, guideIdx);
+}
+// TESTABLE:computeReservationProgressIndex:end
+
+function StatusStepper({ current, hasGuide }) {
+  const steps = RESERVATION_PROGRESS_STEPS;
+  const currentIdx = computeReservationProgressIndex(current, hasGuide);
   const isCancelled = current === "İptal";
 
   return (
@@ -6625,7 +6664,7 @@ function ReservationDetailPage({ resId, onBack }) {
           {}
           <RCard>
             <RCardHead title="Rezervasyon Durumu"/>
-            <StatusStepper current={r.opStatus}/>
+            <StatusStepper current={r.opStatus} hasGuide={!!r.guideId}/>
           </RCard>
 
           {}
