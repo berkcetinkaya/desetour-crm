@@ -846,6 +846,73 @@ Surname: Contact
 Email: test.contact@example.com`,
 };
 
+// A38807986: the real production CANCELLATION test case. The subject
+// below is confirmed VERBATIM real production evidence: "Cancellation
+// A38807986: Visita guiada pela Istambul imprescindível". The body is a
+// minimal, clearly-synthetic placeholder — no real cancellation-email
+// body content was provided — since cancellation detection/matching is
+// deliberately subject-only (see eventDetector.js/cancellationAdapter.js
+// headers): the body is never inspected for cancellation purposes at
+// all, so its exact content has no bearing on correctness here.
+const civitatisCancellationA38807986 = {
+  from: FROM_CIVITATIS,
+  subject: 'Cancellation A38807986: Visita guiada pela Istambul imprescindível',
+  gmailMessageId: 'msg-pt-cancel-38807986',
+  gmailThreadId: 'thread-38807986',
+  receivedAt: '2026-07-10T09:00:00.000Z',
+  body: 'Your reservation A38807986 has been cancelled.',
+};
+
+// A second, independent cancellation email for the SAME booking (a
+// distinct Gmail message id) — used to test that TWO separate
+// cancellation emails for one booking are each planned independently
+// (the RPC's own idempotency/already_cancelled short-circuit is what
+// makes reprocessing safe, not any special-casing in the JS planner).
+const civitatisCancellationA38807986Duplicate = {
+  ...civitatisCancellationA38807986,
+  gmailMessageId: 'msg-pt-cancel-38807986-dup',
+  receivedAt: '2026-07-10T09:05:00.000Z',
+};
+
+// A38807986's companion NEW BOOKING email — clearly-synthetic body (no
+// real content was provided for this specific booking's new-booking
+// email), used only to test the "cancellation arrives before/alongside
+// the original booking" ordering scenario and that the existing
+// new_booking pipeline is completely unaffected when a cancellation
+// message for the SAME external_booking_id is present in the same
+// fetched batch.
+const civitatisNewBookingA38807986 = {
+  from: FROM_CIVITATIS,
+  subject: 'New booking A38807986: Visita guiada pela Istambul imprescindível',
+  gmailMessageId: 'msg-pt-new-38807986',
+  gmailThreadId: 'thread-38807986',
+  receivedAt: '2026-07-09T08:00:00.000Z',
+  body: `Activity: Visita guiada pela Istambul imprescindível
+Reservation number: 38807986
+City: Istanbul
+Language: Português
+Internal code: Visita guiada Istambul
+Date: Sunday, july 12, 2026
+Hour: See more information in the voucher
+People: 2 Adults
+Passenger information 1:
+Name
+TEST
+Last Name
+PASSENGER1
+Passenger information 2:
+Name
+TEST
+Last Name
+PASSENGER2
+Retail price: €150.00
+Net price: €112.00
+Client details
+Name: Test
+Surname: Contact
+Email: test.contact.38807986@example.com`,
+};
+
 module.exports = {
   FROM_CIVITATIS,
   FROM_OTHER,
@@ -869,4 +936,7 @@ module.exports = {
   portugueseA41323338Booking,
   portuguesAccentStrippedA41330832Booking,
   portugueseA40466869HourPlaceholderBooking,
+  civitatisCancellationA38807986,
+  civitatisCancellationA38807986Duplicate,
+  civitatisNewBookingA38807986,
 };

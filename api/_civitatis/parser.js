@@ -496,6 +496,29 @@ function parseCivitatisEmail(message) {
   if (detection.classification === 'needs_review') {
     return { ok: false, status: 'needs_review', reasons: [detection.reason], externalBookingId: detection.externalBookingIdFromSubject, ...base };
   }
+  // Cancellation emails are a structurally different event — no Date/
+  // People/Retail/Net-price fields to extract, no reservation to create
+  // or update. They are deliberately NEVER routed through the rest of
+  // this function (which exists to parse a booking creation/modification
+  // email's body) — that is exactly why this returns here, before any
+  // body-field parsing begins. Handled entirely by the separate
+  // api/_civitatis/cancellationAdapter.js + the dedicated
+  // cancel_civitatis_booking RPC, which planCivitatisIngestion never
+  // even sees (see runCivitatisWriteOrchestration's cancellation/
+  // non-cancellation split) — this branch is defense in depth so that IF
+  // a cancellation message were ever handed to this function anyway
+  // (e.g. the single-booking manual-mode filter, which calls this
+  // function on every fetched message to read externalBookingId off the
+  // result), it still fails closed with ok:false rather than being
+  // silently mis-parsed as a new_booking/modified event, while still
+  // correctly surfacing externalBookingId so that filter keeps working.
+  if (detection.classification === 'cancelled') {
+    return {
+      ok: false, status: 'cancellation_event',
+      reasons: ['this is a Civitatis cancellation email, handled by the separate cancellation pipeline — never by parseCivitatisEmail/ingest_civitatis_booking'],
+      externalBookingId: detection.externalBookingIdFromSubject, ...base,
+    };
+  }
 
   const eventType = detection.classification; // 'new_booking' | 'modified'
 

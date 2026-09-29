@@ -99,6 +99,8 @@ const gmailClient = require('./_civitatis/gmailClient');
 const { createSupabaseCivitatisRepo, getServiceRoleClient, ConfigurationError } = require('./_civitatis/supabaseAdmin');
 const { planCivitatisIngestion, executeCivitatisIngestionPlan } = require('./_civitatis/writeAdapter');
 const { parseCivitatisEmail } = require('./_civitatis/parser');
+const { detectCivitatisEvent } = require('./_civitatis/eventDetector');
+const { planCivitatisCancellations, executeCivitatisCancellationPlan } = require('./_civitatis/cancellationAdapter');
 
 const DEFAULT_MAX_MESSAGES = 25;
 const HARD_MAX_MESSAGES = 100; // same bound as /api/ingest-civitatis, for the same reason (function time budget)
@@ -250,35 +252,102 @@ function buildWriteResults(executedResults, eventTypeByGmailId) {
   });
 }
 
+/** Splits an already-filtered message batch into cancellation messages
+ * and everything else, via the SAME detectCivitatisEvent classification
+ * eventDetector.js already performs — never a second/different rule.
+ * This split happens BEFORE planCivitatisIngestion ever sees the
+ * messages: a cancellation email carries none of the fields
+ * parseCivitatisEmail requires (Date/People/Retail/Net price/...), and
+ * grouping it alongside a new_booking/modified email for the SAME
+ * external_booking_id would incorrectly mark that booking's whole chain
+ * "failed to parse" — see cancellationAdapter.js's header for the full
+ * argument. This is the ONLY change made to how messages reach
+ * planCivitatisIngestion; the non-cancellation array is passed through
+ * completely unfiltered otherwise, so existing new_booking/modified
+ * behavior is unaffected byte-for-byte when no cancellation email is
+ * present in the batch. */
+function splitCancellationMessages(messages) {
+  const cancellations = [];
+  const other = [];
+  for (const m of messages || []) {
+    const detection = detectCivitatisEvent({ from: m && m.from, subject: m && m.subject });
+    if (detection.classification === 'cancelled') cancellations.push(m);
+    else other.push(m);
+  }
+  return { cancellations, other };
+}
+
+/** Dry-run reporting for cancellations — mirrors buildDryRunResults'
+ * shape/spirit for the booking pipeline, but flat (one entry per email,
+ * never grouped) since a cancellation has no booking-chain concept. */
+function buildCancellationDryRunResults(plan) {
+  return plan.plans.map(entry => ({
+    gmailMessageId: entry.gmailMessageId,
+    externalBookingId: entry.externalBookingId,
+    decision: 'WOULD_CANCEL (dry run — write mode not active for this request)',
+    rpcResult: null,
+  }));
+}
+
+/** Write-mode reporting for cancellations — same never-leak-PII/never-
+ * leak-payload discipline as decorateCallResult. */
+function decorateCancellationResult(entry) {
+  const rpcResult = entry.rpcResult || {};
+  const resultValue = rpcResult.result;
+  return {
+    gmailMessageId: entry.gmailMessageId,
+    externalBookingId: entry.externalBookingId,
+    decision: entry.unknownResult ? 'UNKNOWN_RPC_RESULT (failed closed)' : (resultValue || 'UNKNOWN'),
+    rpcResult: resultValue || null,
+    reservationId: rpcResult.reservation_id || null,
+    ingestionId: rpcResult.ingestion_id || null,
+    reason: rpcResult.reason || null,
+    error: rpcResult.error || null,
+    stage: rpcResult.stage || null,
+    diagnostics: rpcResult.diagnostics || null,
+  };
+}
+
 /**
- * The full orchestration, with `repo` and `rpcCaller` (write mode only)
- * INJECTED — no Gmail/Supabase I/O of its own beyond what those
- * injected dependencies do. This is what the HTTP handler below calls,
- * and it is also exactly what tests/civitatis/writeEndpoint.test.js
- * exercises directly with a fake repo and a fake/spy rpcCaller, so the
- * real request-handling code path is what gets proven, not a
- * reimplementation of it.
+ * The full orchestration, with `repo`, `rpcCaller` (write mode only), and
+ * `cancellationRpcCaller` (write mode only) INJECTED — no Gmail/Supabase
+ * I/O of its own beyond what those injected dependencies do. This is what
+ * the HTTP handler below calls, and it is also exactly what
+ * tests/civitatis/writeEndpoint.test.js exercises directly with a fake
+ * repo and a fake/spy rpcCaller, so the real request-handling code path is
+ * what gets proven, not a reimplementation of it.
  *
- * When writeModeActive is false, `rpcCaller` is never invoked — the
- * caller (the HTTP handler below) does not even construct a real one in
- * that case, so there is no real RPC wrapper in existence at all for a
- * disabled request, not merely an unused one.
+ * When writeModeActive is false, NEITHER rpcCaller NOR
+ * cancellationRpcCaller is ever invoked — the caller (the HTTP handler
+ * below) does not even construct real ones in that case, so there is no
+ * real RPC wrapper in existence at all for a disabled request, not merely
+ * an unused one.
  */
-async function runCivitatisWriteOrchestration({ messages, repo, externalBookingId, writeModeActive, rpcCaller }) {
+async function runCivitatisWriteOrchestration({ messages, repo, externalBookingId, writeModeActive, rpcCaller, cancellationRpcCaller }) {
   const filteredMessages = externalBookingId
     ? filterMessagesByExternalBookingId(messages, externalBookingId)
     : (messages || []);
 
-  const plan = await planCivitatisIngestion({ messages: filteredMessages, repo });
+  const { cancellations: cancellationMessages, other: bookingMessages } = splitCancellationMessages(filteredMessages);
+
+  const plan = await planCivitatisIngestion({ messages: bookingMessages, repo });
   if (!plan.ok) return { ok: false, error: plan.error };
 
+  const cancellationPlan = await planCivitatisCancellations({ messages: cancellationMessages, repo });
+  if (!cancellationPlan.ok) return { ok: false, error: cancellationPlan.error };
+
   if (!writeModeActive) {
-    return { ok: true, results: buildDryRunResults(plan) };
+    return { ok: true, results: buildDryRunResults(plan), cancellations: buildCancellationDryRunResults(cancellationPlan) };
   }
 
   const eventTypeByGmailId = buildEventTypeMap(plan);
   const executed = await executeCivitatisIngestionPlan(plan, rpcCaller);
-  return { ok: true, results: buildWriteResults(executed, eventTypeByGmailId) };
+  const executedCancellations = await executeCivitatisCancellationPlan(cancellationPlan.plans, cancellationRpcCaller);
+  return {
+    ok: true,
+    results: buildWriteResults(executed, eventTypeByGmailId),
+    cancellations: executedCancellations.map(decorateCancellationResult),
+  };
 }
 
 /** The ONLY place a real RPC call is ever constructed. A call-level
@@ -293,6 +362,22 @@ function buildRealRpcCaller() {
   const sb = getServiceRoleClient();
   return async function rpcCaller(payload) {
     const { data, error } = await sb.rpc('ingest_civitatis_booking', payload);
+    if (error) {
+      return { result: 'failed', error: `RPC call error: ${error.message}` };
+    }
+    return data;
+  };
+}
+
+/** The ONLY place a real cancellation RPC call is ever constructed —
+ * deliberately a SEPARATE function calling a SEPARATE RPC
+ * (cancel_civitatis_booking), never routed through buildRealRpcCaller/
+ * ingest_civitatis_booking. Same call-level-error-to-{result:'failed'}
+ * translation as buildRealRpcCaller, for the same reason. */
+function buildRealCancellationRpcCaller() {
+  const sb = getServiceRoleClient();
+  return async function cancellationRpcCaller(payload) {
+    const { data, error } = await sb.rpc('cancel_civitatis_booking', payload);
     if (error) {
       return { result: 'failed', error: `RPC call error: ${error.message}` };
     }
@@ -367,9 +452,11 @@ async function handler(req, res) {
   }
 
   let rpcCaller = null;
+  let cancellationRpcCaller = null;
   if (writeModeActive) {
     try {
       rpcCaller = buildRealRpcCaller();
+      cancellationRpcCaller = buildRealCancellationRpcCaller();
     } catch (err) {
       if (err instanceof ConfigurationError) {
         return res.status(503).json({ error: err.message, stage: 'supabase_configuration' });
@@ -380,7 +467,7 @@ async function handler(req, res) {
 
   let outcome;
   try {
-    outcome = await runCivitatisWriteOrchestration({ messages, repo, externalBookingId, writeModeActive, rpcCaller });
+    outcome = await runCivitatisWriteOrchestration({ messages, repo, externalBookingId, writeModeActive, rpcCaller, cancellationRpcCaller });
   } catch (err) {
     console.error('[ingest-civitatis-write] Orchestration error:', err.message);
     return res.status(500).json({ error: 'Ingestion failed unexpectedly. See function logs for details.', stage: 'orchestration' });
@@ -390,13 +477,14 @@ async function handler(req, res) {
     return res.status(422).json({ error: outcome.error, stage: 'planning_precondition' });
   }
 
-  if (externalBookingId && outcome.results.length === 0) {
+  if (externalBookingId && outcome.results.length === 0 && outcome.cancellations.length === 0) {
     return res.status(200).json({
       mode: writeModeActive ? 'write' : 'dryRun',
       writeEnabled: writeEnvValue === 'true',
       requestedWrite,
       externalBookingId,
       results: [],
+      cancellations: [],
       message: `No Gmail messages matching external booking id "${externalBookingId}" were found in this fetched page (maxMessages=${maxMessages}${pageToken ? ', pageToken supplied' : ''}). Try a larger maxMessages or supply pageToken to look further back.`,
       pagination: { requestedMaxMessages: maxMessages, nextPageToken: nextPageToken || null },
     });
@@ -408,6 +496,7 @@ async function handler(req, res) {
     requestedWrite,
     externalBookingId: externalBookingId || null,
     results: outcome.results,
+    cancellations: outcome.cancellations,
     pagination: { requestedMaxMessages: maxMessages, nextPageToken: nextPageToken || null },
   });
 }
@@ -426,9 +515,13 @@ handler.decorateCallResult = decorateCallResult;
 handler.buildDryRunResults = buildDryRunResults;
 handler.buildWriteResults = buildWriteResults;
 handler.runCivitatisWriteOrchestration = runCivitatisWriteOrchestration;
+handler.splitCancellationMessages = splitCancellationMessages;
+handler.buildCancellationDryRunResults = buildCancellationDryRunResults;
+handler.decorateCancellationResult = decorateCancellationResult;
 // Reused as-is by api/cron-ingest-civitatis-write.js so the scheduled
 // entry point duplicates none of this ingestion/RPC logic.
 handler.buildRealRpcCaller = buildRealRpcCaller;
+handler.buildRealCancellationRpcCaller = buildRealCancellationRpcCaller;
 handler.DEFAULT_MAX_MESSAGES = DEFAULT_MAX_MESSAGES;
 handler.HARD_MAX_MESSAGES = HARD_MAX_MESSAGES;
 

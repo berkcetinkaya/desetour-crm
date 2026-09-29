@@ -221,9 +221,11 @@ async function handler(req, res) {
   const writeModeActive = writeEndpoint.isWriteModeActive({ writeEnvValue, requestedWrite: true });
 
   let rpcCaller = null;
+  let cancellationRpcCaller = null;
   if (writeModeActive) {
     try {
       rpcCaller = writeEndpoint.buildRealRpcCaller();
+      cancellationRpcCaller = writeEndpoint.buildRealCancellationRpcCaller();
     } catch (err) {
       if (err instanceof ConfigurationError) {
         return res.status(503).json({ error: err.message, stage: 'supabase_configuration' });
@@ -237,7 +239,7 @@ async function handler(req, res) {
     // externalBookingId: null — a scheduled run is never scoped to one
     // booking, unlike the manual endpoint's diagnostic single-booking mode.
     outcome = await writeEndpoint.runCivitatisWriteOrchestration({
-      messages, repo, externalBookingId: null, writeModeActive, rpcCaller,
+      messages, repo, externalBookingId: null, writeModeActive, rpcCaller, cancellationRpcCaller,
     });
   } catch (err) {
     console.error('[cron-ingest-civitatis-write] Orchestration error:', err.message);
@@ -253,6 +255,7 @@ async function handler(req, res) {
     mode: writeModeActive ? 'write' : 'dryRun',
     writeEnabled: writeEnvValue === 'true',
     results: outcome.results,
+    cancellations: outcome.cancellations,
     discovery: {
       sinceUnixSeconds,
       overlapWindowMs: OVERLAP_WINDOW_MS,

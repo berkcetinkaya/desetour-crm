@@ -7391,7 +7391,21 @@ function useCalendarEvents() {
   // Supabase rows in production) — never a separate hardcoded event list, so
   // an empty/loading result correctly renders as an empty calendar rather
   // than fabricated tours.
-  return (calReservations || []).map(r => {
+  //
+  // Cancelled reservations (opStatus "İptal" — DB status='cancelled')
+  // are excluded here, at this single shared derivation point, rather
+  // than in each individual view (day/week/month/CalSidebar/
+  // MobileAgendaCard all consume this one hook's output) — the same
+  // reservation-status-filtering approach every other "upcoming/active"
+  // list in this file already uses (ReservationsPage, guide workload,
+  // Dashboard KPIs, etc. all already exclude "İptal" the same way). This
+  // never deletes any calendar/reservation data — a cancelled
+  // reservation's row is untouched; it simply stops being derived into
+  // an operational calendar event, exactly like it already stops
+  // counting as "upcoming" everywhere else in the app.
+  return (calReservations || [])
+    .filter(r => r.opStatus !== "İptal")
+    .map(r => {
     const raw = r.checkIn || r.travelStart || r.check_in || r.date || null;
     if (!raw) return null;
     try {

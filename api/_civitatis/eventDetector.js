@@ -20,6 +20,13 @@ const CIVITATIS_SENDER = 'notificaciones@civitatis.com';
 
 const NEW_BOOKING_SUBJECT = /^New booking A(\d+):/;
 const MODIFIED_SUBJECT = /^Booking A(\d+) modified:/;
+// Confirmed verbatim on real production evidence: "Cancellation A38807986:
+// Visita guiada pela Istambul imprescindível". Anchored at the START of
+// the subject, exactly like the two patterns above — never a substring/
+// fuzzy match, and never triggered by an email merely mentioning the word
+// "cancellation" elsewhere (e.g. a policy notice) or by a non-Civitatis
+// sender, since the sender gate above always runs first.
+const CANCELLATION_SUBJECT = /^Cancellation A(\d+):/;
 
 // A stricter "this looks structurally like a booking-event subject we
 // just don't support yet" signal (e.g. a future "Booking A########
@@ -50,7 +57,7 @@ function extractEmailAddress(fromHeader) {
 /**
  * @param {{ from: string, subject: string }} message
  * @returns {{
- *   classification: 'new_booking' | 'modified' | 'ignored' | 'needs_review',
+ *   classification: 'new_booking' | 'modified' | 'cancelled' | 'ignored' | 'needs_review',
  *   externalBookingIdFromSubject: string | null,
  *   reason: string | null,
  * }}
@@ -85,18 +92,27 @@ function detectCivitatisEvent({ from, subject }) {
     };
   }
 
+  const cancellationMatch = CANCELLATION_SUBJECT.exec(subjectText);
+  if (cancellationMatch) {
+    return {
+      classification: 'cancelled',
+      externalBookingIdFromSubject: cancellationMatch[1],
+      reason: null,
+    };
+  }
+
   // Sender is genuinely Civitatis reservations, but the subject didn't
-  // match either supported pattern. Distinguish "looks like a booking
-  // event we don't support yet" (e.g. a future cancellation subject)
-  // from "not a booking event at all" (invoice, marketing, account
-  // manager, review request, "new activity available", ...).
+  // match any of the three supported patterns. Distinguish "looks like a
+  // booking event we don't support yet" (some other, still-unimplemented
+  // event type) from "not a booking event at all" (invoice, marketing,
+  // account manager, review request, "new activity available", ...).
   const shapeMatch = BOOKING_EVENT_SHAPE.exec(subjectText);
   if (shapeMatch) {
     const idToken = /A(\d+)/.exec(shapeMatch[0]);
     return {
       classification: 'needs_review',
       externalBookingIdFromSubject: idToken ? idToken[1] : null,
-      reason: `subject "${subjectText}" appears reservation-related but does not match a currently supported pattern (only "New booking A########:" and "Booking A######## modified:" are supported; cancellation and other event types are not implemented yet)`,
+      reason: `subject "${subjectText}" appears reservation-related but does not match a currently supported pattern (only "New booking A########:", "Booking A######## modified:", and "Cancellation A########:" are supported; other event types are not implemented yet)`,
     };
   }
 
