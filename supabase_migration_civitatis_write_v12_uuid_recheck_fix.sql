@@ -145,37 +145,57 @@ BEGIN
   -- — it does not and cannot verify V11's specific check_in_time fix is
   -- present, only that the expected function/signature exists at all.
   --
-  -- STRUCTURAL type-OID comparison against pg_proc.proargtypes, NOT a
-  -- formatted-string comparison against pg_get_function_identity_arguments().
-  -- An earlier revision of this exact check compared
-  -- pg_get_function_identity_arguments(p.oid) to a hand-written literal
-  -- string of bare type names ('text, text, timestamp with time zone,
-  -- ...') and was PROVEN WRONG in a live production preflight attempt:
-  -- when a function's parameters are named (as every parameter of
-  -- ingest_civitatis_booking is, e.g. p_gmail_message_id), Postgres's
-  -- reconstructed identity-arguments string includes those NAMES
-  -- alongside each type ("p_gmail_message_id text, p_gmail_thread_id
-  -- text, ..."), never bare types alone — so a name-free literal could
-  -- never equal the real function's identity-arguments string, and the
-  -- exact-match check failed closed against the correctly-signatured,
-  -- genuinely-live V11 function every single time, not only when the
-  -- signature had actually drifted. That failure mode is a FALSE
-  -- NEGATIVE bug in the preflight check itself, not evidence of any real
-  -- signature mismatch.
+  -- HISTORY OF THIS CHECK (two prior false negatives against the SAME
+  -- real, correctly-signatured, genuinely-live V11 function — recorded
+  -- here so a third revision never repeats either mistake):
   --
-  -- proargtypes is an oidvector of the function's INPUT argument type
-  -- OIDs, in declaration order — the same representation Postgres's own
-  -- overload resolution uses internally to identify a function, entirely
-  -- independent of parameter names, whitespace, or which of several
-  -- equivalent spellings a type has (uuid, timestamptz vs "timestamp
-  -- with time zone", time vs "time without time zone" all resolve to the
-  -- exact same underlying type OID regardless of which spelling is
-  -- written on either side of this comparison). Casting a computed
-  -- regtype[] of the expected 26 types to oid[], and proargtypes itself
-  -- to oid[], makes this a plain OID-array equality check — nothing
-  -- fragile about formatting or naming remains, and it fails closed
-  -- exactly the same way: any real difference in argument count, order,
-  -- or types still makes this NOT EXISTS.
+  -- Attempt 1 compared pg_get_function_identity_arguments(p.oid) to a
+  -- hand-written literal string of bare type names ('text, text,
+  -- timestamp with time zone, ...'). Every parameter of
+  -- ingest_civitatis_booking is NAMED (p_gmail_message_id, ...), and
+  -- Postgres's reconstructed identity-arguments string includes those
+  -- names alongside each type ("p_gmail_message_id text, ..."), never
+  -- bare types alone — so a name-free literal could never equal it.
+  --
+  -- Attempt 2 replaced that with a STRUCTURAL type-OID comparison:
+  -- p.proargtypes::oid[] = ARRAY[<26 type names>]::regtype[]::oid[].
+  -- This was STILL rejected against the exact same live function, even
+  -- after directly confirming via a read-only production catalog query
+  -- that proargtypes holds precisely the expected 26 OIDs in the
+  -- expected order. proargtypes is an oidvector — a fixed, purpose-built
+  -- catalog vector type with its own dedicated equality machinery
+  -- (oidvectoreq), historically 0-indexed, and DISTINCT from the general
+  -- variable-length array machinery ARRAY[...] literals use (which are
+  -- always 1-indexed by default). Casting oidvector to oid[] coerces it
+  -- into that general array representation, carrying its own dimension/
+  -- lower-bound metadata — metadata a freshly-built ARRAY[...] literal
+  -- does not share — and the two sides were never reliably comparable by
+  -- plain array equality as a result: two arrays holding the identical
+  -- 26 OIDs in the identical order were STILL evaluated as unequal.
+  -- Converting through the generic array machinery in EITHER direction
+  -- is exactly the fragility this check must avoid.
+  --
+  -- V12 (this revision): compare proargtypes AS oidvector, directly,
+  -- against an explicitly-constructed oidvector value — never coerced
+  -- into a general array at all, on either side, so no dimension/lower-
+  -- bound question can arise. The expected oidvector is built from the
+  -- same 26 readable type names (never bare magic numbers) by resolving
+  -- each to its OID via ::regtype, joining them into oidvector's own
+  -- native whitespace-separated TEXT representation via
+  -- array_to_string(...), then parsing that text back into a genuine
+  -- oidvector via oidvector's own input function (::oidvector) — the
+  -- exact same representation proargtypes itself already is. The
+  -- resulting expected value is, digit for digit, the read-only
+  -- production catalog value directly confirmed live:
+  --   25 25 1184 25 25 25 2950 25 2950 25 1082 1083 23 23 1700 25 1700
+  --   25 2950 25 25 25 3802 16 25 25
+  -- (text=25, timestamptz=1184, uuid=2950, date=1082, time=1083,
+  -- integer=23, numeric=1700, jsonb=3802, boolean=16 — all stable,
+  -- pinned OIDs for PostgreSQL's built-in types.) Still fails closed
+  -- exactly as before: any real difference in argument count, order, or
+  -- types still makes oidvectoreq (and therefore this whole predicate)
+  -- false, so NOT EXISTS is still true and the RAISE EXCEPTION still
+  -- fires.
   IF NOT EXISTS (
     SELECT 1
       FROM pg_proc p
@@ -183,11 +203,14 @@ BEGIN
      WHERE n.nspname = 'public'
        AND p.proname = 'ingest_civitatis_booking'
        AND p.pronargs = 26
-       AND p.proargtypes::oid[] = ARRAY[
-             'text', 'text', 'timestamptz', 'text', 'text', 'text', 'uuid', 'text', 'uuid', 'text',
-             'date', 'time', 'integer', 'integer', 'numeric', 'text', 'numeric', 'text', 'uuid',
-             'text', 'text', 'text', 'jsonb', 'boolean', 'text', 'text'
-           ]::regtype[]::oid[]
+       AND p.proargtypes = array_to_string(
+             ARRAY[
+               'text', 'text', 'timestamptz', 'text', 'text', 'text', 'uuid', 'text', 'uuid', 'text',
+               'date', 'time', 'integer', 'integer', 'numeric', 'text', 'numeric', 'text', 'uuid',
+               'text', 'text', 'text', 'jsonb', 'boolean', 'text', 'text'
+             ]::regtype[]::oid[],
+             ' '
+           )::oidvector
   ) THEN
     RAISE EXCEPTION 'V12 PREFLIGHT FAILED: public.ingest_civitatis_booking with the expected 26-parameter V10/V11 signature was not found. Confirm V11 is live before applying V12. Aborting before touching the function — no function was dropped or replaced.';
   END IF;

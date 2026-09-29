@@ -179,64 +179,108 @@ test('V12 function signature is exactly the same 26 parameters, same names/types
   assert.equal(v12Sig, v11Sig, 'the CREATE OR REPLACE FUNCTION parameter list must be byte-for-byte identical between V11 and V12');
 });
 
-// ── D2. Preflight uses STRUCTURAL catalog validation, not a fragile
-// formatted-string comparison — regression coverage for the real
-// production preflight failure (attempted 2026-09-29): the earlier
-// revision compared pg_get_function_identity_arguments(p.oid) — which
+// ── D2. Preflight uses a DIRECT oidvector comparison, never a general
+// array cast on either side — regression coverage for TWO real
+// production preflight false negatives against the exact same
+// correctly-signatured, genuinely-live V11 function (both attempted
+// 2026-09-29):
+//
+// Attempt 1 compared pg_get_function_identity_arguments(p.oid) — which
 // includes each parameter's NAME alongside its type when the function
 // has named parameters, as every V10/V11/V12 parameter does — against a
 // hand-written literal of bare type names with no parameter names at
-// all. That comparison could never be true against the real, correctly-
-// signatured, genuinely-live function: a false negative, not a real
-// signature mismatch. Fixed by comparing pg_proc.proargtypes (an
-// oidvector of argument type OIDs — the same representation Postgres's
-// own overload resolution uses) to a computed regtype[]::oid[] array,
-// which is immune to parameter names, whitespace, and type-spelling
-// aliases (uuid; timestamptz vs "timestamp with time zone"; time vs
-// "time without time zone" all resolve to the same OID either way).
+// all. Could never be true against the real function: a false negative.
+//
+// Attempt 2 replaced that with p.proargtypes::oid[] = ARRAY[<26 type
+// names>]::regtype[]::oid[] — a structural type-OID comparison. This was
+// STILL rejected in production even after a read-only catalog query
+// directly confirmed proargtypes held exactly the expected 26 OIDs in
+// the expected order. proargtypes is an oidvector, a fixed catalog
+// vector type with its own dedicated equality operator and historically
+// 0-indexed representation, distinct from the general array machinery
+// ARRAY[...] literals use (1-indexed by default) — casting oidvector to
+// oid[] carries dimension/lower-bound metadata a freshly-built ARRAY
+// literal does not share, and the two were never reliably comparable via
+// plain array equality: identical OIDs in identical order, still
+// evaluated unequal.
+//
+// V12 (current): proargtypes is compared AS oidvector, directly, against
+// an explicitly-constructed oidvector — built from readable type names
+// via ::regtype, joined into oidvector's own native whitespace-separated
+// text form via array_to_string(...), then parsed back into a genuine
+// oidvector via ::oidvector. Neither side is ever coerced into a general
+// array, so no dimension/lower-bound question can arise.
 
-test('V12 preflight no longer uses the fragile pg_get_function_identity_arguments formatted-string comparison', () => {
-  // The migration's own explanatory comment legitimately NAMES
-  // pg_get_function_identity_arguments when documenting why the earlier
-  // approach was wrong — that's prose, not live SQL. This assertion is
-  // scoped to non-comment lines only, proving the function is no longer
-  // actually CALLED anywhere in the live preflight query.
+const KNOWN_LIVE_PROARGTYPES = '25 25 1184 25 25 25 2950 25 2950 25 1082 1083 23 23 1700 25 1700 25 2950 25 25 25 3802 16 25 25';
+const TYPE_NAME_TO_OID = {
+  text: '25', timestamptz: '1184', uuid: '2950', date: '1082', time: '1083',
+  integer: '23', numeric: '1700', jsonb: '3802', boolean: '16',
+};
+
+test('V12 preflight no longer casts EITHER side through a general PostgreSQL array (no proargtypes::oid[], no pg_get_function_identity_arguments)', () => {
+  // Both prior approaches are named in the migration's own explanatory
+  // comment, documenting why they were wrong — that's prose, not live
+  // SQL. This assertion is scoped to non-comment lines only, proving
+  // neither actually appears in the live preflight query anymore.
   const liveOccurrences = v12.split('\n').filter(line => {
     const trimmed = line.trim();
-    return trimmed.includes('pg_get_function_identity_arguments') && !trimmed.startsWith('--');
+    if (trimmed.startsWith('--')) return false;
+    return trimmed.includes('pg_get_function_identity_arguments') || trimmed.includes('proargtypes::oid[]');
   });
   assert.deepEqual(liveOccurrences, [],
-    `the preflight must not CALL pg_get_function_identity_arguments as live SQL — proven to false-negative against a real, correctly-signatured, named-parameter function in production. Found: ${JSON.stringify(liveOccurrences)}`);
+    `the preflight must not use either prior fragile comparison as live SQL. Found: ${JSON.stringify(liveOccurrences)}`);
 });
 
-test('V12 preflight uses a structural proargtypes/regtype[] OID comparison, immune to parameter names and type-spelling aliases', () => {
+test('V12 preflight compares proargtypes AS oidvector directly, via an explicitly-constructed oidvector (array_to_string(...)::oidvector), never via a general array cast', () => {
   const preflightIdx = v12.indexOf("p.proname = 'ingest_civitatis_booking'", v12.indexOf('DO $$'));
   const preflightBlock = v12.slice(preflightIdx, v12.indexOf('RAISE EXCEPTION', preflightIdx));
 
   assert.match(preflightBlock, /AND p\.pronargs = 26/);
-  assert.match(preflightBlock, /AND p\.proargtypes::oid\[\] = ARRAY\[/);
-  assert.match(preflightBlock, /\]::regtype\[\]::oid\[\]/);
+  assert.match(preflightBlock, /AND p\.proargtypes = array_to_string\(/);
+  assert.match(preflightBlock, /::regtype\[\]::oid\[\],/);
+  assert.match(preflightBlock, /\)::oidvector/);
 
-  // The exact 26 expected types, in order, inside the array literal —
-  // whichever equivalent spelling was used, they must resolve to the
-  // real types. Extract the ARRAY[...] literal and confirm each expected
-  // type name (as a bare token) appears, in order, ignoring which alias
-  // was chosen for timestamptz/time.
-  const arrayLiteralMatch = preflightBlock.match(/ARRAY\[([\s\S]*?)\]::regtype\[\]/);
-  assert.ok(arrayLiteralMatch, 'expected an ARRAY[...]::regtype[] literal in the preflight');
+  const arrayLiteralMatch = preflightBlock.match(/ARRAY\[([\s\S]*?)\]::regtype\[\]::oid\[\]/);
+  assert.ok(arrayLiteralMatch, 'expected an ARRAY[...]::regtype[]::oid[] literal feeding array_to_string(...)::oidvector');
   const literalTypes = arrayLiteralMatch[1]
     .split(',')
     .map(s => s.trim().replace(/^'|'$/g, ''));
-  assert.equal(literalTypes.length, 26, `expected exactly 26 types in the preflight's regtype[] literal, found ${literalTypes.length}`);
+  assert.equal(literalTypes.length, 26, `expected exactly 26 types in the preflight's type-name array, found ${literalTypes.length}`);
 
-  // Normalize both sides (accept either spelling of timestamp/time) and
-  // compare position-by-position against the known-correct V10/V11/V12
-  // signature.
   const normalize = (t) => t === 'timestamp with time zone' ? 'timestamptz'
     : t === 'time without time zone' ? 'time'
     : t;
   assert.deepEqual(literalTypes.map(normalize), V12_EXPECTED_ARG_TYPES,
     'the preflight\'s expected-type array must match the known-correct V10/V11/V12 signature exactly, in order');
+
+  // Independently resolve each literal type name to the OID it is
+  // documented to mean (never trusting the migration's own prose) and
+  // reconstruct the space-separated oidvector text the preflight would
+  // actually build at runtime, then assert it is DIGIT-FOR-DIGIT the
+  // exact live production proargtypes value reported from the read-only
+  // production catalog query. This is the closest a static, no-database
+  // test can get to actually proving the preflight would pass against
+  // production — short of running it against a live Postgres.
+  const reconstructed = literalTypes.map(normalize).map(t => {
+    assert.ok(TYPE_NAME_TO_OID[t], `no known OID mapping for type "${t}" — update TYPE_NAME_TO_OID`);
+    return TYPE_NAME_TO_OID[t];
+  }).join(' ');
+  assert.equal(reconstructed, KNOWN_LIVE_PROARGTYPES,
+    'the preflight\'s expected-type array must reconstruct to EXACTLY the live production proargtypes value confirmed by direct read-only catalog query');
+});
+
+test('the preflight documents the exact confirmed-live production proargtypes value, matching the reconstruction above', () => {
+  // The migration's own comment states the confirmed production value
+  // for human auditability — assert it is present and matches (not
+  // merely that SOME comment exists).
+  const collapsedComment = v12
+    .split('\n')
+    .filter(l => l.trim().startsWith('--'))
+    .map(l => l.replace(/^\s*--\s?/, ''))
+    .join(' ')
+    .replace(/\s+/g, ' ');
+  assert.ok(collapsedComment.includes(KNOWN_LIVE_PROARGTYPES.replace(/ /g, ' ')),
+    'the migration header must document the exact confirmed-live production proargtypes value for auditability');
 });
 
 test('the structural check runs and passes BEFORE CREATE OR REPLACE FUNCTION, same as before', () => {
