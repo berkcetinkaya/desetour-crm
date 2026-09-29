@@ -13,10 +13,21 @@
  * as build-meta.js (see build.js) — DeseTourDashboard.jsx is a single,
  * module-less browser script (Babel, sourceType:'script', no
  * import/export), so this file is loaded via its own <script> tag in
- * index.html, BEFORE app.js, and hands off its data as window.CRM_CHANGELOG.
- * It ALSO exports via module.exports when require()'d (guarded — never
- * runs in a browser), so tests load the exact same data Node-side with no
- * duplication and no eval/extraction tricks.
+ * index.html, BEFORE app.js. Both files are classic (non-module) scripts,
+ * which in a browser share ONE global lexical scope across separate
+ * <script> tags — a top-level `const`/`let` in this file and a top-level
+ * `const`/`let` of the SAME NAME in app.js would collide with a
+ * SyntaxError the instant the second script loads (this actually happened
+ * in production: this file and DeseTourDashboard.jsx each independently
+ * declared their own top-level `const CRM_CHANGELOG`/`CRM_CHANGELOG_
+ * CATEGORIES`). To make that class of bug structurally impossible, EVERY
+ * top-level declaration below lives inside an IIFE — nothing but the
+ * single `window.DESETOUR_CHANGELOG = {...}` property assignment (never a
+ * lexical declaration, so it can never collide with anything) crosses
+ * into the shared global scope. It ALSO exports via module.exports when
+ * require()'d (guarded — never runs in a browser), so tests load the
+ * exact same data Node-side with no duplication and no eval/extraction
+ * tricks.
  *
  * VERSION INVARIANT: CRM_CHANGELOG[0].version (the newest entry) MUST
  * always equal the CRM's current product version, i.e. formatCrmVersion()
@@ -70,6 +81,11 @@
  *                          raw engineering detail.
  * ─────────────────────────────────────────────────────────────────────────
  */
+
+// Everything below is IIFE-scoped — see the LOADING MODEL note above for
+// why nothing here may be a bare top-level `const`/`let`/`class`.
+(function () {
+'use strict';
 
 // Controlled category vocabulary — deliberately small. Do not add a new
 // category casually; reuse the closest existing one.
@@ -214,10 +230,17 @@ const CRM_CHANGELOG = [
   },
 ];
 
+// The ONE thing that crosses into the shared global scope — a property
+// assignment on an existing object, never a lexical declaration, so this
+// can never collide with anything app.js (or any other script) declares.
 if (typeof window !== 'undefined') {
-  window.CRM_CHANGELOG = CRM_CHANGELOG;
-  window.CRM_CHANGELOG_CATEGORIES = CRM_CHANGELOG_CATEGORIES;
+  window.DESETOUR_CHANGELOG = {
+    entries: CRM_CHANGELOG,
+    categories: CRM_CHANGELOG_CATEGORIES,
+  };
 }
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = { CRM_CHANGELOG, CRM_CHANGELOG_CATEGORIES };
 }
+
+})();

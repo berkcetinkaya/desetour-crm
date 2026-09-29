@@ -1757,13 +1757,27 @@ const MetricsService = {
 
 // ── CRM Güncellemeleri (product changelog) ──────────────────────────────
 // See crmChangelog.js for the actual release data and the full release
-// convention (read it before adding a new entry). window.CRM_CHANGELOG is
-// already populated by the time this script runs — crmChangelog.js is a
+// convention (read it before adding a new entry). window.DESETOUR_CHANGELOG
+// is already populated by the time this script runs — crmChangelog.js is a
 // plain <script> loaded before app.js, exactly like build-meta.js (see
 // index.html) — but the fallback to [] keeps this file safe even if that
 // ever changes (an empty changelog renders an empty state, never a crash).
-const CRM_CHANGELOG = (typeof window !== 'undefined' && window.CRM_CHANGELOG) || [];
-const CRM_CHANGELOG_CATEGORIES = (typeof window !== 'undefined' && window.CRM_CHANGELOG_CATEGORIES) || [];
+//
+// Read ONLY off the window.DESETOUR_CHANGELOG namespace object, never a
+// bare top-level global: DeseTourDashboard.jsx and crmChangelog.js are
+// both loaded as separate classic (non-module) <script> tags sharing ONE
+// global lexical scope, so a top-level `const`/`let` of the same name in
+// two such scripts collides with a SyntaxError the instant the second
+// script loads (this is exactly the production incident this comment
+// documents — crmChangelog.js used to assign window.CRM_CHANGELOG /
+// window.CRM_CHANGELOG_CATEGORIES directly, and this file independently
+// declared its own top-level `const` of those same two names, which is
+// fine on its own but collided the moment both scripts' bindings landed
+// in the same shared global lexical environment). A plain property read
+// off one shared object can never collide like this — only two top-level
+// lexical declarations of the identical name can.
+const CRM_CHANGELOG = (typeof window !== 'undefined' && window.DESETOUR_CHANGELOG && window.DESETOUR_CHANGELOG.entries) || [];
+const CRM_CHANGELOG_CATEGORIES = (typeof window !== 'undefined' && window.DESETOUR_CHANGELOG && window.DESETOUR_CHANGELOG.categories) || [];
 
 // localStorage-only "has the user seen the latest release" tracking —
 // informational UX only, deliberately NOT synced across devices/Supabase
