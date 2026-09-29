@@ -3061,11 +3061,197 @@ function ActivityFeed() {
   );
 }
 
+// ── Önemli Uyarılar ──────────────────────────────────────────────────────
+// A dedicated, reusable home-dashboard alert section — NOT a generic
+// notification feed. Reuses the EXACT SAME activity_logs +
+// activity_log_reads architecture (and the EXACT SAME repo method,
+// getReservationNotifications) NotificationBell already reads: one query,
+// one shared useRepo cache entry, one read-state. No second persistence
+// mechanism, no duplicated/mutated activity_log row. Its first (and
+// currently only) supported alert type is a Civitatis reservation
+// cancellation (entity_type='reservation', action='cancelled',
+// metadata.auto_ingested=true) — a non-cancellation auto-ingested
+// activity (e.g. the "Yeni Rezervasyon Geldi" new-booking notification)
+// is deliberately excluded by the action==='cancelled' filter below, so
+// it keeps showing up only in NotificationBell, never here.
+const MAX_VISIBLE_IMPORTANT_ALERTS = 3;
+
+// Pure, framework-free filtering logic — wrapped in TESTABLE markers so the
+// regression suite can extract and exercise the REAL implementation (not a
+// hand-copied duplicate) with plain mock data, no React/DOM required. Only
+// entity_type='reservation' rows with action==='cancelled' ever qualify —
+// a non-cancellation auto-ingested activity (e.g. "Yeni Rezervasyon Geldi")
+// is excluded here, so it only ever shows up in NotificationBell.
+// TESTABLE:_filterImportantAlerts:start
+function _filterImportantAlerts(list, locallyReadIds) {
+  const skip = locallyReadIds || new Set();
+  return (list || []).filter(n => n.action === 'cancelled' && !n.isRead && !skip.has(n.id));
+}
+// TESTABLE:_filterImportantAlerts:end
+
+// Caps how many alert cards ever render at once — multiple unread
+// cancellations must never take over the homepage.
+// TESTABLE:_paginateImportantAlerts:start
+function _paginateImportantAlerts(alerts, max) {
+  const limit = max || 3;
+  const list = alerts || [];
+  const visible = list.slice(0, limit);
+  return { visible, remaining: Math.max(0, list.length - visible.length) };
+}
+// TESTABLE:_paginateImportantAlerts:end
+
+// The single source of truth for what a cancellation alert card shows —
+// both the desktop and mobile card renderers call this, so they can never
+// diverge in which fields they show or how they decide to omit a missing
+// one. Never fabricates a value: a row is simply left out when the
+// metadata doesn't have it, rather than showing an invented fallback.
+// TESTABLE:_cancellationAlertViewModel:start
+function _cancellationAlertViewModel(alert, compact) {
+  const dateLabel = alert.tourDate
+    ? new Date(alert.tourDate).toLocaleDateString('tr-TR', { day:'2-digit', month: compact ? 'short' : 'long', year:'numeric' })
+    : null;
+  const rows = [];
+  if (alert.customerName) rows.push({ key:'customer', label:'Misafir', value:alert.customerName });
+  if (alert.tourName) rows.push({ key:'tour', label:'Tur', value:alert.tourName });
+  if (dateLabel) rows.push({ key:'date', label:'Tur Tarihi', value:dateLabel });
+  if (alert.externalBookingId) rows.push({ key:'civitatis', label:'Civitatis', value:alert.externalBookingId });
+  return {
+    title: 'Rezervasyon İptali',
+    subtitle: 'Civitatis rezervasyonu iptal edildi',
+    reservationNumber: alert.reservationNumber || null,
+    rows,
+  };
+}
+// TESTABLE:_cancellationAlertViewModel:end
+
+function useUnreadImportantAlerts() {
+  const { data, loading, error } = useRepo("activity", "getReservationNotifications");
+  const { mutate } = useRepoMutation("activity");
+  // Optimistic-only bridge: hides a just-marked-read alert from THIS
+  // section immediately, without waiting on the network round trip that
+  // Store.notify() → refetch involves. The refetch is still what actually
+  // syncs NotificationBell (same cache key, same query) — this Set only
+  // makes "Okundu Olarak İşaretle" feel instant here.
+  const [locallyRead, setLocallyRead] = useState(() => new Set());
+
+  const alerts = useMemo(() => _filterImportantAlerts(data, locallyRead), [data, locallyRead]);
+
+  async function markRead(id) {
+    setLocallyRead(prev => { if (prev.has(id)) return prev; const next = new Set(prev); next.add(id); return next; });
+    await mutate("markReservationNotificationRead", id);
+  }
+
+  return { alerts, loading, error: error || null, markRead };
+}
+
+// Presentational only — no data fetching, no navigation logic — reads
+// entirely from _cancellationAlertViewModel so the exact same fields
+// render (with slightly different sizing) on both the desktop
+// CancellationAlertCard and the mobile card wrapper below.
+function CancellationAlertBody({ alert, compact }) {
+  const vm = _cancellationAlertViewModel(alert, compact);
+  const rowStyle = { fontSize: compact ? 12 : 12.5, color:C.text, fontFamily:"'DM Sans',sans-serif" };
+  const labelStyle = { color:C.textFaint };
+  return (
+    <>
+      <span style={{
+        fontSize: compact ? 10 : 10.5, fontWeight:700, letterSpacing:"0.08em", textTransform:"uppercase",
+        color:C.red, fontFamily:"'DM Sans',sans-serif",
+      }}>{vm.title}</span>
+      {vm.reservationNumber && (
+        <div style={{ fontSize: compact ? 14 : 15, fontWeight:700, color:C.navy, fontFamily:"'Playfair Display',serif", marginTop:4 }}>
+          {vm.reservationNumber}
+        </div>
+      )}
+      <div style={{ fontSize: compact ? 12 : 12.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", marginTop:2 }}>
+        {vm.subtitle}
+      </div>
+      <div style={{ display:"flex", flexDirection:"column", gap:3, marginTop:8 }}>
+        {vm.rows.map(row => (
+          <div key={row.key} style={rowStyle}><span style={labelStyle}>{row.label}: </span>{row.value}</div>
+        ))}
+      </div>
+    </>
+  );
+}
+
+function CancellationAlertCard({ alert, onView, onMarkRead }) {
+  return (
+    <div style={{
+      background:C.ivory, border:`1px solid ${C.border}`, borderLeft:`3px solid ${C.red}`,
+      borderRadius:T.radiusSm, padding:"16px 18px",
+      display:"flex", flexDirection:"column",
+    }}>
+      <CancellationAlertBody alert={alert}/>
+      <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginTop:12 }}>
+        <button onClick={onView} style={{
+          padding:"7px 14px", borderRadius:T.radiusSm, border:"none", cursor:"pointer",
+          background:C.navy, color:C.white, fontSize:12.5, fontWeight:600,
+          fontFamily:"'DM Sans',sans-serif",
+        }}>Rezervasyonu Gör</button>
+        <button onClick={onMarkRead} style={{
+          padding:"7px 14px", borderRadius:T.radiusSm, border:`1px solid ${C.border}`, cursor:"pointer",
+          background:C.white, color:C.textMid, fontSize:12.5, fontWeight:500,
+          fontFamily:"'DM Sans',sans-serif",
+        }}>Okundu Olarak İşaretle</button>
+      </div>
+    </div>
+  );
+}
+
+// Reservation navigation also marks the alert read — same as
+// NotificationBell's own handleSelect (mark read, then navigate) — so
+// opening the reservation from either surface is consistent.
+// TESTABLE:_viewReservationFromAlert:start
+function _viewReservationFromAlert(alert, markRead) {
+  markRead(alert.id);
+  if (alert.reservationId && typeof NAV_REF.fn === 'function') {
+    NAV_REF.fn('/reservations/' + alert.reservationId);
+  }
+}
+// TESTABLE:_viewReservationFromAlert:end
+
+// Renders NOTHING (no placeholder, no empty card) when there are zero
+// unread important alerts — never reserves layout space on Ana Sayfa — and
+// fails silently on a query error rather than breaking the rest of the
+// dashboard, which fetches everything else via its own independent
+// useRepo calls regardless of this section's state.
+function OnemliUyarilar() {
+  const { alerts, loading, error, markRead } = useUnreadImportantAlerts();
+  if (loading || error || alerts.length === 0) return null;
+
+  const { visible, remaining } = _paginateImportantAlerts(alerts, MAX_VISIBLE_IMPORTANT_ALERTS);
+
+  return (
+    <Card>
+      <SectionHeader title="Önemli Uyarılar"/>
+      <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+        {visible.map(alert => (
+          <CancellationAlertCard
+            key={alert.id}
+            alert={alert}
+            onView={() => _viewReservationFromAlert(alert, markRead)}
+            onMarkRead={() => markRead(alert.id)}
+          />
+        ))}
+      </div>
+      {remaining > 0 && (
+        <div style={{ marginTop:12, fontSize:12, color:C.textMuted, fontFamily:"'DM Sans',sans-serif" }}>
+          + {remaining} diğer önemli uyarı
+        </div>
+      )}
+    </Card>
+  );
+}
+
 function Dashboard() {
   return (
     <div style={{display:"flex", flexDirection:"column", gap:20}}>
       {}
       <Welcome/>
+
+      {}
+      <OnemliUyarilar/>
 
       {}
       <KpiRow/>
@@ -14055,16 +14241,24 @@ const SupabaseActivityRepo = {
   async getAll(f={}){const sb=getSB();if(!sb)return ActivityRepository.getAll(f);let q=sb.from('activity_logs').select('*,performer:staff_users!performed_by(id,full_name)').order('created_at',{ascending:false});if(f.entityType&&f.entityId)q=q.eq('entity_type',f.entityType).eq('entity_id',f.entityId);if(f.limit)q=q.limit(f.limit);const{data,error}=await q;if(error)throw new Error(error.message);return(data||[]).map(mapActivityFromDB);},
   async getByCustomerId(cid){const sb=getSB();if(!sb)return ActivityRepository.getAll({customerId:cid});const[{data:leads},{data:res},{data:pays}]=await Promise.all([sb.from('leads').select('id').eq('customer_id',cid),sb.from('reservations').select('id').eq('customer_id',cid),sb.from('payments').select('id').eq('customer_id',cid)]);const ids=[...((leads||[]).map(r=>r.id)),...((res||[]).map(r=>r.id)),...((pays||[]).map(r=>r.id)),cid];const{data,error}=await sb.from('activity_logs').select('*,performer:staff_users!performed_by(id,full_name)').in('entity_id',ids).order('created_at',{ascending:false}).limit(50);if(error)throw new Error(error.message);return(data||[]).map(mapActivityFromDB);},
   async create(d){const sb=getSB();if(!sb)return ActivityRepository.create(d);const row={entity_type:d.entityType,entity_id:d.entityId,action:d.action,description:d.description,old_value:d.oldValue||null,new_value:d.newValue||null,metadata:d.metadata||null,performed_by:d.performedBy||null};const{data:c,error}=await sb.from('activity_logs').insert(row).select().single();if(error)throw new Error(error.message);return mapActivityFromDB(c);},
-  // System-generated "new reservation" notifications only (auto_ingested
-  // Civitatis rows today; additively covers any future auto-ingestion
-  // source the same way). Embedding activity_log_reads(id) relies on ITS
-  // OWN RLS ("activity_log_reads: staff read own", staff_id = auth.uid())
-  // to scope the embedded rows to the CURRENT viewer only — no client-side
-  // staff filtering needed, and a guide session (whose own "activity_logs:
-  // guide read own" policy only permits performed_by = auth.uid(), never
-  // NULL) simply gets zero rows back here, already correct at the RLS
-  // layer without this method doing anything role-specific itself.
-  async getReservationNotifications(){const sb=getSB();if(!sb)return ActivityRepository.getReservationNotifications?ActivityRepository.getReservationNotifications():[];const{data,error}=await sb.from('activity_logs').select('id,entity_id,description,metadata,created_at,activity_log_reads(id)').eq('entity_type','reservation').eq('metadata->>auto_ingested','true').order('created_at',{ascending:false}).limit(30);if(error)throw new Error(error.message);return(data||[]).map(l=>({id:l.id,reservationId:l.entity_id,description:l.description,source:l.metadata?.source||null,externalBookingId:l.metadata?.external_booking_id||null,createdAt:l.created_at,isRead:(l.activity_log_reads||[]).length>0}));},
+  // System-generated "new reservation" notifications — auto_ingested
+  // Civitatis rows (both new_booking and cancellation), additively covers
+  // any future auto-ingestion source the same way. Embedding
+  // activity_log_reads(id) relies on ITS OWN RLS ("activity_log_reads:
+  // staff read own", staff_id = auth.uid()) to scope the embedded rows to
+  // the CURRENT viewer only — no client-side staff filtering needed, and a
+  // guide session (whose own "activity_logs: guide read own" policy only
+  // permits performed_by = auth.uid(), never NULL) simply gets zero rows
+  // back here, already correct at the RLS layer without this method doing
+  // anything role-specific itself. Both NotificationBell and the "Önemli
+  // Uyarılar" home-dashboard section call this SAME method (one query, one
+  // cache entry keyed by useRepo("activity","getReservationNotifications"))
+  // so they always agree on read state — marking one read invalidates the
+  // shared cache (Store.notify()) and both surfaces refetch together.
+  // `action` and the extra metadata fields (reservation_number/
+  // customer_name/tour_name/tour_date) are additive: NotificationBell
+  // ignores them, the cancellation alert card below reads them.
+  async getReservationNotifications(){const sb=getSB();if(!sb)return ActivityRepository.getReservationNotifications?ActivityRepository.getReservationNotifications():[];const{data,error}=await sb.from('activity_logs').select('id,entity_id,action,description,metadata,created_at,activity_log_reads(id)').eq('entity_type','reservation').eq('metadata->>auto_ingested','true').order('created_at',{ascending:false}).limit(30);if(error)throw new Error(error.message);return(data||[]).map(l=>({id:l.id,reservationId:l.entity_id,action:l.action,description:l.description,source:l.metadata?.source||null,externalBookingId:l.metadata?.external_booking_id||null,reservationNumber:l.metadata?.reservation_number||null,customerName:l.metadata?.customer_name||null,tourName:l.metadata?.tour_name||null,tourDate:l.metadata?.tour_date||null,createdAt:l.created_at,isRead:(l.activity_log_reads||[]).length>0}));},
   // Per-staff read receipt — INSERT only, staff_id must equal auth.uid()
   // (enforced by "activity_log_reads: staff insert own"), and the table's
   // own UNIQUE(activity_log_id, staff_id) constraint makes a repeat click
@@ -18552,6 +18746,8 @@ function MobileMorePage({ navigate }) {
 function MobileHomePage({ navigate }) {
   const auth = useAuthContext();
   const [quickAction, setQuickAction] = useState(null); // null|'guest'|'reservation'|'payment'
+  const { alerts:importantAlerts, loading:alertsLoading, error:alertsError, markRead:markAlertRead } = useUnreadImportantAlerts();
+  const { visible:visibleAlerts, remaining:remainingAlerts } = _paginateImportantAlerts(importantAlerts, MAX_VISIBLE_IMPORTANT_ALERTS);
 
   const { data:repoRes }    = useRepo("reservation", "getAll");
   const { data:repoPays }   = useRepo("payment",     "getAll");
@@ -18603,6 +18799,34 @@ function MobileHomePage({ navigate }) {
           {todayLabel}
         </div>
       </div>
+
+      {}
+      {!alertsLoading && !alertsError && importantAlerts.length > 0 && (
+        <MobileSection title="Önemli Uyarılar">
+          {visibleAlerts.map(alert => (
+            <MobileEntityCard key={alert.id} style={{ borderLeft:`3px solid ${C.red}` }}>
+              <CancellationAlertBody alert={alert} compact/>
+              <div style={{ display:"flex", flexDirection:"column", gap:6, marginTop:12 }}>
+                <button onClick={() => _viewReservationFromAlert(alert, markAlertRead)} style={{
+                  padding:"9px 14px", borderRadius:T.radiusSm, border:"none", cursor:"pointer",
+                  background:C.navy, color:C.white, fontSize:12.5, fontWeight:600,
+                  fontFamily:"'DM Sans',sans-serif", width:"100%",
+                }}>Rezervasyonu Gör</button>
+                <button onClick={() => markAlertRead(alert.id)} style={{
+                  padding:"9px 14px", borderRadius:T.radiusSm, border:`1px solid ${C.border}`, cursor:"pointer",
+                  background:C.white, color:C.textMid, fontSize:12.5, fontWeight:500,
+                  fontFamily:"'DM Sans',sans-serif", width:"100%",
+                }}>Okundu Olarak İşaretle</button>
+              </div>
+            </MobileEntityCard>
+          ))}
+          {remainingAlerts > 0 && (
+            <div style={{ fontSize:12, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", padding:"0 2px" }}>
+              + {remainingAlerts} diğer önemli uyarı
+            </div>
+          )}
+        </MobileSection>
+      )}
 
       {}
       {urgentItems.length > 0 && (
