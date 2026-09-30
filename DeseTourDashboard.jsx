@@ -2441,12 +2441,201 @@ function Sidebar({ currentBase, collapsed, onToggle, mobileOpen, onMobileClose }
   );
 }
 
+// TESTABLE:istanbulNowParts:start
+// The CURRENT instant expressed as Europe/Istanbul wall-clock values —
+// { dateISO:'YYYY-MM-DD', hhmm:'HH:MM' } — independent of the browser/
+// device's own timezone. Dese Tour operations are Istanbul-based: a
+// stored reservation date/time (e.g. checkIn + "13:00") is already an
+// Istanbul-local operational value and needs no conversion at all — the
+// ONLY thing that actually depends on the viewer's device is "now"
+// itself, so this is the one place that needs an explicit Europe/Istanbul
+// conversion. Uses the same Intl `timeZone:'Europe/Istanbul'` technique
+// already established by formatBuildTimestampTR above (the app's only
+// existing Istanbul-timezone convention — there is no separate shared
+// "istanbulNow()" helper to reuse verbatim, so this mirrors that same
+// technique for computeNextOperation's own narrow use).
+function istanbulNowParts(nowMs) {
+  const now = new Date(typeof nowMs === 'number' ? nowMs : Date.now());
+  const raw = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Europe/Istanbul',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  }).formatToParts(now).reduce((acc, p) => { acc[p.type] = p.value; return acc; }, {});
+  // ICU quirk: hour12:false can format midnight as "24" in some
+  // environments — normalize to "00" so hhmm stays a valid HH:MM string.
+  const hour = raw.hour === '24' ? '00' : raw.hour;
+  return { dateISO: `${raw.year}-${raw.month}-${raw.day}`, hhmm: `${hour}:${raw.minute}` };
+}
+// TESTABLE:istanbulNowParts:end
+
+// TESTABLE:computeNextOperation:start
+// The hero's "Sıradaki Operasyon" summary — the chronologically nearest
+// upcoming, non-cancelled reservation. Reuses the exact same opStatus
+// exclusion semantics as the dashboard's own "Yaklaşan Rezervasyonlar"
+// filter (calculateDashboardMetrics' upcomingRes: excludes "Tamamlandı"
+// and "İptal").
+//
+// Both operational date decisions below — "is this date already in the
+// past" and "is TODAY's structured time already past" — use the SAME
+// authoritative Europe/Istanbul calendar date (istanbulNowParts), never
+// the viewer's own browser/device calendar date. A viewer in Bali (UTC+8,
+// ahead of Istanbul) or Los Angeles (behind Istanbul) must reach the exact
+// same "today" and the exact same past/future verdict as a viewer
+// physically in Istanbul — Dese Tour's operations are Istanbul-based, and
+// a device-local "today" would otherwise incorrectly discard a still-
+// valid Istanbul reservation (viewer ahead of Istanbul) or keep an
+// already-finished one eligible (viewer behind Istanbul) purely because
+// of where the CRM happens to be opened from. There is deliberately no
+// separate "todayISO" argument here — that would just be an invitation to
+// pass a browser-local date back in and reintroduce the same bug.
+//
+// TODAY (Istanbul calendar date) + a real structured time: that time is
+// compared, as a plain "HH:MM" Istanbul wall-clock string, against
+// Istanbul's current wall-clock time — no JS Date+setHours combination
+// that would silently reinterpret "13:00" in the viewer's own timezone.
+// A clearly past timed reservation today is excluded; a future one, or
+// one with no structured time at all, remains eligible regardless of the
+// current clock (we cannot know whether an unknown time is past or
+// future, so it is never excluded on that basis).
+//
+// Same-day ordering: known times sort chronologically first; a
+// reservation with an unknown time sorts AFTER every known-time
+// reservation on that date (never before, never fabricated as midnight)
+// — reversing the earlier "" (a.time||"").localeCompare(...) behavior,
+// which incorrectly put unknown-time reservations first. When every
+// candidate on a date has an unknown time, the only remaining
+// deterministic signal is a stable existing field (reservation number,
+// falling back to id) — never a fabricated time.
+//
+// `nowMs` is an optional injection point for tests (defaults to
+// Date.now()); production callers never pass it.
+function computeNextOperation(reservations, nowMs) {
+  const istanbulNow = istanbulNowParts(nowMs);
+  const candidates = (reservations || []).filter(r => {
+    if (!r.checkIn) return false;
+    if (["Tamamlandı", "İptal"].includes(r.opStatus)) return false;
+    const day = r.checkIn.slice(0, 10);
+    if (day < istanbulNow.dateISO) return false;
+    if (day === istanbulNow.dateISO && r.time) {
+      const timeHHMM = String(r.time).slice(0, 5);
+      if (/^\d{2}:\d{2}$/.test(timeHHMM) && timeHHMM < istanbulNow.hhmm) return false;
+    }
+    return true;
+  });
+  return candidates.slice().sort((a, b) => {
+    const dateCmp = (a.checkIn || "").slice(0, 10).localeCompare((b.checkIn || "").slice(0, 10));
+    if (dateCmp !== 0) return dateCmp;
+    const aHas = !!a.time, bHas = !!b.time;
+    if (aHas && bHas) return a.time.localeCompare(b.time);
+    if (aHas !== bHas) return aHas ? -1 : 1;
+    return String(a.resNumber || a.id || "").localeCompare(String(b.resNumber || b.id || ""));
+  })[0] || null;
+}
+// TESTABLE:computeNextOperation:end
+
+// TESTABLE:nextOperationDayLabel:start
+// "Bugün" / "Yarın" / null (caller falls back to showing just the actual
+// date) — compares against Europe/Istanbul's own current calendar date
+// (istanbulNowParts), the SAME authoritative "today" computeNextOperation
+// itself uses, never the viewer/browser's own calendar date. A viewer in
+// Bali may already be on the next calendar day while Istanbul still shows
+// this reservation as "Bugün" — the label must agree with Istanbul, not
+// the device it's viewed from.
+//
+// "Tomorrow" is computed via UTC-anchored date arithmetic (Date.UTC +
+// setUTCDate), deliberately NOT a local-time `new Date(...+"T00:00:00")`
+// + setDate + toISOString() — that pattern reinterprets the anchor through
+// the RUNTIME's own local timezone, and under a positive UTC offset (e.g.
+// UTC+14) the resulting toISOString() can silently roll back to the wrong
+// calendar day. Using exclusively UTC getters/setters here sidesteps the
+// runtime timezone entirely, which is the whole point of this correction.
+function nextOperationDayLabel(checkInISO, nowMs) {
+  if (!checkInISO) return null;
+  const day = checkInISO.slice(0, 10);
+  const istanbulTodayISO = istanbulNowParts(nowMs).dateISO;
+  if (day === istanbulTodayISO) return "Bugün";
+  const [y, m, d] = istanbulTodayISO.split('-').map(Number);
+  const t = new Date(Date.UTC(y, m - 1, d));
+  t.setUTCDate(t.getUTCDate() + 1);
+  const tomorrowISO = `${t.getUTCFullYear()}-${String(t.getUTCMonth() + 1).padStart(2, '0')}-${String(t.getUTCDate()).padStart(2, '0')}`;
+  if (day === tomorrowISO) return "Yarın";
+  return null;
+}
+// TESTABLE:nextOperationDayLabel:end
+
+// TESTABLE:_viewNextOperationReservation:start
+// Same navigation mechanism the rest of the dashboard already uses for
+// "Rezervasyonu Gör" (see OnemliUyarilar's _viewReservationFromAlert) —
+// NAV_REF.fn to '/reservations/<id>'. No new routing mechanism.
+function _viewNextOperationReservation(operation) {
+  if (operation && operation.id && typeof NAV_REF.fn === 'function') {
+    NAV_REF.fn('/reservations/' + operation.id);
+  }
+}
+// TESTABLE:_viewNextOperationReservation:end
+
+// Presentational only. Reuses the existing RES_STATUS colour map (already
+// used by the calendar pages for these exact opStatus values) rather than
+// inventing a new "ready" concept — an assigned-guide reservation simply
+// shows its own real opStatus, verbatim, in that status's own colour.
+function NextOperationPanel({ operation }) {
+  const dayLabel = operation ? nextOperationDayLabel(operation.checkIn) : null;
+  const statusMeta = operation && operation.guide ? (RES_STATUS[operation.opStatus] || null) : null;
+  return (
+    <div style={{ paddingTop:13, borderTop:`1px solid ${C.borderLight}` }}>
+      <div style={{
+        fontSize:10.5, letterSpacing:"0.14em", textTransform:"uppercase",
+        color:C.goldLight, fontFamily:"'DM Sans',sans-serif", fontWeight:600,
+        marginBottom:8,
+      }}>
+        Sıradaki Operasyon
+      </div>
+      {!operation ? (
+        <div style={{ fontSize:13, color:C.textMuted, fontFamily:"'DM Sans',sans-serif" }}>
+          Planlanmış yaklaşan operasyon bulunmuyor.
+        </div>
+      ) : (
+        <div
+          className="dt-row"
+          style={{ cursor:"pointer", borderRadius:8, padding:"3px 5px", margin:"-3px -5px" }}
+          onClick={()=>_viewNextOperationReservation(operation)}
+        >
+          <div style={{ fontSize:15, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif", lineHeight:1.25 }}>
+            {operation.tour || "—"}
+          </div>
+          <div style={{ fontSize:12.5, color:C.textMid, fontFamily:"'DM Sans',sans-serif", marginTop:3 }}>
+            {[dayLabel ? `${dayLabel} · ${operation.date}` : operation.date, fmtResTime(operation.time)].filter(Boolean).join(" · ")}
+          </div>
+          {(operation.tourLanguage || operation.pax) && (
+            <div style={{ fontSize:12.5, color:C.textMid, fontFamily:"'DM Sans',sans-serif", marginTop:2 }}>
+              {[operation.tourLanguage, operation.pax ? `${operation.pax} Misafir` : null].filter(Boolean).join(" · ")}
+            </div>
+          )}
+          <div style={{ marginTop:9, display:"flex", alignItems:"center", justifyContent:"space-between", gap:10 }}>
+            {operation.guide ? (
+              <Pill label={operation.opStatus || "—"} color={statusMeta?.color || C.textMuted} bg={statusMeta?.bg || C.ivoryDark} small/>
+            ) : (
+              <Pill label="Rehber Ataması Bekliyor" color={C.red} bg={C.redBg} small/>
+            )}
+            <span style={{
+              display:"flex", alignItems:"center", gap:4, flexShrink:0,
+              fontSize:12.5, color:C.goldLight, fontFamily:"'DM Sans',sans-serif", fontWeight:500,
+            }}>
+              Rezervasyonu Gör
+              <Ic d="M9 18l6-6-6-6" size={13} sw={2}/>
+            </span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Welcome() {
   const auth = useAuthContext();
   const firstName = auth.displayName.split(" ")[0] || "Hoş geldiniz";
   const hour = new Date().getHours();
   const greeting = hour < 12 ? "Günaydın" : hour < 18 ? "İyi günler" : "İyi akşamlar";
-  const [showNewRes, setShowNewRes] = useState(false);
 
   // Real urgent-item count for the context line below — this used to be a
   // hardcoded "3 acil işlem" regardless of actual data.
@@ -2459,14 +2648,22 @@ function Welcome() {
     [repoRes, repoPays, repoRems]
   );
 
+  // "Sıradaki Operasyon" reuses the exact same repoRes already fetched
+  // above for the urgent-item count — no second/redundant reservation
+  // fetch. See computeNextOperation — it derives its own authoritative
+  // Europe/Istanbul "today" internally, deliberately never fed a
+  // browser-local date from here.
+  const nextOperation = useMemo(
+    () => computeNextOperation(repoRes),
+    [repoRes]
+  );
+
   return (
     <div className="hero-shell" style={{
       position:"relative", overflow:"hidden",
       background:C.white, border:`1px solid ${C.border}`, borderRadius:T.radius,
       boxShadow:T.shadowSoft,
     }}>
-      {showNewRes && <NewReservationModal onClose={()=>setShowNewRes(false)} onSuccess={()=>setShowNewRes(false)}/>}
-
       {/* Photo layer — a real <img> confined to the hero's right portion
           (not full-bleed) so object-fit:cover crops far less aggressively:
           a narrower box whose aspect ratio sits close to the source
@@ -2483,7 +2680,7 @@ function Welcome() {
       <div className="hero-fade" style={{ position:"absolute", inset:0 }}/>
 
       {}
-      <div style={{position:"relative", maxWidth:460, padding:"32px 36px", display:"flex", flexDirection:"column", justifyContent:"center", gap:13, minWidth:0}}>
+      <div style={{position:"relative", maxWidth:460, padding:"28px 36px", display:"flex", flexDirection:"column", justifyContent:"center", gap:10, minWidth:0}}>
         <div style={{fontSize:10.5, letterSpacing:"0.14em", textTransform:"uppercase", color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>
           {new Date().toLocaleDateString("tr-TR",{day:"2-digit",month:"long",year:"numeric",weekday:"long"})}
         </div>
@@ -2507,30 +2704,16 @@ function Welcome() {
             "Bugünkü operasyon özetiniz — her şey kontrol altında."
           )}
         </p>
+        {/* Editorial quote — deliberately subordinated (smaller, lighter,
+            thinner accent) so it never competes with the operational
+            content above or the Sıradaki Operasyon block below. */}
         <div style={{
-          fontSize:13, color:C.textMuted, fontFamily:"'Playfair Display',serif", fontStyle:"italic",
-          borderLeft:`2px solid rgba(184,151,58,0.4)`, paddingLeft:12, lineHeight:1.5,
+          fontSize:11, color:C.textFaint, fontFamily:"'Playfair Display',serif", fontStyle:"italic",
+          borderLeft:`1.5px solid rgba(184,151,58,0.25)`, paddingLeft:10, lineHeight:1.4,
         }}>
           "Güzel yolculuklar, iyi insanlarla başlar."
-          <div style={{fontStyle:"normal", fontSize:10, letterSpacing:"0.1em", color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:3}}>— DESE TOUR</div>
         </div>
-        <div style={{marginTop:2}}>
-          <button style={{
-            display:"inline-flex", alignItems:"center", gap:8,
-            padding:"11px 20px", borderRadius:T.radiusSm,
-            border:"none", background:C.navy,
-            cursor:"pointer", color:C.white,
-            fontFamily:"'DM Sans',sans-serif", fontSize:13, fontWeight:600,
-            transition:"background 0.12s",
-          }}
-            onClick={()=>setShowNewRes(true)}
-            onMouseEnter={e=>e.currentTarget.style.background=C.navyHover}
-            onMouseLeave={e=>e.currentTarget.style.background=C.navy}
-          >
-            <Ic d="M12 5v14M5 12h14" size={15} sw={2}/>
-            Yeni Rezervasyon Ekle
-          </button>
-        </div>
+        <NextOperationPanel operation={nextOperation}/>
       </div>
     </div>
   );
