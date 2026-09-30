@@ -2614,7 +2614,7 @@ function KpiRow() {
     },
   ];
   return (
-    <div className="rsp-stat-grid" style={{display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:14}}>
+    <div className="dash-kpi-grid" style={{display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:16}}>
       {kpis.map((k,i)=><KpiCard key={i} kpi={k}/>)}
     </div>
   );
@@ -2632,7 +2632,7 @@ function UrgentPanel() {
   const visible = urgentItems.filter(u=>!dismissed.includes(u.id));
 
   return (
-    <Card style={{padding:"20px 22px"}}>
+    <Card style={{display:"flex", flexDirection:"column"}}>
       <SectionHeader
         title="Acil İşler"
         action="Tümünü Gör"
@@ -2743,7 +2743,7 @@ function TodayTours() {
       })
     : TODAY_TOURS;
   return (
-    <Card>
+    <Card style={{display:"flex", flexDirection:"column"}}>
       <SectionHeader title="Bugünkü Turlar" action="Takvimi Gör"/>
       {ttLoading  ? <LoadingState label="Yükleniyor…"/> : null}
       {!ttLoading && rows.length === 0 && (
@@ -2903,20 +2903,23 @@ function UpcomingReservations() {
       const cust = getCustomerById(r.customerId);
       return { ...r, flag:cust?.flag||"🏳", customer:r.name||cust?.name||r.tour };
     });
+  const isEmpty = !upLoading && upcoming.length === 0;
   return (
-    <Card>
+    <Card style={{display:"flex", flexDirection:"column"}}>
       <SectionHeader title="Yaklaşan Rezervasyonlar" action="Tümünü Gör"/>
-      {upLoading  ? <LoadingState label="Yükleniyor…"/> : null}
-      {!upLoading && upcoming.length === 0 && (
-        <EmptyState icon="📅" title="Yaklaşan rezervasyon bulunmuyor." subtitle="Onaylanan rezervasyonlar burada listelenecek."/>
-      )}
-      {!upLoading && upcoming.length > 0 && (
-        <div style={{display:"flex", flexDirection:"column", gap:0}}>
-          {upcoming.map((r,i)=>(
-            <UpcomingResRow key={i} r={r} isLast={i===upcoming.length-1}/>
-          ))}
-        </div>
-      )}
+      <div style={{flex:1, display:"flex", flexDirection:"column", justifyContent:(upLoading||isEmpty) ? "center" : "flex-start"}}>
+        {upLoading  ? <LoadingState label="Yükleniyor…"/> : null}
+        {isEmpty && (
+          <EmptyState icon="📅" title="Yaklaşan rezervasyon bulunmuyor." subtitle="Onaylanan rezervasyonlar burada listelenecek."/>
+        )}
+        {!upLoading && upcoming.length > 0 && (
+          <div style={{display:"flex", flexDirection:"column", gap:0}}>
+            {upcoming.map((r,i)=>(
+              <UpcomingResRow key={i} r={r} isLast={i===upcoming.length-1}/>
+            ))}
+          </div>
+        )}
+      </div>
     </Card>
   );
 }
@@ -2932,34 +2935,37 @@ function PendingPaymentsWidget() {
       const res  = getReservationById(p.resId||"");
       return { ...p, customerName: cust?.name || res?.tour || "—", tourName: res?.tour || "—" };
     });
+  const isEmpty = !ppLoading && pending.length === 0;
   return (
-    <Card>
+    <Card style={{display:"flex", flexDirection:"column"}}>
       <SectionHeader title="Bekleyen Ödemeler" action="Tümünü Gör"/>
-      {ppLoading  ? <LoadingState label="Yükleniyor…"/> : null}
-      {!ppLoading && pending.length === 0 && (
-        <EmptyState icon="💳" title="Bekleyen ödeme bulunmuyor." subtitle="Ödeme planları burada listelenecek."/>
-      )}
-      {!ppLoading && pending.length > 0 && (
-        <div style={{display:"flex", flexDirection:"column", gap:0}}>
-          {pending.map((p,i)=>(
-            <div key={i} className="dt-row" style={{
-              display:"flex", alignItems:"center", justifyContent:"space-between", gap:10,
-              padding:"12px 4px",
-              borderBottom: i<pending.length-1 ? `1px solid ${C.borderLight}` : "none",
-              borderRadius:6,
-            }}>
-              <div style={{minWidth:0}}>
-                <div style={{fontSize:13, fontWeight:500, color:C.text, fontFamily:"'DM Sans',sans-serif", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{p.customerName}</div>
-                <div style={{fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{p.tourName}</div>
+      <div style={{flex:1, display:"flex", flexDirection:"column", justifyContent:(ppLoading||isEmpty) ? "center" : "flex-start"}}>
+        {ppLoading  ? <LoadingState label="Yükleniyor…"/> : null}
+        {isEmpty && (
+          <EmptyState icon="💳" title="Bekleyen ödeme bulunmuyor." subtitle="Ödeme planları burada listelenecek."/>
+        )}
+        {!ppLoading && pending.length > 0 && (
+          <div style={{display:"flex", flexDirection:"column", gap:0}}>
+            {pending.map((p,i)=>(
+              <div key={i} className="dt-row" style={{
+                display:"flex", alignItems:"center", justifyContent:"space-between", gap:10,
+                padding:"12px 4px",
+                borderBottom: i<pending.length-1 ? `1px solid ${C.borderLight}` : "none",
+                borderRadius:6,
+              }}>
+                <div style={{minWidth:0}}>
+                  <div style={{fontSize:13, fontWeight:500, color:C.text, fontFamily:"'DM Sans',sans-serif", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{p.customerName}</div>
+                  <div style={{fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{p.tourName}</div>
+                </div>
+                <div style={{textAlign:"right", flexShrink:0}}>
+                  <div style={{fontSize:13.5, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif"}}>{p.currency==="EUR"?"€":"₺"}{parseFloat(p.amount||0).toLocaleString("tr-TR")}</div>
+                  <Pill label={p.status} color={C.amber} bg={C.amberBg} small/>
+                </div>
               </div>
-              <div style={{textAlign:"right", flexShrink:0}}>
-                <div style={{fontSize:13.5, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif"}}>{p.currency==="EUR"?"€":"₺"}{parseFloat(p.amount||0).toLocaleString("tr-TR")}</div>
-                <Pill label={p.status} color={C.amber} bg={C.amberBg} small/>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
+            ))}
+          </div>
+        )}
+      </div>
     </Card>
   );
 }
@@ -2997,9 +3003,11 @@ function ActivityFeed() {
         return { ...log, ...tm, detail:log.description, date:dt.toLocaleDateString("tr-TR",{day:"2-digit",month:"short"}), time:dt.toLocaleTimeString("tr-TR",{hour:"2-digit",minute:"2-digit"}), who:"—" };
       }));
 
+  const isEmpty = !actLoading && feedItems.length === 0;
   return (
-    <Card>
+    <Card style={{display:"flex", flexDirection:"column"}}>
       <SectionHeader title="Son Aktiviteler" action="Tümünü Gör"/>
+      <div style={{flex:1, display:"flex", flexDirection:"column", justifyContent:(actLoading||isEmpty) ? "center" : "flex-start"}}>
       <div style={{position:"relative", paddingLeft:20}}>
         {}
         <div style={{
@@ -3007,7 +3015,7 @@ function ActivityFeed() {
           width:1, background:C.borderLight,
         }}/>
         {actLoading  ? <LoadingState label="Yükleniyor…"/> : null}
-        {!actLoading && feedItems.length === 0 && (
+        {isEmpty && (
           <div style={{padding:"12px 0 4px", color:C.textFaint, fontFamily:"'DM Sans',sans-serif", fontSize:13}}>
             Henüz aktivite kaydı yok.
           </div>
@@ -3056,6 +3064,7 @@ function ActivityFeed() {
             </div>
           </div>
         ))}
+      </div>
       </div>
     </Card>
   );
@@ -3257,13 +3266,13 @@ function Dashboard() {
       <KpiRow/>
 
       {}
-      <div className="rsp-split" style={{display:"grid", gridTemplateColumns:"1.85fr 1fr", gap:20, alignItems:"start"}}>
+      <div className="dash-row-2" style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:16}}>
         <TodayTours/>
         <UrgentPanel/>
       </div>
 
       {}
-      <div className="rsp-split" style={{display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:20, alignItems:"start"}}>
+      <div className="dash-row-3" style={{display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:16}}>
         <UpcomingReservations/>
         <PendingPaymentsWidget/>
         <ActivityFeed/>
@@ -3332,9 +3341,9 @@ function GuideOpsPanel() {
     .sort((a,b)=>(a.checkIn||"").localeCompare(b.checkIn||""));
 
   return (
-    <div style={{background:C.white, border:`1px solid ${C.border}`, borderRadius:12, padding:"18px 20px"}}>
+    <Card>
       <div style={{fontSize:14, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif", marginBottom:14}}>Rehber Operasyonu</div>
-      <div className="rsp-stat-grid" style={{display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:12, marginBottom:upcomingNoGuide.length?16:0}}>
+      <div className="dash-guide-kpi" style={{display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:16, marginBottom:upcomingNoGuide.length?16:0}}>
         {[
           { label:"Aktif Rehber",                       val:activeGuides,          color:C.green, bg:C.greenBg },
           { label:"Bugün Atanmış Rehber",                val:assignedToday,         color:C.blue,  bg:C.blueBg },
@@ -3356,7 +3365,7 @@ function GuideOpsPanel() {
           ))}
         </div>
       )}
-    </div>
+    </Card>
   );
 }
 
@@ -19161,6 +19170,17 @@ function App() {
            needs its own hover state just to tint on mouseover. ── */
         .dt-row { transition: background 0.12s ease; }
         .dt-row:hover { background: #F7F3E9 !important; }
+
+        /* ── Ana Sayfa (Dashboard) grid — scoped to these dashboard-only
+           classnames so a tablet-width override here can never affect any
+           other page's .rsp-split/.rsp-stat-grid responsive rules.
+           Dashboard itself never renders below 768px (MobileHomePage takes
+           over there instead), so this only ever applies to tablet width. ── */
+        @media (min-width: 768px) and (max-width: 1023px) {
+          .dash-kpi-grid  { grid-template-columns: repeat(2, minmax(0,1fr)) !important; }
+          .dash-row-3     { grid-template-columns: repeat(2, minmax(0,1fr)) !important; }
+          .dash-guide-kpi { grid-template-columns: repeat(2, minmax(0,1fr)) !important; }
+        }
         @media (max-width: 767px) {
           .rsp-table { display: none !important; }
           .rsp-cards { display: flex !important; }
