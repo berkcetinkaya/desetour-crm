@@ -191,13 +191,16 @@ test('crmChangelog.js\'s Node-facing export shape (CRM_CHANGELOG, CRM_CHANGELOG_
   assert.ok(Array.isArray(CRM_CHANGELOG_CATEGORIES) && CRM_CHANGELOG_CATEGORIES.length > 0);
 });
 
-test('this hotfix did not bump the CRM product version or add a new changelog entry', () => {
-  const { readCrmVersion, formatCrmVersion } = require(path.join(REPO_ROOT, 'build-version'));
-  const { major, minor } = readCrmVersion(REPO_ROOT);
-  assert.equal(formatCrmVersion(major, minor), '12.36', 'version must remain 12.36 — this is a loading-bug hotfix, not a release');
-  const { CRM_CHANGELOG } = require(CRM_CHANGELOG_PATH);
-  assert.equal(CRM_CHANGELOG.length, 9, 'no changelog entry should have been added for this hotfix');
-});
+// A version/entry-count assertion pinned to the exact moment this
+// collision hotfix shipped (was: "version must remain 12.36, changelog
+// length must remain 9") lived here previously. That was only ever true
+// immediately after the hotfix and necessarily goes stale the instant any
+// later legitimate release ships (as one now has — see crmChangelog.js's
+// newest entry) — it duplicated, less durably, what tests/dashboard/
+// crmChangelog.test.js already checks properly (CRM_CHANGELOG[0].version
+// === the live crm-version.json, checked dynamically, not hardcoded).
+// Removed rather than perpetually re-bumped; the collision fix itself
+// remains fully covered by every other test in this file.
 
 test('build.js\'s crmChangelog.js cache-busting (added for the earlier release) is untouched by this hotfix', () => {
   const buildJs = fs.readFileSync(path.join(REPO_ROOT, 'build.js'), 'utf8');

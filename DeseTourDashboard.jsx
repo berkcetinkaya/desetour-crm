@@ -6627,6 +6627,14 @@ function ReservationDetailPage({ resId, onBack }) {
   const [showAssignGuide, setShowAssignGuide] = useState(false);
   const [removingGuide, setRemovingGuide] = useState(false);
   const [showEditLanguage, setShowEditLanguage] = useState(false);
+  const [showTourInfo, setShowTourInfo] = useState(false);
+  // Guide-only deep link into a forced-read-only Tour Information Center —
+  // see GuideTourInfoModal. Deliberately scoped to the guide role only in
+  // this phase: Operasyon/Yönetici already reach the full Tour Detail via
+  // the dedicated Turlar nav, so this button adds no new capability for
+  // them, only a second path to the same page — out of scope here.
+  const auth = useAuthContext();
+  const isGuideViewer = auth.role === "Rehber";
   if (resDetLoading) return <LoadingState label="Rezervasyon yükleniyor…"/>;
   if (resDetError)   return <ErrorState message={resDetError} onRetry={()=>{}}/>;
   if (!_resRec)      return <NotFoundCard entityType="Rezervasyon" entityId={resId} onBack={onBack}/>;
@@ -6639,6 +6647,7 @@ function ReservationDetailPage({ resId, onBack }) {
     <>
     {showAssignGuide && <AssignGuideModal r={r} onClose={()=>setShowAssignGuide(false)}/>}
     {showEditLanguage && <EditTourLanguageModal r={r} onClose={()=>setShowEditLanguage(false)}/>}
+    {showTourInfo && r.tourId && <GuideTourInfoModal tourId={r.tourId} onClose={()=>setShowTourInfo(false)}/>}
     <div style={{ display:"flex", flexDirection:"column", gap:20 }}>
 
       {}
@@ -6747,7 +6756,15 @@ function ReservationDetailPage({ resId, onBack }) {
 
           {}
           <RCard>
-            <RCardHead title="Tur Bilgileri"/>
+            <RCardHead title="Tur Bilgileri" right={
+              isGuideViewer && r.tourId ? (
+                <button onClick={()=>setShowTourInfo(true)} style={{
+                  padding:"4px 10px", borderRadius:6, border:`1px solid ${C.border}`,
+                  background:C.white, cursor:"pointer", color:C.navy,
+                  fontFamily:"'DM Sans',sans-serif", fontSize:11.5, fontWeight:500,
+                }}>Tur Bilgilerini Gör</button>
+              ) : null
+            }/>
             {}
             <div style={{
               margin:"16px 16px 0", padding:"14px 16px",
@@ -9205,8 +9222,402 @@ function tourDurationLabel(tour) {
   return null;
 }
 
+// ── Tur Bilgi Merkezi (Tour Information Center) — read-mode dossier ─────
+// Pure, framework-free field-selection logic below (wrapped in TESTABLE
+// markers) drives which rows a section shows — a row/section with no
+// value is simply omitted, never a fabricated placeholder. Every function
+// here takes the already-mapped `tour` object from mapTourFromDB and
+// returns plain data; the JSX components further down are purely
+// presentational and never decide "is this empty" themselves.
+
+const TOUR_TYPE_LABEL_TR = { private:'Özel', group:'Grup' };
+
+// Section 2 — Operasyon Bilgileri. Only fields with a real value appear;
+// nothing here is ever invented. Duration logic is inlined (not a call to
+// tourDurationLabel) so this function stays fully self-contained and
+// extractable in isolation for tests.
+//
+// Deliberately EXCLUDES meetingPoint and bookingCutoffText: both have
+// their own single, authoritative home elsewhere in the dossier
+// (meetingPoint in _meetingEndRows / "Buluşma ve Bitiş"; bookingCutoffText
+// in _cancellationRuleRows / "Rezervasyon ve İptal Kuralları") — showing
+// either here too would duplicate the same fact across two sections.
+// TESTABLE:_operationalInfoRows:start
+function _operationalInfoRows(tour) {
+  const rows = [];
+  const duration = tour?.durationText ? tour.durationText : (tour?.duration ? `${tour.duration} gün` : null);
+  if (duration) rows.push({ key:'duration', label:'Süre', value:duration });
+  const langNames = (tour?.languageNames || []).filter(Boolean);
+  if (langNames.length) rows.push({ key:'language', label:'Tur Dili', value:langNames.join(' · ') });
+  const typeLabels = { private:'Özel', group:'Grup' };
+  const types = (tour?.tourType || []).map(t => typeLabels[t] || t).filter(Boolean);
+  if (types.length) rows.push({ key:'type', label:'Tur Tipi', value:types.join(' · ') });
+  if (tour?.maxGuests) rows.push({ key:'maxguests', label:'Maksimum Misafir', value:String(tour.maxGuests) });
+  if (tour?.accessibilityInfoTr) rows.push({ key:'accessibility', label:'Erişilebilirlik', value:tour.accessibilityInfoTr });
+  if (tour?.petsPolicyTr) rows.push({ key:'pets', label:'Evcil Hayvan Politikası', value:tour.petsPolicyTr });
+  return rows;
+}
+// TESTABLE:_operationalInfoRows:end
+
+// Section 5 — Rezervasyon ve İptal Kuralları. Hides individual empty rows
+// (each condition is independently optional).
+// TESTABLE:_cancellationRuleRows:start
+function _cancellationRuleRows(tour) {
+  const rows = [];
+  if (tour?.bookingCutoffText)    rows.push({ key:'cutoff',  label:'Rezervasyon Limiti', value:tour.bookingCutoffText });
+  if (tour?.freeCancellationText) rows.push({ key:'free',    label:'Ücretsiz İptal',     value:tour.freeCancellationText });
+  if (tour?.lateCancellationText) rows.push({ key:'late',    label:'Geç İptal',          value:tour.lateCancellationText });
+  if (tour?.noShowPolicyText)     rows.push({ key:'noshow',  label:'Gelmeme Durumu',     value:tour.noShowPolicyText });
+  if (tour?.otherConditionsTr)    rows.push({ key:'other',   label:'Diğer Koşullar',     value:tour.otherConditionsTr });
+  return rows;
+}
+// TESTABLE:_cancellationRuleRows:end
+
+// Section 6 — Buluşma ve Bitiş.
+// TESTABLE:_meetingEndRows:start
+function _meetingEndRows(tour) {
+  const rows = [];
+  if (tour?.meetingPoint)           rows.push({ key:'point',        label:'Buluşma Noktası',     value:tour.meetingPoint });
+  if (tour?.meetingInstructionsTr)  rows.push({ key:'instructions', label:'Buluşma Talimatları', value:tour.meetingInstructionsTr });
+  if (tour?.endPointTr)             rows.push({ key:'end',          label:'Bitiş Noktası',       value:tour.endPointTr });
+  return rows;
+}
+// TESTABLE:_meetingEndRows:end
+
+// Generic array reorder used by the itinerary editor's move-up/move-down
+// controls — no drag/drop dependency. Returns a NEW array; a move past
+// either end is a no-op (returns the original order unchanged).
+// TESTABLE:_moveArrayItem:start
+function _moveArrayItem(arr, index, direction) {
+  const list = (arr || []).slice();
+  const target = index + direction;
+  if (target < 0 || target >= list.length) return list;
+  const tmp = list[index];
+  list[index] = list[target];
+  list[target] = tmp;
+  return list;
+}
+// TESTABLE:_moveArrayItem:end
+
+function DossierSectionHeading({ children }) {
+  return (
+    <div style={{ marginBottom:14 }}>
+      <div style={{ fontSize:15.5, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif", letterSpacing:"0.01em" }}>
+        {children}
+      </div>
+      <div style={{ width:36, height:2, background:C.gold, opacity:0.55, marginTop:7, borderRadius:2 }}/>
+    </div>
+  );
+}
+
+function DossierRow({ label, value }) {
+  const { isMobile } = useBreakpoint();
+  if (!value) return null;
+  return (
+    <div style={{
+      display:"flex", flexDirection: isMobile ? "column" : "row",
+      gap: isMobile ? 3 : 16, padding:"9px 0", borderBottom:`1px solid ${C.borderLight}`,
+    }}>
+      <span style={{ flex: isMobile ? "none" : "0 0 168px", fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif" }}>{label}</span>
+      <span style={{ flex:1, minWidth:0, fontSize:13, color:C.text, fontFamily:"'DM Sans',sans-serif", lineHeight:1.55, wordBreak:"break-word" }}>{value}</span>
+    </div>
+  );
+}
+
+function DossierEmptyNote({ children }) {
+  return (
+    <div style={{ fontSize:12.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", fontStyle:"italic" }}>
+      {children || "Henüz bilgi eklenmedi."}
+    </div>
+  );
+}
+
+// Section 3 — Tur Rotası. A single stop card: numbered order badge, place
+// name, marketplace-derived Turkish description, optional approximate
+// duration, and an optional operational note rendered in a visually
+// DISTINCT inset (never blended into the description text) — a reviewer
+// must never mistake Dese Tour's own operational caution for something
+// Civitatis itself said.
+function DossierItineraryStop({ stop, index }) {
+  return (
+    <div style={{ display:"flex", gap:14, padding:"14px 0", borderBottom:`1px solid ${C.borderLight}` }}>
+      <div style={{
+        flexShrink:0, width:26, height:26, borderRadius:"50%",
+        background:C.ivory, border:`1px solid ${C.border}`,
+        display:"flex", alignItems:"center", justifyContent:"center",
+        fontSize:11.5, fontWeight:700, color:C.navy, fontFamily:"'DM Sans',sans-serif",
+      }}>{index + 1}</div>
+      <div style={{ flex:1, minWidth:0 }}>
+        <div style={{ display:"flex", alignItems:"baseline", gap:10, flexWrap:"wrap" }}>
+          <span style={{ fontSize:14, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif" }}>{stop.placeName}</span>
+          {stop.approxDurationText && (
+            <span style={{ fontSize:11, color:C.gold, fontFamily:"'DM Sans',sans-serif", fontWeight:600 }}>{stop.approxDurationText}</span>
+          )}
+        </div>
+        {stop.descriptionTr && (
+          <div style={{ fontSize:12.5, color:C.textMid, fontFamily:"'DM Sans',sans-serif", lineHeight:1.6, marginTop:5 }}>
+            {stop.descriptionTr}
+          </div>
+        )}
+        {stop.operationalNote && (
+          <div style={{
+            marginTop:8, padding:"8px 12px", background:C.ivory, borderRadius:7,
+            borderLeft:`2px solid ${C.gold}`,
+          }}>
+            <div style={{ fontSize:9.5, fontWeight:700, color:C.textFaint, textTransform:"uppercase", letterSpacing:"0.07em", fontFamily:"'DM Sans',sans-serif", marginBottom:3 }}>
+              Operasyon Notu
+            </div>
+            <div style={{ fontSize:12, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", lineHeight:1.5, fontStyle:"italic" }}>
+              {stop.operationalNote}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// The full read-mode dossier — purely presentational, given an already-
+// loaded `tour` (from mapTourFromDB, including languages/channels/
+// itineraryStops). Used identically by TourDetailPage's own read mode and
+// by the guide read-only deep-link modal, so the two surfaces can never
+// render different information for the same tour. `hideChannels` lets the
+// guide modal omit Satış Kanalı Bilgileri outright as defense in depth —
+// in practice a guide's own tour_channels RLS already returns zero rows,
+// so tour.channels is already empty for them regardless.
+function TourDossierReadView({ tour, hideChannels }) {
+  const { isMobile } = useBreakpoint();
+  const opRows = _operationalInfoRows(tour);
+  const cancelRows = _cancellationRuleRows(tour);
+  const meetingRows = _meetingEndRows(tour);
+  const hasItinerary = (tour.itineraryStops || []).length > 0;
+  const hasIncluded = (tour.includedItems || []).length > 0;
+  const hasExcluded = (tour.excludedItems || []).length > 0;
+  const hasInclusionsSection = hasIncluded || hasExcluded;
+  const hasChannels = !hideChannels && (tour.channels || []).length > 0;
+
+  const sectionGap = { marginTop:32 };
+
+  return (
+    <div>
+      {}
+      <div>
+        <DossierSectionHeading>Genel Bakış</DossierSectionHeading>
+        <div style={{ display:"flex", alignItems:"baseline", gap:10, flexWrap:"wrap", marginBottom:10 }}>
+          <span style={{ fontSize:18, fontWeight:700, color:C.navy, fontFamily:"'Playfair Display',serif" }}>{tour.name}</span>
+          {tour.languageNames?.length > 0 && (
+            <span style={{ fontSize:12.5, color:C.gold, fontFamily:"'DM Sans',sans-serif", fontWeight:600 }}>
+              {tour.languageNames.join(' · ')}
+            </span>
+          )}
+        </div>
+        {tour.description
+          ? <div style={{ fontSize:13.5, color:C.textMid, fontFamily:"'DM Sans',sans-serif", lineHeight:1.7 }}>{tour.description}</div>
+          : <DossierEmptyNote/>}
+      </div>
+
+      {}
+      <div style={sectionGap}>
+        <DossierSectionHeading>Operasyon Bilgileri</DossierSectionHeading>
+        {opRows.length > 0
+          ? <div>{opRows.map(r => <DossierRow key={r.key} label={r.label} value={r.value}/>)}</div>
+          : <DossierEmptyNote/>}
+      </div>
+
+      {}
+      {hasItinerary && (
+        <div style={sectionGap}>
+          <DossierSectionHeading>Tur Rotası</DossierSectionHeading>
+          <div>{tour.itineraryStops.map((s, i) => <DossierItineraryStop key={s.id || i} stop={s} index={i}/>)}</div>
+        </div>
+      )}
+
+      {}
+      {hasInclusionsSection && (
+        <div style={sectionGap}>
+          <div style={{ display:"grid", gridTemplateColumns: (!isMobile && hasIncluded && hasExcluded) ? "1fr 1fr" : "1fr", gap:28 }}>
+            {hasIncluded && (
+              <div>
+                <DossierSectionHeading>Tura Dahil</DossierSectionHeading>
+                <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+                  {tour.includedItems.map((item, i) => (
+                    <div key={i} style={{ display:"flex", gap:9, alignItems:"flex-start" }}>
+                      <span style={{ color:C.green, fontSize:13, lineHeight:1.5, flexShrink:0 }}>✓</span>
+                      <span style={{ fontSize:13, color:C.text, fontFamily:"'DM Sans',sans-serif", lineHeight:1.5 }}>{item}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {hasExcluded && (
+              <div>
+                <DossierSectionHeading>Tura Dahil Değil</DossierSectionHeading>
+                <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+                  {tour.excludedItems.map((item, i) => (
+                    <div key={i} style={{ display:"flex", gap:9, alignItems:"flex-start" }}>
+                      <span style={{ color:C.textFaint, fontSize:13, lineHeight:1.5, flexShrink:0 }}>✕</span>
+                      <span style={{ fontSize:13, color:C.textMid, fontFamily:"'DM Sans',sans-serif", lineHeight:1.5 }}>{item}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {}
+      {cancelRows.length > 0 && (
+        <div style={sectionGap}>
+          <DossierSectionHeading>Rezervasyon ve İptal Kuralları</DossierSectionHeading>
+          <div>{cancelRows.map(r => <DossierRow key={r.key} label={r.label} value={r.value}/>)}</div>
+        </div>
+      )}
+
+      {}
+      {meetingRows.length > 0 && (
+        <div style={sectionGap}>
+          <DossierSectionHeading>Buluşma ve Bitiş</DossierSectionHeading>
+          <div>{meetingRows.map(r => <DossierRow key={r.key} label={r.label} value={r.value}/>)}</div>
+        </div>
+      )}
+
+      {}
+      {tour.guideNotesTr && (
+        <div style={sectionGap}>
+          <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:10 }}>
+            <span style={{ fontSize:15.5, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif" }}>Rehber İçin Operasyon Notları</span>
+            <span style={{
+              fontSize:10, fontWeight:600, color:C.gold, background:C.goldPale,
+              padding:"2px 8px", borderRadius:99, fontFamily:"'DM Sans',sans-serif",
+              textTransform:"uppercase", letterSpacing:"0.05em",
+            }}>İç Operasyon Notu</span>
+          </div>
+          <div style={{
+            borderLeft:`2px solid rgba(184,151,58,0.4)`, paddingLeft:14,
+            fontSize:13.5, color:C.text, fontFamily:"'Playfair Display',serif", fontStyle:"italic", lineHeight:1.65,
+          }}>
+            {tour.guideNotesTr}
+          </div>
+        </div>
+      )}
+
+      {}
+      {hasChannels && (
+        <div style={sectionGap}>
+          <DossierSectionHeading>Satış Kanalı Bilgileri</DossierSectionHeading>
+          <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+            {tour.channels.map(c => (
+              <div key={c.id} style={{ padding:"12px 0", borderBottom:`1px solid ${C.borderLight}` }}>
+                <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:10, marginBottom:6 }}>
+                  <span style={{ fontSize:13.5, fontWeight:700, color:C.text, fontFamily:"'DM Sans',sans-serif" }}>{c.sourceName || "—"}</span>
+                  <span style={{
+                    fontSize:10.5, fontWeight:600, padding:"2px 8px", borderRadius:99,
+                    color: c.isActive ? C.green : C.textFaint,
+                    background: c.isActive ? C.greenBg : C.ivory,
+                    fontFamily:"'DM Sans',sans-serif",
+                  }}>{c.isActive ? "Aktif" : "Pasif"}</span>
+                </div>
+                <DossierRow label="External Product ID" value={c.externalProductId}/>
+                <DossierRow label="Rezervasyon Dili" value={c.bookingLanguage}/>
+                <DossierRow label="Platform Fiyatı" value={c.price != null ? `${c.currency==='TRY'?'₺':c.currency==='USD'?'$':'€'}${c.price}` : null}/>
+                {c.listingUrl && (
+                  <div style={{ display:"flex", flexDirection: isMobile ? "column" : "row", gap: isMobile ? 3 : 16, padding:"9px 0" }}>
+                    <span style={{ flex: isMobile ? "none" : "0 0 168px", fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif" }}>Listing URL</span>
+                    <a href={c.listingUrl} target="_blank" rel="noopener noreferrer" style={{
+                      flex:1, minWidth:0, fontSize:12.5, color:C.blue, fontFamily:"'DM Sans',sans-serif",
+                      wordBreak:"break-all", textDecoration:"none",
+                    }}>{c.listingUrl}</a>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Guide read-only deep link — triggered from ReservationDetailPage's own
+// "Tur Bilgilerini Gör" button (guide role only). Deliberately a modal
+// over the CURRENT page, not a navigation to /tours/:id: ROLE_PERMISSIONS
+// has no "tours" entry for Rehber (unchanged, not broadened here), so a
+// route change would hit AccessDenied before ever reaching a tour page.
+// This sidesteps that entirely — no navigation/auth change of any kind —
+// by fetching the SAME useRepo("tour","getById",tourId) call TourDetailPage
+// itself uses, which is already correctly scoped by the existing
+// "tours: guide reads assigned tour" / "tour_itinerary_stops: guide reads
+// assigned tour" RLS policies (a guide viewing a reservation they are not
+// assigned to would simply get null back here — never reachable in
+// practice, since this button only ever renders on a reservation page the
+// guide themselves is looking at). Renders TourDossierReadView with
+// hideChannels — defense in depth: a guide's own tour_channels RLS already
+// returns zero rows, so this is never the only thing protecting
+// commercial/pricing data, just an explicit second guarantee. No edit
+// controls exist anywhere in this component, regardless of role.
+function GuideTourInfoModal({ tourId, onClose }) {
+  const { isMobile } = useBreakpoint();
+  const { data: tour, loading, error } = useRepo("tour", "getById", tourId);
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = prev; };
+  }, []);
+  return ReactDOM.createPortal((
+    <div style={{
+      position:"fixed", inset:0, zIndex:1000,
+      background:"rgba(13,27,62,0.55)", backdropFilter:"blur(3px)",
+      display:"flex", alignItems:"center", justifyContent:"center",
+      padding: isMobile ? 0 : 16, overflowY:"auto",
+    }} onClick={e=>{ if(e.target===e.currentTarget) onClose(); }}>
+      <div style={{
+        background:C.white, borderRadius:T.radius,
+        width:"100%", maxWidth:720,
+        maxHeight:"calc(100vh - 48px)", overflow:"hidden", minHeight:0,
+        boxShadow:"0 16px 40px rgba(13,27,62,0.22)",
+        display:"flex", flexDirection:"column", boxSizing:"border-box",
+      }}>
+        <div style={{
+          padding:"18px 24px", borderBottom:`1px solid ${C.borderLight}`,
+          display:"flex", alignItems:"center", justifyContent:"space-between", flexShrink:0,
+        }}>
+          <div>
+            <div style={{ fontSize:9.5, fontWeight:700, letterSpacing:"0.12em", textTransform:"uppercase", color:C.gold, fontFamily:"'DM Sans',sans-serif", marginBottom:3 }}>
+              Tur Bilgi Merkezi
+            </div>
+            <div style={{fontSize:16, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif"}}>
+              {tour?.name || "Tur"}
+            </div>
+          </div>
+          <button onClick={onClose} style={{
+            width:32, height:32, borderRadius:7, border:`1px solid ${C.border}`,
+            background:"transparent", cursor:"pointer", color:C.textFaint,
+            display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0,
+          }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+              <path d="M18 6 6 18M6 6l12 12"/>
+            </svg>
+          </button>
+        </div>
+        <div style={{padding: isMobile ? "18px 16px" : "22px 24px", flex:"1 1 auto", minHeight:0, overflowY:"auto"}}>
+          {loading && <LoadingState label="Tur bilgileri yükleniyor…"/>}
+          {!loading && error && <ErrorState message={error} onRetry={()=>{}}/>}
+          {!loading && !error && !tour && (
+            <div style={{padding:"24px 0", textAlign:"center", fontSize:13, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>
+              Bu tur için görüntüleme izniniz yok veya tur bulunamadı.
+            </div>
+          )}
+          {!loading && !error && tour && <TourDossierReadView tour={tour} hideChannels/>}
+        </div>
+      </div>
+    </div>
+  ), document.body);
+}
+
 function TourDetailPage({ tourId, onBack }) {
   const { isMobile } = useBreakpoint();
+  const auth = useAuthContext();
   const _sp = safeParam(tourId);
   if (_sp.invalid) return (
     <div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',padding:60,gap:16}}>
@@ -9222,6 +9633,15 @@ function TourDetailPage({ tourId, onBack }) {
   const { data:orig, loading:tdLoading, error:tdError } = useRepo("tour", "getById", tourId);
   const { mutate:mutTour, mutating:tourSaving } = useRepoMutation("tour");
 
+  // No new permission system: matches the EXACT existing write-RLS model
+  // for tours (tours: operations write/update + tours: admin full access
+  // — see supabase_rls_policies.sql). A role reaching this page at all is
+  // already gated by ROLE_PERMISSIONS.tours (Yönetici/Operasyon only,
+  // unchanged) — this just decides whether that same role also sees
+  // "Düzenle" here, one-to-one with what the database would accept anyway.
+  const canEdit = auth.role === "Yönetici" || auth.role === "Operasyon";
+  const [mode, setMode] = useState("read"); // "read" | "edit" — read is the default
+
   const [name, setName]                 = useState("");
   const [category, setCategory]         = useState("cultural");
   const [description, setDescription]   = useState("");
@@ -9232,12 +9652,29 @@ function TourDetailPage({ tourId, onBack }) {
   const [tourType, setTourType]         = useState([]);
   const [maxGuests, setMaxGuests]       = useState("");
   const [meetingPoint, setMeetingPoint] = useState("");
-  const [notes, setNotes]               = useState("");
   const [languages, setLanguages]       = useState([]);
   const [channels, setChannels]         = useState([]);
+  // Tour Information Center — Phase 2 edit-mode state.
+  const [meetingInstructionsTr, setMeetingInstructionsTr] = useState("");
+  const [endPointTr, setEndPointTr]                       = useState("");
+  const [accessibilityInfoTr, setAccessibilityInfoTr]     = useState("");
+  const [petsPolicyTr, setPetsPolicyTr]                   = useState("");
+  const [bookingCutoffText, setBookingCutoffText]         = useState("");
+  const [freeCancellationText, setFreeCancellationText]   = useState("");
+  const [lateCancellationText, setLateCancellationText]   = useState("");
+  const [noShowPolicyText, setNoShowPolicyText]           = useState("");
+  const [otherConditionsTr, setOtherConditionsTr]         = useState("");
+  const [guideNotesTr, setGuideNotesTr]                   = useState("");
+  const [includedItems, setIncludedItems]                 = useState([]);
+  const [excludedItems, setExcludedItems]                 = useState([]);
+  const [itineraryStops, setItineraryStops]               = useState([]);
   const [errs, setErrs]                 = useState({});
-  const [saved, setSaved]               = useState(false);
 
+  // Seeds EVERY field — existing and new — from the loaded record every
+  // time it (re)loads. This is the data-safety anchor for the whole page:
+  // handleSave below always sends this same complete set back together,
+  // so a save can never omit-and-thereby-null a dossier field just
+  // because the user only looked at, say, the Satış Kanalları section.
   useEffect(() => {
     if (orig) {
       setName(orig.name || "");
@@ -9259,12 +9696,27 @@ function TourDetailPage({ tourId, onBack }) {
       setTourType(orig.tourType || []);
       setMaxGuests(orig.maxGuests ? String(orig.maxGuests) : "");
       setMeetingPoint(orig.meetingPoint || "");
-      setNotes(orig.notes || "");
       setLanguages(orig.languages || []);
       setChannels((orig.channels||[]).map(c => ({
         sourceId: c.sourceId, externalProductId: c.externalProductId,
         price: c.price!=null ? String(c.price) : "", currency: c.currency || "EUR",
-        isActive: c.isActive, listingUrl: c.listingUrl,
+        isActive: c.isActive, listingUrl: c.listingUrl, bookingLanguage: c.bookingLanguage,
+      })));
+      setMeetingInstructionsTr(orig.meetingInstructionsTr || "");
+      setEndPointTr(orig.endPointTr || "");
+      setAccessibilityInfoTr(orig.accessibilityInfoTr || "");
+      setPetsPolicyTr(orig.petsPolicyTr || "");
+      setBookingCutoffText(orig.bookingCutoffText || "");
+      setFreeCancellationText(orig.freeCancellationText || "");
+      setLateCancellationText(orig.lateCancellationText || "");
+      setNoShowPolicyText(orig.noShowPolicyText || "");
+      setOtherConditionsTr(orig.otherConditionsTr || "");
+      setGuideNotesTr(orig.guideNotesTr || "");
+      setIncludedItems(orig.includedItems || []);
+      setExcludedItems(orig.excludedItems || []);
+      setItineraryStops((orig.itineraryStops || []).map(s => ({
+        placeName: s.placeName, descriptionTr: s.descriptionTr,
+        operationalNote: s.operationalNote, approxDurationText: s.approxDurationText,
       })));
     }
   }, [orig?.id]);
@@ -9273,6 +9725,44 @@ function TourDetailPage({ tourId, onBack }) {
   if (tdError)   return <ErrorState message={tdError} onRetry={()=>{}}/>;
   if (!orig)     return <NotFound404 onBack={onBack}/>;
 
+  function enterEdit() { setMode("edit"); }
+  function cancelEdit() {
+    // Revert any in-progress, unsaved edits back to the last-loaded record
+    // — re-running the exact same seeding effect body would duplicate it,
+    // so this simply re-triggers it by forcing the effect's dependency
+    // through a fresh read of `orig` (already current) via direct sets.
+    setName(orig.name || ""); setCategory(orig.category || "cultural");
+    setDescription(orig.description || ""); setDurationText(orig.durationText || "");
+    setBasePrice(orig.basePrice ? String(orig.basePrice) : ""); setCurrency(orig.currency || "EUR");
+    setStatus(orig.status || "Aktif"); setTourType(orig.tourType || []);
+    setMaxGuests(orig.maxGuests ? String(orig.maxGuests) : ""); setMeetingPoint(orig.meetingPoint || "");
+    setLanguages(orig.languages || []);
+    setChannels((orig.channels||[]).map(c => ({
+      sourceId: c.sourceId, externalProductId: c.externalProductId,
+      price: c.price!=null ? String(c.price) : "", currency: c.currency || "EUR",
+      isActive: c.isActive, listingUrl: c.listingUrl, bookingLanguage: c.bookingLanguage,
+    })));
+    setMeetingInstructionsTr(orig.meetingInstructionsTr || ""); setEndPointTr(orig.endPointTr || "");
+    setAccessibilityInfoTr(orig.accessibilityInfoTr || ""); setPetsPolicyTr(orig.petsPolicyTr || "");
+    setBookingCutoffText(orig.bookingCutoffText || ""); setFreeCancellationText(orig.freeCancellationText || "");
+    setLateCancellationText(orig.lateCancellationText || ""); setNoShowPolicyText(orig.noShowPolicyText || "");
+    setOtherConditionsTr(orig.otherConditionsTr || ""); setGuideNotesTr(orig.guideNotesTr || "");
+    setIncludedItems(orig.includedItems || []); setExcludedItems(orig.excludedItems || []);
+    setItineraryStops((orig.itineraryStops || []).map(s => ({
+      placeName: s.placeName, descriptionTr: s.descriptionTr,
+      operationalNote: s.operationalNote, approxDurationText: s.approxDurationText,
+    })));
+    setErrs({});
+    setMode("read");
+  }
+
+  // Always sends the COMPLETE field set — every existing field plus every
+  // Tour Information Center field — in one call, every time. This is what
+  // makes a save safe regardless of which section the user actually
+  // looked at: mapTourToDB only ever writes a column when its key is
+  // present here, and every key always IS present here, so nothing is
+  // ever implicitly cleared. tours.notes is the one deliberate exception —
+  // never included, never touched, see mapTourToDB's own note.
   async function handleSave() {
     const e = validate({ name: { required:"Tur adı zorunludur", minLen:2 } }, { name });
     if (maxGuests && (isNaN(parseInt(maxGuests)) || parseInt(maxGuests) <= 0)) {
@@ -9283,16 +9773,20 @@ function TourDetailPage({ tourId, onBack }) {
     const { data, error } = await mutTour("update", orig.id, {
       name, category, description, durationText: durationText || null,
       basePrice: basePrice ? parseFloat(basePrice) : 0, currency, status,
-      tourType, maxGuests: maxGuests || null, meetingPoint, notes,
+      tourType, maxGuests: maxGuests || null, meetingPoint,
       languages, channels,
+      meetingInstructionsTr, endPointTr, accessibilityInfoTr, petsPolicyTr,
+      bookingCutoffText, freeCancellationText, lateCancellationText, noShowPolicyText,
+      otherConditionsTr, guideNotesTr, includedItems, excludedItems, itineraryStops,
     });
     if (error) { showToast("Kaydedilemedi: " + error); return; }
     if (data?._syncWarning) {
+      // A child-table sync failure is surfaced distinctly and the page
+      // stays in edit mode — never silently presented as a clean success.
       showToast("Kaydedildi, ancak " + data._syncWarning);
     } else {
-      setSaved(true);
       showToast("Tur kaydedildi ✓");
-      setTimeout(() => setSaved(false), 2400);
+      setMode("read");
     }
   }
 
@@ -9302,10 +9796,10 @@ function TourDetailPage({ tourId, onBack }) {
       {}
       <div style={{
         background:C.white, border:`1px solid ${C.border}`, borderRadius:12,
-        padding:"15px 22px",
+        padding: isMobile ? "14px 16px" : "15px 22px",
         display:"flex", alignItems:"center", justifyContent:"space-between", gap:16, flexWrap:"wrap",
       }}>
-        <div style={{display:"flex", alignItems:"center", gap:14, minWidth:0}}>
+        <div style={{display:"flex", alignItems:"center", gap:14, minWidth:0, flexWrap: isMobile ? "wrap" : "nowrap"}}>
           <button onClick={onBack} style={{
             display:"flex", alignItems:"center", gap:6, flexShrink:0,
             background:C.ivory, border:`1px solid ${C.border}`,
@@ -9318,9 +9812,12 @@ function TourDetailPage({ tourId, onBack }) {
             <URIc d="M15 18l-6-6 6-6" size={13} sw={2}/>
             Turlar
           </button>
-          <div style={{width:1, height:20, background:C.borderLight, flexShrink:0}}/>
-          <span style={{fontSize:12, color:C.textFaint, fontFamily:"'DM Mono',monospace", background:C.ivory, border:`1px solid ${C.borderLight}`, padding:"3px 8px", borderRadius:5, flexShrink:0}}>{orig.id}</span>
+          {!isMobile && <div style={{width:1, height:20, background:C.borderLight, flexShrink:0}}/>}
           <div style={{minWidth:0}}>
+            <div style={{
+              fontSize:9.5, fontWeight:700, letterSpacing:"0.12em", textTransform:"uppercase",
+              color:C.gold, fontFamily:"'DM Sans',sans-serif", marginBottom:3,
+            }}>Tur Bilgi Merkezi</div>
             <div style={{fontSize:16, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif", lineHeight:1.2, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{name}</div>
             <div style={{fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:2}}>
               {TOUR_CATEGORY_LABEL[category] || category} · {tourDurationLabel({ durationText, duration: orig?.duration }) || "Süre belirtilmemiş"}
@@ -9329,17 +9826,37 @@ function TourDetailPage({ tourId, onBack }) {
         </div>
         <div style={{display:"flex", alignItems:"center", gap:10, flexShrink:0}}>
           <TourStatusBadge status={status}/>
-          <button onClick={handleSave} style={{
-            display:"flex", alignItems:"center", gap:7,
-            padding:"8px 18px", borderRadius:7,
-            border:"none", background: saved ? C.green : C.navy,
-            cursor:"pointer", color:C.white,
-            fontFamily:"'DM Sans',sans-serif", fontSize:13, fontWeight:600,
-            transition:"background .2s",
-          }}>
-            <URIc d={saved?"M20 6L9 17l-5-5":"M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v14a2 2 0 01-2 2z M17 21v-8H7v8 M7 3v5h8"} size={14} sw={2}/>
-            {saved ? "Kaydedildi ✓" : "Kaydet"}
-          </button>
+          {mode === "read" ? (
+            canEdit && (
+              <button onClick={enterEdit} style={{
+                display:"flex", alignItems:"center", gap:7,
+                padding:"8px 18px", borderRadius:7,
+                border:"none", background:C.navy, cursor:"pointer", color:C.white,
+                fontFamily:"'DM Sans',sans-serif", fontSize:13, fontWeight:600,
+              }}>
+                <URIc d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" size={13} sw={1.8}/>
+                Düzenle
+              </button>
+            )
+          ) : (
+            <>
+              <button onClick={cancelEdit} style={{
+                padding:"8px 16px", borderRadius:7, cursor:"pointer",
+                border:`1px solid ${C.border}`, background:C.white,
+                color:C.textMid, fontFamily:"'DM Sans',sans-serif", fontSize:13,
+              }}>İptal</button>
+              <button onClick={handleSave} disabled={tourSaving} style={{
+                display:"flex", alignItems:"center", gap:7,
+                padding:"8px 18px", borderRadius:7,
+                border:"none", background:C.navy, cursor: tourSaving ? "default" : "pointer",
+                color:C.white, opacity: tourSaving ? 0.7 : 1,
+                fontFamily:"'DM Sans',sans-serif", fontSize:13, fontWeight:600,
+              }}>
+                <URIc d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v14a2 2 0 01-2 2z M17 21v-8H7v8 M7 3v5h8" size={14} sw={2}/>
+                {tourSaving ? "Kaydediliyor…" : "Kaydet"}
+              </button>
+            </>
+          )}
         </div>
       </div>
 
@@ -9347,21 +9864,45 @@ function TourDetailPage({ tourId, onBack }) {
       <div style={{display:"grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 300px", gap:20, alignItems:"start"}}>
 
         {}
-        <div style={{background:C.white, border:`1px solid ${C.border}`, borderRadius:12, padding: isMobile ? "18px 16px" : "22px 24px"}}>
-          <TourFormFields
-            name={name} setName={setName} category={category} setCategory={setCategory}
-            description={description} setDescription={setDescription}
-            durationText={durationText} setDurationText={setDurationText}
-            basePrice={basePrice} setBasePrice={setBasePrice} currency={currency} setCurrency={setCurrency}
-            status={status} setStatus={setStatus}
-            tourType={tourType} setTourType={setTourType}
-            maxGuests={maxGuests} setMaxGuests={setMaxGuests}
-            meetingPoint={meetingPoint} setMeetingPoint={setMeetingPoint}
-            notes={notes} setNotes={setNotes}
-            languages={languages} setLanguages={setLanguages}
-            channels={channels} setChannels={setChannels}
-            errors={errs}
-          />
+        <div style={{background:C.white, border:`1px solid ${C.border}`, borderRadius:12, padding: isMobile ? "18px 16px" : "26px 28px"}}>
+          {mode === "read" ? (
+            <TourDossierReadView tour={orig}/>
+          ) : (
+            <>
+              <TourFormFields
+                name={name} setName={setName} category={category} setCategory={setCategory}
+                description={description} setDescription={setDescription}
+                durationText={durationText} setDurationText={setDurationText}
+                basePrice={basePrice} setBasePrice={setBasePrice} currency={currency} setCurrency={setCurrency}
+                status={status} setStatus={setStatus}
+                tourType={tourType} setTourType={setTourType}
+                maxGuests={maxGuests} setMaxGuests={setMaxGuests}
+                meetingPoint={meetingPoint} setMeetingPoint={setMeetingPoint}
+                languages={languages} setLanguages={setLanguages}
+                channels={channels} setChannels={setChannels}
+                errors={errs}
+              />
+              <div style={{height:1, background:C.borderLight, margin:"20px 0 16px"}}/>
+              <div style={{fontSize:9.5, fontWeight:700, letterSpacing:"0.12em", textTransform:"uppercase", color:C.gold, fontFamily:"'DM Sans',sans-serif", marginBottom:14}}>
+                Tur Bilgi Merkezi
+              </div>
+              <TourDossierEditFields
+                meetingInstructionsTr={meetingInstructionsTr} setMeetingInstructionsTr={setMeetingInstructionsTr}
+                endPointTr={endPointTr} setEndPointTr={setEndPointTr}
+                accessibilityInfoTr={accessibilityInfoTr} setAccessibilityInfoTr={setAccessibilityInfoTr}
+                petsPolicyTr={petsPolicyTr} setPetsPolicyTr={setPetsPolicyTr}
+                bookingCutoffText={bookingCutoffText} setBookingCutoffText={setBookingCutoffText}
+                freeCancellationText={freeCancellationText} setFreeCancellationText={setFreeCancellationText}
+                lateCancellationText={lateCancellationText} setLateCancellationText={setLateCancellationText}
+                noShowPolicyText={noShowPolicyText} setNoShowPolicyText={setNoShowPolicyText}
+                otherConditionsTr={otherConditionsTr} setOtherConditionsTr={setOtherConditionsTr}
+                guideNotesTr={guideNotesTr} setGuideNotesTr={setGuideNotesTr}
+                includedItems={includedItems} setIncludedItems={setIncludedItems}
+                excludedItems={excludedItems} setExcludedItems={setExcludedItems}
+                itineraryStops={itineraryStops} setItineraryStops={setItineraryStops}
+              />
+            </>
+          )}
         </div>
 
         {}
@@ -16004,6 +16545,199 @@ function TourChannelRows({ channels, setChannels, sources, srcLoading }) {
   );
 }
 
+// Reusable repeatable-text-row editor — used for both tours.included_items
+// and tours.excluded_items (two independent instances, same component).
+// Simple rows, never a comma-separated giant textarea.
+function TourInclusionsEditor({ items, setItems, addLabel, placeholder }) {
+  function updateRow(i, value) { setItems(prev => prev.map((v,j) => j===i ? value : v)); }
+  function removeRow(i) { setItems(prev => prev.filter((_,j) => j!==i)); }
+  function addRow() { setItems(prev => [...prev, ""]); }
+  const list = items || [];
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+      {list.map((val, i) => (
+        <div key={i} style={{ display:"flex", gap:8, alignItems:"center" }}>
+          <div style={{ flex:1 }}>
+            <FText value={val} onChange={v=>updateRow(i,v)} placeholder={placeholder}/>
+          </div>
+          <button type="button" onClick={()=>removeRow(i)} style={{
+            padding:"9px 10px", borderRadius:7, border:`1px solid ${C.border}`, background:C.white,
+            cursor:"pointer", color:C.red, flexShrink:0, display:"flex", alignItems:"center",
+          }}><RIc d="M18 6L6 18M6 6l12 12" size={13} sw={2}/></button>
+        </div>
+      ))}
+      <button type="button" onClick={addRow} style={{
+        alignSelf:"flex-start", display:"flex", alignItems:"center", gap:6,
+        padding:"8px 14px", borderRadius:7, border:`1px dashed ${C.border}`, background:C.white,
+        cursor:"pointer", color:C.navy, fontFamily:"'DM Sans',sans-serif", fontSize:12.5, fontWeight:500,
+      }}>
+        <RIc d="M12 5v14m-7-7h14" size={13} sw={2}/>
+        {addLabel || "+ Madde Ekle"}
+      </button>
+    </div>
+  );
+}
+
+// Itinerary stop editor — same design language as TourChannelRows (one
+// card per row, add/remove at the bottom). Move up/down instead of drag/
+// drop; stop_order itself is never edited directly here — it is always
+// regenerated from the visible array order at save time
+// (_syncTourItineraryStops), so reordering on screen is all this needs to do.
+function TourItineraryStopRows({ stops, setStops }) {
+  function updateRow(i, patch) { setStops(prev => prev.map((s,j) => j===i ? {...s, ...patch} : s)); }
+  function removeRow(i) { setStops(prev => prev.filter((_,j) => j!==i)); }
+  function addRow() { setStops(prev => [...prev, { placeName:"", descriptionTr:"", operationalNote:"", approxDurationText:"" }]); }
+  function move(i, direction) { setStops(prev => _moveArrayItem(prev, i, direction)); }
+  const list = stops || [];
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+      {list.map((s, i) => (
+        <div key={i} style={{ border:`1px solid ${C.borderLight}`, borderRadius:9, padding:"12px 14px", background:C.ivory }}>
+          <div style={{ display:"flex", gap:10, alignItems:"flex-end", marginBottom:10 }}>
+            <div style={{
+              flexShrink:0, width:26, height:26, borderRadius:"50%", marginBottom:2,
+              background:C.white, border:`1px solid ${C.border}`,
+              display:"flex", alignItems:"center", justifyContent:"center",
+              fontSize:11, fontWeight:700, color:C.navy, fontFamily:"'DM Sans',sans-serif",
+            }}>{i+1}</div>
+            <div style={{ flex:1 }}>
+              <div style={{ fontSize:10.5, fontWeight:600, color:C.textFaint, textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:5, fontFamily:"'DM Sans',sans-serif" }}>Durak Adı</div>
+              <FText value={s.placeName} onChange={v=>updateRow(i,{placeName:v})} placeholder="Örn: Kapalıçarşı Ana Giriş"/>
+            </div>
+            <div style={{ display:"flex", gap:4, flexShrink:0 }}>
+              <button type="button" onClick={()=>move(i,-1)} disabled={i===0} style={{
+                padding:"9px 8px", borderRadius:7, border:`1px solid ${C.border}`, background:C.white,
+                cursor: i===0 ? "not-allowed" : "pointer", color: i===0 ? C.textFaint : C.textMid,
+                opacity: i===0 ? 0.5 : 1, display:"flex", alignItems:"center",
+              }}><RIc d="M18 15l-6-6-6 6" size={13} sw={2}/></button>
+              <button type="button" onClick={()=>move(i,1)} disabled={i===list.length-1} style={{
+                padding:"9px 8px", borderRadius:7, border:`1px solid ${C.border}`, background:C.white,
+                cursor: i===list.length-1 ? "not-allowed" : "pointer", color: i===list.length-1 ? C.textFaint : C.textMid,
+                opacity: i===list.length-1 ? 0.5 : 1, display:"flex", alignItems:"center",
+              }}><RIc d="M6 9l6 6 6-6" size={13} sw={2}/></button>
+              <button type="button" onClick={()=>removeRow(i)} style={{
+                padding:"9px 10px", borderRadius:7, border:`1px solid ${C.border}`, background:C.white,
+                cursor:"pointer", color:C.red, display:"flex", alignItems:"center",
+              }}><RIc d="M18 6L6 18M6 6l12 12" size={13} sw={2}/></button>
+            </div>
+          </div>
+          <div style={{ marginBottom:10 }}>
+            <div style={{ fontSize:10.5, fontWeight:600, color:C.textFaint, textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:5, fontFamily:"'DM Sans',sans-serif" }}>Türkçe Açıklama</div>
+            <FTextArea value={s.descriptionTr} onChange={v=>updateRow(i,{descriptionTr:v})} rows={2} placeholder="Opsiyonel"/>
+          </div>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:10 }}>
+            <div>
+              <div style={{ fontSize:10.5, fontWeight:600, color:C.textFaint, textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:5, fontFamily:"'DM Sans',sans-serif" }}>Yaklaşık Süre</div>
+              <FText value={s.approxDurationText} onChange={v=>updateRow(i,{approxDurationText:v})} placeholder="Örn: 20 dakika"/>
+            </div>
+            <div>
+              <div style={{ fontSize:10.5, fontWeight:600, color:C.textFaint, textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:5, fontFamily:"'DM Sans',sans-serif" }}>Operasyon Notu</div>
+              <FText value={s.operationalNote} onChange={v=>updateRow(i,{operationalNote:v})} placeholder="Opsiyonel"/>
+            </div>
+          </div>
+        </div>
+      ))}
+      <button type="button" onClick={addRow} style={{
+        alignSelf:"flex-start", display:"flex", alignItems:"center", gap:6,
+        padding:"8px 14px", borderRadius:7, border:`1px dashed ${C.border}`, background:C.white,
+        cursor:"pointer", color:C.navy, fontFamily:"'DM Sans',sans-serif", fontSize:12.5, fontWeight:500,
+      }}>
+        <RIc d="M12 5v14m-7-7h14" size={13} sw={2}/>
+        + Durak Ekle
+      </button>
+    </div>
+  );
+}
+
+// Tour Information Center edit fields — everything NewTourModal deliberately
+// does NOT render (see NewTourModal's own comment). Only TourDetailPage's
+// edit mode mounts this, so a brand-new tour is never overloaded with the
+// full dossier editor at creation time.
+function TourDossierEditFields({
+  meetingInstructionsTr, setMeetingInstructionsTr,
+  endPointTr, setEndPointTr,
+  accessibilityInfoTr, setAccessibilityInfoTr,
+  petsPolicyTr, setPetsPolicyTr,
+  bookingCutoffText, setBookingCutoffText,
+  freeCancellationText, setFreeCancellationText,
+  lateCancellationText, setLateCancellationText,
+  noShowPolicyText, setNoShowPolicyText,
+  otherConditionsTr, setOtherConditionsTr,
+  guideNotesTr, setGuideNotesTr,
+  includedItems, setIncludedItems,
+  excludedItems, setExcludedItems,
+  itineraryStops, setItineraryStops,
+}) {
+  return (
+    <>
+      <div style={{fontSize:13.5, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif", marginBottom:14}}>Buluşma ve Bitiş</div>
+      <FGrid cols={2}>
+        <FRow label="Buluşma Talimatları" hint="Buluşma noktasının nasıl bulunacağı — Temel Bilgiler'deki Buluşma Noktası'ndan ayrı.">
+          <FTextArea value={meetingInstructionsTr} onChange={setMeetingInstructionsTr} rows={2} placeholder="Opsiyonel"/>
+        </FRow>
+        <FRow label="Bitiş Noktası">
+          <FTextArea value={endPointTr} onChange={setEndPointTr} rows={2} placeholder="Opsiyonel — buluşma noktasından farklıysa"/>
+        </FRow>
+      </FGrid>
+
+      <div style={{height:1, background:C.borderLight, margin:"20px 0 16px"}}/>
+      <div style={{fontSize:13.5, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif", marginBottom:14}}>Erişilebilirlik ve Politikalar</div>
+      <FGrid cols={2}>
+        <FRow label="Erişilebilirlik">
+          <FTextArea value={accessibilityInfoTr} onChange={setAccessibilityInfoTr} rows={2} placeholder="Opsiyonel"/>
+        </FRow>
+        <FRow label="Evcil Hayvan Politikası">
+          <FTextArea value={petsPolicyTr} onChange={setPetsPolicyTr} rows={2} placeholder="Opsiyonel"/>
+        </FRow>
+      </FGrid>
+
+      <div style={{height:1, background:C.borderLight, margin:"20px 0 16px"}}/>
+      <div style={{fontSize:13.5, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif", marginBottom:14}}>Rezervasyon ve İptal Kuralları</div>
+      <FRow label="Rezervasyon Limiti" full>
+        <FTextArea value={bookingCutoffText} onChange={setBookingCutoffText} rows={2} placeholder="Opsiyonel"/>
+      </FRow>
+      <FRow label="Ücretsiz İptal" full>
+        <FTextArea value={freeCancellationText} onChange={setFreeCancellationText} rows={2} placeholder="Opsiyonel"/>
+      </FRow>
+      <FRow label="Geç İptal" full>
+        <FTextArea value={lateCancellationText} onChange={setLateCancellationText} rows={2} placeholder="Opsiyonel"/>
+      </FRow>
+      <FRow label="Gelmeme Durumu (No-show)" full>
+        <FTextArea value={noShowPolicyText} onChange={setNoShowPolicyText} rows={2} placeholder="Opsiyonel"/>
+      </FRow>
+      <FRow label="Diğer Koşullar" full>
+        <FTextArea value={otherConditionsTr} onChange={setOtherConditionsTr} rows={2} placeholder="Opsiyonel"/>
+      </FRow>
+
+      <div style={{height:1, background:C.borderLight, margin:"20px 0 16px"}}/>
+      <div style={{fontSize:13.5, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif", marginBottom:14}}>Tura Dahil / Tura Dahil Değil</div>
+      <FGrid cols={2}>
+        <FRow label="Tura Dahil">
+          <TourInclusionsEditor items={includedItems} setItems={setIncludedItems} addLabel="+ Madde Ekle" placeholder="Örn: Profesyonel rehber"/>
+        </FRow>
+        <FRow label="Tura Dahil Değil">
+          <TourInclusionsEditor items={excludedItems} setItems={setExcludedItems} addLabel="+ Madde Ekle" placeholder="Örn: Kişisel harcamalar"/>
+        </FRow>
+      </FGrid>
+
+      <div style={{height:1, background:C.borderLight, margin:"20px 0 16px"}}/>
+      <div style={{fontSize:13.5, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif", marginBottom:14}}>Tur Rotası</div>
+      <FRow full>
+        <TourItineraryStopRows stops={itineraryStops} setStops={setItineraryStops}/>
+      </FRow>
+
+      <div style={{height:1, background:C.borderLight, margin:"20px 0 16px"}}/>
+      <div style={{fontSize:13.5, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif", marginBottom:6}}>Rehber İçin Operasyon Notları</div>
+      <div style={{fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginBottom:10}}>
+        Dese Tour iç operasyon içeriği — Civitatis'ten gelen bilgi değildir, otomatik doldurulmaz.
+      </div>
+      <FRow full>
+        <FTextArea value={guideNotesTr} onChange={setGuideNotesTr} rows={3} placeholder="Opsiyonel — yalnızca Dese Tour ekibi ve rehberler görür"/>
+      </FRow>
+    </>
+  );
+}
+
 // Shared Temel Bilgiler / Operasyon / Diller / Satış Kanalları field set —
 // used identically by NewTourModal and TourDetailPage so the two forms can
 // never drift apart. Purely controlled: all state/setters come from props.
@@ -16011,7 +16745,7 @@ function TourFormFields({
   name, setName, category, setCategory, description, setDescription,
   durationText, setDurationText, basePrice, setBasePrice, currency, setCurrency,
   status, setStatus, tourType, setTourType, maxGuests, setMaxGuests,
-  meetingPoint, setMeetingPoint, notes, setNotes,
+  meetingPoint, setMeetingPoint,
   languages, setLanguages, channels, setChannels, errors,
 }) {
   const { sources: channelSources, srcLoading } = useSources({ capability: 'sales' });
@@ -16028,7 +16762,8 @@ function TourFormFields({
           <FText value={durationText} onChange={setDurationText} placeholder="Örn: 3 saat, 4.5 saat, 1 gün"/>
         </FRow>
       </FGrid>
-      <FRow label="Açıklama" full>
+      {}
+      <FRow label="Genel Bakış" hint="Tur Bilgi Merkezi'nde bu turun Türkçe özeti olarak görüntülenir." full>
         <FTextArea value={description} onChange={setDescription} rows={3} placeholder="Tur hakkında kısa açıklama…"/>
       </FRow>
       <FGrid cols={2}>
@@ -16069,9 +16804,6 @@ function TourFormFields({
           <FText value={meetingPoint} onChange={setMeetingPoint} placeholder="Opsiyonel"/>
         </FRow>
       </FGrid>
-      <FRow label="Operasyon Notları" full>
-        <FTextArea value={notes} onChange={setNotes} rows={2} placeholder="Opsiyonel — operasyon ekibi için notlar…"/>
-      </FRow>
 
       <div style={{height:1, background:C.borderLight, margin:"20px 0 16px"}}/>
       <div style={{fontSize:13.5, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif", marginBottom:14}}>Diller</div>
@@ -16097,12 +16829,16 @@ function NewTourModal({ onClose }) {
   const [tourType, setTourType]         = useState([]);
   const [maxGuests, setMaxGuests]       = useState("");
   const [meetingPoint, setMeetingPoint] = useState("");
-  const [notes, setNotes]               = useState("");
   const [languages, setLanguages]       = useState([]);
   const [channels, setChannels]         = useState([]);
   const [errs, setErrs]                 = useState({});
   const { mutate:mutTour, mutating:tourMut } = useRepoMutation("tour");
 
+  // Deliberately lightweight — the full Tour Information Center dossier
+  // (Genel Bakış's extended fields, itinerary, inclusions/exclusions,
+  // cancellation rules, guide notes, ...) is completed afterward from Tour
+  // Detail, never here. Every one of those keys is simply absent from this
+  // payload, which mapTourToDB treats as "don't touch" — never as "clear".
   async function handleSubmit() {
     const e = validate({ name: { required:"Tur adı zorunludur", minLen:3 } }, { name });
     if (maxGuests && (isNaN(parseInt(maxGuests)) || parseInt(maxGuests) <= 0)) {
@@ -16113,7 +16849,7 @@ function NewTourModal({ onClose }) {
     const { data, error } = await mutTour("create", {
       name, category, description, durationText: durationText || null,
       basePrice: basePrice ? parseFloat(basePrice) : 0, currency, status,
-      tourType, maxGuests: maxGuests || null, meetingPoint, notes,
+      tourType, maxGuests: maxGuests || null, meetingPoint,
       languages, channels,
     });
     if (error) { showToast("Tur oluşturulamadı ✗"); return; }
@@ -16137,7 +16873,6 @@ function NewTourModal({ onClose }) {
         tourType={tourType} setTourType={setTourType}
         maxGuests={maxGuests} setMaxGuests={setMaxGuests}
         meetingPoint={meetingPoint} setMeetingPoint={setMeetingPoint}
-        notes={notes} setNotes={setNotes}
         languages={languages} setLanguages={setLanguages}
         channels={channels} setChannels={setChannels}
         errors={errs}
@@ -16442,10 +17177,33 @@ function mapTourChannelFromDB(c) {
   };
 }
 
+// Tour Information Center — one row per itinerary stop. stopOrder is read
+// straight through from stop_order; the query that produces r.tour_
+// itinerary_stops already orders by it (see _TOUR_DETAIL_SELECT/getById),
+// and mapTourFromDB below re-sorts client-side as a defensive no-cost
+// backstop, never assumed.
+function mapTourItineraryStopFromDB(s) {
+  if (!s) return null;
+  return {
+    id: s.id, tourId: s.tour_id, stopOrder: s.stop_order,
+    placeName: s.place_name || '',
+    descriptionTr: s.description_tr || '',
+    operationalNote: s.operational_note || '',
+    approxDurationText: s.approx_duration_text || '',
+  };
+}
+
 function mapTourFromDB(r) {
   if (!r) return null;
   const languages = (r.tour_languages||[]).map(l => ({ code:l.language_code, name:l.language_name }));
   const channels  = (r.tour_channels||[]).map(mapTourChannelFromDB);
+  // tour_itinerary_stops is only present on the row when the caller used
+  // _TOUR_DETAIL_SELECT (getById) — absent (undefined) on a plain list-view
+  // row (getAll), which correctly maps to an empty array here rather than
+  // throwing or fabricating stops that were never fetched.
+  const itineraryStops = (r.tour_itinerary_stops||[])
+    .map(mapTourItineraryStopFromDB)
+    .sort((a,b) => a.stopOrder - b.stopOrder);
   return {
     id:          r.id,
     name:        r.name          || '',
@@ -16458,13 +17216,38 @@ function mapTourFromDB(r) {
     status:      _TOUR_STATUS_APP[r.status] || r.status || 'Aktif',
     basePrice:   parseFloat(r.base_price || 0),
     currency:    r.currency      || 'EUR',
+    // Reused, unrenamed, as the Tour Information Center's Turkish "Genel
+    // Bakış" (overview) field — see supabase_migration_tour_information_
+    // center.sql. No summary_tr column exists or is read anywhere.
     description: r.description   || '',
     pricingType: r.pricing_type  || 'flat',
     isActive:    r.is_active     !== false,
     tourType:    r.tour_type     || [],
     maxGuests:   r.maximum_guest_capacity || null,
     meetingPoint:r.meeting_point || '',
+    // Deliberately left readable but never written by the Tour Information
+    // Center UI going forward (see mapTourToDB) — kept for compatibility
+    // with whatever pre-existing value a tour may already carry.
     notes:       r.notes         || '',
+    // Tour Information Center — Phase 2. All ten nullable columns map to
+    // '' (never null/undefined) so every consumer can treat "no value" as
+    // one consistent falsy string, matching every other text field above.
+    meetingInstructionsTr: r.meeting_instructions_tr || '',
+    endPointTr:            r.end_point_tr            || '',
+    accessibilityInfoTr:   r.accessibility_info_tr    || '',
+    petsPolicyTr:          r.pets_policy_tr           || '',
+    bookingCutoffText:     r.booking_cutoff_text      || '',
+    freeCancellationText:  r.free_cancellation_text   || '',
+    lateCancellationText:  r.late_cancellation_text   || '',
+    noShowPolicyText:      r.no_show_policy_text      || '',
+    otherConditionsTr:     r.other_conditions_tr      || '',
+    // Dese Tour INTERNAL content — never marketplace-derived, never
+    // auto-populated. See supabase_migration_tour_information_center.sql's
+    // COMMENT ON COLUMN for the authoritative statement of this.
+    guideNotesTr:          r.guide_notes_tr           || '',
+    includedItems: r.included_items || [],
+    excludedItems: r.excluded_items || [],
+    itineraryStops,
     languages, languageNames: languages.map(l=>l.name),
     channels,
     createdAt:   r.created_at    ? r.created_at.split('T')[0] : '',
@@ -16473,6 +17256,16 @@ function mapTourFromDB(r) {
   };
 }
 
+// NOTE ON tours.notes: deliberately has NO branch here. The Tour
+// Information Center UI (Phase 2) never renders or collects a value for
+// the legacy `notes` field — see guide_notes_tr instead, a distinct,
+// purpose-specific column. Omitting the key entirely from the object this
+// function receives (rather than ever sending d.notes = '' or null) is
+// exactly what makes tours.notes structurally untouchable by any save
+// this function produces: the `!== undefined` guard below simply never
+// fires for it, so whatever value already exists (including a tour's
+// pre-existing "Deneme" test value) is never read from, written to, or
+// cleared by this function, no matter which fields a caller does send.
 function mapTourToDB(d) {
   const row = {};
   if (d.name         !== undefined) row.name = d.name;
@@ -16484,6 +17277,7 @@ function mapTourToDB(d) {
   if (d.durationText   !== undefined) row.duration_text = d.durationText || null;
   if (d.basePrice      !== undefined) row.base_price = parseFloat(d.basePrice) || 0;
   if (d.currency       !== undefined) row.currency = d.currency || 'EUR';
+  // Reused as "Genel Bakış" — same column, same write path as before.
   if (d.description    !== undefined) row.description = d.description || null;
   // Authoritative lifecycle write — never is_active. The DB trigger derives
   // is_active from this on every insert/update.
@@ -16491,7 +17285,23 @@ function mapTourToDB(d) {
   if (d.tourType        !== undefined) row.tour_type = (d.tourType && d.tourType.length) ? d.tourType : null;
   if (d.maxGuests        !== undefined) row.maximum_guest_capacity = d.maxGuests ? parseInt(d.maxGuests) : null;
   if (d.meetingPoint      !== undefined) row.meeting_point = d.meetingPoint || null;
-  if (d.notes             !== undefined) row.notes = d.notes || null;
+  // Tour Information Center — Phase 2. Every one of these ten follows the
+  // exact same "only write if this call explicitly sent it" convention as
+  // every field above — a save that never mentions, say, guideNotesTr
+  // (e.g. NewTourModal's lightweight create payload) leaves that column
+  // completely untouched rather than nulling it.
+  if (d.meetingInstructionsTr !== undefined) row.meeting_instructions_tr = d.meetingInstructionsTr || null;
+  if (d.endPointTr            !== undefined) row.end_point_tr            = d.endPointTr || null;
+  if (d.accessibilityInfoTr   !== undefined) row.accessibility_info_tr   = d.accessibilityInfoTr || null;
+  if (d.petsPolicyTr          !== undefined) row.pets_policy_tr          = d.petsPolicyTr || null;
+  if (d.bookingCutoffText     !== undefined) row.booking_cutoff_text     = d.bookingCutoffText || null;
+  if (d.freeCancellationText  !== undefined) row.free_cancellation_text  = d.freeCancellationText || null;
+  if (d.lateCancellationText  !== undefined) row.late_cancellation_text  = d.lateCancellationText || null;
+  if (d.noShowPolicyText      !== undefined) row.no_show_policy_text     = d.noShowPolicyText || null;
+  if (d.otherConditionsTr     !== undefined) row.other_conditions_tr     = d.otherConditionsTr || null;
+  if (d.guideNotesTr          !== undefined) row.guide_notes_tr          = d.guideNotesTr || null;
+  if (d.includedItems         !== undefined) row.included_items = (d.includedItems||[]).map(s=>(s||'').trim()).filter(Boolean).length ? d.includedItems.map(s=>(s||'').trim()).filter(Boolean) : null;
+  if (d.excludedItems         !== undefined) row.excluded_items = (d.excludedItems||[]).map(s=>(s||'').trim()).filter(Boolean).length ? d.excludedItems.map(s=>(s||'').trim()).filter(Boolean) : null;
   return row;
 }
 
@@ -16536,7 +17346,53 @@ async function _syncTourChannels(sb, tourId, channels) {
   if (insErr) throw new Error(insErr.message);
 }
 
+// Replace-all sync of a tour's tour_itinerary_stops rows — identical
+// delete-then-insert convention as _syncTourLanguages/_syncTourChannels.
+// stop_order is NEVER trusted from the caller's stale state; it is always
+// regenerated here, deterministically, from the array's own visible order
+// (1-based index) — this is what makes "move up"/"move down" in the
+// editor simply reordering a local array, with the database's stop_order
+// always ending up an exact, gapless reflection of whatever order was on
+// screen at save time. A stop with no place_name (the one NOT NULL,
+// required field) is silently dropped rather than sent to the database,
+// mirroring _syncTourChannels' own drop-incomplete-row convention.
+//
+// Called ONLY when the caller's payload explicitly includes an
+// `itineraryStops` key (see SupabaseTourRepo.create/update's own
+// `if (d.itineraryStops !== undefined)` guard) — an update call that never
+// mentions itineraryStops at all never reaches this function, so an
+// existing itinerary is never touched by an unrelated field edit.
+// stops === [] IS a call that reaches here (the guard only excludes
+// undefined, not an explicit empty array) — that is the intentional
+// "clear the itinerary" case: the DELETE below always runs, and an empty
+// filtered list simply skips the INSERT, leaving zero rows behind.
+// TESTABLE:_syncTourItineraryStops:start
+async function _syncTourItineraryStops(sb, tourId, stops) {
+  const { error: delErr } = await sb.from('tour_itinerary_stops').delete().eq('tour_id', tourId);
+  if (delErr) throw new Error(delErr.message);
+  const list = (stops||[]).filter(s => s && s.placeName && s.placeName.trim());
+  if (!list.length) return;
+  const rows = list.map((s, i) => ({
+    tour_id: tourId,
+    stop_order: i + 1,
+    place_name: s.placeName.trim(),
+    description_tr: s.descriptionTr || null,
+    operational_note: s.operationalNote || null,
+    approx_duration_text: s.approxDurationText || null,
+  }));
+  const { error: insErr } = await sb.from('tour_itinerary_stops').insert(rows);
+  if (insErr) throw new Error(insErr.message);
+}
+// TESTABLE:_syncTourItineraryStops:end
+
 const _TOUR_SELECT = '*,tour_languages(id,language_code,language_name),tour_channels(*,source:sources(id,name))';
+// getById only: the list view (getAll/ToursPage) never needs a tour's full
+// itinerary, so it is deliberately excluded from the plain _TOUR_SELECT
+// above to avoid fetching every stop of every tour for a page that only
+// ever renders name/category/duration/status per row. Supabase's
+// embedded-resource `.order(..., { foreignTable })` (used below) is a
+// single query, never a second round trip — no N+1.
+const _TOUR_DETAIL_SELECT = _TOUR_SELECT + ',tour_itinerary_stops(*)';
 
 const SupabaseTourRepo = {
   async getAll(f = {}) {
@@ -16557,7 +17413,10 @@ const SupabaseTourRepo = {
   async getById(id) {
     const sb = getSB();
     if (!sb) return TourRepository.getById(id);
-    const { data, error } = await sb.from('tours').select(_TOUR_SELECT).eq('id', id).maybeSingle();
+    const { data, error } = await sb.from('tours').select(_TOUR_DETAIL_SELECT)
+      .eq('id', id)
+      .order('stop_order', { foreignTable: 'tour_itinerary_stops' })
+      .maybeSingle();
     if (error) throw new Error(error.message);
     return mapTourFromDB(data);
   },
@@ -16593,6 +17452,10 @@ const SupabaseTourRepo = {
       try { await _syncTourChannels(sb, c.id, d.channels); }
       catch(e) { syncWarning = syncWarning ? syncWarning + ' · Satış kanalları kaydedilemedi: ' + e.message : 'Satış kanalları kaydedilemedi: ' + e.message; }
     }
+    if (d.itineraryStops !== undefined) {
+      try { await _syncTourItineraryStops(sb, c.id, d.itineraryStops); }
+      catch(e) { syncWarning = syncWarning ? syncWarning + ' · Tur rotası kaydedilemedi: ' + e.message : 'Tur rotası kaydedilemedi: ' + e.message; }
+    }
     const created = await SupabaseTourRepo.getById(c.id);
     if (syncWarning) created._syncWarning = syncWarning;
     return created;
@@ -16614,6 +17477,10 @@ const SupabaseTourRepo = {
     if (d.channels !== undefined) {
       try { await _syncTourChannels(sb, id, d.channels); }
       catch(e) { syncWarning = syncWarning ? syncWarning + ' · Satış kanalları kaydedilemedi: ' + e.message : 'Satış kanalları kaydedilemedi: ' + e.message; }
+    }
+    if (d.itineraryStops !== undefined) {
+      try { await _syncTourItineraryStops(sb, id, d.itineraryStops); }
+      catch(e) { syncWarning = syncWarning ? syncWarning + ' · Tur rotası kaydedilemedi: ' + e.message : 'Tur rotası kaydedilemedi: ' + e.message; }
     }
     await _sbLog('tour', id, 'updated', `Tur güncellendi: ${d.name || id}`);
     const updated = await SupabaseTourRepo.getById(id);

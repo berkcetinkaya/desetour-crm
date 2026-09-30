@@ -101,6 +101,22 @@ const CRM_CHANGELOG_CATEGORIES = [
 // Newest first. See the release convention above before editing.
 const CRM_CHANGELOG = [
   {
+    version: '12.37',
+    date: '2026-09-30',
+    title: 'Tur Bilgi Merkezi',
+    summary: 'Tur detayları artık operasyon ekibinin ihtiyaç duyduğu her bilgiyi Türkçe olarak bir arada sunan kapsamlı bir Tur Bilgi Merkezi\'ne dönüştü; Ana Sayfa da okunmamış önemli operasyon uyarılarını artık öne çıkarıyor.',
+    categories: ['Yeni Özellik', 'Operasyon'],
+    highlights: [
+      'Tur detaylarının kapsamlı bir Tur Bilgi Merkezi olarak görüntülenmesi',
+      'Yabancı dilde satılan turların operasyon bilgilerinin CRM içinde Türkçe tutulabilmesi',
+      'Durak bazlı tur rotası, dahil/hariç hizmetler, buluşma-bitiş bilgileri ve rezervasyon/iptal kurallarının tur bazında görüntülenmesi',
+      'Dese Tour\'a özel rehber operasyon notlarının marketplace içeriğinden ayrı tutulması ve rehberlerin kendilerine atanmış turları salt okunur görebilmesi',
+      'Ana Sayfa\'da Civitatis rezervasyon iptalleri gibi okunmamış önemli operasyon uyarılarının öne çıkarılması',
+    ],
+    author: 'Berk',
+    technicalNote: 'Rehberler yalnızca kendilerine atanmış rezervasyonların tur bilgilerini görebiliyor; ticari satış kanalı ve fiyat bilgileri bu görünümde yer almıyor, düzenleme yapamıyorlar.',
+  },
+  {
     version: '12.36',
     date: '2026-09-28',
     title: 'Portekizce Civitatis Desteği',
