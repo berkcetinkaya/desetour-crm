@@ -6793,6 +6793,43 @@ function ResQuickActions({ res, onAssignGuide }) {
   );
 }
 
+// TESTABLE:getMealStatusDisplay:start
+// Tour Preparation Intelligence Phase C1 — pure presentation mapping for
+// reservations.meal_status ('included'|'not_included'|'unknown'), used by
+// both the desktop and mobile Reservation Detail pages. A missing/null/
+// unrecognized value (any legacy or non-Civitatis reservation that has
+// never had this column populated) falls through to the SAME entry as an
+// explicit 'unknown' — this function never distinguishes "missing" from
+// "known unknown" in its output, and 'not_included' is reached ONLY for
+// the exact stored string 'not_included', never as a fallback for
+// anything else. tone is a semantic hint only (never a literal color) so
+// the rendering layer stays the single place that owns the actual color
+// tokens.
+const MEAL_STATUS_DISPLAY = {
+  included:     { title:'Yemek Dahil', supportingText:'Bu rezervasyon yemekli tur seçeneğiyle oluşturuldu.', tone:'positive' },
+  not_included: { title:'Yemek Dahil Değil', supportingText:'Bu rezervasyonda yemek dahil değildir.', tone:'neutral' },
+  unknown:      { title:'Yemek Durumu Belirtilmemiş', supportingText:'Rezervasyon kaynağında yemek seçeneği kesin olarak belirtilmemiş.', tone:'attention' },
+};
+function getMealStatusDisplay(mealStatus) {
+  return MEAL_STATUS_DISPLAY[mealStatus] || MEAL_STATUS_DISPLAY.unknown;
+}
+// TESTABLE:getMealStatusDisplay:end
+
+// TESTABLE:getPurchasedActivityDisplayValue:start
+// Returns the EXACT reservations.purchased_activity_raw string to render,
+// or null when nothing should be shown (null/undefined/blank-after-trim).
+// Deliberately does nothing else: no translation, no repair, no trimming
+// of the returned value itself, no language inference, no reading of the
+// text's own content — the string that comes back is byte-for-byte the
+// same one passed in, so a trailing "-" or any other real character is
+// never altered or hidden.
+function getPurchasedActivityDisplayValue(purchasedActivityRaw) {
+  if (typeof purchasedActivityRaw !== 'string') return null;
+  if (purchasedActivityRaw.trim() === '') return null;
+  return purchasedActivityRaw;
+}
+// TESTABLE:getPurchasedActivityDisplayValue:end
+
 function ReservationDetailPage({ resId, onBack }) {
   const _sp = safeParam(resId);
   if (_sp.invalid) return (
@@ -6991,6 +7028,53 @@ function ReservationDetailPage({ resId, onBack }) {
                 }}>{r.tourLanguage ? "Değiştir" : "Belirle"}</button>
               </div>
             </div>
+          </RCard>
+
+          {}
+          {/* Tour Preparation Intelligence Phase C1 — meal_status is
+              operationally important (what the guide/driver must confirm
+              on tour day), so it gets its own clearly-labeled card rather
+              than a buried metadata row. purchased_activity_raw, when
+              present, renders directly underneath as the exact source
+              evidence the status was derived from — never rewritten. */}
+          <RCard>
+            <RCardHead title="Tur İçeriği"/>
+            {(() => {
+              const meal = getMealStatusDisplay(r.mealStatus);
+              const toneColor = meal.tone === "positive" ? C.green : meal.tone === "attention" ? C.amber : C.text;
+              const toneBg    = meal.tone === "positive" ? C.greenBg : meal.tone === "attention" ? C.amberBg : C.ivory;
+              const activityValue = getPurchasedActivityDisplayValue(r.purchasedActivityRaw);
+              return (
+                <>
+                  <div style={{ padding:"16px 20px", display:"flex", gap:12, alignItems:"flex-start" }}>
+                    <div style={{
+                      width:34, height:34, borderRadius:9, flexShrink:0,
+                      background:toneBg, display:"flex", alignItems:"center", justifyContent:"center",
+                    }}>
+                      <RIc d="M18 8h1a4 4 0 010 8h-1M2 8h16v9a4 4 0 01-4 4H6a4 4 0 01-4-4V8z M6 1v3M10 1v3M14 1v3" size={16} sw={1.6} color={toneColor}/>
+                    </div>
+                    <div>
+                      <div style={{ fontSize:14.5, fontWeight:700, color:toneColor, fontFamily:"'DM Sans',sans-serif" }}>
+                        {meal.title}
+                      </div>
+                      <div style={{ fontSize:12, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", marginTop:3, lineHeight:1.5 }}>
+                        {meal.supportingText}
+                      </div>
+                    </div>
+                  </div>
+                  {activityValue && (
+                    <div style={{ padding:"12px 20px 16px", borderTop:`1px solid ${C.borderLight}` }}>
+                      <div style={{ fontSize:10.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:4 }}>
+                        Satın Alınan Aktivite
+                      </div>
+                      <div style={{ fontSize:12.5, color:C.textMid, fontFamily:"'DM Mono',monospace", lineHeight:1.5, wordBreak:"break-word" }}>
+                        {activityValue}
+                      </div>
+                    </div>
+                  )}
+                </>
+              );
+            })()}
           </RCard>
 
           {}
@@ -14595,6 +14679,14 @@ function mapResFromDB(r) {
     // reservation without a retail_amount (every manually-created booking).
     retailAmount:r.retail_amount!=null?parseFloat(r.retail_amount):null,
     retailCurrency:r.retail_currency||null,
+    // Tour Preparation Intelligence Phase C1 — read-only passthrough of
+    // the Phase A columns; this mapper never writes them (SupabaseReservationRepo.update's
+    // field map has no entry for either, so neither can be touched from
+    // any existing edit surface). meal_status||null normalizes an absent/
+    // unset column the same way getMealStatusDisplay already treats a
+    // missing value — as 'unknown', never 'not_included'.
+    mealStatus:r.meal_status||null,
+    purchasedActivityRaw:r.purchased_activity_raw||null,
     createdAt:r.created_at?r.created_at.split('T')[0]:'', _fromDB:true };
 }
 function mapPayFromDB(r) {
@@ -21014,6 +21106,40 @@ function MobileReservationDetailPage({ resId, onBack }) {
           <MobileInfoLine label="Pickup Saati" value={r.pickupTime || "—"}/>
         </MobileEntityCard>
       </MobileSection>
+
+      {/* Tour Preparation Intelligence Phase C1 — same meal_status/
+          purchased_activity_raw presentation as desktop's "Tur İçeriği"
+          card, via the same pure getMealStatusDisplay/
+          getPurchasedActivityDisplayValue helpers, adapted to the
+          existing mobile section/card components rather than a new
+          layout. */}
+      {(() => {
+        const meal = getMealStatusDisplay(r.mealStatus);
+        const toneColor = meal.tone === "positive" ? C.green : meal.tone === "attention" ? C.amber : C.text;
+        const activityValue = getPurchasedActivityDisplayValue(r.purchasedActivityRaw);
+        return (
+          <MobileSection title="Tur İçeriği">
+            <MobileEntityCard>
+              <div style={{ fontSize:14.5, fontWeight:700, color:toneColor, fontFamily:"'DM Sans',sans-serif" }}>
+                {meal.title}
+              </div>
+              <div style={{ fontSize:12.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", marginTop:3, lineHeight:1.5 }}>
+                {meal.supportingText}
+              </div>
+              {activityValue && (
+                <div style={{ marginTop:10, paddingTop:10, borderTop:`1px solid ${C.borderLight}` }}>
+                  <div style={{ fontSize:10.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:4 }}>
+                    Satın Alınan Aktivite
+                  </div>
+                  <div style={{ fontSize:12.5, color:C.textMid, fontFamily:"'DM Mono',monospace", lineHeight:1.5, wordBreak:"break-word" }}>
+                    {activityValue}
+                  </div>
+                </div>
+              )}
+            </MobileEntityCard>
+          </MobileSection>
+        );
+      })()}
 
       <MobileSection title="Ödeme">
         <MobileEntityCard>
