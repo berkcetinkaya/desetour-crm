@@ -248,6 +248,16 @@ async function planCivitatisIngestion({ messages, repo }) {
           tourId: null, customerId: null, autoProvisionTour: false,
           civitatisInternalCode: mergedState.internalCode, civitatisLanguageCode: mergedState.languageCode,
         })),
+        // Tour Preparation Intelligence Phase B3: a purely additive,
+        // parallel-to-`calls` array (same order/length) carrying each
+        // individual event's own already-parsed Activity/language, so a
+        // post-write enrichment step can read them by index without a
+        // second parse. Deliberately NOT merged into `calls`' own payload
+        // objects — api/ingest-civitatis-write.js's buildEventTypeMap/
+        // buildDryRunResults/buildWriteResults/decorateCallResult all read
+        // specific keys directly off each `calls` element today, and this
+        // field must never change that existing shape.
+        callMeta: items.map(it => ({ activityName: it.parsed.activityName, languageCode: it.parsed.languageCode })),
       });
       continue;
     }
@@ -325,6 +335,9 @@ async function planCivitatisIngestion({ messages, repo }) {
         civitatisInternalCode: mergedState.internalCode,
         civitatisLanguageCode: mergedState.languageCode,
       })),
+      // Tour Preparation Intelligence Phase B3 — see the other plans.push
+      // call site above for why this parallel field exists.
+      callMeta: items.map(it => ({ activityName: it.parsed.activityName, languageCode: it.parsed.languageCode })),
     });
   }
 

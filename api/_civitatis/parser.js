@@ -710,4 +710,12 @@ function parseCivitatisEmail(message) {
   return { ok: true, status: 'parsed', reasons: [], ...parsed };
 }
 
-module.exports = { parseCivitatisEmail, extractGuestCounts, parseMoneyLine, compactLines };
+// findLabelValue/LABEL_NAMES are additionally exported (Tour Preparation
+// Intelligence Phase B2) so the backfill dry-run tool can extract the
+// Activity field using the EXACT SAME label-matching logic normal
+// ingestion already uses, without re-implementing it and without needing
+// a synthetic `from` header to run the full event-classification path
+// parseCivitatisEmail itself requires (email_ingestions never stored
+// that header — see activityModalityBackfillDryRun.js). No existing
+// behavior of this file is changed by adding these two names.
+module.exports = { parseCivitatisEmail, extractGuestCounts, parseMoneyLine, compactLines, findLabelValue, LABEL_NAMES };

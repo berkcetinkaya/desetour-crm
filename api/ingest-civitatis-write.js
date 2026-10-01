@@ -98,6 +98,7 @@
 const gmailClient = require('./_civitatis/gmailClient');
 const { createSupabaseCivitatisRepo, getServiceRoleClient, ConfigurationError } = require('./_civitatis/supabaseAdmin');
 const { planCivitatisIngestion, executeCivitatisIngestionPlan } = require('./_civitatis/writeAdapter');
+const { enrichCivitatisActivityModalityForPlan } = require('./_civitatis/activityModalityEnrichment');
 const { parseCivitatisEmail } = require('./_civitatis/parser');
 const { detectCivitatisEvent } = require('./_civitatis/eventDetector');
 const { planCivitatisCancellations, executeCivitatisCancellationPlan } = require('./_civitatis/cancellationAdapter');
@@ -342,6 +343,25 @@ async function runCivitatisWriteOrchestration({ messages, repo, externalBookingI
 
   const eventTypeByGmailId = buildEventTypeMap(plan);
   const executed = await executeCivitatisIngestionPlan(plan, rpcCaller);
+
+  // Tour Preparation Intelligence Phase B3: automatic Activity/meal-modality
+  // enrichment, run ONLY here — after the booking domain write has already
+  // fully committed, and never for cancellations (executedCancellations,
+  // below, is a structurally separate variable/path this call never
+  // touches). This is a SECONDARY ENRICHMENT: wrapped so that nothing it
+  // does can alter `executed` or this function's return value, and so any
+  // failure here (rule-repository read error, persistence RPC error, or
+  // anything else) can never cause the booking write above to be treated
+  // as failed or retried. enrichCivitatisActivityModalityForPlan already
+  // isolates failures per individual event internally; this try/catch is
+  // an extra outer guard against a totally unexpected error in the
+  // enrichment step itself.
+  try {
+    await enrichCivitatisActivityModalityForPlan({ plan, executed });
+  } catch (err) {
+    console.error('[ingest-civitatis-write] Activity modality enrichment error:', err.message);
+  }
+
   const executedCancellations = await executeCivitatisCancellationPlan(cancellationPlan.plans, cancellationRpcCaller);
   return {
     ok: true,
