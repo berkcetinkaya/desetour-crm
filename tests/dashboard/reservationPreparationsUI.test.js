@@ -232,33 +232,36 @@ test('mapPreparationFromDB returns null for a null/undefined row, same conventio
 // repository: ONE query, no itinerary inference, no materialization call
 // ═══════════════════════════════════════════════════════════════════════
 
+// Scoped strictly to getByReservation's OWN method body (by signature,
+// ending at its own closing `},`) — NOT the whole
+// SupabaseReservationPreparationRepo object, which also holds the later
+// Phase C2D-2 getUpcomingPending method with its own separate query.
+function _getByReservationBody() {
+  const start = SOURCE.indexOf('async getByReservation(reservationId){');
+  assert.ok(start !== -1, 'getByReservation must exist');
+  const end = SOURCE.indexOf('\n  },', start);
+  return SOURCE.slice(start, end);
+}
+
 test('SupabaseReservationPreparationRepo.getByReservation performs exactly one query, filtered by reservation_id', () => {
-  const repoIdx = SOURCE.indexOf('const SupabaseReservationPreparationRepo');
-  assert.ok(repoIdx !== -1, 'SupabaseReservationPreparationRepo must exist');
-  const repoEnd = SOURCE.indexOf('\n};', repoIdx);
-  const repoBody = SOURCE.slice(repoIdx, repoEnd);
-  assert.match(repoBody, /\.from\('reservation_preparations'\)/);
-  assert.match(repoBody, /\.eq\('reservation_id',reservationId\)/);
-  // Exactly one .from( call in the whole repo — no second query.
-  const fromCalls = repoBody.match(/\.from\(/g) || [];
+  const body = _getByReservationBody();
+  assert.match(body, /\.from\('reservation_preparations'\)/);
+  assert.match(body, /\.eq\('reservation_id',reservationId\)/);
+  const fromCalls = body.match(/\.from\(/g) || [];
   assert.equal(fromCalls.length, 1, 'expected exactly one query in getByReservation');
 });
 
-test('the repository never queries tour_preparation_rules and never infers from itinerary', () => {
-  const repoIdx = SOURCE.indexOf('const SupabaseReservationPreparationRepo');
-  const repoEnd = SOURCE.indexOf('\n};', repoIdx);
-  const repoBody = SOURCE.slice(repoIdx, repoEnd);
-  assert.doesNotMatch(repoBody, /tour_preparation_rules/);
-  assert.doesNotMatch(repoBody, /itinerary/i);
+test('getByReservation never queries tour_preparation_rules and never infers from itinerary', () => {
+  const body = _getByReservationBody();
+  assert.doesNotMatch(body, /tour_preparation_rules/);
+  assert.doesNotMatch(body, /itinerary/i);
 });
 
-test('the repository never calls materialize_reservation_preparations and performs no write', () => {
-  const repoIdx = SOURCE.indexOf('const SupabaseReservationPreparationRepo');
-  const repoEnd = SOURCE.indexOf('\n};', repoIdx);
-  const repoBody = SOURCE.slice(repoIdx, repoEnd);
-  assert.doesNotMatch(repoBody, /materialize_reservation_preparations/);
-  assert.doesNotMatch(repoBody, /\.rpc\(/);
-  assert.doesNotMatch(repoBody, /\.insert\(|\.update\(|\.delete\(|\.upsert\(/);
+test('getByReservation never calls materialize_reservation_preparations and performs no write', () => {
+  const body = _getByReservationBody();
+  assert.doesNotMatch(body, /materialize_reservation_preparations/);
+  assert.doesNotMatch(body, /\.rpc\(/);
+  assert.doesNotMatch(body, /\.insert\(|\.update\(|\.delete\(|\.upsert\(/);
 });
 
 test('getActiveRepo registers reservationPreparation and falls back to an empty-array mock in non-Supabase mode', () => {
@@ -317,42 +320,40 @@ test('15b. the mobile section is wrapped in the same zero-rows guard', () => {
 // no raw Supabase query inside the presentation components
 // ═══════════════════════════════════════════════════════════════════════
 
-test('meal_status is not duplicated into the new Tur Hazırlıkları card (desktop)', () => {
-  const idxPrep = SOURCE.indexOf('title="Tur Hazırlıkları"');
+// Scoped strictly within ReservationDetailPage/MobileReservationDetailPage
+// (via pageStart, same as the placement tests above) — NOT a bare global
+// indexOf, which would otherwise match the Dashboard's OWN, textually
+// earlier "Tur Hazırlıkları" SectionHeader (Phase C2D-2) instead of the
+// Reservation Detail card/section this test actually targets.
+function _desktopPrepCardSnippet() {
+  const pageStart = SOURCE.indexOf('function ReservationDetailPage(');
+  const idxPrep = SOURCE.indexOf('title="Tur Hazırlıkları"', pageStart);
   const cardEnd = SOURCE.indexOf('title="Ödeme Özeti"', idxPrep);
-  const cardSnippet = SOURCE.slice(idxPrep, cardEnd);
-  assert.doesNotMatch(cardSnippet, /meal_status|mealStatus|purchasedActivityRaw/);
+  return SOURCE.slice(idxPrep, cardEnd);
+}
+function _mobilePrepSectionSnippet() {
+  const pageStart = SOURCE.indexOf('function MobileReservationDetailPage(');
+  const idxPrep = SOURCE.indexOf('title="Tur Hazırlıkları"', pageStart);
+  const cardEnd = SOURCE.indexOf('title="Ödeme"', idxPrep);
+  return SOURCE.slice(idxPrep, cardEnd);
+}
+
+test('meal_status is not duplicated into the new Tur Hazırlıkları card (desktop)', () => {
+  assert.doesNotMatch(_desktopPrepCardSnippet(), /meal_status|mealStatus|purchasedActivityRaw/);
 });
 
 test('meal_status is not duplicated into the new Tur Hazırlıkları section (mobile)', () => {
-  const idxPrep = SOURCE.indexOf('title="Tur Hazırlıkları"', SOURCE.indexOf('function MobileReservationDetailPage('));
-  const cardEnd = SOURCE.indexOf('title="Ödeme"', idxPrep);
-  const cardSnippet = SOURCE.slice(idxPrep, cardEnd);
-  assert.doesNotMatch(cardSnippet, /meal_status|mealStatus|purchasedActivityRaw/);
+  assert.doesNotMatch(_mobilePrepSectionSnippet(), /meal_status|mealStatus|purchasedActivityRaw/);
 });
 
 test('the new card/section never performs a write, mutation, or RPC call (desktop + mobile)', () => {
-  const idxPrepDesktop = SOURCE.indexOf('title="Tur Hazırlıkları"');
-  const desktopEnd = SOURCE.indexOf('title="Ödeme Özeti"', idxPrepDesktop);
-  const desktopSnippet = SOURCE.slice(idxPrepDesktop, desktopEnd);
-  assert.doesNotMatch(desktopSnippet, /\.update\(|\.rpc\(|useRepoMutation|materialize_reservation_preparations/);
-
-  const idxPrepMobile = SOURCE.indexOf('title="Tur Hazırlıkları"', SOURCE.indexOf('function MobileReservationDetailPage('));
-  const mobileEnd = SOURCE.indexOf('title="Ödeme"', idxPrepMobile);
-  const mobileSnippet = SOURCE.slice(idxPrepMobile, mobileEnd);
-  assert.doesNotMatch(mobileSnippet, /\.update\(|\.rpc\(|useRepoMutation|materialize_reservation_preparations/);
+  assert.doesNotMatch(_desktopPrepCardSnippet(), /\.update\(|\.rpc\(|useRepoMutation|materialize_reservation_preparations/);
+  assert.doesNotMatch(_mobilePrepSectionSnippet(), /\.update\(|\.rpc\(|useRepoMutation|materialize_reservation_preparations/);
 });
 
 test('the presentation components never run a raw Supabase query themselves — only via useRepo', () => {
-  const idxPrepDesktop = SOURCE.indexOf('title="Tur Hazırlıkları"');
-  const desktopEnd = SOURCE.indexOf('title="Ödeme Özeti"', idxPrepDesktop);
-  const desktopSnippet = SOURCE.slice(idxPrepDesktop, desktopEnd);
-  assert.doesNotMatch(desktopSnippet, /getSB\(\)|\.from\(/);
-
-  const idxPrepMobile = SOURCE.indexOf('title="Tur Hazırlıkları"', SOURCE.indexOf('function MobileReservationDetailPage('));
-  const mobileEnd = SOURCE.indexOf('title="Ödeme"', idxPrepMobile);
-  const mobileSnippet = SOURCE.slice(idxPrepMobile, mobileEnd);
-  assert.doesNotMatch(mobileSnippet, /getSB\(\)|\.from\(/);
+  assert.doesNotMatch(_desktopPrepCardSnippet(), /getSB\(\)|\.from\(/);
+  assert.doesNotMatch(_mobilePrepSectionSnippet(), /getSB\(\)|\.from\(/);
 });
 
 test('data loading uses the useRepo hook pattern, not a direct repo call, in both pages', () => {
