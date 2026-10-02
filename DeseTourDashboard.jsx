@@ -3458,7 +3458,11 @@ function OnemliUyarilar() {
 // awareness stays entirely driven by the per-reservation meal_status
 // column, which is why the same tour can freely have both meal and
 // no-meal reservations without a static tour-level rule.
-const MAX_VISIBLE_PREPARATIONS = 5;
+// Phase C2D-4 — each panel manages its own visible-row cap, so a busy
+// ticket day can never hide meal rows (or vice versa) the way one shared
+// limit across an interleaved list used to.
+const MAX_VISIBLE_TICKET_PREPARATIONS = 5;
+const MAX_VISIBLE_MEAL_PREPARATIONS = 5;
 
 // true ONLY for the literal stored value 'included' — 'not_included' and
 // 'unknown' (and anything unrecognized) all return false, so 'unknown' is
@@ -3514,6 +3518,14 @@ function _buildPreparationDashboardRow(p) {
     tourName: p.tourName || '',
     label: p.label || '',
     quantityText: getPreparationQuantityDisplay(p.requiredQuantity),
+    // Tour Preparation Intelligence Phase C2D-4 — the raw number (not just
+    // its "N adet" display string) and the raw preparation_type, both
+    // additive: existing consumers of quantityText/kind are unaffected.
+    // Needed so the Dashboard's ticket summary can sum real quantities and
+    // identify entrance-ticket rows via the actual normalized type column
+    // — never by matching against label text.
+    quantity: Number(p.requiredQuantity) || 0,
+    preparationType: p.preparationType || null,
     statusLabel: statusDisplay.label,
     sourceStatus: p.status,
     sortKey: `${checkIn}|0|${(p.label || '').toLowerCase()}`,
@@ -3538,6 +3550,8 @@ function _buildMealDashboardRow(r) {
     tourName: r.tour || '',
     label: 'Yemek Organizasyonu',
     quantityText: `${guestCount} misafir`,
+    // Phase C2D-4 — raw guest count, additive (see _buildPreparationDashboardRow).
+    quantity: guestCount,
     statusLabel: 'Yemek Dahil',
     sourceStatus: 'included',
     sortKey: `${checkIn}|1|yemek organizasyonu`,
@@ -3595,6 +3609,82 @@ function _buildTurHazirliklariRows(preparationRows, mealReservations, nowMs) {
 }
 // TESTABLE:_buildTurHazirliklariRows:end
 
+// ── Tour Preparation Intelligence Phase C2D-4 ───────────────────────────
+// Visual information architecture refinement ONLY: entrance-ticket
+// preparations and meal preparations are two operationally different
+// responsibilities and must never be interleaved into one chronological
+// list again. This grouping happens strictly AFTER _buildTurHazirliklariRows
+// has already filtered (cancelled/past excluded) and sorted (check_in
+// ascending) the combined rows — splitting an already-sorted array by a
+// predicate preserves each subset's relative order, so tickets/meals stay
+// correctly date-ordered with zero duplicated filtering or sorting logic.
+// No query, no data source, and no completion behavior changes here.
+// TESTABLE:_groupTourPreparationRows:start
+function _groupTourPreparationRows(rows) {
+  const list = rows || [];
+  return {
+    tickets: list.filter(r => r.kind === 'preparation'),
+    meals: list.filter(r => r.kind === 'meal'),
+  };
+}
+// TESTABLE:_groupTourPreparationRows:end
+
+// Only rows whose NORMALIZED preparation_type is literally 'entrance_ticket'
+// contribute to the ticket summary — never inferred from label text, and
+// never just "any row in the tickets panel" (future-proofing: today every
+// reservation_preparations row in production IS an entrance ticket, but
+// the schema itself permits meal/transport/special_access/other types on
+// that same table too).
+// TESTABLE:_summarizeTicketPreparations:start
+function _summarizeTicketPreparations(ticketRows) {
+  const tickets = (ticketRows || []).filter(r => r.preparationType === 'entrance_ticket');
+  const reservationIds = new Set(tickets.map(r => r.reservationId));
+  const ticketCount = tickets.reduce((sum, r) => sum + (r.quantity || 0), 0);
+  return { reservationCount: reservationIds.size, ticketCount };
+}
+// TESTABLE:_summarizeTicketPreparations:end
+
+// Guest count is summed from each row's own `quantity`, which
+// _buildMealDashboardRow already derived from the SAME authoritative
+// pax+paxChild calculation used elsewhere in this file — never a second,
+// invented guest-count definition.
+// TESTABLE:_summarizeMealPreparations:start
+function _summarizeMealPreparations(mealRows) {
+  const meals = mealRows || [];
+  const reservationIds = new Set(meals.map(r => r.reservationId));
+  const guestCount = meals.reduce((sum, r) => sum + (r.quantity || 0), 0);
+  return { reservationCount: reservationIds.size, guestCount };
+}
+// TESTABLE:_summarizeMealPreparations:end
+
+// TESTABLE:_formatTicketSummary:start
+function _formatTicketSummary(summary) {
+  return `${summary.reservationCount} rezervasyon · ${summary.ticketCount} bilet bekliyor`;
+}
+// TESTABLE:_formatTicketSummary:end
+
+// TESTABLE:_formatMealSummary:start
+function _formatMealSummary(summary) {
+  return `${summary.reservationCount} yaklaşan yemekli tur · ${summary.guestCount} misafir`;
+}
+// TESTABLE:_formatMealSummary:end
+
+// Dashboard-row-only quantity emphasis (large, uppercase unit word) — a
+// presentation choice distinct from Reservation Detail's existing
+// "N adet" (getPreparationQuantityDisplay), which is untouched and still
+// used there. required_quantity itself is never changed by either.
+// TESTABLE:_formatTicketQuantityLabel:start
+function _formatTicketQuantityLabel(quantity) {
+  return `${Number(quantity) || 0} BİLET`;
+}
+// TESTABLE:_formatTicketQuantityLabel:end
+
+// TESTABLE:_formatMealQuantityLabel:start
+function _formatMealQuantityLabel(quantity) {
+  return `${Number(quantity) || 0} MİSAFİR`;
+}
+// TESTABLE:_formatMealQuantityLabel:end
+
 function useTurHazirliklariRows() {
   // Two bounded, independent queries — never one query per reservation or
   // per preparation row. getUpcomingPending joins reservation_preparations
@@ -3623,14 +3713,73 @@ function _goToPreparationReservation(reservationId) {
   }
 }
 
+// Shared desktop row renderer for BOTH panels — presentation only, no
+// business logic (quantityLabel/accentColor/badgeMap are passed in, the
+// row's own data/sort order already came from the shared pure helpers
+// above). Not reused by MobileHomePage's own section below, which has its
+// own wrapper primitives (MobileEntityCard/MobileStatusChip), the same
+// split already established for Reservation Detail in prior phases.
+function _DashboardPrepRow({ row, quantityLabel, accentColor, badgeMap }) {
+  const dateLabel = row.checkIn
+    ? new Date(row.checkIn).toLocaleDateString('tr-TR', { day:'numeric', month:'long' })
+    : '—';
+  return (
+    <div
+      onClick={() => _goToPreparationReservation(row.reservationId)}
+      style={{
+        display:"flex", alignItems:"center", gap:12, cursor:"pointer",
+        padding:"10px 12px", borderRadius:T.radiusSm,
+        background:C.ivory, border:`1px solid ${C.borderLight}`,
+      }}
+    >
+      <div style={{ minWidth:52, fontSize:11.5, fontWeight:700, color:C.navy, fontFamily:"'DM Sans',sans-serif", lineHeight:1.3 }}>
+        {dateLabel}
+      </div>
+      <div style={{ flex:1, minWidth:0 }}>
+        <div style={{ fontSize:12.5, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+          {row.tourName}
+        </div>
+        <div style={{ fontSize:10.5, color:C.textFaint, fontFamily:"'DM Mono',monospace", marginTop:1 }}>
+          {row.reservationNumber}
+        </div>
+        <div style={{ fontSize:11.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", marginTop:3 }}>
+          {row.label}
+        </div>
+      </div>
+      <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:5, flexShrink:0 }}>
+        <div style={{ fontSize:14, fontWeight:700, color:accentColor, fontFamily:"'Playfair Display',serif", whiteSpace:"nowrap" }}>
+          {quantityLabel}
+        </div>
+        <RBadge label={row.statusLabel} map={badgeMap} small/>
+      </div>
+    </div>
+  );
+}
+
 // Renders NOTHING when there are zero actionable rows, or while loading,
 // or on a read error — never a large empty operational card, and never a
 // broken partial render blocking the rest of Ana Sayfa.
+//
+// Phase C2D-4: entrance-ticket preparations and meal preparations are now
+// two visually separated panels (Bilet Hazırlıkları / Yemek Hazırlıkları)
+// inside this ONE outer section — never two unrelated dashboard sections,
+// and never interleaved into one chronological list again. When only one
+// category has rows, only that panel renders (full width, no blank second
+// column); when both are empty, the whole section is omitted exactly as
+// before C2D-4.
 function TurHazirliklari() {
   const { rows, loading, error } = useTurHazirliklariRows();
   if (loading || error || rows.length === 0) return null;
 
-  const { visible, remaining } = _paginateDashboardPreparationRows(rows, MAX_VISIBLE_PREPARATIONS);
+  const { tickets, meals } = _groupTourPreparationRows(rows);
+  const hasTickets = tickets.length > 0;
+  const hasMeals = meals.length > 0;
+  if (!hasTickets && !hasMeals) return null;
+
+  const { visible:visibleTickets, remaining:remainingTickets } = _paginateDashboardPreparationRows(tickets, MAX_VISIBLE_TICKET_PREPARATIONS);
+  const { visible:visibleMeals, remaining:remainingMeals } = _paginateDashboardPreparationRows(meals, MAX_VISIBLE_MEAL_PREPARATIONS);
+  const ticketSummary = _summarizeTicketPreparations(tickets);
+  const mealSummary = _summarizeMealPreparations(meals);
   // Computed here (render time, not module-init time) because
   // PREPARATION_STATUS_BADGE_MAP is defined later in this file, near
   // ReservationDetailPage — safe to reference from inside a function
@@ -3638,6 +3787,7 @@ function TurHazirliklari() {
   // NOT safe as a top-level `const ... = {...PREPARATION_STATUS_BADGE_MAP}`
   // at this point in the file, which would throw before initialization.
   const badgeMap = { ...PREPARATION_STATUS_BADGE_MAP, 'Yemek Dahil': { color:C.green, bg:C.greenBg, dot:C.green } };
+  const GOLD_ACCENT = "#8A6D1F";
 
   return (
     <Card>
@@ -3645,43 +3795,56 @@ function TurHazirliklari() {
       <div style={{ fontSize:12.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", marginTop:-6, marginBottom:14 }}>
         Yaklaşan turlar için tamamlanması gereken hazırlıklar.
       </div>
-      <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
-        {visible.map((row, i) => {
-          const dateLabel = row.checkIn
-            ? new Date(row.checkIn).toLocaleDateString('tr-TR', { day:'numeric', month:'long' })
-            : '—';
-          return (
-            <div
-              key={`${row.kind}-${row.reservationId}-${row.label}-${i}`}
-              onClick={() => _goToPreparationReservation(row.reservationId)}
-              style={{
-                display:"flex", alignItems:"center", gap:16, cursor:"pointer",
-                padding:"12px 14px", borderRadius:T.radiusSm,
-                background:C.ivory, border:`1px solid ${C.borderLight}`,
-                flexWrap:"wrap",
-              }}
-            >
-              <div style={{ minWidth:72, fontSize:12.5, fontWeight:700, color:C.navy, fontFamily:"'DM Sans',sans-serif" }}>
-                {dateLabel}
-              </div>
-              <div style={{ flex:1, minWidth:180 }}>
-                <div style={{ fontSize:13, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif" }}>
-                  {row.tourName}{row.reservationNumber ? ` · ${row.reservationNumber}` : ''}
-                </div>
-                <div style={{ fontSize:12.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", marginTop:2 }}>
-                  {row.label} · {row.quantityText}
-                </div>
-              </div>
-              <RBadge label={row.statusLabel} map={badgeMap} small/>
+      <div style={{ display:"grid", gridTemplateColumns: hasTickets && hasMeals ? "1fr 1fr" : "1fr", gap:16 }}>
+        {hasTickets && (
+          <div style={{ background:C.white, border:`1px solid ${C.borderLight}`, borderRadius:T.radiusSm, padding:14 }}>
+            <div style={{ fontSize:13, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif" }}>Bilet Hazırlıkları</div>
+            <div style={{ fontSize:11.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", marginTop:3, marginBottom:12 }}>
+              {_formatTicketSummary(ticketSummary)}
             </div>
-          );
-        })}
+            <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+              {visibleTickets.map((row, i) => (
+                <_DashboardPrepRow
+                  key={`ticket-${row.reservationId}-${row.label}-${i}`}
+                  row={row}
+                  quantityLabel={_formatTicketQuantityLabel(row.quantity)}
+                  accentColor={GOLD_ACCENT}
+                  badgeMap={badgeMap}
+                />
+              ))}
+            </div>
+            {remainingTickets > 0 && (
+              <div style={{ marginTop:10, fontSize:11.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif" }}>
+                + {remainingTickets} diğer bilet hazırlığı
+              </div>
+            )}
+          </div>
+        )}
+        {hasMeals && (
+          <div style={{ background:C.white, border:`1px solid ${C.borderLight}`, borderRadius:T.radiusSm, padding:14 }}>
+            <div style={{ fontSize:13, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif" }}>Yemek Hazırlıkları</div>
+            <div style={{ fontSize:11.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", marginTop:3, marginBottom:12 }}>
+              {_formatMealSummary(mealSummary)}
+            </div>
+            <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+              {visibleMeals.map((row, i) => (
+                <_DashboardPrepRow
+                  key={`meal-${row.reservationId}-${row.label}-${i}`}
+                  row={row}
+                  quantityLabel={_formatMealQuantityLabel(row.quantity)}
+                  accentColor={C.green}
+                  badgeMap={badgeMap}
+                />
+              ))}
+            </div>
+            {remainingMeals > 0 && (
+              <div style={{ marginTop:10, fontSize:11.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif" }}>
+                + {remainingMeals} diğer yemek hazırlığı
+              </div>
+            )}
+          </div>
+        )}
       </div>
-      {remaining > 0 && (
-        <div style={{ marginTop:12, fontSize:12, color:C.textMuted, fontFamily:"'DM Sans',sans-serif" }}>
-          + {remaining} diğer hazırlık
-        </div>
-      )}
     </Card>
   );
 }
@@ -20524,6 +20687,12 @@ function MobileHomePage({ navigate }) {
   const { data:repoPays }   = useRepo("payment",     "getAll");
   const { data:repoRems }   = useRepo("reminder",    "getAll");
   const { data:repoAct }    = useRepo("activity",    "getAll", { limit:5 });
+  // Tour Preparation Intelligence Phase C2D-4 — same hook, same pure
+  // grouping/summary helpers Dashboard() uses; only this page's JSX
+  // differs (MobileEntityCard/MobileStatusChip vs RBadge), the same
+  // desktop/mobile split already established in prior C2D phases. No
+  // separate query, no separate business logic.
+  const { rows:turHazirliklariRows, loading:turHazLoading, error:turHazError } = useTurHazirliklariRows();
 
   const urgentItems = useMemo(
     () => computeUrgent(repoRes, repoPays, repoRems),
@@ -20622,6 +20791,86 @@ function MobileHomePage({ navigate }) {
           ))}
         </MobileSection>
       )}
+
+      {/* Tour Preparation Intelligence Phase C2D-4 — same two-panel split
+          as Dashboard() (Bilet Hazırlıkları / Yemek Hazırlıkları), same
+          hook, same pure grouping/summary helpers; only the wrapper
+          components differ (MobileSection/MobileEntityCard/MobileStatusChip
+          vs RBadge). Omitted entirely when neither panel has rows, exactly
+          like the desktop section. */}
+      {!turHazLoading && !turHazError && turHazirliklariRows.length > 0 && (() => {
+        const { tickets, meals } = _groupTourPreparationRows(turHazirliklariRows);
+        const hasTickets = tickets.length > 0;
+        const hasMeals = meals.length > 0;
+        if (!hasTickets && !hasMeals) return null;
+        const { visible:visibleTickets, remaining:remainingTickets } = _paginateDashboardPreparationRows(tickets, MAX_VISIBLE_TICKET_PREPARATIONS);
+        const { visible:visibleMeals, remaining:remainingMeals } = _paginateDashboardPreparationRows(meals, MAX_VISIBLE_MEAL_PREPARATIONS);
+        const ticketSummary = _summarizeTicketPreparations(tickets);
+        const mealSummary = _summarizeMealPreparations(meals);
+        const GOLD_ACCENT = "#8A6D1F";
+        return (
+          <>
+            {hasTickets && (
+              <MobileSection title="Bilet Hazırlıkları">
+                <div style={{ fontSize:11.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", padding:"0 2px" }}>
+                  {_formatTicketSummary(ticketSummary)}
+                </div>
+                {visibleTickets.map((row, i) => (
+                  <MobileEntityCard key={`ticket-${row.reservationId}-${row.label}-${i}`} onClick={() => navigate('/reservations/' + row.reservationId)}>
+                    <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:10 }}>
+                      <div style={{ minWidth:0, flex:1 }}>
+                        <div style={{ fontSize:13, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{row.tourName}</div>
+                        <div style={{ fontSize:11, color:C.textFaint, fontFamily:"'DM Mono',monospace", marginTop:1 }}>{row.reservationNumber}</div>
+                        <div style={{ fontSize:11.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", marginTop:3 }}>{row.label}</div>
+                      </div>
+                      <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:5, flexShrink:0 }}>
+                        <div style={{ fontSize:14, fontWeight:700, color:GOLD_ACCENT, fontFamily:"'Playfair Display',serif", whiteSpace:"nowrap" }}>
+                          {_formatTicketQuantityLabel(row.quantity)}
+                        </div>
+                        <MobileStatusChip label={row.statusLabel} tone="gold"/>
+                      </div>
+                    </div>
+                  </MobileEntityCard>
+                ))}
+                {remainingTickets > 0 && (
+                  <div style={{ fontSize:11.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", padding:"0 2px" }}>
+                    + {remainingTickets} diğer bilet hazırlığı
+                  </div>
+                )}
+              </MobileSection>
+            )}
+            {hasMeals && (
+              <MobileSection title="Yemek Hazırlıkları">
+                <div style={{ fontSize:11.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", padding:"0 2px" }}>
+                  {_formatMealSummary(mealSummary)}
+                </div>
+                {visibleMeals.map((row, i) => (
+                  <MobileEntityCard key={`meal-${row.reservationId}-${row.label}-${i}`} onClick={() => navigate('/reservations/' + row.reservationId)}>
+                    <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:10 }}>
+                      <div style={{ minWidth:0, flex:1 }}>
+                        <div style={{ fontSize:13, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{row.tourName}</div>
+                        <div style={{ fontSize:11, color:C.textFaint, fontFamily:"'DM Mono',monospace", marginTop:1 }}>{row.reservationNumber}</div>
+                        <div style={{ fontSize:11.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", marginTop:3 }}>{row.label}</div>
+                      </div>
+                      <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:5, flexShrink:0 }}>
+                        <div style={{ fontSize:14, fontWeight:700, color:C.green, fontFamily:"'Playfair Display',serif", whiteSpace:"nowrap" }}>
+                          {_formatMealQuantityLabel(row.quantity)}
+                        </div>
+                        <MobileStatusChip label={row.statusLabel} tone="good"/>
+                      </div>
+                    </div>
+                  </MobileEntityCard>
+                ))}
+                {remainingMeals > 0 && (
+                  <div style={{ fontSize:11.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", padding:"0 2px" }}>
+                    + {remainingMeals} diğer yemek hazırlığı
+                  </div>
+                )}
+              </MobileSection>
+            )}
+          </>
+        );
+      })()}
 
       {}
       <MobileSection title="Bugünkü Turlar" action={todaysTours.length>0?"Takvim":null} onAction={()=>navigate('/calendar')}>

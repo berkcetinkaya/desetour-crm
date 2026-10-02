@@ -272,11 +272,15 @@ test('no overflow when the row count is within the limit', () => {
   assert.equal(remaining, 0);
 });
 
-test('MAX_VISIBLE_PREPARATIONS constant exists and is a sane bound', () => {
-  const m = SOURCE.match(/const MAX_VISIBLE_PREPARATIONS = (\d+);/);
-  assert.ok(m, 'MAX_VISIBLE_PREPARATIONS must be defined');
-  const n = parseInt(m[1], 10);
-  assert.ok(n >= 3 && n <= 10, 'expected a sensible, bounded visible-row cap');
+test('each panel has its own sensible, bounded visible-row cap (Phase C2D-4 split)', () => {
+  const mTicket = SOURCE.match(/const MAX_VISIBLE_TICKET_PREPARATIONS = (\d+);/);
+  const mMeal = SOURCE.match(/const MAX_VISIBLE_MEAL_PREPARATIONS = (\d+);/);
+  assert.ok(mTicket, 'MAX_VISIBLE_TICKET_PREPARATIONS must be defined');
+  assert.ok(mMeal, 'MAX_VISIBLE_MEAL_PREPARATIONS must be defined');
+  const nTicket = parseInt(mTicket[1], 10);
+  const nMeal = parseInt(mMeal[1], 10);
+  assert.ok(nTicket >= 3 && nTicket <= 10, 'expected a sensible, bounded ticket visible-row cap');
+  assert.ok(nMeal >= 3 && nMeal <= 10, 'expected a sensible, bounded meal visible-row cap');
 });
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -360,10 +364,13 @@ test('clicking a row navigates to Reservation Detail via the existing navigation
   const body = SOURCE.slice(start, end);
   assert.match(body, /NAV_REF\.fn\('\/reservations\/'\s*\+\s*reservationId\)/);
 
-  const sectionStart = SOURCE.indexOf('function TurHazirliklari()');
-  const sectionEnd = SOURCE.indexOf('\n}', sectionStart);
-  const sectionBody = SOURCE.slice(sectionStart, sectionEnd);
-  assert.match(sectionBody, /onClick=\{\(\)\s*=>\s*_goToPreparationReservation\(row\.reservationId\)\}/);
+  // Phase C2D-4: the row's onClick now lives in the shared _DashboardPrepRow
+  // presentational component (used by both the ticket and meal panels),
+  // not inlined directly in TurHazirliklari() itself.
+  const rowStart = SOURCE.indexOf('function _DashboardPrepRow(');
+  const rowEnd = SOURCE.indexOf('\n}', rowStart);
+  const rowBody = SOURCE.slice(rowStart, rowEnd);
+  assert.match(rowBody, /onClick=\{\(\)\s*=>\s*_goToPreparationReservation\(row\.reservationId\)\}/);
 });
 
 test('no completion write, no status mutation, and no "Tamamlandı" button exist anywhere in the new Dashboard section', () => {
