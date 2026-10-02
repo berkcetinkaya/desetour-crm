@@ -3528,6 +3528,17 @@ function _buildPreparationDashboardRow(p) {
     preparationType: p.preparationType || null,
     statusLabel: statusDisplay.label,
     sourceStatus: p.status,
+    // Phase C2G — purely additive (existing consumers of the fields above
+    // are unaffected). `status` (verbatim, alongside the pre-existing
+    // `sourceStatus`) and `id` are what let the Dashboard's completion
+    // action reuse _canCompletePreparation/mutate('complete', row.id)
+    // directly on this same row shape, without a second, parallel object.
+    // completedAt/completedByName are present only for a row that came
+    // from getRecentCompleted() — undefined (never fabricated) otherwise.
+    id: p.id || null,
+    status: p.status || null,
+    completedAt: p.completedAt || null,
+    completedByName: p.completedByName || null,
     sortKey: `${checkIn}|0|${(p.label || '').toLowerCase()}`,
   };
 }
@@ -3685,6 +3696,110 @@ function _formatMealQuantityLabel(quantity) {
 }
 // TESTABLE:_formatMealQuantityLabel:end
 
+// ── Tour Preparation Intelligence Phase C2G: Bilet Hazırlıkları tabs ───
+// Bounded recent-completed-history limit: a dashboard history view must
+// never load unlimited rows. 20 mirrors the same order of magnitude as
+// this file's other bounded "recent activity" lists (e.g. ActivityRepo's
+// own .limit(50) for a customer's full cross-entity history is a wider
+// case; 20 is deliberately smaller here since this is a single-purpose,
+// single-glance operational widget, not a full audit log — Reservation
+// Detail's own per-reservation preparation list remains the place to see
+// everything for one specific reservation, unbounded).
+const RECENT_COMPLETED_TICKET_LIMIT = 20;
+const MAX_VISIBLE_COMPLETED_TICKET_PREPARATIONS = 5;
+
+// Pending-tab count: ROW count (never deduplicated by reservation) + total
+// required quantity across those rows — deliberately distinct from
+// _summarizeTicketPreparations above (which this phase does NOT replace,
+// only supplements), because two different operational preparation rows
+// on the SAME reservation (e.g. Ayasofya + Topkapı) must each count as
+// their own unit of pending work, never merged into one.
+// TESTABLE:_summarizePendingTicketRows:start
+function _summarizePendingTicketRows(ticketRows) {
+  const tickets = (ticketRows || []).filter(r => r.preparationType === 'entrance_ticket');
+  const ticketCount = tickets.reduce((sum, r) => sum + (r.quantity || 0), 0);
+  return { rowCount: tickets.length, ticketCount };
+}
+// TESTABLE:_summarizePendingTicketRows:end
+
+// TESTABLE:_formatPendingTicketSummary:start
+function _formatPendingTicketSummary(summary) {
+  return `${summary.rowCount} hazırlık · ${summary.ticketCount} bilet bekliyor`;
+}
+// TESTABLE:_formatPendingTicketSummary:end
+
+// Completed-tab count: how many completed rows are in the (bounded) recent
+// history currently loaded — never the all-time total, since this phase
+// never fetches an unbounded count.
+// TESTABLE:_summarizeCompletedTicketRows:start
+function _summarizeCompletedTicketRows(ticketRows) {
+  return { rowCount: (ticketRows || []).length };
+}
+// TESTABLE:_summarizeCompletedTicketRows:end
+
+// TESTABLE:_formatCompletedTicketSummary:start
+function _formatCompletedTicketSummary(summary) {
+  return `${summary.rowCount} tamamlandı`;
+}
+// TESTABLE:_formatCompletedTicketSummary:end
+
+// Normalizes SupabaseReservationPreparationRepo.getRecentCompleted()'s
+// already-bounded, already-mapped rows into the shared dashboard row
+// shape via the SAME _buildPreparationDashboardRow used for pending rows
+// — never a second, divergent row-shape definition. Filtered to
+// entrance_ticket only, the same normalized-type rule
+// _summarizeTicketPreparations already uses (never by label text) — meal
+// rows never reach this path at all, since no reservation_preparations
+// row is ever created for a meal.
+// TESTABLE:_buildCompletedTicketDashboardRows:start
+function _buildCompletedTicketDashboardRows(completedRows) {
+  return (completedRows || [])
+    .filter(row => row.preparationType === 'entrance_ticket')
+    .map(_buildPreparationDashboardRow);
+}
+// TESTABLE:_buildCompletedTicketDashboardRows:end
+
+// Most-recently-completed first — a history view reads naturally newest-
+// first, unlike the pending tab (which stays check_in-ascending, "what's
+// coming up soonest"). Defensive re-sort on top of the repository's own
+// ORDER BY, same "never trust query order alone" convention
+// _filterUpcomingPendingPreparationRows already follows. Never mutates
+// its input.
+// TESTABLE:_sortCompletedTicketRows:start
+function _sortCompletedTicketRows(rows) {
+  const list = (rows || []).slice();
+  list.sort((a, b) => {
+    const ca = a.completedAt || '', cb = b.completedAt || '';
+    if (ca === cb) return 0;
+    return ca < cb ? 1 : -1;
+  });
+  return list;
+}
+// TESTABLE:_sortCompletedTicketRows:end
+
+// "2 Eki · 14:35" — date + time of completion, Istanbul-local wall-clock
+// as stored (completed_at is a TIMESTAMPTZ; toLocaleString renders it in
+// the browser's own local time zone, the same convention every other
+// date display in this file already uses — never a separate TZ library).
+// TESTABLE:_formatCompletedAtLabel:start
+function _formatCompletedAtLabel(completedAt) {
+  if (!completedAt) return '';
+  const d = new Date(completedAt);
+  if (isNaN(d.getTime())) return '';
+  const datePart = d.toLocaleDateString('tr-TR', { day:'numeric', month:'short' });
+  const timePart = d.toLocaleTimeString('tr-TR', { hour:'2-digit', minute:'2-digit' });
+  return `${datePart} · ${timePart}`;
+}
+// TESTABLE:_formatCompletedAtLabel:end
+
+// "Hazırlayan: Deniz" — omitted entirely (empty string) when no staff name
+// could be resolved; NEVER a fabricated/placeholder name.
+// TESTABLE:_formatCompletedByLabel:start
+function _formatCompletedByLabel(completedByName) {
+  return completedByName ? `Hazırlayan: ${completedByName}` : '';
+}
+// TESTABLE:_formatCompletedByLabel:end
+
 function useTurHazirliklariRows() {
   // Two bounded, independent queries — never one query per reservation or
   // per preparation row. getUpcomingPending joins reservation_preparations
@@ -3756,6 +3871,305 @@ function _DashboardPrepRow({ row, quantityLabel, accentColor, badgeMap }) {
   );
 }
 
+/* ══════════════════════════════════════════════════════════════════════
+   Tour Preparation Intelligence Phase C2G — Bilet Hazırlıkları, made
+   operational: Bekleyenler/Tamamlananlar tabs + the completion action,
+   reusing the EXISTING completion architecture (_canCompletePreparation,
+   _completePreparationWithFeedback, useRepoMutation("reservationPreparation"),
+   SupabaseReservationPreparationRepo.complete(id)) already proven on
+   Reservation Detail — never a new completion RPC, never a direct
+   Supabase write from these components. The meal panel is completely
+   untouched by everything below.
+   ══════════════════════════════════════════════════════════════════════ */
+
+// Shared data/state for BOTH the desktop and mobile ticket panel — a React
+// hook (useState/useMemo/useRepo/useRepoMutation), so it must be called
+// from inside a component, never from a plain render-time function (this
+// is exactly why the ticket panel became its own component below, instead
+// of staying inlined in TurHazirliklari()/MobileHomePage() as before).
+function useBiletHazirliklariTabs(pendingTickets) {
+  const [tab, setTab] = useState('pending'); // default tab: Bekleyenler
+  // ONE additional bounded query (getRecentCompleted), fetched only here —
+  // never inside useTurHazirliklariRows itself, so that hook's own
+  // 2-query architecture (pending preparations + meal-included
+  // reservations) stays exactly as it was before this phase.
+  const { data:completedData, loading:completedLoading, error:completedError } = useRepo("reservationPreparation", "getRecentCompleted");
+  const completedTickets = useMemo(
+    () => _sortCompletedTicketRows(_buildCompletedTicketDashboardRows(completedData || [])),
+    [completedData]
+  );
+  const pendingSummary = useMemo(() => _summarizePendingTicketRows(pendingTickets), [pendingTickets]);
+  const completedSummary = useMemo(() => _summarizeCompletedTicketRows(completedTickets), [completedTickets]);
+
+  const { mutate:mutDashPreparation } = useRepoMutation("reservationPreparation");
+  const [completingId, setCompletingId] = useState(null);
+  async function handleComplete(id) {
+    setCompletingId(id);
+    await _completePreparationWithFeedback(mutDashPreparation, id);
+    setCompletingId(null);
+  }
+
+  return {
+    tab, setTab,
+    completedTickets, completedLoading, completedError,
+    pendingSummary, completedSummary,
+    completingId, handleComplete,
+  };
+}
+
+// Compact segmented-control button — presentation only, used only by the
+// two panel components below.
+function _TicketTabButton({ active, onClick, children }) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        padding:"4px 10px", borderRadius:T.radiusSm, border:"none",
+        background: active ? C.navy : "transparent",
+        color: active ? C.ivory : C.textMuted,
+        cursor:"pointer", fontSize:11.5, fontWeight:600,
+        fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap",
+      }}
+    >{children}</button>
+  );
+}
+
+// Desktop ticket row — a ticket-specific variant of _DashboardPrepRow
+// (which stays untouched and keeps rendering the meal panel exactly as
+// before): adds the optional completion button (Bekleyenler tab) or the
+// completed-by/at meta line (Tamamlananlar tab). Never used by the meal
+// panel, so a completion control can never appear there.
+function _TicketPrepRow({ row, accentColor, badgeMap, canComplete, completing, onComplete, completedMeta }) {
+  const dateLabel = row.checkIn
+    ? new Date(row.checkIn).toLocaleDateString('tr-TR', { day:'numeric', month:'long' })
+    : '—';
+  return (
+    <div
+      onClick={() => _goToPreparationReservation(row.reservationId)}
+      style={{
+        display:"flex", alignItems:"center", gap:12, cursor:"pointer",
+        padding:"10px 12px", borderRadius:T.radiusSm,
+        background:C.ivory, border:`1px solid ${C.borderLight}`,
+      }}
+    >
+      <div style={{ minWidth:52, fontSize:11.5, fontWeight:700, color:C.navy, fontFamily:"'DM Sans',sans-serif", lineHeight:1.3 }}>
+        {dateLabel}
+      </div>
+      <div style={{ flex:1, minWidth:0 }}>
+        <div style={{ fontSize:12.5, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+          {row.tourName}
+        </div>
+        <div style={{ fontSize:10.5, color:C.textFaint, fontFamily:"'DM Mono',monospace", marginTop:1 }}>
+          {row.reservationNumber}
+        </div>
+        <div style={{ fontSize:11.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", marginTop:3 }}>
+          {row.label}
+        </div>
+      </div>
+      <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:5, flexShrink:0 }}>
+        <div style={{ fontSize:14, fontWeight:700, color:accentColor, fontFamily:"'Playfair Display',serif", whiteSpace:"nowrap" }}>
+          {_formatTicketQuantityLabel(row.quantity)}
+        </div>
+        {completedMeta ? (
+          <div style={{ fontSize:10, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", textAlign:"right", lineHeight:1.4 }}>
+            {completedMeta}
+          </div>
+        ) : canComplete ? (
+          <button
+            onClick={(e) => { e.stopPropagation(); onComplete(); }}
+            disabled={completing}
+            style={{
+              padding:"5px 12px", borderRadius:T.radiusSm,
+              border:`1px solid ${C.green}66`, background:C.greenBg, color:C.green,
+              cursor: completing ? "default" : "pointer",
+              opacity: completing ? 0.6 : 1,
+              fontSize:11.5, fontWeight:600, fontFamily:"'DM Sans',sans-serif",
+              whiteSpace:"nowrap",
+            }}
+          >{completing ? "…" : "Hazırlandı ✓"}</button>
+        ) : (
+          <RBadge label={row.statusLabel} map={badgeMap} small/>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Desktop panel body — called from inside TurHazirliklari()'s existing
+// {hasTickets && (...)} branch. Takes the already-grouped, already-
+// pending tickets (unchanged pipeline) as a prop; everything tab/
+// completed-history/completion-specific lives here, never in
+// TurHazirliklari() itself.
+function _BiletHazirliklariDesktopPanel({ pendingTickets, badgeMap, accentColor }) {
+  const auth = useAuthContext();
+  const {
+    tab, setTab, completedTickets, completedLoading, completedError,
+    pendingSummary, completedSummary, completingId, handleComplete,
+  } = useBiletHazirliklariTabs(pendingTickets);
+
+  const { visible:visiblePending, remaining:remainingPending } = _paginateDashboardPreparationRows(pendingTickets, MAX_VISIBLE_TICKET_PREPARATIONS);
+  const { visible:visibleCompleted, remaining:remainingCompleted } = _paginateDashboardPreparationRows(completedTickets, MAX_VISIBLE_COMPLETED_TICKET_PREPARATIONS);
+
+  const isPending = tab === 'pending';
+  const activeRows = isPending ? visiblePending : visibleCompleted;
+  const remaining = isPending ? remainingPending : remainingCompleted;
+  const summaryText = isPending ? _formatPendingTicketSummary(pendingSummary) : _formatCompletedTicketSummary(completedSummary);
+
+  return (
+    <>
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:8 }}>
+        <div style={{ fontSize:13, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif" }}>Bilet Hazırlıkları</div>
+        <div style={{ display:"flex", gap:2, background:C.ivory, border:`1px solid ${C.borderLight}`, borderRadius:T.radiusSm, padding:2 }}>
+          <_TicketTabButton active={isPending} onClick={()=>setTab('pending')}>Bekleyenler</_TicketTabButton>
+          <_TicketTabButton active={!isPending} onClick={()=>setTab('completed')}>Tamamlananlar</_TicketTabButton>
+        </div>
+      </div>
+      <div style={{ fontSize:11.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", marginTop:3, marginBottom:12 }}>
+        {summaryText}
+      </div>
+      {!isPending && completedLoading ? (
+        <div style={{ fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", padding:"8px 0" }}>Yükleniyor…</div>
+      ) : !isPending && completedError ? null : (
+        <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+          {activeRows.map((row, i) => (
+            <_TicketPrepRow
+              key={`${tab}-${row.id || row.reservationId}-${row.label}-${i}`}
+              row={row}
+              accentColor={accentColor}
+              badgeMap={badgeMap}
+              canComplete={isPending && _canCompletePreparation(auth.role, row)}
+              completing={completingId === row.id}
+              onComplete={() => handleComplete(row.id)}
+              completedMeta={!isPending ? [
+                _formatCompletedAtLabel(row.completedAt),
+                _formatCompletedByLabel(row.completedByName),
+              ].filter(Boolean).join(' · ') : null}
+            />
+          ))}
+        </div>
+      )}
+      {remaining > 0 && isPending && (
+        <div style={{ marginTop:10, fontSize:11.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif" }}>
+          + {remaining} diğer bilet hazırlığı
+        </div>
+      )}
+      {remaining > 0 && !isPending && (
+        <div style={{ marginTop:10, fontSize:11.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif" }}>
+          + {remaining} diğer tamamlanan hazırlık
+        </div>
+      )}
+    </>
+  );
+}
+
+// Mobile ticket row — same shape/data as _TicketPrepRow above, adapted to
+// MobileEntityCard/MobileStatusChip (the existing mobile wrapper
+// primitives) instead of the desktop div/RBadge, same "shared hook, only
+// the wrapper components differ" convention this file already uses for
+// the rest of the mobile dashboard.
+function _MobileTicketPrepRow({ row, navigate, canComplete, completing, onComplete, completedMeta }) {
+  const GOLD_ACCENT = "#8A6D1F";
+  return (
+    <MobileEntityCard onClick={completedMeta ? undefined : () => navigate('/reservations/' + row.reservationId)}>
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:10 }}>
+        <div style={{ minWidth:0, flex:1 }}>
+          <div style={{ fontSize:13, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{row.tourName}</div>
+          <div style={{ fontSize:11, color:C.textFaint, fontFamily:"'DM Mono',monospace", marginTop:1 }}>{row.reservationNumber}</div>
+          <div style={{ fontSize:11.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", marginTop:3 }}>{row.label}</div>
+        </div>
+        <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:5, flexShrink:0 }}>
+          <div style={{ fontSize:14, fontWeight:700, color:GOLD_ACCENT, fontFamily:"'Playfair Display',serif", whiteSpace:"nowrap" }}>
+            {_formatTicketQuantityLabel(row.quantity)}
+          </div>
+          {completedMeta ? (
+            <div style={{ fontSize:10, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", textAlign:"right", lineHeight:1.4 }}>
+              {completedMeta}
+            </div>
+          ) : canComplete ? (
+            <button
+              onClick={(e) => { e.stopPropagation(); onComplete(); }}
+              disabled={completing}
+              style={{
+                padding:"6px 14px", borderRadius:T.radiusSm,
+                border:`1px solid ${C.green}66`, background:C.greenBg, color:C.green,
+                cursor: completing ? "default" : "pointer",
+                opacity: completing ? 0.6 : 1,
+                fontSize:12, fontWeight:600, fontFamily:"'DM Sans',sans-serif",
+                whiteSpace:"nowrap", minHeight:30,
+              }}
+            >{completing ? "…" : "Hazırlandı ✓"}</button>
+          ) : (
+            <MobileStatusChip label={row.statusLabel} tone="gold"/>
+          )}
+        </div>
+      </div>
+    </MobileEntityCard>
+  );
+}
+
+// Mobile panel body — called from inside MobileHomePage's existing
+// {hasTickets && (...)} branch, same role as _BiletHazirliklariDesktopPanel
+// for desktop: all tab/completed-history/completion logic lives here via
+// the SAME shared useBiletHazirliklariTabs hook, only the JSX wrapper
+// components differ.
+function _BiletHazirliklariMobilePanel({ pendingTickets, navigate }) {
+  const auth = useAuthContext();
+  const {
+    tab, setTab, completedTickets, completedLoading, completedError,
+    pendingSummary, completedSummary, completingId, handleComplete,
+  } = useBiletHazirliklariTabs(pendingTickets);
+
+  const { visible:visiblePending, remaining:remainingPending } = _paginateDashboardPreparationRows(pendingTickets, MAX_VISIBLE_TICKET_PREPARATIONS);
+  const { visible:visibleCompleted, remaining:remainingCompleted } = _paginateDashboardPreparationRows(completedTickets, MAX_VISIBLE_COMPLETED_TICKET_PREPARATIONS);
+
+  const isPending = tab === 'pending';
+  const activeRows = isPending ? visiblePending : visibleCompleted;
+  const remaining = isPending ? remainingPending : remainingCompleted;
+  const summaryText = isPending ? _formatPendingTicketSummary(pendingSummary) : _formatCompletedTicketSummary(completedSummary);
+
+  return (
+    <MobileSection title="Bilet Hazırlıkları">
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:8, padding:"0 2px" }}>
+        <div style={{ fontSize:11.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif" }}>
+          {summaryText}
+        </div>
+        <div style={{ display:"flex", gap:2, background:C.ivory, border:`1px solid ${C.borderLight}`, borderRadius:T.radiusSm, padding:2 }}>
+          <_TicketTabButton active={isPending} onClick={()=>setTab('pending')}>Bekleyenler</_TicketTabButton>
+          <_TicketTabButton active={!isPending} onClick={()=>setTab('completed')}>Tamamlananlar</_TicketTabButton>
+        </div>
+      </div>
+      {!isPending && completedLoading ? (
+        <div style={{ fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", padding:"8px 2px" }}>Yükleniyor…</div>
+      ) : !isPending && completedError ? null : (
+        activeRows.map((row, i) => (
+          <_MobileTicketPrepRow
+            key={`${tab}-${row.id || row.reservationId}-${row.label}-${i}`}
+            row={row}
+            navigate={navigate}
+            canComplete={isPending && _canCompletePreparation(auth.role, row)}
+            completing={completingId === row.id}
+            onComplete={() => handleComplete(row.id)}
+            completedMeta={!isPending ? [
+              _formatCompletedAtLabel(row.completedAt),
+              _formatCompletedByLabel(row.completedByName),
+            ].filter(Boolean).join(' · ') : null}
+          />
+        ))
+      )}
+      {remaining > 0 && isPending && (
+        <div style={{ fontSize:11.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", padding:"0 2px" }}>
+          + {remaining} diğer bilet hazırlığı
+        </div>
+      )}
+      {remaining > 0 && !isPending && (
+        <div style={{ fontSize:11.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", padding:"0 2px" }}>
+          + {remaining} diğer tamamlanan hazırlık
+        </div>
+      )}
+    </MobileSection>
+  );
+}
+
 // Renders NOTHING when there are zero actionable rows, or while loading,
 // or on a read error — never a large empty operational card, and never a
 // broken partial render blocking the rest of Ana Sayfa.
@@ -3776,9 +4190,11 @@ function TurHazirliklari() {
   const hasMeals = meals.length > 0;
   if (!hasTickets && !hasMeals) return null;
 
-  const { visible:visibleTickets, remaining:remainingTickets } = _paginateDashboardPreparationRows(tickets, MAX_VISIBLE_TICKET_PREPARATIONS);
+  // Phase C2G: ticket pagination/summary now live inside
+  // _BiletHazirliklariDesktopPanel (tab-aware: Bekleyenler vs Tamamlananlar
+  // each need their own visible/remaining and their own count) — only the
+  // meal panel still computes its pagination/summary here, unchanged.
   const { visible:visibleMeals, remaining:remainingMeals } = _paginateDashboardPreparationRows(meals, MAX_VISIBLE_MEAL_PREPARATIONS);
-  const ticketSummary = _summarizeTicketPreparations(tickets);
   const mealSummary = _summarizeMealPreparations(meals);
   // Computed here (render time, not module-init time) because
   // PREPARATION_STATUS_BADGE_MAP is defined later in this file, near
@@ -3798,26 +4214,11 @@ function TurHazirliklari() {
       <div style={{ display:"grid", gridTemplateColumns: hasTickets && hasMeals ? "1fr 1fr" : "1fr", gap:16 }}>
         {hasTickets && (
           <div style={{ background:C.white, border:`1px solid ${C.borderLight}`, borderRadius:T.radiusSm, padding:14 }}>
-            <div style={{ fontSize:13, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif" }}>Bilet Hazırlıkları</div>
-            <div style={{ fontSize:11.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", marginTop:3, marginBottom:12 }}>
-              {_formatTicketSummary(ticketSummary)}
-            </div>
-            <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
-              {visibleTickets.map((row, i) => (
-                <_DashboardPrepRow
-                  key={`ticket-${row.reservationId}-${row.label}-${i}`}
-                  row={row}
-                  quantityLabel={_formatTicketQuantityLabel(row.quantity)}
-                  accentColor={GOLD_ACCENT}
-                  badgeMap={badgeMap}
-                />
-              ))}
-            </div>
-            {remainingTickets > 0 && (
-              <div style={{ marginTop:10, fontSize:11.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif" }}>
-                + {remainingTickets} diğer bilet hazırlığı
-              </div>
-            )}
+            {/* Tour Preparation Intelligence Phase C2G: the ticket panel's
+                Bekleyenler/Tamamlananlar tabs, completed-history fetch, and
+                completion action all live in this one sub-component — the
+                meal panel below is completely untouched by this phase. */}
+            <_BiletHazirliklariDesktopPanel pendingTickets={tickets} badgeMap={badgeMap} accentColor={GOLD_ACCENT}/>
           </div>
         )}
         {hasMeals && (
@@ -15830,6 +16231,38 @@ const SupabaseReservationPreparationRepo = {
         reservation: { status: row.reservation.status, check_in: row.reservation.check_in },
       }));
   },
+  // Tour Preparation Intelligence Phase C2G — Dashboard "Bilet Hazırlıkları
+  // > Tamamlananlar". ONE bounded query, same shape/discipline as
+  // getUpcomingPending above: status='completed' is a direct-column
+  // filter, joined to its reservation/tour via a single PostgREST embed,
+  // PLUS a second embed resolving completed_by -> staff_users.full_name —
+  // the SAME embedded-join pattern already used elsewhere in this file for
+  // performed_by/assigned_to (see SupabaseActivityRepo/SupabaseTaskRepo
+  // above), so completed_by is resolved to a display name with ZERO
+  // additional queries, never one staff lookup per row. ORDER BY
+  // completed_at DESC + LIMIT RECENT_COMPLETED_TICKET_LIMIT keeps this a
+  // bounded "recent history" view, never an unlimited historical load.
+  // Never queries tour_preparation_rules, never calls
+  // materialize_reservation_preparations.
+  async getRecentCompleted(){
+    const sb=getSB();
+    if(!sb) return [];
+    const{data,error}=await sb.from('reservation_preparations')
+      .select('*,reservation:reservations(id,reservation_number,check_in,tour:tours(name)),completedStaff:staff_users!completed_by(id,full_name)')
+      .eq('status','completed')
+      .order('completed_at',{ascending:false})
+      .limit(RECENT_COMPLETED_TICKET_LIMIT)
+    ;
+    if(error) throw new Error(error.message);
+    return (data||[])
+      .filter(row=>row.reservation)
+      .map(row=>Object.assign(mapPreparationFromDB(row), {
+        reservationNumber: row.reservation.reservation_number || '',
+        checkIn: row.reservation.check_in || null,
+        tourName: row.reservation.tour?.name || '',
+        completedByName: row.completedStaff?.full_name || null,
+      }));
+  },
   // Tour Preparation Intelligence Phase C2D-3 — the ONE write method on
   // this repo. One-directional: the .eq('status','pending') guard means
   // this UPDATE can only ever move pending -> completed — it structurally
@@ -15885,7 +16318,7 @@ function getActiveRepo(entity) {
   if(entity==='guidePayment')return useReal ? SupabaseGuidePaymentRepo : GuidePaymentRepository;
   if(entity==='review')     return useReal ? SupabaseReviewRepo       : ReviewRepository;
   if(entity==='staff')      return useReal ? SupabaseStaffRepo       : { getAll: async () => DB.staff };
-  if(entity==='reservationPreparation') return useReal ? SupabaseReservationPreparationRepo : { getByReservation: async () => [], getUpcomingPending: async () => [], complete: async () => ({ ok:false, reason:'invalid' }) };
+  if(entity==='reservationPreparation') return useReal ? SupabaseReservationPreparationRepo : { getByReservation: async () => [], getUpcomingPending: async () => [], getRecentCompleted: async () => [], complete: async () => ({ ok:false, reason:'invalid' }) };
   return null;
 }
 
@@ -20803,42 +21236,16 @@ function MobileHomePage({ navigate }) {
         const hasTickets = tickets.length > 0;
         const hasMeals = meals.length > 0;
         if (!hasTickets && !hasMeals) return null;
-        const { visible:visibleTickets, remaining:remainingTickets } = _paginateDashboardPreparationRows(tickets, MAX_VISIBLE_TICKET_PREPARATIONS);
+        // Phase C2G: ticket tab state/pagination/summary/completion now
+        // live inside _BiletHazirliklariMobilePanel (shares the SAME
+        // useBiletHazirliklariTabs hook as the desktop panel) — only the
+        // meal side still computes its own pagination/summary here,
+        // completely unchanged.
         const { visible:visibleMeals, remaining:remainingMeals } = _paginateDashboardPreparationRows(meals, MAX_VISIBLE_MEAL_PREPARATIONS);
-        const ticketSummary = _summarizeTicketPreparations(tickets);
         const mealSummary = _summarizeMealPreparations(meals);
-        const GOLD_ACCENT = "#8A6D1F";
         return (
           <>
-            {hasTickets && (
-              <MobileSection title="Bilet Hazırlıkları">
-                <div style={{ fontSize:11.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", padding:"0 2px" }}>
-                  {_formatTicketSummary(ticketSummary)}
-                </div>
-                {visibleTickets.map((row, i) => (
-                  <MobileEntityCard key={`ticket-${row.reservationId}-${row.label}-${i}`} onClick={() => navigate('/reservations/' + row.reservationId)}>
-                    <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:10 }}>
-                      <div style={{ minWidth:0, flex:1 }}>
-                        <div style={{ fontSize:13, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{row.tourName}</div>
-                        <div style={{ fontSize:11, color:C.textFaint, fontFamily:"'DM Mono',monospace", marginTop:1 }}>{row.reservationNumber}</div>
-                        <div style={{ fontSize:11.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", marginTop:3 }}>{row.label}</div>
-                      </div>
-                      <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:5, flexShrink:0 }}>
-                        <div style={{ fontSize:14, fontWeight:700, color:GOLD_ACCENT, fontFamily:"'Playfair Display',serif", whiteSpace:"nowrap" }}>
-                          {_formatTicketQuantityLabel(row.quantity)}
-                        </div>
-                        <MobileStatusChip label={row.statusLabel} tone="gold"/>
-                      </div>
-                    </div>
-                  </MobileEntityCard>
-                ))}
-                {remainingTickets > 0 && (
-                  <div style={{ fontSize:11.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", padding:"0 2px" }}>
-                    + {remainingTickets} diğer bilet hazırlığı
-                  </div>
-                )}
-              </MobileSection>
-            )}
+            {hasTickets && <_BiletHazirliklariMobilePanel pendingTickets={tickets} navigate={navigate}/>}
             {hasMeals && (
               <MobileSection title="Yemek Hazırlıkları">
                 <div style={{ fontSize:11.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", padding:"0 2px" }}>

@@ -303,7 +303,11 @@ test('both categories present -> two-column desktop layout', () => {
 test('tickets only -> only the ticket panel renders (guarded by hasTickets)', () => {
   const body = _turHazirliklariBody();
   assert.match(body, /\{hasTickets && \(/);
-  assert.match(body, /Bilet Hazırlıkları/);
+  // Phase C2G: the ticket panel's title/tabs/rows/completion all moved
+  // into _BiletHazirliklariDesktopPanel (so Bekleyenler/Tamamlananlar
+  // state can live in its own component) — TurHazirliklari() itself now
+  // only renders that sub-component inside the hasTickets-guarded cell.
+  assert.match(body, /<_BiletHazirliklariDesktopPanel\b/);
 });
 
 test('meals only -> only the meal panel renders (guarded by hasMeals)', () => {
@@ -353,9 +357,18 @@ test('meal overflow is independent of how many ticket rows exist', () => {
 
 test('correct +N overflow text for tickets and meals, distinct from each other', () => {
   const body = _turHazirliklariBody();
-  assert.match(body, /diğer bilet hazırlığı/);
+  // Meal overflow text is still rendered directly inside TurHazirliklari().
   assert.match(body, /diğer yemek hazırlığı/);
   assert.doesNotMatch(body, /\+ \{remaining\} diğer hazırlık[^ı]/); // old single-list overflow text is gone
+
+  // Phase C2G: ticket overflow text now lives inside
+  // _BiletHazirliklariDesktopPanel (tab-aware: "diğer bilet hazırlığı" for
+  // Bekleyenler, "diğer tamamlanan hazırlık" for Tamamlananlar).
+  const panelStart = SOURCE.indexOf('function _BiletHazirliklariDesktopPanel(');
+  const panelEnd = SOURCE.indexOf('\n}', panelStart);
+  const panelBody = SOURCE.slice(panelStart, panelEnd);
+  assert.match(panelBody, /diğer bilet hazırlığı/);
+  assert.match(panelBody, /diğer tamamlanan hazırlık/);
 });
 
 test('each panel manages its own MAX_VISIBLE constant', () => {
@@ -374,9 +387,47 @@ test('row navigation still goes to Reservation Detail via the existing conventio
   assert.match(body, /onClick=\{\(\)\s*=>\s*_goToPreparationReservation\(row\.reservationId\)\}/);
 });
 
-test('Dashboard still contains no completion action anywhere in the refined section', () => {
+// Phase C2G superseded this C2D-4-era expectation: the ticket panel now
+// DOES support a completion action (that is the whole point of C2G), via
+// the shared, existing _canCompletePreparation/mutate('complete', id)
+// architecture — never a new one. What must remain true is narrower and
+// more precise: TurHazirliklari()'s OWN orchestration body still has none
+// directly (it only renders the sub-components below), and the MEAL
+// panel's own rendered block still has none at all, in either the
+// orchestrator or the sub-component that renders it.
+test('TurHazirliklari() itself still has no completion action directly — it only renders the two panel sub-components', () => {
   const body = _turHazirliklariBody();
-  assert.doesNotMatch(body, /_canCompletePreparation|handleCompletePreparation|<button/);
+  assert.doesNotMatch(body, /_canCompletePreparation|handleCompletePreparation|useRepoMutation/);
+});
+
+test('the ticket panel (desktop) now supports the completion action via the existing shared architecture', () => {
+  // The completion action spans three cooperating pieces: the panel
+  // (role check), the row component (the button itself), and the shared
+  // hook (the actual mutate call) — assert each claim against the piece
+  // that actually contains it, rather than assuming they're all inlined
+  // in one function.
+  const panelStart = SOURCE.indexOf('function _BiletHazirliklariDesktopPanel(');
+  const panelBody = SOURCE.slice(panelStart, SOURCE.indexOf('\n}', panelStart));
+  assert.match(panelBody, /_canCompletePreparation\(/);
+
+  const rowStart = SOURCE.indexOf('function _TicketPrepRow(');
+  const rowBody = SOURCE.slice(rowStart, SOURCE.indexOf('\n}', rowStart));
+  assert.match(rowBody, /Hazırlandı/);
+
+  const hookStart = SOURCE.indexOf('function useBiletHazirliklariTabs(');
+  const hookBody = SOURCE.slice(hookStart, SOURCE.indexOf('\n}', hookStart));
+  // Reuses the existing shared helper — never a second completion
+  // implementation inlined here.
+  assert.match(hookBody, /_completePreparationWithFeedback\(/);
+});
+
+test('the meal panel body (hasMeals block) still has no completion action of any kind', () => {
+  const body = _turHazirliklariBody();
+  const mealStart = body.indexOf('{hasMeals && (');
+  assert.ok(mealStart !== -1, 'expected a {hasMeals && (...)} block');
+  const mealEnd = body.indexOf('\n        )}', mealStart);
+  const mealBody = body.slice(mealStart, mealEnd === -1 ? undefined : mealEnd);
+  assert.doesNotMatch(mealBody, /_canCompletePreparation|handleCompletePreparation|useRepoMutation|Hazırlandı|<button/);
 });
 
 test('the completion workflow repository method is untouched by this phase', () => {
@@ -440,20 +491,55 @@ test('MobileHomePage reuses useTurHazirliklariRows and the same grouping/summary
   const body = SOURCE.slice(start, end);
   assert.match(body, /useTurHazirliklariRows\(\)/);
   assert.match(body, /_groupTourPreparationRows\(/);
-  assert.match(body, /_summarizeTicketPreparations\(/);
+  // Phase C2G: the ticket summary now comes from the SAME shared
+  // useBiletHazirliklariTabs hook / _summarizePendingTicketRows helper
+  // the desktop panel uses too (via _BiletHazirliklariMobilePanel) —
+  // MobileHomePage itself no longer calls _summarizeTicketPreparations
+  // directly, same as the desktop TurHazirliklari() no longer does.
+  assert.match(body, /<_BiletHazirliklariMobilePanel\b/);
   assert.match(body, /_summarizeMealPreparations\(/);
-  assert.match(body, /Bilet Hazırlıkları/);
   assert.match(body, /Yemek Hazırlıkları/);
   // Never a second, independent useRepo("reservationPreparation", ...)
   // or useRepo("reservation", "getUpcomingMealIncluded") call site inside
-  // MobileHomePage itself — it must come from the shared hook only.
+  // MobileHomePage itself — it must come from the shared hooks only.
   assert.doesNotMatch(body, /useRepo\("reservationPreparation"/);
   assert.doesNotMatch(body, /useRepo\("reservation",\s*"getUpcomingMealIncluded"\)/);
 });
 
-test('MobileHomePage has no completion action either', () => {
+// Phase C2G superseded this C2D-4-era expectation the same way the
+// desktop test above was updated: the mobile ticket panel now DOES
+// support completion, via the shared architecture — but MobileHomePage's
+// own orchestration body still has none directly, and the meal section
+// still has none at all.
+test('MobileHomePage() itself still has no completion action directly — it only renders the ticket/meal sub-components', () => {
   const start = SOURCE.indexOf('function MobileHomePage(');
   const end = SOURCE.indexOf('\nfunction ', start + 10);
   const body = SOURCE.slice(start, end);
-  assert.doesNotMatch(body, /_canCompletePreparation|handleCompletePreparation/);
+  assert.doesNotMatch(body, /_canCompletePreparation|handleCompletePreparation|useRepoMutation/);
+});
+
+test('the ticket panel (mobile) now supports the completion action via the existing shared architecture', () => {
+  const panelStart = SOURCE.indexOf('function _BiletHazirliklariMobilePanel(');
+  const panelBody = SOURCE.slice(panelStart, SOURCE.indexOf('\n}', panelStart));
+  assert.match(panelBody, /_canCompletePreparation\(/);
+
+  const rowStart = SOURCE.indexOf('function _MobileTicketPrepRow(');
+  const rowBody = SOURCE.slice(rowStart, SOURCE.indexOf('\n}', rowStart));
+  assert.match(rowBody, /Hazırlandı/);
+
+  // Same shared hook as desktop — asserted already in the desktop test
+  // above, not repeated verbatim here, but confirmed structurally: the
+  // mobile panel calls the identical useBiletHazirliklariTabs hook.
+  assert.match(panelBody, /useBiletHazirliklariTabs\(/);
+});
+
+test('the mobile meal section (hasMeals block) still has no completion action of any kind', () => {
+  const start = SOURCE.indexOf('function MobileHomePage(');
+  const end = SOURCE.indexOf('\nfunction ', start + 10);
+  const body = SOURCE.slice(start, end);
+  const mealStart = body.indexOf('{hasMeals && (');
+  assert.ok(mealStart !== -1, 'expected a {hasMeals && (...)} block');
+  const mealEnd = body.indexOf('\n            )}', mealStart);
+  const mealBody = body.slice(mealStart, mealEnd === -1 ? undefined : mealEnd);
+  assert.doesNotMatch(mealBody, /_canCompletePreparation|handleCompletePreparation|useRepoMutation|Hazırlandı|<button/);
 });
