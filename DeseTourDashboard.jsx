@@ -7181,6 +7181,52 @@ function _preparationViewModel(p) {
 }
 // TESTABLE:_preparationViewModel:end
 
+// Tour Preparation Intelligence Phase C2D-3 — completion eligibility. The
+// ONE place that decides whether a "Tamamlandı" action may be shown for a
+// given preparation row, shared by BOTH desktop and mobile Reservation
+// Detail so eligibility can never drift between them. Mirrors the
+// production RLS exactly (admin/operations write, guide/sales none) —
+// this is defense in depth, never the security boundary itself: the
+// database's own "reservation_preparations: admin/operations full
+// access" policies are what actually permit or reject the write.
+// Eligible ONLY when status is exactly 'pending' — never for completed
+// (no un-completing), never for superseded or cancelled (both are
+// terminal/historical states a staff action must never resurrect).
+// TESTABLE:_canCompletePreparation:start
+function _canCompletePreparation(role, preparation) {
+  return ["Yönetici", "Operasyon"].includes(role) && !!preparation && preparation.status === 'pending';
+}
+// TESTABLE:_canCompletePreparation:end
+
+// Shared click-handler logic for BOTH desktop and mobile — interprets the
+// repo's complete() result and shows the one matching toast, using the
+// existing showToast convention (never a new notification mechanism).
+// `mutate` is the function useRepoMutation("reservationPreparation")
+// already returns; Store.notify() (called by mutate itself on any
+// resolved call, success OR stale) is what refreshes both this page's own
+// preparation list and the Dashboard's separate upcoming-pending query —
+// no bespoke cache-invalidation code needed here.
+// TESTABLE:_completePreparationWithFeedback:start
+async function _completePreparationWithFeedback(mutate, preparationId) {
+  const { data, error } = await mutate('complete', preparationId);
+  if (error) {
+    showToast('Hata: ' + error);
+    return { ok: false };
+  }
+  if (data && data.ok) {
+    showToast('Hazırlık tamamlandı.');
+    return { ok: true };
+  }
+  // Zero rows matched the conditional UPDATE (status was no longer
+  // 'pending' by the time this click reached the database) — another
+  // staff member already acted on it. Never silently claim success, never
+  // retry unconditionally; Store.notify() inside mutate() already
+  // refreshed the list with whatever the real current state is.
+  showToast('Bu hazırlığın durumu başka bir işlemle değişmiş. Liste güncellendi.');
+  return { ok: false, stale: true };
+}
+// TESTABLE:_completePreparationWithFeedback:end
+
 // Desktop-only presentation lookup (RBadge's label-keyed map convention,
 // same as PAY_STATUS/RES_STATUS above) — mobile instead passes vm.tone
 // straight into MobileStatusChip, which already defines its own
@@ -7223,6 +7269,18 @@ function ReservationDetailPage({ resId, onBack }) {
   // "fail silently, never break the rest of the page" convention
   // Önemli Uyarılar's dashboard section already uses.
   const { data:resPreparations, loading:prepLoading, error:prepError } = useRepo("reservationPreparation", "getByReservation", resId);
+  // Tour Preparation Intelligence Phase C2D-3 — completion write. mutate's
+  // own Store.notify() (fired on success AND on a stale/no-op result —
+  // see _completePreparationWithFeedback) is what refreshes this page's
+  // resPreparations above AND the Dashboard's separate upcoming-pending
+  // query; no bespoke cache-invalidation code needed here.
+  const { mutate:mutPreparation } = useRepoMutation("reservationPreparation");
+  const [completingPrepId, setCompletingPrepId] = useState(null);
+  async function handleCompletePreparation(prepId) {
+    setCompletingPrepId(prepId);
+    await _completePreparationWithFeedback(mutPreparation, prepId);
+    setCompletingPrepId(null);
+  }
   const { mutate:mutGuideAssign } = useRepoMutation("reservation");
   const [showAssignGuide, setShowAssignGuide] = useState(false);
   const [removingGuide, setRemovingGuide] = useState(false);
@@ -7464,6 +7522,7 @@ function ReservationDetailPage({ resId, onBack }) {
               <div style={{ display:"flex", flexDirection:"column" }}>
                 {_sortPreparations(resPreparations).map((p, i, arr) => {
                   const vm = _preparationViewModel(p);
+                  const canComplete = _canCompletePreparation(auth.role, p);
                   return (
                     <div key={vm.id} style={{
                       padding:"14px 20px", display:"flex", alignItems:"center", justifyContent:"space-between", gap:12,
@@ -7476,7 +7535,23 @@ function ReservationDetailPage({ resId, onBack }) {
                           {vm.quantityDisplay}{vm.completedAtLabel ? ` · ${vm.completedAtLabel}` : ''}
                         </div>
                       </div>
-                      <RBadge label={vm.statusLabel} map={PREPARATION_STATUS_BADGE_MAP} small/>
+                      <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                        <RBadge label={vm.statusLabel} map={PREPARATION_STATUS_BADGE_MAP} small/>
+                        {canComplete && (
+                          <button
+                            onClick={() => handleCompletePreparation(p.id)}
+                            disabled={completingPrepId === p.id}
+                            style={{
+                              padding:"5px 12px", borderRadius:T.radiusSm,
+                              border:`1px solid ${C.green}66`, background:C.greenBg, color:C.green,
+                              cursor: completingPrepId === p.id ? "default" : "pointer",
+                              opacity: completingPrepId === p.id ? 0.6 : 1,
+                              fontSize:11.5, fontWeight:600, fontFamily:"'DM Sans',sans-serif",
+                              whiteSpace:"nowrap",
+                            }}
+                          >{completingPrepId === p.id ? "…" : "Tamamlandı"}</button>
+                        )}
+                      </div>
                     </div>
                   );
                 })}
@@ -15592,6 +15667,38 @@ const SupabaseReservationPreparationRepo = {
         reservation: { status: row.reservation.status, check_in: row.reservation.check_in },
       }));
   },
+  // Tour Preparation Intelligence Phase C2D-3 — the ONE write method on
+  // this repo. One-directional: the .eq('status','pending') guard means
+  // this UPDATE can only ever move pending -> completed — it structurally
+  // cannot move completed -> pending (no toggle), and cannot move
+  // cancelled/superseded -> completed, because neither matches the guard
+  // either. Targets the exact reservation_preparations.id — never
+  // reservation_id, never a bulk update. .maybeSingle() (not .single(),
+  // which would throw when the guard legitimately matches zero rows)
+  // turns "another staff member already acted on this row" into a plain
+  // data:null result rather than an error — the stale/conflict case this
+  // method's caller must detect, never silently overwrite. Modifies ONLY
+  // status/completed_at/completed_by — reservation_id, preparation_rule_id,
+  // preparation_type, label, and required_quantity are never touched, and
+  // neither is the reservation itself nor tour_preparation_rules.
+  async complete(id){
+    const sb=getSB();
+    if(!sb||!id) return { ok:false, reason:'invalid' };
+    const staffId = getAuthContext()?.staff?.id || null;
+    const{data,error}=await sb.from('reservation_preparations')
+      .update({ status:'completed', completed_at:new Date().toISOString(), completed_by:staffId })
+      .eq('id', id)
+      .eq('status', 'pending')
+      .select()
+      .maybeSingle();
+    if(error) throw new Error(error.message);
+    if(!data) return { ok:false, reason:'stale' };
+    // Logged only on this success path — a stale/conflict result above
+    // returns before ever reaching this line, so a failed/no-op
+    // completion attempt never produces an activity log entry.
+    await _sbLog('reservation_preparation', data.id, 'completed', `Hazırlık tamamlandı: ${data.label} (${data.required_quantity} adet)`);
+    return { ok:true, preparation: mapPreparationFromDB(data) };
+  },
 };
 
 async function autoLog(entityType, entityId, action, description) {
@@ -15615,7 +15722,7 @@ function getActiveRepo(entity) {
   if(entity==='guidePayment')return useReal ? SupabaseGuidePaymentRepo : GuidePaymentRepository;
   if(entity==='review')     return useReal ? SupabaseReviewRepo       : ReviewRepository;
   if(entity==='staff')      return useReal ? SupabaseStaffRepo       : { getAll: async () => DB.staff };
-  if(entity==='reservationPreparation') return useReal ? SupabaseReservationPreparationRepo : { getByReservation: async () => [], getUpcomingPending: async () => [] };
+  if(entity==='reservationPreparation') return useReal ? SupabaseReservationPreparationRepo : { getByReservation: async () => [], getUpcomingPending: async () => [], complete: async () => ({ ok:false, reason:'invalid' }) };
   return null;
 }
 
@@ -21548,6 +21655,17 @@ function MobileReservationDetailPage({ resId, onBack }) {
   // desktop page, so business logic is never duplicated between the two;
   // only the rendering below differs.
   const { data:mobPreparations, loading:mobPrepLoading, error:mobPrepError } = useRepo("reservationPreparation", "getByReservation", resId);
+  // Tour Preparation Intelligence Phase C2D-3 — same shared
+  // _canCompletePreparation/_completePreparationWithFeedback helpers and
+  // the same mutation entity as desktop; only the button's JSX differs.
+  const mobAuth = useAuthContext();
+  const { mutate:mutPreparationMobile } = useRepoMutation("reservationPreparation");
+  const [completingPrepIdMobile, setCompletingPrepIdMobile] = useState(null);
+  async function handleCompletePreparationMobile(prepId) {
+    setCompletingPrepIdMobile(prepId);
+    await _completePreparationWithFeedback(mutPreparationMobile, prepId);
+    setCompletingPrepIdMobile(null);
+  }
 
   if (loading) return <LoadingState label="Rezervasyon yükleniyor…"/>;
   if (error)   return <ErrorState message={error} onRetry={()=>{}}/>;
@@ -21657,6 +21775,7 @@ function MobileReservationDetailPage({ resId, onBack }) {
         <MobileSection title="Tur Hazırlıkları">
           {_sortPreparations(mobPreparations).map(p => {
             const vm = _preparationViewModel(p);
+            const canComplete = _canCompletePreparation(mobAuth.role, p);
             return (
               <MobileEntityCard key={vm.id} style={{ opacity: vm.isHistorical ? 0.55 : 1 }}>
                 <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:10 }}>
@@ -21668,6 +21787,19 @@ function MobileReservationDetailPage({ resId, onBack }) {
                   </div>
                   <MobileStatusChip label={vm.statusLabel} tone={vm.tone}/>
                 </div>
+                {canComplete && (
+                  <button
+                    onClick={() => handleCompletePreparationMobile(p.id)}
+                    disabled={completingPrepIdMobile === p.id}
+                    style={{
+                      marginTop:10, width:"100%", padding:"8px 0", borderRadius:10,
+                      border:`1px solid ${C.green}66`, background:C.greenBg, color:C.green,
+                      cursor: completingPrepIdMobile === p.id ? "default" : "pointer",
+                      opacity: completingPrepIdMobile === p.id ? 0.6 : 1,
+                      fontSize:12.5, fontWeight:600, fontFamily:"'DM Sans',sans-serif",
+                    }}
+                  >{completingPrepIdMobile === p.id ? "…" : "Tamamlandı"}</button>
+                )}
               </MobileEntityCard>
             );
           })}
