@@ -191,9 +191,10 @@ test('no activity log is written on a failed/stale update — the log call is te
   assert.ok(guardIdx < logIdx, 'the stale-return guard must come before the activity log call');
 });
 
-test('activity log is written on successful completion, naming the entity_type/action convention', () => {
+test('activity log is written on successful completion, using entity_type="reservation" (a real activity_logs CHECK-allowed value, fixed during Phase C2H\'s audit — it previously used the invalid "reservation_preparation") and action="completed"', () => {
   const body = _completeRepoBody();
-  assert.match(body, /_sbLog\('reservation_preparation', data\.id, 'completed'/);
+  assert.match(body, /_sbLog\('reservation', data\.reservation_id, 'completed'/);
+  assert.doesNotMatch(body, /_sbLog\('reservation_preparation'/);
 });
 
 test('complete() performs exactly one write (.update call), no second write anywhere', () => {

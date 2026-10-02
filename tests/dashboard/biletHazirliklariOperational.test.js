@@ -327,12 +327,14 @@ test('none of the new Phase C2G components or the shared hook ever call .update(
   }
 });
 
-test('no second/parallel completion RPC or repository method was introduced — SupabaseReservationPreparationRepo still has exactly one write method', () => {
+test('no unexpected third write method exists on SupabaseReservationPreparationRepo — only complete(id) and reopen(id) (Phase C2H\'s deliberate, explicitly-requested reversal counterpart)', () => {
   const start = SOURCE.indexOf('const SupabaseReservationPreparationRepo = {');
   const end = SOURCE.indexOf('\n};', start);
   const body = SOURCE.slice(start, end);
   const writeCalls = body.match(/\.update\(/g) || [];
-  assert.equal(writeCalls.length, 1, 'exactly one .update( call across the whole repo — complete(id) — never a second write path');
+  assert.equal(writeCalls.length, 2, 'exactly two .update( calls across the whole repo — complete(id) and reopen(id) — never a third write path');
+  assert.match(body, /async complete\(id\)\{/);
+  assert.match(body, /async reopen\(id\)\{/);
 });
 
 // ═══════════════════════════════════════════════════════════════════════

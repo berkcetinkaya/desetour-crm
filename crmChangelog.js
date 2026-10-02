@@ -101,6 +101,22 @@ const CRM_CHANGELOG_CATEGORIES = [
 // Newest first. See the release convention above before editing.
 const CRM_CHANGELOG = [
   {
+    version: '12.38',
+    date: '2026-10-02',
+    title: 'Tur Hazırlıkları Takibi',
+    summary: 'Civitatis rezervasyonları için gerekli bilet hazırlıkları artık otomatik olarak belirleniyor; Ana Sayfa ve Rezervasyon Detayı\'ndan takip edilip tamamlanabiliyor, yanlışlıkla tamamlanan bir hazırlık da güvenle geri alınabiliyor.',
+    categories: ['Yeni Özellik', 'Operasyon', 'Otomasyon'],
+    highlights: [
+      'Yeni veya değişen Civitatis rezervasyonları için gerekli giriş bileti hazırlıklarının (örn. Ayasofya, Topkapı Sarayı + Harem) misafir sayısına göre otomatik belirlenmesi',
+      'Ana Sayfa\'da Bilet Hazırlıkları panelinde Bekleyenler ve Tamamlananlar olarak ayrı takip, "Hazırlandı" ile tek tıkla tamamlama',
+      'Rezervasyon Detayı\'nda o rezervasyona ait tüm bilet hazırlıklarının görüntülenebilmesi',
+      'Yemek dahil/dahil değil bilgisinin Rezervasyon Detayı\'nda ve Ana Sayfa\'da ayrıca görülebilmesi',
+      'Yanlışlıkla tamamlanan bir bilet hazırlığının Rezervasyon Detayı\'ndan onay adımıyla güvenle yeniden bekleyen durumuna alınabilmesi',
+    ],
+    author: 'Berk',
+    technicalNote: 'Bilet hazırlığı tamamlama ve geri alma işlemleri yalnızca yönetici ve operasyon rolleri tarafından yapılabiliyor; geri alma özelliği bilinçli bir düzeltme adımı olması için sadece Rezervasyon Detayı\'nda sunuluyor, Ana Sayfa\'ya eklenmedi.',
+  },
+  {
     version: '12.37',
     date: '2026-09-30',
     title: 'Tur Bilgi Merkezi',

@@ -7754,13 +7754,33 @@ function _preparationViewModel(p) {
 // database's own "reservation_preparations: admin/operations full
 // access" policies are what actually permit or reject the write.
 // Eligible ONLY when status is exactly 'pending' — never for completed
-// (no un-completing), never for superseded or cancelled (both are
-// terminal/historical states a staff action must never resurrect).
+// (completing an already-completed row), never for superseded or
+// cancelled (both are terminal/historical states this action must never
+// resurrect). Phase C2H adds a SEPARATE, narrower reversal path
+// (_canReopenPreparation/reopen(id)) for the completed -> pending
+// direction specifically — this function's own eligibility is
+// deliberately unchanged by that addition.
 // TESTABLE:_canCompletePreparation:start
 function _canCompletePreparation(role, preparation) {
   return ["Yönetici", "Operasyon"].includes(role) && !!preparation && preparation.status === 'pending';
 }
 // TESTABLE:_canCompletePreparation:end
+
+// Tour Preparation Intelligence Phase C2H — the reversal counterpart to
+// _canCompletePreparation above, deliberately a SEPARATE function rather
+// than a parameter/flag on it: completion and reversal are two distinct
+// corrective actions with two distinct eligible states (pending vs.
+// completed), and keeping them separate makes each one's own condition
+// trivial to read and test in isolation. Same role gate as completion —
+// Yönetici/Operasyon only; Satış/Rehber can never reopen a preparation,
+// exactly as they can never complete one. Eligible ONLY when status is
+// exactly 'completed' — never for pending (nothing to reverse), never
+// for superseded or cancelled (both remain terminal/historical).
+// TESTABLE:_canReopenPreparation:start
+function _canReopenPreparation(role, preparation) {
+  return ["Yönetici", "Operasyon"].includes(role) && !!preparation && preparation.status === 'completed';
+}
+// TESTABLE:_canReopenPreparation:end
 
 // Shared click-handler logic for BOTH desktop and mobile — interprets the
 // repo's complete() result and shows the one matching toast, using the
@@ -7790,6 +7810,43 @@ async function _completePreparationWithFeedback(mutate, preparationId) {
   return { ok: false, stale: true };
 }
 // TESTABLE:_completePreparationWithFeedback:end
+
+// Tour Preparation Intelligence Phase C2H — the exact same shape as
+// _completePreparationWithFeedback above (same mutate/Store.notify
+// contract, same stale-conflict handling), calling 'reopen' instead of
+// 'complete'. A stale result here means the row was no longer 'completed'
+// by the time this click reached the database (e.g. another staff member
+// had already reopened it, or — structurally impossible via any UI path,
+// but still guarded at the database layer — it was already pending).
+// TESTABLE:_reopenPreparationWithFeedback:start
+async function _reopenPreparationWithFeedback(mutate, preparationId) {
+  const { data, error } = await mutate('reopen', preparationId);
+  if (error) {
+    showToast('Hata: ' + error);
+    return { ok: false };
+  }
+  if (data && data.ok) {
+    showToast('Hazırlık bekleyene alındı.');
+    return { ok: true };
+  }
+  showToast('Bu hazırlığın durumu başka bir işlemle değişmiş. Liste güncellendi.');
+  return { ok: false, stale: true };
+}
+// TESTABLE:_reopenPreparationWithFeedback:end
+
+// The one lightweight confirmation this phase introduces (native
+// window.confirm — no new modal component for a single yes/no gate),
+// used identically by both desktop and mobile Reservation Detail before
+// ever calling _reopenPreparationWithFeedback. Deliberately states the
+// concrete consequence (the row returns to the Bekleyenler list) rather
+// than a generic "are you sure?" — reversal is a corrective action on an
+// already-operational completion state, so the message says exactly what
+// will change.
+// TESTABLE:_confirmReopenPreparationMessage:start
+function _confirmReopenPreparationMessage(label) {
+  return `"${label}" hazırlığı Bekleyenler listesine geri alınacak. Onaylıyor musunuz?`;
+}
+// TESTABLE:_confirmReopenPreparationMessage:end
 
 // Desktop-only presentation lookup (RBadge's label-keyed map convention,
 // same as PAY_STATUS/RES_STATUS above) — mobile instead passes vm.tone
@@ -7844,6 +7901,20 @@ function ReservationDetailPage({ resId, onBack }) {
     setCompletingPrepId(prepId);
     await _completePreparationWithFeedback(mutPreparation, prepId);
     setCompletingPrepId(null);
+  }
+  // Tour Preparation Intelligence Phase C2H — reversal, Reservation Detail
+  // only (never Dashboard). Same mutation entity/hook as completion above
+  // (useRepoMutation("reservationPreparation") — never a second one), its
+  // own independent in-flight id so completing one row and reopening
+  // another can never visually collide, and a lightweight native confirm
+  // BEFORE the mutate call — declining it is a complete no-op (never
+  // calls mutate, never shows a toast).
+  const [reopeningPrepId, setReopeningPrepId] = useState(null);
+  async function handleReopenPreparation(prepId, label) {
+    if (!window.confirm(_confirmReopenPreparationMessage(label))) return;
+    setReopeningPrepId(prepId);
+    await _reopenPreparationWithFeedback(mutPreparation, prepId);
+    setReopeningPrepId(null);
   }
   const { mutate:mutGuideAssign } = useRepoMutation("reservation");
   const [showAssignGuide, setShowAssignGuide] = useState(false);
@@ -8087,6 +8158,11 @@ function ReservationDetailPage({ resId, onBack }) {
                 {_sortPreparations(resPreparations).map((p, i, arr) => {
                   const vm = _preparationViewModel(p);
                   const canComplete = _canCompletePreparation(auth.role, p);
+                  // Tour Preparation Intelligence Phase C2H — mutually
+                  // exclusive with canComplete by construction (pending
+                  // vs. completed), so the two buttons never both render
+                  // for the same row.
+                  const canReopen = _canReopenPreparation(auth.role, p);
                   return (
                     <div key={vm.id} style={{
                       padding:"14px 20px", display:"flex", alignItems:"center", justifyContent:"space-between", gap:12,
@@ -8114,6 +8190,24 @@ function ReservationDetailPage({ resId, onBack }) {
                               whiteSpace:"nowrap",
                             }}
                           >{completingPrepId === p.id ? "…" : "Tamamlandı"}</button>
+                        )}
+                        {canReopen && (
+                          // Deliberately a secondary/corrective style —
+                          // neutral border+text, lighter font-weight, no
+                          // fill color — never more visually prominent
+                          // than the green completion action above.
+                          <button
+                            onClick={() => handleReopenPreparation(p.id, vm.label)}
+                            disabled={reopeningPrepId === p.id}
+                            style={{
+                              padding:"5px 12px", borderRadius:T.radiusSm,
+                              border:`1px solid ${C.border}`, background:C.white, color:C.textMid,
+                              cursor: reopeningPrepId === p.id ? "default" : "pointer",
+                              opacity: reopeningPrepId === p.id ? 0.6 : 1,
+                              fontSize:11.5, fontWeight:500, fontFamily:"'DM Sans',sans-serif",
+                              whiteSpace:"nowrap",
+                            }}
+                          >{reopeningPrepId === p.id ? "…" : "Bekleyene Geri Al"}</button>
                         )}
                       </div>
                     </div>
@@ -16263,20 +16357,24 @@ const SupabaseReservationPreparationRepo = {
         completedByName: row.completedStaff?.full_name || null,
       }));
   },
-  // Tour Preparation Intelligence Phase C2D-3 — the ONE write method on
-  // this repo. One-directional: the .eq('status','pending') guard means
-  // this UPDATE can only ever move pending -> completed — it structurally
-  // cannot move completed -> pending (no toggle), and cannot move
-  // cancelled/superseded -> completed, because neither matches the guard
-  // either. Targets the exact reservation_preparations.id — never
-  // reservation_id, never a bulk update. .maybeSingle() (not .single(),
-  // which would throw when the guard legitimately matches zero rows)
-  // turns "another staff member already acted on this row" into a plain
-  // data:null result rather than an error — the stale/conflict case this
-  // method's caller must detect, never silently overwrite. Modifies ONLY
-  // status/completed_at/completed_by — reservation_id, preparation_rule_id,
-  // preparation_type, label, and required_quantity are never touched, and
-  // neither is the reservation itself nor tour_preparation_rules.
+  // Tour Preparation Intelligence Phase C2D-3 — the ONE completion write
+  // method on this repo as of that phase. One-directional on its own:
+  // the .eq('status','pending') guard means this UPDATE can only ever
+  // move pending -> completed here — it cannot move completed -> pending
+  // through THIS method (no toggle), and cannot move cancelled/superseded
+  // -> completed, because neither matches the guard either. Phase C2H
+  // adds reopen(id) immediately below as the deliberate, separate,
+  // narrower counterpart for the completed -> pending direction — this
+  // method itself is otherwise unchanged. Targets the exact
+  // reservation_preparations.id — never reservation_id, never a bulk
+  // update. .maybeSingle() (not .single(), which would throw when the
+  // guard legitimately matches zero rows) turns "another staff member
+  // already acted on this row" into a plain data:null result rather than
+  // an error — the stale/conflict case this method's caller must detect,
+  // never silently overwrite. Modifies ONLY status/completed_at/
+  // completed_by — reservation_id, preparation_rule_id, preparation_type,
+  // label, and required_quantity are never touched, and neither is the
+  // reservation itself nor tour_preparation_rules.
   async complete(id){
     const sb=getSB();
     if(!sb||!id) return { ok:false, reason:'invalid' };
@@ -16292,7 +16390,65 @@ const SupabaseReservationPreparationRepo = {
     // Logged only on this success path — a stale/conflict result above
     // returns before ever reaching this line, so a failed/no-op
     // completion attempt never produces an activity log entry.
-    await _sbLog('reservation_preparation', data.id, 'completed', `Hazırlık tamamlandı: ${data.label} (${data.required_quantity} adet)`);
+    // entity_type:'reservation' / entity_id:data.reservation_id — NOT
+    // 'reservation_preparation', which is not a member of activity_logs'
+    // own entity_type CHECK constraint. This call used to use that
+    // invalid value, which meant every completion's audit log insert was
+    // silently failing in production (swallowed by _sbLog's own internal
+    // try/catch) even though the completion itself succeeded; fixed
+    // during Phase C2H's audit to use the same valid entity architecture
+    // reopen(id) below already uses, so completion and reversal both
+    // produce real, queryable audit history under the reservation's own
+    // entity_id.
+    await _sbLog('reservation', data.reservation_id, 'completed', `Bilet hazırlığı tamamlandı: ${data.label} (${data.required_quantity} adet)`);
+    return { ok:true, preparation: mapPreparationFromDB(data) };
+  },
+  // Tour Preparation Intelligence Phase C2H — the reversal counterpart to
+  // complete(id) above, same shape/discipline: a single conditional
+  // UPDATE, guarded by .eq('status','completed') so this can ONLY ever
+  // move completed -> pending — it structurally cannot touch a row that
+  // is not currently 'completed' (pending/superseded/cancelled all fail
+  // the guard and simply match zero rows). completed_at and completed_by
+  // are cleared together, satisfying the table's own
+  // reservation_preparations_completed_consistency CHECK constraint
+  // (status != 'completed' requires BOTH to be NULL) — this is why they
+  // are always set in the same UPDATE, never one without the other. Same
+  // .maybeSingle()-based stale/conflict detection as complete(id): zero
+  // rows matched (another staff member already reopened it, or it was
+  // no longer 'completed' by the time this click reached the database)
+  // returns {ok:false, reason:'stale'} rather than silently claiming
+  // success. No new RLS policy was needed: "reservation_preparations:
+  // admin full access" / "...: operations full access" already grant
+  // UNRESTRICTED UPDATE to both roles (FOR ALL, no column/status
+  // condition in USING/WITH CHECK) — the exact same policies complete(id)
+  // already relies on.
+  async reopen(id){
+    const sb=getSB();
+    if(!sb||!id) return { ok:false, reason:'invalid' };
+    const{data,error}=await sb.from('reservation_preparations')
+      .update({ status:'pending', completed_at:null, completed_by:null })
+      .eq('id', id)
+      .eq('status', 'completed')
+      .select()
+      .maybeSingle();
+    if(error) throw new Error(error.message);
+    if(!data) return { ok:false, reason:'stale' };
+    // entity_type:'reservation' (never 'reservation_preparation', which
+    // is NOT a member of activity_logs' own entity_type CHECK constraint
+    // — confirmed directly against the real constraint during this
+    // phase's audit). complete(id) above originally used that invalid
+    // value too, which meant its own audit log insert was silently
+    // failing in production (swallowed by _sbLog's internal try/catch);
+    // that was fixed in the same audit to use this same valid entity
+    // architecture, so completion and reversal now share one consistent,
+    // actually-persisted audit trail. action:'status_changed' is
+    // the closest member of activity_logs' own action CHECK vocabulary
+    // to "a reversal" — there is no dedicated 'reopened' value and this
+    // phase does not widen that CHECK (no migration was necessary for
+    // this feature). Logged only on this success path, exactly like
+    // complete(id) — a stale/conflict result above returns before ever
+    // reaching this line.
+    await _sbLog('reservation', data.reservation_id, 'status_changed', `Bilet hazırlığı tamamlanması geri alındı: ${data.label} (${data.required_quantity} adet)`);
     return { ok:true, preparation: mapPreparationFromDB(data) };
   },
 };
@@ -16318,7 +16474,7 @@ function getActiveRepo(entity) {
   if(entity==='guidePayment')return useReal ? SupabaseGuidePaymentRepo : GuidePaymentRepository;
   if(entity==='review')     return useReal ? SupabaseReviewRepo       : ReviewRepository;
   if(entity==='staff')      return useReal ? SupabaseStaffRepo       : { getAll: async () => DB.staff };
-  if(entity==='reservationPreparation') return useReal ? SupabaseReservationPreparationRepo : { getByReservation: async () => [], getUpcomingPending: async () => [], getRecentCompleted: async () => [], complete: async () => ({ ok:false, reason:'invalid' }) };
+  if(entity==='reservationPreparation') return useReal ? SupabaseReservationPreparationRepo : { getByReservation: async () => [], getUpcomingPending: async () => [], getRecentCompleted: async () => [], complete: async () => ({ ok:false, reason:'invalid' }), reopen: async () => ({ ok:false, reason:'invalid' }) };
   return null;
 }
 
@@ -22322,6 +22478,16 @@ function MobileReservationDetailPage({ resId, onBack }) {
     await _completePreparationWithFeedback(mutPreparationMobile, prepId);
     setCompletingPrepIdMobile(null);
   }
+  // Tour Preparation Intelligence Phase C2H — same shared
+  // _canReopenPreparation/_reopenPreparationWithFeedback helpers and the
+  // same mutation entity as desktop; only the button's JSX differs.
+  const [reopeningPrepIdMobile, setReopeningPrepIdMobile] = useState(null);
+  async function handleReopenPreparationMobile(prepId, label) {
+    if (!window.confirm(_confirmReopenPreparationMessage(label))) return;
+    setReopeningPrepIdMobile(prepId);
+    await _reopenPreparationWithFeedback(mutPreparationMobile, prepId);
+    setReopeningPrepIdMobile(null);
+  }
 
   if (loading) return <LoadingState label="Rezervasyon yükleniyor…"/>;
   if (error)   return <ErrorState message={error} onRetry={()=>{}}/>;
@@ -22432,6 +22598,9 @@ function MobileReservationDetailPage({ resId, onBack }) {
           {_sortPreparations(mobPreparations).map(p => {
             const vm = _preparationViewModel(p);
             const canComplete = _canCompletePreparation(mobAuth.role, p);
+            // Tour Preparation Intelligence Phase C2H — mutually
+            // exclusive with canComplete by construction.
+            const canReopen = _canReopenPreparation(mobAuth.role, p);
             return (
               <MobileEntityCard key={vm.id} style={{ opacity: vm.isHistorical ? 0.55 : 1 }}>
                 <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:10 }}>
@@ -22455,6 +22624,22 @@ function MobileReservationDetailPage({ resId, onBack }) {
                       fontSize:12.5, fontWeight:600, fontFamily:"'DM Sans',sans-serif",
                     }}
                   >{completingPrepIdMobile === p.id ? "…" : "Tamamlandı"}</button>
+                )}
+                {canReopen && (
+                  // Secondary/corrective style, never more prominent than
+                  // the green completion action above — same discipline
+                  // as the desktop button.
+                  <button
+                    onClick={() => handleReopenPreparationMobile(p.id, vm.label)}
+                    disabled={reopeningPrepIdMobile === p.id}
+                    style={{
+                      marginTop:10, width:"100%", padding:"8px 0", borderRadius:10,
+                      border:`1px solid ${C.border}`, background:C.white, color:C.textMid,
+                      cursor: reopeningPrepIdMobile === p.id ? "default" : "pointer",
+                      opacity: reopeningPrepIdMobile === p.id ? 0.6 : 1,
+                      fontSize:12.5, fontWeight:500, fontFamily:"'DM Sans',sans-serif",
+                    }}
+                  >{reopeningPrepIdMobile === p.id ? "…" : "Bekleyene Geri Al"}</button>
                 )}
               </MobileEntityCard>
             );
