@@ -99,6 +99,7 @@ const gmailClient = require('./_civitatis/gmailClient');
 const { createSupabaseCivitatisRepo, getServiceRoleClient, ConfigurationError } = require('./_civitatis/supabaseAdmin');
 const { planCivitatisIngestion, executeCivitatisIngestionPlan } = require('./_civitatis/writeAdapter');
 const { enrichCivitatisActivityModalityForPlan } = require('./_civitatis/activityModalityEnrichment');
+const { materializeReservationPreparationsForBookingPlan, materializeReservationPreparationsForCancellations } = require('./_civitatis/reservationPreparationEnrichment');
 const { parseCivitatisEmail } = require('./_civitatis/parser');
 const { detectCivitatisEvent } = require('./_civitatis/eventDetector');
 const { planCivitatisCancellations, executeCivitatisCancellationPlan } = require('./_civitatis/cancellationAdapter');
@@ -362,7 +363,34 @@ async function runCivitatisWriteOrchestration({ messages, repo, externalBookingI
     console.error('[ingest-civitatis-write] Activity modality enrichment error:', err.message);
   }
 
+  // Tour Preparation Intelligence Phase C2F: automatic reservation-
+  // preparation materialization, run ONLY here — after the booking domain
+  // write above has already fully committed. Same isolation philosophy as
+  // the activity-modality enrichment immediately above: wrapped so that
+  // nothing it does can alter `executed` or this function's return value,
+  // and so any failure here can never cause the booking write to be
+  // treated as failed or retried.
+  // materializeReservationPreparationsForBookingPlan already isolates
+  // failures per individual event internally; this try/catch is an extra
+  // outer guard against a totally unexpected error in the step itself.
+  try {
+    await materializeReservationPreparationsForBookingPlan({ plan, executed });
+  } catch (err) {
+    console.error('[ingest-civitatis-write] Reservation preparation materialization error (booking):', err.message);
+  }
+
   const executedCancellations = await executeCivitatisCancellationPlan(cancellationPlan.plans, cancellationRpcCaller);
+
+  // Same Phase C2F enrichment, for the cancellation pipeline — run ONLY
+  // after the cancellation domain write above has already fully
+  // committed, and never able to affect `executedCancellations` or this
+  // function's return value.
+  try {
+    await materializeReservationPreparationsForCancellations({ executedCancellations });
+  } catch (err) {
+    console.error('[ingest-civitatis-write] Reservation preparation materialization error (cancellation):', err.message);
+  }
+
   return {
     ok: true,
     results: buildWriteResults(executed, eventTypeByGmailId),
