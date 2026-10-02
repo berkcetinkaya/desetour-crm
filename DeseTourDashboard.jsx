@@ -6830,6 +6830,117 @@ function getPurchasedActivityDisplayValue(purchasedActivityRaw) {
 }
 // TESTABLE:getPurchasedActivityDisplayValue:end
 
+// ── Tour Preparation Intelligence Phase C2D-1 ───────────────────────────
+// Reservation Detail "Tur Hazırlıkları" — reservation_preparations is the
+// SOLE source of truth for materialized preparation requirements. These
+// helpers only ever format/sort rows a prior materialization already
+// produced; they never infer a requirement from itinerary text and never
+// call materialize_reservation_preparations. Deliberately separate from
+// Tur İçeriği's meal_status display above — that card answers "what did
+// the guest purchase", this one answers "what must operations prepare".
+
+// Only the four statuses the reservation_preparations CHECK constraint
+// permits are ever real; the fallback branch is purely defensive (so a
+// future, currently-impossible status never throws) and is never expected
+// to be exercised. tone is a semantic hint only (gold/good/neutral), the
+// same vocabulary MobileStatusChip already uses — the rendering layer owns
+// the actual color tokens, exactly like getMealStatusDisplay's tone above.
+// TESTABLE:getPreparationStatusDisplay:start
+const PREPARATION_STATUS_DISPLAY = {
+  pending:    { label:'Bekliyor',    tone:'gold' },
+  completed:  { label:'Tamamlandı',  tone:'good' },
+  superseded: { label:'Güncellendi', tone:'neutral' },
+  cancelled:  { label:'İptal',       tone:'neutral' },
+};
+function getPreparationStatusDisplay(status) {
+  return PREPARATION_STATUS_DISPLAY[status] || PREPARATION_STATUS_DISPLAY.pending;
+}
+// TESTABLE:getPreparationStatusDisplay:end
+
+// Supplementary only — label (e.g. "Ayasofya Giriş Bileti") is already the
+// primary, human-written text for a row; this exists purely so a type
+// value is never shown to a user as a raw enum string if a future UI ever
+// wants a small per-type indicator.
+// TESTABLE:getPreparationTypeDisplay:start
+const PREPARATION_TYPE_LABEL = {
+  entrance_ticket: 'Giriş Bileti',
+  meal:            'Yemek',
+  reservation:     'Rezervasyon',
+  transport:       'Ulaşım',
+  special_access:  'Özel Erişim',
+  other:           'Diğer',
+};
+function getPreparationTypeDisplay(preparationType) {
+  return PREPARATION_TYPE_LABEL[preparationType] || PREPARATION_TYPE_LABEL.other;
+}
+// TESTABLE:getPreparationTypeDisplay:end
+
+// TESTABLE:getPreparationQuantityDisplay:start
+function getPreparationQuantityDisplay(requiredQuantity) {
+  const n = Number(requiredQuantity);
+  return `${Number.isFinite(n) && n > 0 ? n : 0} adet`;
+}
+// TESTABLE:getPreparationQuantityDisplay:end
+
+// Deterministic display order: active work (pending) first, then
+// completed, then historical/inactive (superseded/cancelled) last — ties
+// broken by created_at ascending, then label — so the card's row order
+// never depends on whatever order the database happens to return.
+// TESTABLE:_sortPreparations:start
+const _PREPARATION_STATUS_SORT_RANK = { pending:0, completed:1, superseded:2, cancelled:2 };
+function _sortPreparations(preparations) {
+  const list = (preparations || []).slice();
+  list.sort((a, b) => {
+    const ra = _PREPARATION_STATUS_SORT_RANK[a.status] ?? 3;
+    const rb = _PREPARATION_STATUS_SORT_RANK[b.status] ?? 3;
+    if (ra !== rb) return ra - rb;
+    const ca = a.createdAt || '';
+    const cb = b.createdAt || '';
+    if (ca !== cb) return ca < cb ? -1 : 1;
+    return (a.label || '').localeCompare(b.label || '');
+  });
+  return list;
+}
+// TESTABLE:_sortPreparations:end
+
+// The single source of truth for what a preparation row shows — both the
+// desktop RCard and the mobile MobileSection below call this, so they can
+// never diverge on label/quantity/status text or tone. completedAtLabel is
+// populated ONLY for a completed row (never for pending/superseded/
+// cancelled) and reads completed_at exactly as already fetched by
+// getByReservation's single query — no second query is introduced to
+// resolve completed_by, which this view model deliberately never exposes.
+// TESTABLE:_preparationViewModel:start
+function _preparationViewModel(p) {
+  const statusDisplay = getPreparationStatusDisplay(p.status);
+  return {
+    id: p.id,
+    label: p.label || '',
+    quantityDisplay: getPreparationQuantityDisplay(p.requiredQuantity),
+    statusLabel: statusDisplay.label,
+    tone: statusDisplay.tone,
+    typeLabel: getPreparationTypeDisplay(p.preparationType),
+    isHistorical: p.status === 'superseded' || p.status === 'cancelled',
+    completedAtLabel: (p.status === 'completed' && p.completedAt)
+      ? new Date(p.completedAt).toLocaleDateString('tr-TR', { day:'2-digit', month:'short', year:'numeric' })
+      : null,
+  };
+}
+// TESTABLE:_preparationViewModel:end
+
+// Desktop-only presentation lookup (RBadge's label-keyed map convention,
+// same as PAY_STATUS/RES_STATUS above) — mobile instead passes vm.tone
+// straight into MobileStatusChip, which already defines its own
+// gold/good/neutral colors; this is the desktop-side equivalent, kept as a
+// plain style constant (not business logic) separate from the pure
+// helpers above.
+const PREPARATION_STATUS_BADGE_MAP = {
+  'Bekliyor':    { color:"#8A6D1F",   bg:C.goldPale,  dot:"#8A6D1F" },
+  'Tamamlandı':  { color:C.green,     bg:C.greenBg,   dot:C.green },
+  'Güncellendi': { color:C.textMuted, bg:C.ivoryDark, dot:C.textMuted },
+  'İptal':       { color:C.textMuted, bg:C.ivoryDark, dot:C.textMuted },
+};
+
 function ReservationDetailPage({ resId, onBack }) {
   const _sp = safeParam(resId);
   if (_sp.invalid) return (
@@ -6852,6 +6963,13 @@ function ReservationDetailPage({ resId, onBack }) {
   // fetch from the customer above: the customer is the booking contact
   // (who/what made the booking), these are the people actually traveling.
   const { data:resGuests } = useRepo("reservation", "getGuests", resId);
+  // Tour Preparation Intelligence Phase C2D-1 — one dedicated query via
+  // the repository layer, never a raw Supabase call here. Loading/error
+  // states are deliberately swallowed below (card omitted, never a broken
+  // partial render) rather than surfaced as a page-level error, the same
+  // "fail silently, never break the rest of the page" convention
+  // Önemli Uyarılar's dashboard section already uses.
+  const { data:resPreparations, loading:prepLoading, error:prepError } = useRepo("reservationPreparation", "getByReservation", resId);
   const { mutate:mutGuideAssign } = useRepoMutation("reservation");
   const [showAssignGuide, setShowAssignGuide] = useState(false);
   const [removingGuide, setRemovingGuide] = useState(false);
@@ -7076,6 +7194,42 @@ function ReservationDetailPage({ resId, onBack }) {
               );
             })()}
           </RCard>
+
+          {}
+          {/* Tour Preparation Intelligence Phase C2D-1 — deliberately
+              separate card from Tur İçeriği above: that card answers "what
+              did the guest purchase" (meal_status/purchased_activity_raw),
+              this one answers "what must operations prepare"
+              (reservation_preparations). Omitted entirely when there are
+              zero rows — never a large empty operational card — so a
+              reservation with no materialized preparation never implies
+              it has no meal requirement either; meal awareness stays
+              exclusively in Tur İçeriği via meal_status. */}
+          {!prepLoading && !prepError && (resPreparations || []).length > 0 && (
+            <RCard>
+              <RCardHead title="Tur Hazırlıkları"/>
+              <div style={{ display:"flex", flexDirection:"column" }}>
+                {_sortPreparations(resPreparations).map((p, i, arr) => {
+                  const vm = _preparationViewModel(p);
+                  return (
+                    <div key={vm.id} style={{
+                      padding:"14px 20px", display:"flex", alignItems:"center", justifyContent:"space-between", gap:12,
+                      borderBottom: i < arr.length - 1 ? `1px solid ${C.borderLight}` : "none",
+                      opacity: vm.isHistorical ? 0.55 : 1,
+                    }}>
+                      <div>
+                        <div style={{ fontSize:13.5, fontWeight:700, color:C.text, fontFamily:"'DM Sans',sans-serif" }}>{vm.label}</div>
+                        <div style={{ fontSize:12, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", marginTop:2 }}>
+                          {vm.quantityDisplay}{vm.completedAtLabel ? ` · ${vm.completedAtLabel}` : ''}
+                        </div>
+                      </div>
+                      <RBadge label={vm.statusLabel} map={PREPARATION_STATUS_BADGE_MAP} small/>
+                    </div>
+                  );
+                })}
+              </div>
+            </RCard>
+          )}
 
           {}
           <RCard>
@@ -14689,6 +14843,30 @@ function mapResFromDB(r) {
     purchasedActivityRaw:r.purchased_activity_raw||null,
     createdAt:r.created_at?r.created_at.split('T')[0]:'', _fromDB:true };
 }
+// Tour Preparation Intelligence Phase C2D-1 — maps EVERY column of a
+// reservation_preparations row, including preparation_rule_id/completed_by/
+// updated_at which no C2D-1 UI surface displays yet. Deliberately not
+// omitted: a column existing in production with nothing reading it is
+// exactly the gap meal_status/purchased_activity_raw sat in between Phase
+// A and Phase C1 — this mapper closes that gap for every column up front
+// rather than letting a future phase rediscover it.
+function mapPreparationFromDB(r) {
+  if (!r) return null;
+  return {
+    id: r.id,
+    reservationId: r.reservation_id || null,
+    preparationRuleId: r.preparation_rule_id || null,
+    preparationType: r.preparation_type || null,
+    label: r.label || '',
+    requiredQuantity: r.required_quantity != null ? parseInt(r.required_quantity, 10) : 0,
+    status: r.status || 'pending',
+    completedAt: r.completed_at || null,
+    completedBy: r.completed_by || null,
+    createdAt: r.created_at || null,
+    updatedAt: r.updated_at || null,
+    _fromDB: true,
+  };
+}
 function mapPayFromDB(r) {
   if(!r)return null;
   const tm={deposit:'Kapora',balance:'Kalan Ödeme',full:'Tam Ödeme',refund:'İade',extra:'Ek Ödeme'};
@@ -15093,6 +15271,23 @@ const SupabaseActivityRepo = {
   async markReservationNotificationRead(activityLogId){const sb=getSB();if(!sb)return ActivityRepository.markReservationNotificationRead?ActivityRepository.markReservationNotificationRead(activityLogId):true;const staffId=getAuthContext()?.staff?.id;if(!staffId)return false;const{error}=await sb.from('activity_log_reads').insert({activity_log_id:activityLogId,staff_id:staffId});if(error&&error.code!=='23505')throw new Error(error.message);return true;},
 };
 
+// Tour Preparation Intelligence Phase C2D-1 — READ ONLY. getByReservation
+// is ONE query against reservation_preparations, filtered to exactly this
+// reservation_id; it never joins or queries tour_preparation_rules, never
+// infers a requirement from itinerary text, and never calls
+// materialize_reservation_preparations — reservation_preparations is the
+// sole source of truth for already-materialized requirements. No write
+// method exists on this repo yet (completion is a later phase).
+const SupabaseReservationPreparationRepo = {
+  async getByReservation(reservationId){
+    const sb=getSB();
+    if(!sb||!reservationId) return [];
+    const{data,error}=await sb.from('reservation_preparations').select('*').eq('reservation_id',reservationId).order('created_at',{ascending:true});
+    if(error) throw new Error(error.message);
+    return (data||[]).map(mapPreparationFromDB);
+  },
+};
+
 async function autoLog(entityType, entityId, action, description) {
   if (!entityId) return;
   try { await Promise.resolve(getActiveRepo('activity').create({entityType,entityId,action,description})); }
@@ -15114,6 +15309,7 @@ function getActiveRepo(entity) {
   if(entity==='guidePayment')return useReal ? SupabaseGuidePaymentRepo : GuidePaymentRepository;
   if(entity==='review')     return useReal ? SupabaseReviewRepo       : ReviewRepository;
   if(entity==='staff')      return useReal ? SupabaseStaffRepo       : { getAll: async () => DB.staff };
+  if(entity==='reservationPreparation') return useReal ? SupabaseReservationPreparationRepo : { getByReservation: async () => [] };
   return null;
 }
 
@@ -21041,6 +21237,11 @@ function MobileReservationDetailPage({ resId, onBack }) {
 
   const { data:r, loading, error } = useRepo("reservation", "getById", resId);
   const { data:cust } = useRepo("customer", "getById", r?.customerId || null);
+  // Tour Preparation Intelligence Phase C2D-1 — same repository call and
+  // the same pure helpers (_sortPreparations/_preparationViewModel) as the
+  // desktop page, so business logic is never duplicated between the two;
+  // only the rendering below differs.
+  const { data:mobPreparations, loading:mobPrepLoading, error:mobPrepError } = useRepo("reservationPreparation", "getByReservation", resId);
 
   if (loading) return <LoadingState label="Rezervasyon yükleniyor…"/>;
   if (error)   return <ErrorState message={error} onRetry={()=>{}}/>;
@@ -21140,6 +21341,32 @@ function MobileReservationDetailPage({ resId, onBack }) {
           </MobileSection>
         );
       })()}
+
+      {/* Tour Preparation Intelligence Phase C2D-1 — same separation of
+          concerns as desktop: Tur İçeriği above answers "what did the
+          guest purchase", this answers "what must operations prepare".
+          Omitted entirely when there are zero reservation_preparations
+          rows, same as desktop. */}
+      {!mobPrepLoading && !mobPrepError && (mobPreparations || []).length > 0 && (
+        <MobileSection title="Tur Hazırlıkları">
+          {_sortPreparations(mobPreparations).map(p => {
+            const vm = _preparationViewModel(p);
+            return (
+              <MobileEntityCard key={vm.id} style={{ opacity: vm.isHistorical ? 0.55 : 1 }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:10 }}>
+                  <div>
+                    <div style={{ fontSize:13.5, fontWeight:700, color:C.text, fontFamily:"'DM Sans',sans-serif" }}>{vm.label}</div>
+                    <div style={{ fontSize:12, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", marginTop:2 }}>
+                      {vm.quantityDisplay}{vm.completedAtLabel ? ` · ${vm.completedAtLabel}` : ''}
+                    </div>
+                  </div>
+                  <MobileStatusChip label={vm.statusLabel} tone={vm.tone}/>
+                </div>
+              </MobileEntityCard>
+            );
+          })}
+        </MobileSection>
+      )}
 
       <MobileSection title="Ödeme">
         <MobileEntityCard>
