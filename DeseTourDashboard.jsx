@@ -4170,6 +4170,258 @@ function _BiletHazirliklariMobilePanel({ pendingTickets, navigate }) {
   );
 }
 
+// Civitatis Settlement Engine — Phase 1. Pure helpers only; the actual
+// read (civitatis_settlement_items + exchange_rates) lives in
+// SupabaseCivitatisSettlementRepo.getSummary() further down. Kept
+// completely separate from Reports' own calculateReportMetrics — Phase 0
+// found Reports' revenue aggregation currency-blind, and this phase is
+// explicitly told not to reuse or repair that code; this is a fresh,
+// correctly currency-aware build from the settlement data only.
+
+// 'TL' is Civitatis's own literal parser string for Turkish Lira;
+// civitatis_settlement_items.original_currency already normalizes it to
+// the ISO code 'TRY' at write time (see the forward migration), so this
+// set exists only as a defensive belt-and-suspenders check — no code
+// path should ever hand this function a raw 'TL' row, but if one ever
+// did, it must still be treated as needing zero conversion, never as an
+// unrecognized currency requiring a missing-rate fallback.
+const _CIVITATIS_TRY_EQUIVALENT_CURRENCIES = new Set(['TRY', 'TL']);
+
+// TESTABLE:_civitatisEffectiveSettlementStatus:start
+// The ONLY place "accrued -> claimable" is decided. A pure function of
+// the stored status, the stored claimable_at, and "today" — never a
+// scheduled job, never written back to the database (Phase 1 brief,
+// section 5: avoid requiring a cron job merely for a calendar
+// transition). Every other stored status (requested/paid/adjusted/
+// cancelled) passes through unchanged — those are explicit human
+// actions this function must never second-guess.
+function _civitatisEffectiveSettlementStatus(item, todayIso) {
+  if (!item) return null;
+  if (item.status === 'accrued' && item.claimableAt && item.claimableAt <= todayIso) {
+    return 'claimable';
+  }
+  return item.status;
+}
+// TESTABLE:_civitatisEffectiveSettlementStatus:end
+
+// TESTABLE:_civitatisConvertToTry:start
+// Financial correctness over showing a number (Phase 1 brief, section
+// 11): TRY/TL need no conversion at all (rate implicitly 1). Any other
+// currency REQUIRES a same-currency row in latestRateByCurrency (the
+// most recently cached base_currency->TRY rate) — never a guessed rate,
+// never a silent EUR-as-TRY assumption, never an omission that would
+// make a real receivable vanish from a total. Returns { tryAmount:null,
+// missingRate:true } rather than a fabricated number when the rate is
+// unavailable; the caller is responsible for surfacing that honestly
+// (see _buildCivitatisSettlementSummary / "Kur bilgisi bekleniyor").
+function _civitatisConvertToTry(amount, currency, latestRateByCurrency) {
+  const amt = parseFloat(amount);
+  if (!Number.isFinite(amt)) return { tryAmount: null, missingRate: true };
+  if (_CIVITATIS_TRY_EQUIVALENT_CURRENCIES.has(currency)) {
+    return { tryAmount: amt, missingRate: false };
+  }
+  const rate = latestRateByCurrency && latestRateByCurrency[currency];
+  if (!rate || !Number.isFinite(rate) || rate <= 0) {
+    return { tryAmount: null, missingRate: true };
+  }
+  return { tryAmount: amt * rate, missingRate: false };
+}
+// TESTABLE:_civitatisConvertToTry:end
+
+// TESTABLE:_latestCivitatisRatesByCurrency:start
+// Reduces every cached exchange_rates row (quote_currency='TRY' already
+// filtered by the repo's own query) down to ONE rate per base_currency —
+// the most recent rate_date. Never averages, never picks an arbitrary
+// row when several dates exist for the same pair.
+function _latestCivitatisRatesByCurrency(rateRows) {
+  const latest = {};
+  for (const row of (rateRows || [])) {
+    if (!row || !row.baseCurrency || !row.rateDate) continue;
+    const existing = latest[row.baseCurrency];
+    if (!existing || row.rateDate > existing.rateDate) {
+      latest[row.baseCurrency] = { rateDate: row.rateDate, rate: parseFloat(row.rate) };
+    }
+  }
+  const byCurrency = {};
+  for (const code of Object.keys(latest)) byCurrency[code] = latest[code].rate;
+  return byCurrency;
+}
+// TESTABLE:_latestCivitatisRatesByCurrency:end
+
+// TESTABLE:_buildCivitatisSettlementSummary:start
+// The one aggregator the homepage card reads from. Strictly separates
+// claimable / current-month-accrued / requested / paid (Phase 1 brief,
+// section 19) — never collapses them into one number. Every returned
+// total carries the exact list of settlement-item ids (and therefore,
+// transitively, reservation ids) that make it up, so any displayed
+// figure can always be traced back to individual settlement items
+// (brief section 26's own validation requirement).
+function _buildCivitatisSettlementSummary(items, latestRateByCurrency, todayIso) {
+  const currentPeriod = todayIso.slice(0, 7) + '-01'; // 'YYYY-MM-01' for "today"
+
+  const emptyBucket = () => ({
+    tryTotal: 0, hasMissingRate: false, itemIds: [], reservationIds: [],
+    originalByCurrency: {}, periods: new Set(),
+  });
+
+  const claimable = emptyBucket();
+  const currentMonthAccrual = emptyBucket();
+  const requested = emptyBucket();
+  const paid = emptyBucket();
+
+  for (const item of (items || [])) {
+    const effectiveStatus = _civitatisEffectiveSettlementStatus(item, todayIso);
+    if (effectiveStatus === 'adjusted' || effectiveStatus === 'cancelled') continue; // never an active receivable
+
+    let bucket = null;
+    if (effectiveStatus === 'claimable') bucket = claimable;
+    else if (effectiveStatus === 'accrued' && item.settlementPeriod === currentPeriod) bucket = currentMonthAccrual;
+    else if (effectiveStatus === 'requested') bucket = requested;
+    else if (effectiveStatus === 'paid') bucket = paid;
+    if (!bucket) continue; // e.g. an 'accrued' item from a period that is neither claimable yet nor the current month (should not occur given the two-state model, but never silently misfiled)
+
+    const { tryAmount, missingRate } = _civitatisConvertToTry(item.originalAmount, item.originalCurrency, latestRateByCurrency);
+    bucket.itemIds.push(item.id);
+    bucket.reservationIds.push(item.reservationId);
+    bucket.periods.add(item.settlementPeriod);
+    bucket.originalByCurrency[item.originalCurrency] = (bucket.originalByCurrency[item.originalCurrency] || 0) + parseFloat(item.originalAmount || 0);
+    if (missingRate) {
+      bucket.hasMissingRate = true;
+    } else {
+      bucket.tryTotal += tryAmount;
+    }
+  }
+
+  const finalize = (bucket) => ({
+    tryTotal: Math.round(bucket.tryTotal),
+    hasMissingRate: bucket.hasMissingRate,
+    itemCount: bucket.itemIds.length,
+    itemIds: bucket.itemIds,
+    reservationIds: bucket.reservationIds,
+    originalByCurrency: bucket.originalByCurrency,
+    periods: Array.from(bucket.periods).sort(),
+  });
+
+  return {
+    claimable: finalize(claimable),
+    currentMonthAccrual: finalize(currentMonthAccrual),
+    requested: finalize(requested),
+    paid: finalize(paid),
+    currentPeriod,
+  };
+}
+// TESTABLE:_buildCivitatisSettlementSummary:end
+
+// 'YYYY-MM-01' -> 'Eylül 2026', same tr-TR long-month convention this
+// file already uses in several other places (e.g. the weekly dashboard
+// header). Never re-derives the month from "today" — always from the
+// stored period string itself.
+function _formatCivitatisPeriodLabel(periodIso) {
+  if (!periodIso) return '';
+  return new Date(periodIso + 'T00:00:00').toLocaleDateString('tr-TR', { month:'long', year:'numeric' });
+}
+// The calendar month immediately after periodIso, formatted the same
+// way — used for "Kasım başında talep edilebilir" under the current
+// month's accrual figure.
+function _formatCivitatisNextPeriodLabel(periodIso) {
+  if (!periodIso) return '';
+  const d = new Date(periodIso + 'T00:00:00');
+  d.setMonth(d.getMonth() + 1);
+  return d.toLocaleDateString('tr-TR', { month:'long', year:'numeric' });
+}
+
+// Civitatis Settlement Engine — Phase 1 homepage card. Admin/operations
+// only (the same two roles the migration's own RLS policies grant write
+// access to, and the same "operational logistics, not sales/guide-
+// facing" reasoning reservation_preparations already established) —
+// every other role sees nothing, not an empty/broken card. Purely
+// informational: no requested/paid/edit/delete action anywhere in this
+// component, exactly as instructed for Phase 1.
+function CivitatisHakedisPanel() {
+  const auth = useAuthContext();
+  const eligible = ["Yönetici", "Operasyon"].includes(auth.role);
+  const { data, loading, error } = useRepo("civitatisSettlement", "getSummary");
+  if (!eligible || loading || error || !data) return null;
+
+  const { claimable, currentMonthAccrual, requested } = data;
+  if (claimable.itemCount === 0 && currentMonthAccrual.itemCount === 0 && requested.itemCount === 0) return null;
+
+  const hasClaimable = claimable.itemCount > 0;
+  // Phase 1 brief, section 18: a claimable amount is an action item (not
+  // an error) — slightly stronger visual priority via the existing gold/
+  // amber accent, never red.
+  const cardStyle = hasClaimable ? { border:`1.5px solid ${C.gold}`, background:C.goldPale } : undefined;
+
+  const claimablePeriodLabel = claimable.periods.length === 1
+    ? `${_formatCivitatisPeriodLabel(claimable.periods[0])} hakedişi`
+    : claimable.periods.length > 1
+      ? `${claimable.periods.length} dönem bekliyor`
+      : '';
+
+  return (
+    <Card style={cardStyle}>
+      <SectionHeader title="Civitatis Hakedişi" action="Hakedişleri Gör" onAction={() => NAV_REF.fn && NAV_REF.fn('/payments')}/>
+      <div style={{ display:"grid", gridTemplateColumns: requested.itemCount>0 ? "1fr 1fr 1fr" : "1fr 1fr", gap:16 }}>
+        <div>
+          <div style={{ fontSize:11, fontWeight:600, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:6 }}>
+            Talep Edilebilir
+          </div>
+          {hasClaimable ? (
+            <>
+              <div style={{ fontSize:26, fontWeight:700, color:C.gold, fontFamily:"'Playfair Display',serif", lineHeight:1.1 }}>
+                {fmtMoney(claimable.tryTotal, 'TRY')}
+              </div>
+              <div style={{ fontSize:12, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", marginTop:4 }}>{claimablePeriodLabel}</div>
+              {claimable.hasMissingRate && (
+                <div style={{ fontSize:11, color:C.amber, fontFamily:"'DM Sans',sans-serif", marginTop:3 }}>Kur bilgisi bekleniyor</div>
+              )}
+            </>
+          ) : (
+            <div style={{ fontSize:13, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", fontStyle:"italic" }}>Talep edilebilir hakediş yok</div>
+          )}
+        </div>
+        <div>
+          <div style={{ fontSize:11, fontWeight:600, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:6 }}>
+            Bu Ay Biriken
+          </div>
+          {currentMonthAccrual.itemCount > 0 ? (
+            <>
+              <div style={{ fontSize:22, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif", lineHeight:1.1 }}>
+                {fmtMoney(currentMonthAccrual.tryTotal, 'TRY')}
+              </div>
+              <div style={{ fontSize:12, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", marginTop:4 }}>
+                {_formatCivitatisPeriodLabel(data.currentPeriod)}
+              </div>
+              <div style={{ fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:3 }}>
+                {_formatCivitatisNextPeriodLabel(data.currentPeriod)} başında talep edilebilir
+              </div>
+              {currentMonthAccrual.hasMissingRate && (
+                <div style={{ fontSize:11, color:C.amber, fontFamily:"'DM Sans',sans-serif", marginTop:3 }}>Kur bilgisi bekleniyor</div>
+              )}
+            </>
+          ) : (
+            <div style={{ fontSize:13, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", fontStyle:"italic" }}>Bu ay henüz biriken tutar yok</div>
+          )}
+        </div>
+        {requested.itemCount > 0 && (
+          <div>
+            <div style={{ fontSize:11, fontWeight:600, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:6 }}>
+              Talep Edildi
+            </div>
+            <div style={{ fontSize:22, fontWeight:700, color:C.blue, fontFamily:"'Playfair Display',serif", lineHeight:1.1 }}>
+              {fmtMoney(requested.tryTotal, 'TRY')}
+            </div>
+            <div style={{ fontSize:12, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", marginTop:4 }}>Civitatis ödemesi bekleniyor</div>
+            {requested.hasMissingRate && (
+              <div style={{ fontSize:11, color:C.amber, fontFamily:"'DM Sans',sans-serif", marginTop:3 }}>Kur bilgisi bekleniyor</div>
+            )}
+          </div>
+        )}
+      </div>
+    </Card>
+  );
+}
+
 // Renders NOTHING when there are zero actionable rows, or while loading,
 // or on a read error — never a large empty operational card, and never a
 // broken partial render blocking the rest of Ana Sayfa.
@@ -4261,6 +4513,9 @@ function Dashboard() {
 
       {}
       <KpiRow/>
+
+      {}
+      <CivitatisHakedisPanel/>
 
       {}
       <TurHazirliklari/>
@@ -15853,6 +16108,38 @@ function mapPreparationFromDB(r) {
     _fromDB: true,
   };
 }
+// Civitatis Settlement Engine — Phase 1. settlementPeriod/claimableAt
+// stay as the raw 'YYYY-MM-DD' strings Postgres DATE columns already
+// serialize to over PostgREST — never re-parsed into a JS Date, since
+// every pure helper above compares them as plain ISO-prefix strings.
+function mapCivitatisSettlementItemFromDB(r) {
+  if (!r) return null;
+  return {
+    id: r.id,
+    reservationId: r.reservation_id || null,
+    settlementPeriod: r.settlement_period || null,
+    originalAmount: r.original_amount != null ? parseFloat(r.original_amount) : 0,
+    originalCurrency: r.original_currency || null,
+    claimableAt: r.claimable_at || null,
+    status: r.status || 'accrued',
+    exchangeRateUsed: r.exchange_rate_used != null ? parseFloat(r.exchange_rate_used) : null,
+    exchangeRateDate: r.exchange_rate_date || null,
+    tryAmount: r.try_amount != null ? parseFloat(r.try_amount) : null,
+    createdAt: r.created_at || null,
+    updatedAt: r.updated_at || null,
+    _fromDB: true,
+  };
+}
+function mapExchangeRateFromDB(r) {
+  if (!r) return null;
+  return {
+    rateDate: r.rate_date || null,
+    baseCurrency: r.base_currency || null,
+    quoteCurrency: r.quote_currency || null,
+    rate: r.rate != null ? parseFloat(r.rate) : null,
+    source: r.source || null,
+  };
+}
 function mapPayFromDB(r) {
   if(!r)return null;
   const tm={deposit:'Kapora',balance:'Kalan Ödeme',full:'Tam Ödeme',refund:'İade',extra:'Ek Ödeme'};
@@ -16453,6 +16740,35 @@ const SupabaseReservationPreparationRepo = {
   },
 };
 
+// Civitatis Settlement Engine — Phase 1. Read-only in this phase (the
+// brief's own instruction: "homepage should currently be informational",
+// no requested/paid actions yet). getSummary() fetches the two raw
+// tables and hands them to the pure _buildCivitatisSettlementSummary —
+// zero aggregation logic lives in this repo method itself, so the exact
+// same aggregation is trivially unit-testable without any network call.
+const SupabaseCivitatisSettlementRepo = {
+  async getSummary() {
+    const sb = getSB();
+    if (!sb) return _buildCivitatisSettlementSummary([], {}, _TODAY_ISO);
+
+    const { data: itemRows, error: itemsError } = await sb.from('civitatis_settlement_items').select('*');
+    if (itemsError) throw new Error(itemsError.message);
+
+    // quote_currency filter matches the forward migration's own
+    // exchange_rates shape (base_currency -> TRY); never reads a pair
+    // this project doesn't use.
+    const { data: rateRows, error: ratesError } = await sb.from('exchange_rates')
+      .select('rate_date,base_currency,quote_currency,rate')
+      .eq('quote_currency', 'TRY');
+    if (ratesError) throw new Error(ratesError.message);
+
+    const items = (itemRows || []).map(mapCivitatisSettlementItemFromDB);
+    const rates = (rateRows || []).map(mapExchangeRateFromDB);
+    const latestRateByCurrency = _latestCivitatisRatesByCurrency(rates);
+    return _buildCivitatisSettlementSummary(items, latestRateByCurrency, _TODAY_ISO);
+  },
+};
+
 async function autoLog(entityType, entityId, action, description) {
   if (!entityId) return;
   try { await Promise.resolve(getActiveRepo('activity').create({entityType,entityId,action,description})); }
@@ -16475,6 +16791,7 @@ function getActiveRepo(entity) {
   if(entity==='review')     return useReal ? SupabaseReviewRepo       : ReviewRepository;
   if(entity==='staff')      return useReal ? SupabaseStaffRepo       : { getAll: async () => DB.staff };
   if(entity==='reservationPreparation') return useReal ? SupabaseReservationPreparationRepo : { getByReservation: async () => [], getUpcomingPending: async () => [], getRecentCompleted: async () => [], complete: async () => ({ ok:false, reason:'invalid' }), reopen: async () => ({ ok:false, reason:'invalid' }) };
+  if(entity==='civitatisSettlement') return useReal ? SupabaseCivitatisSettlementRepo : { getSummary: async () => _buildCivitatisSettlementSummary([], {}, _TODAY_ISO) };
   return null;
 }
 
@@ -21282,6 +21599,9 @@ function MobileHomePage({ navigate }) {
   // desktop/mobile split already established in prior C2D phases. No
   // separate query, no separate business logic.
   const { rows:turHazirliklariRows, loading:turHazLoading, error:turHazError } = useTurHazirliklariRows();
+  // Civitatis Settlement Engine — Phase 1. Same repo call, same pure
+  // aggregation as the desktop panel; only the JSX differs.
+  const { data:civitatisSettlement, loading:civSettleLoading, error:civSettleError } = useRepo("civitatisSettlement", "getSummary");
 
   const urgentItems = useMemo(
     () => computeUrgent(repoRes, repoPays, repoRems),
@@ -21378,6 +21698,59 @@ function MobileHomePage({ navigate }) {
               </div>
             </MobileEntityCard>
           ))}
+        </MobileSection>
+      )}
+
+      {/* Civitatis Settlement Engine — Phase 1. Admin/operations only,
+          same eligibility and same pure aggregation as the desktop
+          CivitatisHakedisPanel; only the markup differs. */}
+      {["Yönetici","Operasyon"].includes(auth.role) && !civSettleLoading && !civSettleError && civitatisSettlement &&
+        (civitatisSettlement.claimable.itemCount > 0 || civitatisSettlement.currentMonthAccrual.itemCount > 0 || civitatisSettlement.requested.itemCount > 0) && (
+        <MobileSection title="Civitatis Hakedişi" action="Hakedişleri Gör" onAction={() => navigate('/payments')}>
+          <MobileEntityCard style={civitatisSettlement.claimable.itemCount > 0 ? { border:`1.5px solid ${C.gold}`, background:C.goldPale } : undefined}>
+            <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+              <div>
+                <div style={{ fontSize:10.5, fontWeight:600, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:5 }}>Talep Edilebilir</div>
+                {civitatisSettlement.claimable.itemCount > 0 ? (
+                  <>
+                    <div style={{ fontSize:22, fontWeight:700, color:C.gold, fontFamily:"'Playfair Display',serif" }}>
+                      {fmtMoney(civitatisSettlement.claimable.tryTotal, 'TRY')}
+                    </div>
+                    <div style={{ fontSize:11.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", marginTop:2 }}>
+                      {civitatisSettlement.claimable.periods.length === 1
+                        ? `${_formatCivitatisPeriodLabel(civitatisSettlement.claimable.periods[0])} hakedişi`
+                        : `${civitatisSettlement.claimable.periods.length} dönem bekliyor`}
+                    </div>
+                    {civitatisSettlement.claimable.hasMissingRate && (
+                      <div style={{ fontSize:10.5, color:C.amber, fontFamily:"'DM Sans',sans-serif", marginTop:2 }}>Kur bilgisi bekleniyor</div>
+                    )}
+                  </>
+                ) : (
+                  <div style={{ fontSize:12.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", fontStyle:"italic" }}>Talep edilebilir hakediş yok</div>
+                )}
+              </div>
+              {civitatisSettlement.currentMonthAccrual.itemCount > 0 && (
+                <div style={{ paddingTop:12, borderTop:`1px solid ${C.borderLight}` }}>
+                  <div style={{ fontSize:10.5, fontWeight:600, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:5 }}>Bu Ay Biriken</div>
+                  <div style={{ fontSize:18, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif" }}>
+                    {fmtMoney(civitatisSettlement.currentMonthAccrual.tryTotal, 'TRY')}
+                  </div>
+                  <div style={{ fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:2 }}>
+                    {_formatCivitatisNextPeriodLabel(civitatisSettlement.currentPeriod)} başında talep edilebilir
+                  </div>
+                </div>
+              )}
+              {civitatisSettlement.requested.itemCount > 0 && (
+                <div style={{ paddingTop:12, borderTop:`1px solid ${C.borderLight}` }}>
+                  <div style={{ fontSize:10.5, fontWeight:600, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:5 }}>Talep Edildi</div>
+                  <div style={{ fontSize:18, fontWeight:700, color:C.blue, fontFamily:"'Playfair Display',serif" }}>
+                    {fmtMoney(civitatisSettlement.requested.tryTotal, 'TRY')}
+                  </div>
+                  <div style={{ fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:2 }}>Civitatis ödemesi bekleniyor</div>
+                </div>
+              )}
+            </div>
+          </MobileEntityCard>
         </MobileSection>
       )}
 

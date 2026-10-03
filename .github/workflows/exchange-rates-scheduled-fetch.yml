@@ -1,0 +1,66 @@
+# Exchange Rates Scheduled Fetch
+# ─────────────────────────────────────────────────────────────────────────
+# Calls the already-protected api/cron-fetch-exchange-rates.js endpoint
+# once a day, so the Civitatis settlement engine always has a reasonably
+# fresh EUR->TRY/USD->TRY/GBP->TRY cache to read from. No FX logic lives
+# in this file — its entire job is one authenticated HTTP request; the
+# ECB feed fetch, parsing, cross-rate computation, and the write to
+# exchange_rates all live in the endpoint itself.
+#
+# IMPORTANT — INERT until merged to the repository's default branch,
+# same caveat as civitatis-scheduled-ingestion.yml.
+#
+# SECRETS: FX_SCHEDULER_SECRET (below) is a GitHub Actions encrypted
+# secret. The same value must separately be set as the
+# FX_SCHEDULER_SECRET environment variable on the Vercel deployment this
+# workflow targets. FX_CRON_URL is a repository VARIABLE (a plain HTTPS
+# endpoint URL, no embedded credential) set to the deployed endpoint's
+# full URL, e.g. https://<your-production-domain>/api/cron-fetch-exchange-rates
+# — neither is set by this change.
+# ─────────────────────────────────────────────────────────────────────────
+name: Exchange Rates Scheduled Fetch
+
+on:
+  schedule:
+    # Once daily, after the ECB's own ~16:00 CET publication time —
+    # 17:00 UTC comfortably covers both standard and summer time.
+    - cron: '0 17 * * *'
+  workflow_dispatch: {}
+
+permissions: {}
+
+concurrency:
+  group: exchange-rates-scheduled-fetch
+  cancel-in-progress: false
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Call the protected exchange-rate fetch endpoint
+        env:
+          SCHEDULER_SECRET: ${{ secrets.FX_SCHEDULER_SECRET }}
+          FETCH_URL: ${{ vars.FX_CRON_URL }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${FETCH_URL}" ]; then
+            echo "::error::FX_CRON_URL repository variable is not set — see the activation instructions."
+            exit 1
+          fi
+
+          http_status=$(curl -sS -o response.json -w '%{http_code}' \
+            --max-time 30 \
+            -X GET \
+            -H "Authorization: Bearer ${SCHEDULER_SECRET}" \
+            "${FETCH_URL}")
+
+          echo "HTTP status: ${http_status}"
+          echo "Response body:"
+          cat response.json
+
+          if [ "${http_status}" -lt 200 ] || [ "${http_status}" -ge 300 ]; then
+            echo "::error::Exchange-rate fetch endpoint returned a non-2xx status (${http_status})"
+            exit 1
+          fi
