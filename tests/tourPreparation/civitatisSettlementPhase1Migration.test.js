@@ -82,7 +82,7 @@ test('exchange_rates RLS: authenticated staff can only SELECT, no INSERT/UPDATE/
 
 // ── C. Eligibility / period / currency normalization logic ──────────────
 
-test('eligibility requires Civitatis source, completed status, positive total_amount, and a known currency', () => {
+test('eligibility requires Civitatis source, completed status, positive total_amount, a known (non-blank) currency, and a known check_in', () => {
   const fnStart = forward.indexOf('CREATE OR REPLACE FUNCTION public.fn_ensure_civitatis_settlement_item');
   const fnEnd = forward.indexOf('$$;', fnStart);
   const body = forward.slice(fnStart, fnEnd);
@@ -90,6 +90,64 @@ test('eligibility requires Civitatis source, completed status, positive total_am
   assert.match(body, /v_res\.status IS DISTINCT FROM 'completed'/);
   assert.match(body, /v_res\.total_amount IS NULL\s*\n\s*OR v_res\.total_amount <= 0/);
   assert.match(body, /v_res\.currency IS NULL/);
+  // Phase 1.2 hardening: blank/whitespace-only currency and a NULL check_in
+  // must both be treated as ineligible (return NULL, create nothing) —
+  // neither may ever reach the settlement_period/claimable_at computation
+  // or the INSERT, since both would otherwise violate this table's own
+  // NOT NULL columns and raise a real exception inside the caller's own
+  // reservation UPDATE.
+  assert.match(body, /OR btrim\(v_res\.currency\) = ''/);
+  assert.match(body, /OR v_res\.check_in IS NULL/);
+});
+
+// ── H2. Phase 1.2 production-safety hardening ────────────────────────────
+
+test('Phase 1.2: the entire migration is wrapped in exactly one explicit BEGIN;/COMMIT; transaction', () => {
+  // Line-anchored: the migration's own header prose explains the BEGIN;/COMMIT;
+  // wrapping in words (e.g. "wrapped in one explicit BEGIN;/COMMIT;"), which
+  // would false-match a bare substring search. The real transaction-control
+  // statements each stand alone on their own line with nothing else before
+  // the "--" comment marker could apply, so anchor to that.
+  const beginMatches = forward.match(/^BEGIN;\s*$/gm) || [];
+  const commitMatches = forward.match(/^COMMIT;\s*$/gm) || [];
+  assert.equal(beginMatches.length, 1, 'expected exactly one transaction-level BEGIN;');
+  assert.equal(commitMatches.length, 1, 'expected exactly one transaction-level COMMIT;');
+
+  const beginIdx = forward.search(/^BEGIN;\s*$/m);
+  const commitIdx = forward.search(/^COMMIT;\s*$/m);
+  const firstTableIdx = forward.indexOf('CREATE TABLE IF NOT EXISTS public.civitatis_settlement_items');
+  const backfillIdx = forward.indexOf('SELECT public.fn_ensure_civitatis_settlement_item(r.id)');
+  const verificationIdx = forward.indexOf('POST-MIGRATION READ-ONLY VERIFICATION');
+
+  assert.ok(beginIdx > -1 && beginIdx < firstTableIdx, 'BEGIN; must precede the first CREATE TABLE');
+  assert.ok(commitIdx > backfillIdx, 'COMMIT; must come after the backfill statement');
+  assert.ok(commitIdx < verificationIdx, 'COMMIT; must come before the read-only verification section');
+});
+
+test('Phase 1.2: EXECUTE on both settlement-write functions is revoked from PUBLIC immediately after creation', () => {
+  const ensureFnIdx = forward.indexOf('CREATE OR REPLACE FUNCTION public.fn_ensure_civitatis_settlement_item');
+  const ensureRevokeIdx = forward.indexOf('REVOKE EXECUTE ON FUNCTION public.fn_ensure_civitatis_settlement_item(UUID) FROM PUBLIC;');
+  const cancelFnIdx = forward.indexOf('CREATE OR REPLACE FUNCTION public.fn_cancel_civitatis_settlement_item_if_exists');
+  const cancelRevokeIdx = forward.indexOf('REVOKE EXECUTE ON FUNCTION public.fn_cancel_civitatis_settlement_item_if_exists(UUID) FROM PUBLIC;');
+
+  assert.ok(ensureRevokeIdx > -1, 'expected REVOKE EXECUTE for fn_ensure_civitatis_settlement_item');
+  assert.ok(cancelRevokeIdx > -1, 'expected REVOKE EXECUTE for fn_cancel_civitatis_settlement_item_if_exists');
+  assert.ok(ensureFnIdx < ensureRevokeIdx, 'REVOKE must come after fn_ensure_civitatis_settlement_item is created');
+  assert.ok(cancelFnIdx < cancelRevokeIdx, 'REVOKE must come after fn_cancel_civitatis_settlement_item_if_exists is created');
+});
+
+test('Phase 1.2: the trigger function is SECURITY DEFINER so its internal calls into the two REVOKEd functions keep working under any invoking role', () => {
+  assert.match(
+    forward,
+    /CREATE OR REPLACE FUNCTION public\.fn_trg_civitatis_settlement_on_reservation_change\(\)\s*\nRETURNS TRIGGER\s*\nLANGUAGE plpgsql\s*\nSECURITY DEFINER\s*\nSET search_path = public/
+  );
+});
+
+test('original_amount is sourced from reservations.total_amount (never retail_amount) in the INSERT itself', () => {
+  const fnStart = forward.indexOf('CREATE OR REPLACE FUNCTION public.fn_ensure_civitatis_settlement_item');
+  const fnEnd = forward.indexOf('$$;', fnStart);
+  const body = forward.slice(fnStart, fnEnd);
+  assert.match(body, /VALUES\s*\(\s*\n\s*v_res\.id, v_settlement_period, v_res\.total_amount, v_norm_currency,/);
 });
 
 test('settlement_period and claimable_at are derived from check_in, never completed_at', () => {
@@ -232,7 +290,10 @@ test('rollback drops exactly the objects the forward migration created, in depen
 
 test('rollback reverts activity_logs.entity_type to exactly the pre-migration list, removing only civitatis_settlement', () => {
   const idx = rollback.lastIndexOf('ADD CONSTRAINT activity_logs_entity_type_check');
-  const body = rollback.slice(idx, rollback.indexOf('));', idx) + 3);
+  // Terminator is "))" (the CHECK's own closing parens), not "));" — the
+  // Phase 1.2A fix appends " NOT VALID" before the final semicolon, so a
+  // literal "));" search would no longer find anything.
+  const body = rollback.slice(idx, rollback.indexOf('))', idx) + 2);
   assert.doesNotMatch(body, /'civitatis_settlement'/);
   for (const priorValue of ['customer','reservation','payment','tour_channel']) {
     assert.match(body, new RegExp(`'${priorValue}'`));
@@ -249,6 +310,36 @@ test('rollback never touches public.reservations or public.payments', () => {
 test('rollback never deletes or updates any existing activity_logs row — only the CHECK constraint definition changes', () => {
   assert.doesNotMatch(rollback, /DELETE FROM public\.activity_logs/);
   assert.doesNotMatch(rollback, /UPDATE public\.activity_logs/);
+});
+
+test('Phase 1.2A fix: the rollback re-adds the narrowed activity_logs CHECK as NOT VALID, so it does not re-validate (and fail against) the civitatis_settlement rows the forward migration already logged', () => {
+  // Reproduced live: the forward migration's backfill always logs at
+  // least one activity_logs row with entity_type='civitatis_settlement'
+  // for every settlement item it creates. A plain (non-NOT VALID)
+  // ADD CONSTRAINT re-validates every existing row against the narrower
+  // CHECK and fails with "check constraint ... is violated by some row",
+  // aborting the entire rollback. NOT VALID still enforces the
+  // constraint for every future INSERT/UPDATE; it only skips
+  // re-validating rows that already exist, which is required for the
+  // append-only guarantee the rest of this file already documents.
+  const idx = rollback.lastIndexOf('ADD CONSTRAINT activity_logs_entity_type_check');
+  const afterClose = rollback.indexOf('))', idx) + 2;
+  const tail = rollback.slice(afterClose, afterClose + 20);
+  assert.match(tail, /^\s*NOT VALID;/);
+});
+
+test('rollback drops both functions whose EXECUTE was revoked from PUBLIC in the forward migration, so no privilege state can survive (the object itself is gone)', () => {
+  assert.match(forward, /REVOKE EXECUTE ON FUNCTION public\.fn_ensure_civitatis_settlement_item\(UUID\) FROM PUBLIC;/);
+  assert.match(forward, /REVOKE EXECUTE ON FUNCTION public\.fn_cancel_civitatis_settlement_item_if_exists\(UUID\) FROM PUBLIC;/);
+  assert.match(rollback, /DROP FUNCTION IF EXISTS public\.fn_ensure_civitatis_settlement_item\(UUID\);/);
+  assert.match(rollback, /DROP FUNCTION IF EXISTS public\.fn_cancel_civitatis_settlement_item_if_exists\(UUID\);/);
+});
+
+test('rollback itself is wrapped in exactly one explicit BEGIN;/COMMIT; transaction', () => {
+  const beginMatches = rollback.match(/\bBEGIN;/g) || [];
+  const commitMatches = rollback.match(/\bCOMMIT;/g) || [];
+  assert.equal(beginMatches.length, 1, 'expected exactly one transaction-level BEGIN; in the rollback');
+  assert.equal(commitMatches.length, 1, 'expected exactly one transaction-level COMMIT; in the rollback');
 });
 
 test('rollback has a postflight check confirming both new tables are gone and reservations still exists', () => {

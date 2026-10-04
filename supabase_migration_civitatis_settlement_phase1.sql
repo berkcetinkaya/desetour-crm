@@ -1,6 +1,7 @@
 -- ============================================================
 -- DESE TOUR OPERATIONS CENTER
 -- Migration: Civitatis Settlement Engine — Phase 1 Foundation
+-- Phase 1.2 — Final Production Safety Revision
 -- ============================================================
 -- File:    supabase_migration_civitatis_settlement_phase1.sql
 -- Depends: supabase_schema.sql, supabase_rls_policies.sql,
@@ -10,6 +11,66 @@
 --          activity_logs.entity_type's most recent widening — this
 --          migration widens it again, additively, same as that one did)
 --          (all already applied)
+--
+-- PHASE 1.2 REVISION NOTE — WHAT CHANGED AND WHY
+-- ─────────────────────────────────────────────────────────────
+-- The architecture and business logic from Phase 1 are APPROVED and
+-- UNCHANGED. This revision adds exactly five production-safety
+-- hardenings, nothing else:
+--   1. The entire migration (every CREATE/ALTER/DROP/backfill) is now
+--      wrapped in one explicit BEGIN;/COMMIT; — if ANY statement fails,
+--      Postgres rolls back everything, so no partial schema and no
+--      partial backfill can ever remain. This no longer relies on the
+--      Supabase SQL Editor's own behavior for atomicity.
+--   2. fn_ensure_civitatis_settlement_item now ALSO requires check_in
+--      to be NOT NULL before computing settlement_period/claimable_at.
+--      Previously, a reservation marked completed with a NULL check_in
+--      would compute settlement_period = date_trunc('month', NULL) =
+--      NULL, and the INSERT into a NOT NULL column would raise a real
+--      exception — INSIDE the trigger that fires on the reservation's
+--      own UPDATE, meaning a single malformed reservation could have
+--      aborted that staff member's ordinary "mark as completed" action
+--      entirely. Now it returns NULL (no settlement item, no error)
+--      before ever reaching that computation. completed_at is still
+--      never used for the settlement month — check_in remains the
+--      only valid source, exactly as before.
+--   3. Currency validation is hardened from "NOT NULL" to "NOT NULL
+--      AND NOT blank/whitespace-only" (btrim(currency) <> ''). The TL
+--      -> TRY normalization and every valid EUR/USD/GBP/TRY value are
+--      completely unchanged; only NULL/''/'   ' are now also treated
+--      as "unknown currency, create nothing" rather than risking an
+--      empty-string original_currency ever reaching the table.
+--   4. public.fn_ensure_civitatis_settlement_item(uuid) and
+--      public.fn_cancel_civitatis_settlement_item_if_exists(uuid) are
+--      now REVOKEd from PUBLIC immediately after creation — neither is
+--      directly callable by the anon/authenticated Supabase roles (no
+--      browser-reachable financial write path), matching the same
+--      "no public RPC surface for a financial state change" posture
+--      the rest of this project already holds. The ongoing trigger and
+--      this migration's own backfill both keep working: the trigger
+--      function (fn_trg_civitatis_settlement_on_reservation_change) is
+--      now ALSO marked SECURITY DEFINER (it previously ran with
+--      invoker rights), so its internal PERFORM calls into the two
+--      now-locked-down functions execute under the DEFINER's own
+--      privileges — exactly the same mechanism supabase_rls_policies.sql's
+--      is_admin()/is_operations() already rely on — never under the
+--      privileges of whichever role's UPDATE statement fired the
+--      trigger. The backfill SELECT below runs as whichever role
+--      executes this migration file (a privileged admin/service
+--      connection via the Supabase SQL Editor), which — as the owner of
+--      every function created in this same script — always retains
+--      EXECUTE on its own functions regardless of the PUBLIC
+--      revocation. No RLS policy anywhere in this file was changed for
+--      this hardening; it is a function-privilege change only.
+--   5. A read-only verification section is added AFTER the COMMIT,
+--      confirming object existence and the real September 2026
+--      production numbers.
+-- Every other line below (table shapes, eligibility rule, TL/TRY
+-- normalization, settlement period math, RLS policies, the
+-- activity_logs widening, the backfill's own logic) is IDENTICAL in
+-- substance to the approved Phase 1 design — see the unchanged
+-- explanatory sections immediately below for the full original
+-- rationale, which still applies verbatim.
 --
 -- SCOPE OF THIS MIGRATION (Phase 0 audit → Phase 1 implementation)
 -- ─────────────────────────────────────────────────────────────
@@ -89,6 +150,9 @@
 -- post-payment correction is an 'adjusted' state, a deliberate human
 -- action reserved for Phase 2, not something this trigger invents).
 -- ============================================================
+
+
+BEGIN;
 
 
 -- ──────────────────────────────────────────────────────────────────────────
@@ -217,6 +281,14 @@ CREATE POLICY "exchange_rates: authenticated staff can read"
 -- the trigger regardless of which role performed the UPDATE that fired
 -- it (same reasoning as this project's other SECURITY DEFINER helpers
 -- in supabase_rls_policies.sql), with search_path pinned to public.
+--
+-- PHASE 1.2 HARDENING: eligibility now ALSO requires check_in IS NOT
+-- NULL (computing settlement_period/claimable_at from a NULL check_in
+-- would produce NULL values that violate this table's own NOT NULL
+-- columns, raising an exception INSIDE the caller's own reservation
+-- UPDATE — this guard returns NULL, no-op, before that can ever
+-- happen) and treats a blank/whitespace-only currency the same as NULL
+-- (never lets an empty string reach original_currency).
 -- ──────────────────────────────────────────────────────────────────────────
 
 CREATE OR REPLACE FUNCTION public.fn_ensure_civitatis_settlement_item(p_reservation_id UUID)
@@ -242,12 +314,16 @@ BEGIN
     RETURN NULL;
   END IF;
 
-  -- Eligibility (Phase 1 brief, section 2): source = Civitatis, status =
-  -- completed (status itself already excludes cancelled — the CHECK on
-  -- reservations.status only allows one value at a time, so a completed
-  -- reservation is, by construction, not a cancelled one), total_amount
-  -- > 0, currency known (NOT NULL). Never eligible from check_in alone —
-  -- a past tour date with no completed status creates nothing.
+  -- Eligibility (Phase 1 brief, section 2; hardened in Phase 1.2):
+  -- source = Civitatis, status = completed (status itself already
+  -- excludes cancelled — the CHECK on reservations.status only allows
+  -- one value at a time, so a completed reservation is, by
+  -- construction, not a cancelled one), total_amount > 0, currency
+  -- known (NOT NULL and not blank/whitespace-only), AND check_in known
+  -- (NOT NULL — settlement_period/claimable_at are both derived from
+  -- it below and are NOT NULL columns on this table; a NULL check_in
+  -- must never reach that computation). Never eligible from check_in
+  -- alone — a past tour date with no completed status creates nothing.
   SELECT EXISTS (
     SELECT 1 FROM public.sources s WHERE s.id = v_res.source_id AND s.slug = 'civitatis'
   ) INTO v_is_civitatis;
@@ -257,6 +333,8 @@ BEGIN
      OR v_res.total_amount IS NULL
      OR v_res.total_amount <= 0
      OR v_res.currency IS NULL
+     OR btrim(v_res.currency) = ''
+     OR v_res.check_in IS NULL
   THEN
     RETURN NULL;
   END IF;
@@ -268,7 +346,8 @@ BEGIN
   -- Settlement period = the tour date's own calendar month (check_in),
   -- NEVER completed_at — an operator might mark a tour completed days
   -- after it actually happened; the settlement month must not shift
-  -- because of that administrative delay.
+  -- because of that administrative delay. check_in is guaranteed
+  -- NOT NULL at this point by the eligibility guard above.
   v_settlement_period := date_trunc('month', v_res.check_in)::DATE;
   v_claimable_at       := (date_trunc('month', v_res.check_in) + INTERVAL '1 month')::DATE;
 
@@ -311,7 +390,14 @@ BEGIN
 END;
 $$;
 
-COMMENT ON FUNCTION public.fn_ensure_civitatis_settlement_item(UUID) IS 'Idempotent: creates exactly one civitatis_settlement_items row for an eligible completed Civitatis reservation, or no-ops (returns NULL) if ineligible or already created. The one copy of this logic — called by both the one-time backfill and the ongoing trigger.';
+COMMENT ON FUNCTION public.fn_ensure_civitatis_settlement_item(UUID) IS 'Idempotent: creates exactly one civitatis_settlement_items row for an eligible completed Civitatis reservation (status=completed, source=Civitatis, total_amount>0, currency non-blank, check_in non-null), or no-ops (returns NULL) if ineligible or already created. The one copy of this logic — called by both the one-time backfill and the ongoing trigger.';
+
+-- PHASE 1.2 HARDENING: no direct browser-callable financial write path.
+-- Only this function's owner (the role that runs this migration) and
+-- the SECURITY DEFINER trigger function below (which executes under
+-- that same owner's privileges) may ever call this — never the
+-- anon/authenticated Supabase roles directly.
+REVOKE EXECUTE ON FUNCTION public.fn_ensure_civitatis_settlement_item(UUID) FROM PUBLIC;
 
 
 -- ──────────────────────────────────────────────────────────────────────────
@@ -353,6 +439,10 @@ $$;
 
 COMMENT ON FUNCTION public.fn_cancel_civitatis_settlement_item_if_exists(UUID) IS 'No-op if no settlement item exists, or if it is already paid/cancelled. Never deletes a row.';
 
+-- PHASE 1.2 HARDENING: same reasoning as fn_ensure_civitatis_settlement_item
+-- above — no direct browser-callable financial write path.
+REVOKE EXECUTE ON FUNCTION public.fn_cancel_civitatis_settlement_item_if_exists(UUID) FROM PUBLIC;
+
 
 -- ──────────────────────────────────────────────────────────────────────────
 -- TRIGGER: trg_civitatis_settlement_on_reservation_change
@@ -364,11 +454,23 @@ COMMENT ON FUNCTION public.fn_cancel_civitatis_settlement_item_if_exists(UUID) I
 -- transition into 'completed' or 'cancelled', so ordinary reservation
 -- edits (guide assignment, pickup time, etc.) never even invoke the
 -- function body.
+--
+-- PHASE 1.2 HARDENING: now SECURITY DEFINER (it previously ran with the
+-- invoking role's own privileges). This is NOT required for the trigger
+-- to fire — trigger invocation itself never goes through a normal
+-- EXECUTE-privilege check — it is required so that THIS function's own
+-- internal PERFORM calls into fn_ensure_civitatis_settlement_item /
+-- fn_cancel_civitatis_settlement_item_if_exists (both now REVOKEd from
+-- PUBLIC above) keep succeeding regardless of which role's UPDATE
+-- statement fired the trigger (the authenticated app role via the CRM
+-- UI, the service_role key via an RPC, or any future interface).
 -- ──────────────────────────────────────────────────────────────────────────
 
 CREATE OR REPLACE FUNCTION public.fn_trg_civitatis_settlement_on_reservation_change()
 RETURNS TRIGGER
 LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
 AS $$
 BEGIN
   IF NEW.status = 'completed' THEN
@@ -387,7 +489,7 @@ CREATE TRIGGER trg_civitatis_settlement_on_reservation_change
   WHEN (NEW.status IN ('completed', 'cancelled'))
   EXECUTE FUNCTION public.fn_trg_civitatis_settlement_on_reservation_change();
 
-COMMENT ON FUNCTION public.fn_trg_civitatis_settlement_on_reservation_change() IS 'Keeps civitatis_settlement_items correct regardless of which interface transitions a reservation to completed/cancelled. Never modifies reservations itself (RETURN NEW, no column assignment).';
+COMMENT ON FUNCTION public.fn_trg_civitatis_settlement_on_reservation_change() IS 'Keeps civitatis_settlement_items correct regardless of which interface transitions a reservation to completed/cancelled. Never modifies reservations itself (RETURN NEW, no column assignment). SECURITY DEFINER so its internal calls into the two REVOKEd-from-PUBLIC helper functions keep working under any invoking role.';
 
 
 -- ──────────────────────────────────────────────────────────────────────────
@@ -415,8 +517,11 @@ ALTER TABLE public.activity_logs ADD CONSTRAINT activity_logs_entity_type_check
 -- SELECT any number of times only ever creates the rows that do not
 -- already exist. Scoped to Civitatis-sourced, completed reservations
 -- only — the function itself re-checks every eligibility condition
--- again defensively, so this SELECT's own WHERE clause is a cheap
--- pre-filter, not the sole guard.
+-- again defensively (including the Phase 1.2 check_in/blank-currency
+-- guards), so this SELECT's own WHERE clause is a cheap pre-filter,
+-- not the sole guard. Runs as whichever role executes this migration
+-- file, which — as the owner of fn_ensure_civitatis_settlement_item —
+-- retains EXECUTE on it regardless of the REVOKE FROM PUBLIC above.
 -- ──────────────────────────────────────────────────────────────────────────
 
 SELECT public.fn_ensure_civitatis_settlement_item(r.id)
@@ -425,6 +530,65 @@ SELECT public.fn_ensure_civitatis_settlement_item(r.id)
  WHERE s.slug = 'civitatis'
    AND r.status = 'completed';
 
+
+COMMIT;
+
+
+-- ============================================================
+-- POST-MIGRATION READ-ONLY VERIFICATION (run AFTER the COMMIT above —
+-- every statement below is a plain SELECT; none writes anything)
+-- ============================================================
+
+-- A. Object existence
+SELECT
+  (SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='civitatis_settlement_items') AS settlement_table_exists,
+  (SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='exchange_rates') AS fx_table_exists,
+  (SELECT COUNT(*) FROM pg_trigger WHERE tgname='trg_civitatis_settlement_on_reservation_change') AS trigger_exists,
+  (SELECT COUNT(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname='fn_ensure_civitatis_settlement_item') AS ensure_fn_exists,
+  (SELECT COUNT(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname='fn_cancel_civitatis_settlement_item_if_exists') AS cancel_fn_exists;
+
+-- B. Total settlement item count
+SELECT COUNT(*) AS total_settlement_items FROM public.civitatis_settlement_items;
+
+-- C. Settlement items grouped by settlement_period and original_currency
+SELECT settlement_period, original_currency, COUNT(*) AS item_count, SUM(original_amount) AS original_amount_total
+  FROM public.civitatis_settlement_items
+ GROUP BY settlement_period, original_currency
+ ORDER BY settlement_period, original_currency;
+
+-- D. September 2026 reconciliation, including guest counts from the
+-- linked reservations (expected: 2026-09-01 / TRY / 3 / 8 / 14400.00)
+SELECT
+  csi.settlement_period,
+  csi.original_currency,
+  COUNT(*) AS reservation_count,
+  SUM(r.pax_adult + r.pax_child) AS guest_count,
+  SUM(csi.original_amount) AS original_amount_total
+FROM public.civitatis_settlement_items csi
+JOIN public.reservations r ON r.id = csi.reservation_id
+WHERE csi.settlement_period = '2026-09-01'
+GROUP BY csi.settlement_period, csi.original_currency;
+
+-- E. Every September 2026 settlement item, with stored vs. effective
+-- status shown side by side (effective status is derived here at read
+-- time — exactly how the application layer computes it — never written
+-- back to the stored column by this query or by any scheduled job).
+SELECT
+  r.reservation_number,
+  r.external_booking_id,
+  r.check_in,
+  csi.original_amount,
+  csi.original_currency,
+  csi.claimable_at,
+  csi.status AS stored_status,
+  CASE
+    WHEN csi.status = 'accrued' AND csi.claimable_at <= CURRENT_DATE THEN 'claimable'
+    ELSE csi.status
+  END AS effective_status
+FROM public.civitatis_settlement_items csi
+JOIN public.reservations r ON r.id = csi.reservation_id
+WHERE csi.settlement_period = '2026-09-01'
+ORDER BY r.check_in;
 
 -- ============================================================
 -- END OF supabase_migration_civitatis_settlement_phase1.sql

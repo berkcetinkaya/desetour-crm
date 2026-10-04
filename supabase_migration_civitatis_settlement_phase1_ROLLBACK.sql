@@ -72,6 +72,20 @@ DROP TABLE IF EXISTS public.exchange_rates;
 -- 'civitatis_settlement'. Existing rows already carrying that value are
 -- left untouched (append-only); only future inserts with that value
 -- would now be rejected again, which is the correct rollback behavior.
+--
+-- PHASE 1.2A FIX — NOT VALID is required here, not optional. By the time
+-- this rollback runs, the forward migration's own backfill has already
+-- logged at least one activity_logs row with entity_type =
+-- 'civitatis_settlement' for every settlement item it created (this is
+-- the normal, expected case, not an edge case). A plain ADD CONSTRAINT
+-- re-validates EVERY existing row against the new, narrower CHECK by
+-- default, so without NOT VALID this statement itself fails with
+-- "check constraint ... is violated by some row" and the whole rollback
+-- transaction aborts, achieving nothing. NOT VALID adds the constraint
+-- for all future INSERT/UPDATE activity without re-validating rows that
+-- already exist, which is exactly the append-only guarantee stated
+-- above: old 'civitatis_settlement' rows are left exactly as they are,
+-- and the constraint still rejects any new one going forward.
 ALTER TABLE public.activity_logs DROP CONSTRAINT IF EXISTS activity_logs_entity_type_check;
 ALTER TABLE public.activity_logs ADD CONSTRAINT activity_logs_entity_type_check
   CHECK (entity_type IN (
@@ -79,7 +93,7 @@ ALTER TABLE public.activity_logs ADD CONSTRAINT activity_logs_entity_type_check
     'task','reminder','tour','message','settings',
     'guide','guide_payment','reservation_review',
     'tour_language','tour_channel'
-  ));
+  )) NOT VALID;
 
 DO $$
 BEGIN
