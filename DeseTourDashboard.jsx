@@ -4409,6 +4409,43 @@ function _groupCivitatisSettlementItemsByPeriod(items, todayIso) {
 }
 // TESTABLE:_groupCivitatisSettlementItemsByPeriod:end
 
+// TESTABLE:_buildCivitatisReportsSettlementTotals:start
+// Reports Cleanup Phase — "Civitatis Hakediş Durumu" section. A thin
+// presentation-layer reducer over the ALREADY-correct per-period
+// grouping from _groupCivitatisSettlementItemsByPeriod — introduces no
+// new settlement-state rule and no new currency-conversion rule; every
+// period's effectiveStatus/displayTryTotal/hasUnsupportedCurrency/
+// originalByCurrency is taken as-is. Unlike the homepage card's "Bu Ay
+// Biriken" (current month only), "accrued" here deliberately spans
+// EVERY not-yet-claimable period — the Reports audit's own definition
+// ("Accrued: not yet claimable"), broader than that narrower homepage
+// product decision. 'mixed' periods (should not occur given Phase 2's
+// atomic per-period transitions, but defensively possible) are excluded
+// from all four totals and counted separately — never silently folded
+// into either side.
+function _buildCivitatisReportsSettlementTotals(periods) {
+  const emptyBucket = () => ({ tryTotal: 0, hasUnsupportedCurrency: false, periodCount: 0, reservationCount: 0 });
+  const buckets = { accrued: emptyBucket(), claimable: emptyBucket(), requested: emptyBucket(), paid: emptyBucket() };
+  let mixedPeriodCount = 0;
+  let hasEurExposure = false;
+
+  for (const period of (periods || [])) {
+    if (period.effectiveStatus === 'mixed') { mixedPeriodCount++; continue; }
+    const bucket = buckets[period.effectiveStatus];
+    if (!bucket) continue; // defensive: an unrecognized status never silently joins a total
+    bucket.periodCount += 1;
+    bucket.reservationCount += period.reservationCount || 0;
+    if (period.hasUnsupportedCurrency) bucket.hasUnsupportedCurrency = true;
+    else bucket.tryTotal += period.displayTryTotal || 0;
+    if ((period.originalByCurrency || {}).EUR > 0) hasEurExposure = true;
+  }
+
+  for (const key of Object.keys(buckets)) buckets[key].tryTotal = Math.round(buckets[key].tryTotal);
+
+  return { ...buckets, mixedPeriodCount, hasEurExposure };
+}
+// TESTABLE:_buildCivitatisReportsSettlementTotals:end
+
 // 'YYYY-MM-01' -> 'Eylül 2026', same tr-TR long-month convention this
 // file already uses in several other places (e.g. the weekly dashboard
 // header). Never re-derives the month from "today" — always from the
@@ -13999,7 +14036,14 @@ function calculateReportMetrics(period, reservations, payments, customers, sourc
   const _sources = sources && sources.length ? sources : DB.sources;
   const srcName  = (id) => { const s=_sources.find(x=>x.id===id); return s?.name || s?.label || "Diğer"; };
 
-  const fRes   = filterByDateRange(_res,     "checkIn",    period);
+  // Reports Cleanup Phase: filterByDateRange falls back to item.createdAt
+  // (or item.date) whenever the requested dateField is empty — a sane
+  // default for most callers, but wrong for a report that claims to be
+  // tour-date-based. A reservation with no checkIn is excluded here
+  // BEFORE calling it, rather than silently landing in a date bucket by
+  // its creation date instead — scoped to this one call site, not a
+  // change to the shared helper (other pages keep its existing fallback).
+  const fRes   = filterByDateRange(_res.filter(r=>!!r.checkIn), "checkIn",    period);
   const fPays  = filterByDateRange(_pays,    "createdAt",  period);
 
   const kpi = {
@@ -14007,97 +14051,115 @@ function calculateReportMetrics(period, reservations, payments, customers, sourc
     confirmed:    fRes.filter(r=>["Onaylandı","Tur Günü","Tamamlandı"].includes(r.opStatus)).length,
     inProgress:   fRes.filter(r=>r.opStatus==="Tur Günü").length,
     completed:    fRes.filter(r=>r.opStatus==="Tamamlandı").length,
-    expectedEur:  fPays.filter(p=>p.currency==="EUR")
-                   .reduce((s,p)=>{ const r=getReservationById(p.resId||""); return s+(r?r.total:p.amount); },0),
-    collectedEur: fPays.filter(p=>p.currency==="EUR"&&!["Bekliyor"].includes(p.status))
-                   .reduce((s,p)=>s+parseFloat(p.amount||0), 0),
+    // Reports Cleanup Phase: "Beklenen Gelir"/"Tahsil Edilen Gelir" (an
+    // EUR-only public.payments proxy, blind to any reservation with zero
+    // rows in that table — i.e. every Civitatis reservation since
+    // Phase 1/2) were removed outright rather than fixed. There is no
+    // single authoritative "total revenue" figure across both the
+    // Civitatis settlement domain and the direct-payments domain yet —
+    // see the new "Civitatis Hakediş Durumu" section and "Doğrudan
+    // Ödemeler" below for the two domains kept truthfully separate.
   };
 
-  // Source performance now reflects where CUSTOMERS came from (customers
-  // .source_id) and how many reservations/how much revenue followed —
-  // the lead→quote funnel this used to track no longer exists as an
-  // active workflow.
+  // Source performance reflects where CUSTOMERS came from (customers
+  // .source_id) and how many reservations followed. Reservation count is
+  // the PRIMARY, currency-safe ranking signal. Reports Cleanup Phase:
+  // revenue is never raw-summed across currencies any more — each source
+  // keeps its own per-currency originals plus an "operational" TRY-
+  // equivalent total using the exact same fixed-rate policy as the
+  // Civitatis settlement engine (_civitatisConvertToTry, Phase 1.3) —
+  // never a silent blend of TRY + EUR under one symbol, and never a
+  // fabricated number for any other currency (hasUnsupportedCurrency
+  // flags that instead).
   const sourceMap = {};
   fRes.forEach(r => {
     const cust = _custs.find(c=>c.id===r.customerId);
     const src  = cust?.sourceId ? srcName(cust.sourceId) : "Diğer";
-    if (!sourceMap[src]) sourceMap[src] = { source:src, reservations:0, revenue:0 };
-    sourceMap[src].reservations++;
-    sourceMap[src].revenue += parseFloat(r.total||0);
+    if (!sourceMap[src]) sourceMap[src] = { source:src, reservations:0, originalByCurrency:{}, operationalTryTotal:0, hasUnsupportedCurrency:false };
+    const s = sourceMap[src];
+    s.reservations++;
+    s.originalByCurrency[r.currency] = (s.originalByCurrency[r.currency] || 0) + parseFloat(r.total||0);
+    const { tryAmount, missingRate } = _civitatisConvertToTry(r.total, r.currency);
+    if (missingRate) s.hasUnsupportedCurrency = true;
+    else s.operationalTryTotal += tryAmount;
   });
   const sourcesData = Object.values(sourceMap)
     .sort((a,b)=>b.reservations-a.reservations);
 
+  // En Çok Satan Turlar — ranked PRIMARILY by reservation count (Reports
+  // Cleanup Phase: the one comparison that is valid across currencies
+  // today; raw revenue previously let a 3600 TRY tour outrank a 154 EUR
+  // tour merely because 3600 > 154). Same per-currency/operational-TRY
+  // tracking as sources above.
   const tourMap = {};
   fRes.forEach(r => {
     const name = r.tour || "Diğer";
-    if (!tourMap[name]) tourMap[name] = { name, reservations:0, guests:0, revenue:0 };
-    tourMap[name].reservations++;
-    tourMap[name].guests += parseInt(r.pax||1);
-    tourMap[name].revenue += parseFloat(r.total||0);
+    if (!tourMap[name]) tourMap[name] = { name, reservations:0, guests:0, originalByCurrency:{}, operationalTryTotal:0, hasUnsupportedCurrency:false };
+    const t = tourMap[name];
+    t.reservations++;
+    t.guests += parseInt(r.pax||1);
+    t.originalByCurrency[r.currency] = (t.originalByCurrency[r.currency] || 0) + parseFloat(r.total||0);
+    const { tryAmount, missingRate } = _civitatisConvertToTry(r.total, r.currency);
+    if (missingRate) t.hasUnsupportedCurrency = true;
+    else t.operationalTryTotal += tryAmount;
   });
   const toursData = Object.values(tourMap)
-    .map(t => ({ ...t, avgPrice: t.reservations>0 ? Math.round(t.revenue/t.reservations) : 0 }))
-    .sort((a,b)=>b.revenue-a.revenue)
+    .sort((a,b)=>b.reservations-a.reservations)
     .slice(0,6);
 
-  // Country analysis is now reservation-based (who's actually booking),
-  // not lead-based (who merely enquired).
+  // Country analysis is reservation-based (who's actually booking), kept
+  // deliberately lightweight: count + share only. Reports Cleanup Phase:
+  // "Ort. Tutar"/avgRevenue was always a raw mixed-currency average and
+  // is removed outright, not fixed — there is no truthful single-number
+  // "average spend per country" across TRY and EUR today.
   const countryMap = {};
   fRes.forEach(r => {
     const cust = _custs.find(c=>c.id===r.customerId);
     const country = cust?.country || cust?.nationality || "Diğer";
-    if (!countryMap[country]) countryMap[country] = { country, flag:countryFlag(country), reservations:0, totalRevenue:0, count:0 };
+    if (!countryMap[country]) countryMap[country] = { country, flag:countryFlag(country), reservations:0 };
     countryMap[country].reservations++;
-    countryMap[country].totalRevenue += parseFloat(r.total||0);
-    countryMap[country].count++;
   });
+  const totalCountryRes = Object.values(countryMap).reduce((s,c)=>s+c.reservations, 0);
   const countriesData = Object.values(countryMap)
-    .map(c => ({ ...c, avgRevenue: c.count>0 ? Math.round(c.totalRevenue/c.count) : 0 }))
+    .map(c => ({ ...c, share: totalCountryRes>0 ? Math.round(c.reservations/totalCountryRes*100) : 0 }))
     .sort((a,b)=>b.reservations-a.reservations)
     .slice(0,8);
 
-  const totalExpected = fPays.filter(p=>p.currency==="EUR")
-    .reduce((s,p)=>{ const r=getReservationById(p.resId||""); return s+(r?r.total:p.amount); },0);
-  const collected  = fPays.filter(p=>p.currency==="EUR"&&!["Bekliyor"].includes(p.status))
-    .reduce((s,p)=>s+parseFloat(p.amount||0), 0);
-  const pending    = fPays.filter(p=>p.currency==="EUR"&&p.status==="Bekliyor")
-    .reduce((s,p)=>s+parseFloat(p.amount||0), 0);
-  const partial    = fPays.filter(p=>p.currency==="EUR"&&p.status==="Kısmi Ödendi")
-    .reduce((s,p)=>s+parseFloat(p.amount||0), 0);
-  const refunded   = fPays.filter(p=>p.status==="İade Edildi")
-    .reduce((s,p)=>s+parseFloat(p.amount||0), 0);
+  // Doğrudan Ödemeler (public.payments only — never merged with Civitatis
+  // settlement). Reports Cleanup Phase: per-currency, mutually exclusive
+  // buckets, replacing the old EUR-only logic whose "collected" bucket
+  // actually double-counted every partial/refunded payment (status ≠
+  // "Bekliyor" alone, with no exclusion of "Kısmi Ödendi"/"İade Edildi").
+  // "Gecikmiş" (overdue) joins "pending" — it is unpaid, just overdue —
+  // and "Kapora Ödendi" joins "collected" alongside "Ödendi" — both are
+  // money actually received, just at different completion stages.
+  const payByCurrency = {};
+  fPays.forEach(p => {
+    const cur = p.currency || 'EUR';
+    if (!payByCurrency[cur]) payByCurrency[cur] = { collected:0, pending:0, partial:0, refunded:0 };
+    const b = payByCurrency[cur];
+    const amt = parseFloat(p.amount||0);
+    if (p.status === 'İade Edildi') b.refunded += amt;
+    else if (p.status === 'Kısmi Ödendi') b.partial += amt;
+    else if (p.status === 'Bekliyor' || p.status === 'Gecikmiş') b.pending += amt;
+    else b.collected += amt; // "Ödendi", "Kapora Ödendi"
+  });
 
-  const highValuePays = (_res)
-    .filter(r => r.remaining > 0 && !["Tamamlandı","İptal"].includes(r.opStatus))
-    .sort((a,b)=>b.remaining-a.remaining)
-    .slice(0,5)
-    .map(r => {
-      const cust = _custs.find(c=>c.id===r.customerId);
-      return { guest:cust?.name||"—", flag:cust?.flag||"🌍", resId:r.id, remaining:r.remaining, dueDate:r.date||"—", urgent:r.remaining>1000 };
-    });
-
-  const paymentsData = {
-    expected: totalExpected,
-    collected,
-    pending,
-    partial,
-    refunded,
-    highValue: highValuePays,
-  };
-
+  // Reports Cleanup Phase: now built from the period-filtered fRes (same
+  // set every other operational metric on this page uses), not the raw,
+  // all-time _res — the period selector previously had no effect here at
+  // all despite the section displaying the selected period as its label.
   const opsData = {
-    upcoming:   _res.filter(r=>!["Tamamlandı","İptal"].includes(r.opStatus)).length,
-    completed:  _res.filter(r=>r.opStatus==="Tamamlandı").length,
-    cancelled:  _res.filter(r=>r.opStatus==="İptal").length,
-    noGuide:    _res.filter(r=>!r.guideId&&!r.guide&&!["Tamamlandı","İptal"].includes(r.opStatus)).length,
-    noPickup:   _res.filter(r=>!r.pickup&&!["Tamamlandı","İptal"].includes(r.opStatus)).length,
+    upcoming:   fRes.filter(r=>!["Tamamlandı","İptal"].includes(r.opStatus)).length,
+    completed:  fRes.filter(r=>r.opStatus==="Tamamlandı").length,
+    cancelled:  fRes.filter(r=>r.opStatus==="İptal").length,
+    noGuide:    fRes.filter(r=>!r.guideId&&!r.guide&&!["Tamamlandı","İptal"].includes(r.opStatus)).length,
+    noPickup:   fRes.filter(r=>!r.pickup&&!["Tamamlandı","İptal"].includes(r.opStatus)).length,
   };
 
   // Guide performance — tours/guests per guide within the selected period,
   // derived purely from reservations.guide_id + guides; never a stored
-  // counter. Payment totals are EUR-only (same convention as the rest of
-  // this report) with a currency-mix note left to the caller.
+  // counter.
   const guideMap = {};
   fRes.forEach(r => {
     if (!r.guideId) return;
@@ -14110,21 +14172,27 @@ function calculateReportMetrics(period, reservations, payments, customers, sourc
   });
   const guidesData = Object.values(guideMap).sort((a,b)=>b.tours-a.tours).slice(0,8);
 
+  // Guide payment summary — per currency (Reports Cleanup Phase: this
+  // used to silently drop every non-EUR guide payment from the totals).
   const fGPays = filterByDateRange(_gPays, "paymentDate", period);
-  const guidePaymentsData = {
-    paidEur:    fGPays.filter(p=>p.currency==="EUR"&&p.status==="Ödendi").reduce((s,p)=>s+(p.amount||0),0),
-    pendingEur: fGPays.filter(p=>p.currency==="EUR"&&p.status==="Bekliyor").reduce((s,p)=>s+(p.amount||0),0),
-  };
+  const guidePayByCurrency = {};
+  fGPays.forEach(p => {
+    const cur = p.currency || 'EUR';
+    if (!guidePayByCurrency[cur]) guidePayByCurrency[cur] = { paid:0, pending:0 };
+    const amt = parseFloat(p.amount||0);
+    if (p.status === 'Ödendi') guidePayByCurrency[cur].paid += amt;
+    else if (p.status === 'Bekliyor') guidePayByCurrency[cur].pending += amt;
+  });
 
   return {
     kpi,
     sources: sourcesData,
     tours:   toursData,
     countries: countriesData,
-    payments: paymentsData,
+    payments: { byCurrency: payByCurrency },
     ops: opsData,
     guides: guidesData,
-    guidePayments: guidePaymentsData,
+    guidePayments: { byCurrency: guidePayByCurrency },
   };
 }
 
@@ -14133,11 +14201,11 @@ function calculateReportMetrics(period, reservations, payments, customers, sourc
 // Guarantees ReportsPage always has every field it reads, never fabricates
 // non-zero values, and never crashes.
 const EMPTY_REPORT_METRICS = {
-  kpi: { reservations:0, confirmed:0, inProgress:0, completed:0, expectedEur:0, collectedEur:0 },
+  kpi: { reservations:0, confirmed:0, inProgress:0, completed:0 },
   sources: [], tours: [], countries: [],
-  payments: { expected:0, collected:0, pending:0, partial:0, refunded:0, highValue:[] },
+  payments: { byCurrency: {} },
   ops: { upcoming:0, completed:0, cancelled:0, noGuide:0, noPickup:0 },
-  guides: [], guidePayments: { paidEur:0, pendingEur:0 },
+  guides: [], guidePayments: { byCurrency: {} },
 };
 
 // TESTABLE:computeMonthlyReservationRevenue:start
@@ -14291,7 +14359,35 @@ function RpKpiCard({ label, value, sub, icon, color, bg, highlight }) {
   );
 }
 
+// Reports Cleanup Phase — shared formatting for every currency-safe
+// "operational amount" cell on this page (Kaynak Performansı, En Çok
+// Satan Turlar, Yönetici Özeti). Never fabricates a combined total: once
+// hasUnsupportedCurrency is true the figure is explicitly marked
+// incomplete ("+") rather than presented as if it were whole, and when
+// nothing could be converted at all it shows "—", never "₺0".
+function _civFmtOperationalTry(tryTotal, hasUnsupportedCurrency) {
+  const rounded = Math.round(tryTotal || 0);
+  if (hasUnsupportedCurrency) return rounded > 0 ? `₺${rounded.toLocaleString("tr-TR")}+` : "—";
+  return `₺${rounded.toLocaleString("tr-TR")}`;
+}
+
+// A real display symbol for the two currencies this CRM actually prices
+// in; any other currency is shown by its ISO code instead of a guessed
+// symbol — never silently relabeled as TRY or EUR.
+function _currencySymbol(cur) {
+  if (cur === 'EUR') return '€';
+  if (cur === 'TRY' || cur === 'TL') return '₺';
+  return '';
+}
+function _fmtByCurrency(amount, cur) {
+  const sym = _currencySymbol(cur);
+  const num = Math.round(amount || 0).toLocaleString("tr-TR");
+  return sym ? `${sym}${num}` : `${num} ${cur}`;
+}
+
 function ReportsPage() {
+  const auth = useAuthContext();
+  const civitatisEligible = ["Yönetici","Operasyon"].includes(auth.role);
   const [period, setPeriod] = useState("Bu Ay");
   const PERIODS = ["Bugün","Bu Hafta","Bu Ay","Son 3 Ay"];
 
@@ -14302,6 +14398,17 @@ function ReportsPage() {
   const { data:rGuidePays }                                                           = useRepo("guidePayment","getAll");
   const { sources } = useSources();
   const isLoading = rResLoading || rPaysLoading;
+
+  // Civitatis settlement — a completely separate data pipeline from the
+  // reservations/payments above (Reports Cleanup Phase). Reuses the exact
+  // same repo method the Payments page's "Civitatis Hakedişleri" tab
+  // already calls; no new settlement-read logic. Not period-filtered —
+  // see the "Civitatis Hakediş Durumu" section below for why.
+  const { data:civData, loading:civLoading, error:civError } = useRepo("civitatisSettlement", "getDetailed");
+  const civTotals = useMemo(
+    () => _buildCivitatisReportsSettlementTotals(civData?.periods),
+    [civData]
+  );
 
   const metrics = useMemo(() => {
     try {
@@ -14314,8 +14421,18 @@ function ReportsPage() {
   const kpi       = metrics.kpi || EMPTY_REPORT_METRICS.kpi;
   const completionRate = kpi.reservations > 0 ? Math.round(kpi.completed/kpi.reservations*100) : 0;
   const maxSourceRes = Math.max(1, ...metrics.sources.map(s=>s.reservations));
-  const maxRev    = Math.max(1, ...metrics.tours.map(t=>t.revenue));
+  const maxTourRes = Math.max(1, ...metrics.tours.map(t=>t.reservations));
   const maxGuideTours = Math.max(1, ...metrics.guides.map(g=>g.tours));
+  const guidePayCurrencies = Object.keys(metrics.guidePayments.byCurrency);
+  const guidePaySummary = guidePayCurrencies.length === 0 ? "Veri yok" : guidePayCurrencies
+    .flatMap(cur => {
+      const b = metrics.guidePayments.byCurrency[cur];
+      const parts = [];
+      if (b.paid > 0)    parts.push(`${_fmtByCurrency(b.paid, cur)} ödendi`);
+      if (b.pending > 0) parts.push(`${_fmtByCurrency(b.pending, cur)} bekliyor`);
+      return parts;
+    })
+    .join(" · ") || "Ödeme yok";
 
   return (
     <div style={{display:"flex", flexDirection:"column", gap:20}}>
@@ -14363,9 +14480,8 @@ function ReportsPage() {
         <RpKpiCard label="Rezervasyon"             value={kpi.reservations}                      icon="M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"                              color={C.blue}  bg={C.blueBg}   sub={`${period} döneminde`}/>
         <RpKpiCard label="Onaylanan"               value={kpi.confirmed}                         icon="M20 6L9 17l-5-5"                                                                                     color={C.amber} bg={C.amberBg}  sub={`${safePct(kpi.confirmed, kpi.reservations)} onaylandı`}/>
         <RpKpiCard label="Tamamlanan Tur"          value={kpi.completed}                         icon="M22 11.08V12a10 10 0 11-5.93-9.14 M22 4L12 14.01l-3-3"                                              color={C.green} bg={C.greenBg}  sub={`${completionRate}% tamamlanma oranı`}/>
-        <RpKpiCard label="Beklenen Gelir"          value={`€${kpi.expectedEur.toLocaleString("tr-TR")}`} icon="M12 2v20M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"                                    color={C.gold}  bg={C.goldPale}  sub="EUR bazlı tüm rezervasyonlar" highlight/>
-        <RpKpiCard label="Tahsil Edilen Gelir"    value={`€${kpi.collectedEur.toLocaleString("tr-TR")}`} icon="M22 11.08V12a10 10 0 11-5.93-9.14 M22 4L12 14.01l-3-3"                                    color={C.green} bg={C.greenBg}  sub={`${safePct(kpi.collectedEur, kpi.expectedEur)} tahsil edildi`} highlight/>
       </div>
+      {}
 
       {}
       <div style={{display:"grid", gridTemplateColumns: window.innerWidth < 1024 ? "1fr" : "1fr 280px", gap:20, alignItems:"start"}}>
@@ -14420,6 +14536,51 @@ function ReportsPage() {
           </RpSection>
 
           {}
+          {civitatisEligible && (
+          <RpSection title="Civitatis Hakediş Durumu" icon="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z">
+            {civLoading ? (
+              <div style={{fontSize:12.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", fontStyle:"italic"}}>Hakediş verileri yükleniyor…</div>
+            ) : civError ? (
+              <div style={{fontSize:12.5, color:C.red, fontFamily:"'DM Sans',sans-serif"}}>Hakediş verileri yüklenemedi.</div>
+            ) : (
+              <>
+                <div className="rsp-stat-grid" style={{display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:12}}>
+                  {[
+                    { key:"accrued",   label:"Biriken Hakediş",   color:C.textMuted, bg:C.ivoryDark, sub:"Henüz talep edilebilir değil" },
+                    { key:"claimable", label:"Talep Edilebilir",  color:C.gold,      bg:C.goldPale,  sub:"Talep edilmeyi bekliyor" },
+                    { key:"requested", label:"Talep Edildi",      color:C.blue,      bg:C.blueBg,    sub:"Civitatis ödemesi bekleniyor" },
+                    { key:"paid",      label:"Ödenen",            color:C.green,     bg:C.greenBg,   sub:"CRM'de ödendi olarak işaretlenen" },
+                  ].map((c,i)=>{
+                    const b = civTotals[c.key];
+                    return (
+                      <div key={i} style={{background:c.bg, border:`1px solid ${c.color}22`, borderRadius:10, padding:"14px 12px", textAlign:"center"}}>
+                        <div style={{fontSize:18, fontWeight:700, color:c.color, fontFamily:"'Playfair Display',serif", lineHeight:1, marginBottom:5}}>
+                          {b.periodCount === 0 ? "—" : _civFmtOperationalTry(b.tryTotal, b.hasUnsupportedCurrency)}
+                        </div>
+                        <div style={{fontSize:11.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif"}}>{c.label}</div>
+                        <div style={{fontSize:10.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:3}}>{c.sub}</div>
+                        {b.periodCount > 0 && (
+                          <div style={{fontSize:10, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:2}}>{b.periodCount} dönem</div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+                {civTotals.hasEurExposure && (
+                  <div style={{fontSize:10.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:10}}>Sabit kur: €1 = ₺55 (operasyonel gösterim)</div>
+                )}
+                {civTotals.mixedPeriodCount > 0 && (
+                  <div style={{fontSize:11, color:C.amber, fontFamily:"'DM Sans',sans-serif", marginTop:6}}>{civTotals.mixedPeriodCount} dönem kontrol gerekiyor. Ödemeler sayfasından inceleyin.</div>
+                )}
+                <div style={{fontSize:10.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:10, fontStyle:"italic"}}>
+                  Bu bölüm seçili tarih aralığından bağımsızdır: Civitatis hakedişleri ay bazında (dönem) yönetildiği için her zaman tüm dönemlerin güncel durumunu gösterir.
+                </div>
+              </>
+            )}
+          </RpSection>
+          )}
+
+          {}
           <RpSection title="Kaynak Performansı" icon="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z">
             {metrics.sources.length === 0 ? (
               <EmptyState icon="📊" title="Bu dönem için veri yok" subtitle="Seçilen tarih aralığında kaynak bazlı rezervasyon bulunmuyor."/>
@@ -14427,7 +14588,7 @@ function ReportsPage() {
             <table className="rsp-table" style={{width:"100%", borderCollapse:"collapse"}}>
               <thead>
                 <tr style={{borderBottom:`1px solid ${C.border}`}}>
-                  {["Kaynak","Rezervasyon","Beklenen Gelir","Dağılım"].map((h,i)=>(
+                  {["Kaynak","Rezervasyon","Operasyonel Tutar","Dağılım"].map((h,i)=>(
                     <th key={i} style={{
                       padding:"8px 10px", textAlign: i===0?"left":"center",
                       fontSize:10.5, fontWeight:600, color:C.textFaint,
@@ -14449,7 +14610,7 @@ function ReportsPage() {
                         <span style={{fontSize:13.5, fontWeight:600, color:C.text, fontFamily:"'Playfair Display',serif"}}>{s.reservations}</span>
                       </td>
                       <td style={{padding:"12px 10px", borderBottom:`1px solid ${C.borderLight}`, textAlign:"center", verticalAlign:"middle"}}>
-                        <span style={{fontSize:13, fontWeight:600, color:C.gold, fontFamily:"'Playfair Display',serif"}}>€{s.revenue.toLocaleString("tr-TR")}</span>
+                        <span style={{fontSize:13, fontWeight:600, color:C.gold, fontFamily:"'Playfair Display',serif"}}>{_civFmtOperationalTry(s.operationalTryTotal, s.hasUnsupportedCurrency)}</span>
                       </td>
                       <td style={{padding:"12px 10px", borderBottom:`1px solid ${C.borderLight}`, verticalAlign:"middle", minWidth:80}}>
                         <MiniBar value={s.reservations} max={maxSourceRes} color={C.navy} height={5}/>
@@ -14460,10 +14621,13 @@ function ReportsPage() {
               </tbody>
             </table>
             )}
+            {metrics.sources.some(s=>(s.originalByCurrency.EUR||0)>0) && (
+              <div style={{fontSize:10.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:10}}>Sabit kur: €1 = ₺55 (operasyonel gösterim)</div>
+            )}
           </RpSection>
 
           {}
-          <RpSection title="Rehber Performansı" icon="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2 M23 21v-2a4 4 0 00-3-3.87 M16 3.13a4 4 0 010 7.75" action={`€${metrics.guidePayments.paidEur.toLocaleString("tr-TR")} ödendi · €${metrics.guidePayments.pendingEur.toLocaleString("tr-TR")} bekliyor`}>
+          <RpSection title="Rehber Performansı" icon="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2 M23 21v-2a4 4 0 00-3-3.87 M16 3.13a4 4 0 010 7.75" action={guidePaySummary}>
             {metrics.guides.length === 0 ? (
               <EmptyState icon="🧭" title="Bu dönem için veri yok" subtitle="Seçilen tarih aralığında rehbere atanmış rezervasyon bulunmuyor."/>
             ) : (
@@ -14530,7 +14694,7 @@ function ReportsPage() {
                   {}
                   <div style={{flex:1, minWidth:0}}>
                     <div style={{fontSize:14, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif", marginBottom:3}}>{t.name}</div>
-                    <MiniBar value={t.revenue} max={maxRev} color={i===0?C.gold:C.blue} height={4}/>
+                    <MiniBar value={t.reservations} max={maxTourRes} color={i===0?C.gold:C.blue} height={4}/>
                   </div>
                   {}
                   {[
@@ -14544,12 +14708,15 @@ function ReportsPage() {
                   ))}
                   {}
                   <div style={{textAlign:"right", flexShrink:0}}>
-                    <div style={{fontSize:18, fontWeight:700, color:C.gold, fontFamily:"'Playfair Display',serif", lineHeight:1}}>€{t.revenue.toLocaleString("tr-TR")}</div>
-                    <div style={{fontSize:11, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:2}}>Ort. €{t.avgPrice}/kişi</div>
+                    <div style={{fontSize:16, fontWeight:700, color:C.gold, fontFamily:"'Playfair Display',serif", lineHeight:1}}>{_civFmtOperationalTry(t.operationalTryTotal, t.hasUnsupportedCurrency)}</div>
+                    <div style={{fontSize:11, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:2}}>Operasyonel Tutar</div>
                   </div>
                 </div>
               ))}
             </div>
+            )}
+            {metrics.tours.some(t=>(t.originalByCurrency.EUR||0)>0) && (
+              <div style={{fontSize:10.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:10}}>Sabit kur: €1 = ₺55 (operasyonel gösterim)</div>
             )}
           </RpSection>
 
@@ -14561,7 +14728,7 @@ function ReportsPage() {
             <table style={{width:"100%", borderCollapse:"collapse"}}>
               <thead>
                 <tr style={{borderBottom:`1px solid ${C.border}`}}>
-                  {["Ülke","Rezervasyon","Ort. Tutar","Pay"].map((h,i)=>(
+                  {["Ülke","Rezervasyon","Pay"].map((h,i)=>(
                     <th key={i} style={{
                       padding:"8px 12px", textAlign:i===0?"left":"center",
                       fontSize:10.5, fontWeight:600, color:C.textFaint,
@@ -14588,10 +14755,8 @@ function ReportsPage() {
                       <td style={{padding:"11px 12px", borderBottom:`1px solid ${C.borderLight}`, textAlign:"center", verticalAlign:"middle"}}>
                         <span style={{fontSize:14, fontWeight:600, color:C.green, fontFamily:"'Playfair Display',serif"}}>{c.reservations}</span>
                       </td>
-                      <td style={{padding:"11px 12px", borderBottom:`1px solid ${C.borderLight}`, textAlign:"center", verticalAlign:"middle"}}>
-                        <span style={{fontSize:13.5, fontWeight:600, color:C.gold, fontFamily:"'Playfair Display',serif"}}>€{c.avgRevenue}</span>
-                      </td>
-                      <td style={{padding:"11px 12px", borderBottom:`1px solid ${C.borderLight}`, verticalAlign:"middle", minWidth:80}}>
+                      <td style={{padding:"11px 12px", borderBottom:`1px solid ${C.borderLight}`, verticalAlign:"middle", minWidth:100}}>
+                        <div style={{fontSize:12.5, fontWeight:600, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", marginBottom:4, textAlign:"center"}}>%{c.share}</div>
                         <MiniBar value={c.reservations} max={maxResC} color={C.navy} height={5}/>
                       </td>
                     </tr>
@@ -14603,71 +14768,49 @@ function ReportsPage() {
           </RpSection>
 
           {}
-          <RpSection title="Ödeme Analizi" icon="M2 9a2 2 0 012-2h16a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V9zM2 13h20">
-            <div className="rsp-stat-grid" style={{display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:12, marginBottom:20}}>
-              {[
-                { label:"Toplam Beklenen", val:`€${metrics.payments.expected.toLocaleString("tr-TR")}`,   color:C.text,  bg:C.ivoryDark },
-                { label:"Tahsil Edilen",   val:`€${metrics.payments.collected.toLocaleString("tr-TR")}`,  color:C.green, bg:C.greenBg },
-                { label:"Bekleyen",        val:`€${metrics.payments.pending.toLocaleString("tr-TR")}`,    color:C.red,   bg:C.redBg },
-                { label:"Kısmi Ödenen",    val:`€${metrics.payments.partial.toLocaleString("tr-TR")}`,    color:C.amber, bg:C.amberBg },
-                { label:"İade",            val:`€${metrics.payments.refunded.toLocaleString("tr-TR")}`,   color:C.textFaint, bg:C.ivoryDark },
-              ].map((r,i)=>(
-                <div key={i} style={{
-                  background:r.bg, border:`1px solid ${r.color}22`,
-                  borderRadius:10, padding:"14px 12px", textAlign:"center",
-                }}>
-                  <div style={{fontSize:18, fontWeight:700, color:r.color, fontFamily:"'Playfair Display',serif", lineHeight:1, marginBottom:5}}>{r.val}</div>
-                  <div style={{fontSize:11.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif"}}>{r.label}</div>
-                </div>
-              ))}
+          <RpSection title="Doğrudan Ödemeler" icon="M2 9a2 2 0 012-2h16a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V9zM2 13h20">
+            <div style={{fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginBottom:14}}>
+              Civitatis hakedişlerinden tamamen ayrı — yalnızca doğrudan (Civitatis dışı) tahsilatları yansıtır.
             </div>
-            {}
-            <div style={{marginBottom:20}}>
-              <div style={{display:"flex", justifyContent:"space-between", marginBottom:6}}>
-                <span style={{fontSize:12.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif"}}>Tahsilat Oranı</span>
-                <span style={{fontSize:12.5, fontWeight:600, color:C.gold, fontFamily:"'DM Sans',sans-serif"}}>
-                  {safePct(metrics.payments.collected, metrics.payments.expected)}
-                </span>
-              </div>
-              <div style={{height:8, background:C.ivoryDark, borderRadius:99, overflow:"hidden"}}>
-                <div style={{
-                  width:`${safePctNum(metrics.payments.collected, metrics.payments.expected)}%`,
-                  height:"100%",
-                  background:`linear-gradient(90deg, ${C.green}, ${C.gold})`,
-                  borderRadius:99,
-                }}/>
-              </div>
-            </div>
-            {}
-            <div style={{fontSize:11.5, fontWeight:600, color:C.textFaint, textTransform:"uppercase", letterSpacing:"0.08em", fontFamily:"'DM Sans',sans-serif", marginBottom:10}}>
-              Yüksek Tutarlı Bekleyenler
-            </div>
-            {metrics.payments.highValue.length === 0 ? (
-              <div style={{fontSize:12.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", fontStyle:"italic", padding:"8px 2px"}}>
-                Yüksek tutarlı bekleyen ödeme yok.
-              </div>
-            ) : metrics.payments.highValue.map((p,i)=>(
-              <div key={i} style={{
-                display:"flex", alignItems:"center", gap:12,
-                padding:"10px 12px", borderRadius:8, marginBottom:7,
-                background:p.urgent?C.redBg:C.ivory,
-                border:`1px solid ${p.urgent?C.red+"33":C.borderLight}`,
-              }}>
-                <span style={{fontSize:18}}>{p.flag}</span>
-                <div style={{flex:1}}>
-                  <div style={{fontSize:13, fontWeight:500, color:C.text, fontFamily:"'DM Sans',sans-serif"}}>{p.guest}</div>
-                  <div style={{fontSize:11.5, color:C.textFaint, fontFamily:"'DM Mono',monospace"}}>{p.resId} · Son tarih: {p.dueDate}</div>
-                </div>
-                <div style={{fontSize:15, fontWeight:700, color:p.urgent?C.red:C.text, fontFamily:"'Playfair Display',serif", flexShrink:0}}>
-                  €{p.remaining.toLocaleString("tr-TR")}
-                </div>
-                {p.urgent && <span style={{
-                  fontSize:10, fontWeight:600, color:C.red,
-                  background:C.redBg, border:`1px solid ${C.red}44`,
-                  padding:"1px 7px", borderRadius:99, fontFamily:"'DM Sans',sans-serif",
-                }}>ACİL</span>}
-              </div>
-            ))}
+            {Object.keys(metrics.payments.byCurrency).length === 0 ? (
+              <EmptyState icon="💳" title="Bu dönem için veri yok" subtitle="Seçilen tarih aralığında doğrudan ödeme bulunmuyor."/>
+            ) : (
+            <table className="rsp-table" style={{width:"100%", borderCollapse:"collapse"}}>
+              <thead>
+                <tr style={{borderBottom:`1px solid ${C.border}`}}>
+                  {["Para Birimi","Tahsil Edilen","Bekleyen","Kısmi Ödenen","İade"].map((h,i)=>(
+                    <th key={i} style={{
+                      padding:"8px 10px", textAlign: i===0?"left":"center",
+                      fontSize:10.5, fontWeight:600, color:C.textFaint,
+                      fontFamily:"'DM Sans',sans-serif",
+                      textTransform:"uppercase", letterSpacing:"0.07em",
+                    }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {Object.entries(metrics.payments.byCurrency).map(([cur,b],i)=>(
+                  <tr key={i} className="dt-row" style={{background:C.white, transition:"background .1s"}}>
+                    <td style={{padding:"12px 10px", borderBottom:`1px solid ${C.borderLight}`, verticalAlign:"middle"}}>
+                      <span style={{fontSize:13.5, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif"}}>{cur}</span>
+                    </td>
+                    <td style={{padding:"12px 10px", borderBottom:`1px solid ${C.borderLight}`, textAlign:"center", verticalAlign:"middle"}}>
+                      <span style={{fontSize:13, fontWeight:600, color:C.green, fontFamily:"'Playfair Display',serif"}}>{_fmtByCurrency(b.collected, cur)}</span>
+                    </td>
+                    <td style={{padding:"12px 10px", borderBottom:`1px solid ${C.borderLight}`, textAlign:"center", verticalAlign:"middle"}}>
+                      <span style={{fontSize:13, fontWeight:600, color:C.red, fontFamily:"'Playfair Display',serif"}}>{_fmtByCurrency(b.pending, cur)}</span>
+                    </td>
+                    <td style={{padding:"12px 10px", borderBottom:`1px solid ${C.borderLight}`, textAlign:"center", verticalAlign:"middle"}}>
+                      <span style={{fontSize:13, fontWeight:600, color:C.amber, fontFamily:"'Playfair Display',serif"}}>{_fmtByCurrency(b.partial, cur)}</span>
+                    </td>
+                    <td style={{padding:"12px 10px", borderBottom:`1px solid ${C.borderLight}`, textAlign:"center", verticalAlign:"middle"}}>
+                      <span style={{fontSize:13, fontWeight:600, color:C.textFaint, fontFamily:"'Playfair Display',serif"}}>{_fmtByCurrency(b.refunded, cur)}</span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            )}
           </RpSection>
 
           {}
@@ -14729,10 +14872,16 @@ function ReportsPage() {
             {}
             <div style={{padding:"12px 14px", display:"flex", flexDirection:"column", gap:8}}>
               {(() => {
+                // Reports Cleanup Phase: "En Yüksek Ortalama" (a raw
+                // mixed-currency country average) and "Bekleyen Ödeme"
+                // (depended on the removed Yüksek Tutarlı Bekleyenler)
+                // are both removed, not fixed — neither had a truthful
+                // single-number basis. topSource/topTour already rank by
+                // reservation count (the sort order calculateReportMetrics
+                // now uses), so this inherits that corrected ranking
+                // without any extra logic here.
                 const topSource  = metrics.sources.length  ? metrics.sources[0]  : null;
                 const topTour    = metrics.tours.length    ? metrics.tours[0]    : null;
-                const topCountry = metrics.countries.length ? [...metrics.countries].sort((a,b)=>b.avgRevenue-a.avgRevenue)[0] : null;
-                const pendingCount = metrics.payments.highValue.length;
                 const noGuide = metrics.ops.noGuide;
                 return [
                 {
@@ -14740,28 +14889,14 @@ function ReportsPage() {
                   color:C.green, bg:C.greenBg,
                   label:"En Güçlü Kaynak",
                   value: topSource ? topSource.source : "Veri yok",
-                  sub: topSource ? `${topSource.reservations} rezervasyon · €${topSource.revenue.toLocaleString("tr-TR")}` : "Bu dönem için veri yok",
+                  sub: topSource ? `${topSource.reservations} rezervasyon · ${_civFmtOperationalTry(topSource.operationalTryTotal, topSource.hasUnsupportedCurrency)}` : "Bu dönem için veri yok",
                 },
                 {
                   icon:"M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z M9 22V12h6v10",
                   color:C.gold, bg:C.goldPale,
                   label:"En Çok Satan Tur",
                   value: topTour ? topTour.name : "Veri yok",
-                  sub: topTour ? `${topTour.reservations} rezervasyon · €${topTour.revenue.toLocaleString("tr-TR")}` : "Bu dönem için veri yok",
-                },
-                {
-                  icon:"M12 2v20M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6",
-                  color:C.blue, bg:C.blueBg,
-                  label:"En Yüksek Ortalama",
-                  value: topCountry ? `${topCountry.country} — €${topCountry.avgRevenue}` : "Veri yok",
-                  sub:"Kişi başı ortalama rezervasyon tutarı",
-                },
-                {
-                  icon:"M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z",
-                  color:C.amber, bg:C.amberBg,
-                  label:"Bekleyen Ödeme",
-                  value:`€${metrics.payments.pending.toLocaleString("tr-TR")}`,
-                  sub: pendingCount>0 ? `${pendingCount} rezervasyon` : "Bekleyen ödeme yok",
+                  sub: topTour ? `${topTour.reservations} rezervasyon · ${_civFmtOperationalTry(topTour.operationalTryTotal, topTour.hasUnsupportedCurrency)}` : "Bu dönem için veri yok",
                 },
                 {
                   icon:"M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z",
