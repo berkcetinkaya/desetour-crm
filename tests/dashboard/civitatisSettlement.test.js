@@ -2,18 +2,20 @@
 /**
  * tests/dashboard/civitatisSettlement.test.js
  * ─────────────────────────────────────────────────────────────────────────
- * Civitatis Settlement Engine — Phase 1 (homepage receivable card).
- * Exercises the REAL shipping pure helpers from DeseTourDashboard.jsx
- * (_civitatisEffectiveSettlementStatus, _civitatisConvertToTry,
- * _latestCivitatisRatesByCurrency, _buildCivitatisSettlementSummary),
- * extracted via the existing TESTABLE-marker convention, plus static
- * source inspection for the homepage UI wiring (role gating, no
- * requested/paid/edit/delete action anywhere, "Hakedişleri Gör" link,
- * gold/amber-never-red priority styling, and the explicit "do not
- * touch" guarantees for Reports/Payments/Reservations payment_status/
- * retail_amount this phase was told to respect). No real Supabase/
- * network call anywhere in this file. The database-level eligibility/
- * backfill/trigger/idempotency logic is covered separately in
+ * Civitatis Settlement Engine — Phase 1 (homepage receivable card),
+ * revised for Phase 1.3 (fixed EUR->TRY operational rate, no live FX
+ * dependency). Exercises the REAL shipping pure helpers from
+ * DeseTourDashboard.jsx (_civitatisEffectiveSettlementStatus,
+ * _civitatisConvertToTry, _latestCivitatisRatesByCurrency,
+ * _buildCivitatisSettlementSummary, _civitatisHasEurExposure), extracted
+ * via the existing TESTABLE-marker convention, plus static source
+ * inspection for the homepage UI wiring (role gating, no requested/paid/
+ * edit/delete action anywhere, "Hakedişleri Gör" link, gold/amber-never-
+ * red priority styling, the fixed-rate disclosure note, and the explicit
+ * "do not touch" guarantees for Reports/Payments/Reservations
+ * payment_status/retail_amount this phase was told to respect). No real
+ * Supabase/network call anywhere in this file. The database-level
+ * eligibility/backfill/trigger/idempotency logic is covered separately in
  * tests/tourPreparation/civitatisSettlementPhase1Migration.test.js and
  * was validated live against a throwaway local Postgres during
  * implementation — this file covers the application/presentation layer.
@@ -27,23 +29,23 @@ const path = require('path');
 const SOURCE_PATH = path.join(__dirname, '..', '..', 'DeseTourDashboard.jsx');
 const SOURCE = fs.readFileSync(SOURCE_PATH, 'utf8');
 
-// The four settlement-math helpers are contiguous in the source and the
-// later ones depend on the earlier ones (and on the module-level
-// _CIVITATIS_TRY_EQUIVALENT_CURRENCIES const) being in the same scope —
-// the single-marker extractTestableFn helper can't supply that, so this
-// file extracts the whole contiguous region (const through the last
-// function's end marker) once, the same combined-extraction approach
-// preparationReversal.test.js already established for a multi-function
-// dependency chain.
+// The settlement-math helpers are contiguous in the source and the later
+// ones depend on the earlier ones (and on the module-level
+// _CIVITATIS_TRY_EQUIVALENT_CURRENCIES/_CIVITATIS_FIXED_EUR_TO_TRY_RATE
+// consts) being in the same scope — the single-marker extractTestableFn
+// helper can't supply that, so this file extracts the whole contiguous
+// region (const through _civitatisHasEurExposure's own end marker) once,
+// the same combined-extraction approach preparationReversal.test.js
+// already established for a multi-function dependency chain.
 function extractCivitatisSettlementHelpers() {
   const start = SOURCE.indexOf('const _CIVITATIS_TRY_EQUIVALENT_CURRENCIES');
-  const end = SOURCE.indexOf('// TESTABLE:_buildCivitatisSettlementSummary:end');
+  const end = SOURCE.indexOf('// TESTABLE:_civitatisHasEurExposure:end');
   assert.ok(start !== -1 && end !== -1, 'settlement helper region not found');
   const body = SOURCE.slice(start, end);
   // eslint-disable-next-line no-new-func
   const factory = new Function(`
     ${body}
-    return { _civitatisEffectiveSettlementStatus, _civitatisConvertToTry, _latestCivitatisRatesByCurrency, _buildCivitatisSettlementSummary };
+    return { _civitatisEffectiveSettlementStatus, _civitatisConvertToTry, _latestCivitatisRatesByCurrency, _buildCivitatisSettlementSummary, _civitatisHasEurExposure };
   `);
   return factory();
 }
@@ -53,6 +55,7 @@ const {
   _civitatisConvertToTry,
   _latestCivitatisRatesByCurrency,
   _buildCivitatisSettlementSummary,
+  _civitatisHasEurExposure,
 } = extractCivitatisSettlementHelpers();
 
 function item(overrides) {
@@ -96,48 +99,55 @@ test('never a scheduled-job write: this is a pure read of stored fields, never m
 });
 
 // ═══════════════════════════════════════════════════════════════════════
-// _civitatisConvertToTry (brief validation items 6-10)
+// _civitatisConvertToTry — Phase 1.3: fixed EUR->TRY operational rate
+// (brief validation items: 3600 TRY = 3600 TRY, 3600 TL = 3600 TRY,
+// 154.05 EUR = 8472.75 TRY, 100 EUR = 5500 TRY, unsupported currencies
+// never produce a fake TRY total)
 // ═══════════════════════════════════════════════════════════════════════
 
-test('a TRY amount requires no conversion — returned unchanged regardless of what rates are cached', () => {
-  const { tryAmount, missingRate } = _civitatisConvertToTry(3600, 'TRY', {});
+test('3600 TRY requires no conversion — returned unchanged', () => {
+  const { tryAmount, missingRate } = _civitatisConvertToTry(3600, 'TRY');
   assert.equal(tryAmount, 3600);
   assert.equal(missingRate, false);
 });
 
-test('a TL amount is treated exactly as TRY — no conversion, unchanged amount', () => {
-  const { tryAmount, missingRate } = _civitatisConvertToTry(3600, 'TL', {});
+test('3600 TL is treated exactly as TRY — no conversion, unchanged amount', () => {
+  const { tryAmount, missingRate } = _civitatisConvertToTry(3600, 'TL');
   assert.equal(tryAmount, 3600);
   assert.equal(missingRate, false);
 });
 
-test('a EUR amount is converted using the cached EUR->TRY rate', () => {
-  const { tryAmount, missingRate } = _civitatisConvertToTry(50, 'EUR', { EUR: 40 });
-  assert.equal(tryAmount, 2000);
+test('154.05 EUR converts to exactly 8472.75 TRY at the fixed operational rate (1 EUR = 55 TRY)', () => {
+  const { tryAmount, missingRate } = _civitatisConvertToTry(154.05, 'EUR');
+  assert.equal(tryAmount, 8472.75);
   assert.equal(missingRate, false);
 });
 
-test('a USD amount is converted using the cached USD->TRY rate', () => {
-  const { tryAmount, missingRate } = _civitatisConvertToTry(100, 'USD', { USD: 35 });
-  assert.equal(tryAmount, 3500);
+test('100 EUR converts to exactly 5500 TRY at the fixed operational rate', () => {
+  const { tryAmount, missingRate } = _civitatisConvertToTry(100, 'EUR');
+  assert.equal(tryAmount, 5500);
   assert.equal(missingRate, false);
 });
 
-test('missing FX data never produces a fake TRY total — no rate cached for the currency returns tryAmount:null, missingRate:true', () => {
-  const { tryAmount, missingRate } = _civitatisConvertToTry(50, 'GBP', { EUR: 40, USD: 35 });
+test('the EUR conversion never depends on a rates argument — no live/cached rate lookup happens at all', () => {
+  // Passing a bogus/empty extra argument must not change the result —
+  // there is no second parameter this function reads anymore.
+  assert.equal(_civitatisConvertToTry(100, 'EUR', { EUR: 999 }).tryAmount, 5500);
+  assert.equal(_civitatisConvertToTry(100, 'EUR', null).tryAmount, 5500);
+});
+
+test('a currency other than TRY/TL/EUR has no conversion rule at all — never a fabricated TRY total', () => {
+  const { tryAmount, missingRate } = _civitatisConvertToTry(50, 'USD');
   assert.equal(tryAmount, null);
   assert.equal(missingRate, true);
 });
 
-test('never assumes EUR as TRY, or any other currency as TRY, when the rate is missing', () => {
-  const { tryAmount, missingRate } = _civitatisConvertToTry(50, 'EUR', {}); // no EUR rate cached at all
-  assert.equal(tryAmount, null);
-  assert.equal(missingRate, true);
-});
-
-test('a zero or negative cached rate is treated as missing, never used to divide/multiply into a nonsensical total', () => {
-  assert.equal(_civitatisConvertToTry(50, 'EUR', { EUR: 0 }).missingRate, true);
-  assert.equal(_civitatisConvertToTry(50, 'EUR', { EUR: -5 }).missingRate, true);
+test('missing/unsupported currencies never produce a fake TRY total (GBP, USD, and any other non-TRY/TL/EUR code)', () => {
+  for (const currency of ['USD', 'GBP', 'CHF']) {
+    const { tryAmount, missingRate } = _civitatisConvertToTry(50, currency);
+    assert.equal(tryAmount, null);
+    assert.equal(missingRate, true);
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -169,7 +179,7 @@ test('requested settlements are excluded from the claimable total', () => {
     item({ id:'claim1', status:'accrued', claimableAt:'2026-10-01', originalCurrency:'TRY', originalAmount:1000 }),
     item({ id:'req1', status:'requested', originalCurrency:'TRY', originalAmount:9999 }),
   ];
-  const summary = _buildCivitatisSettlementSummary(items, {}, '2026-10-03');
+  const summary = _buildCivitatisSettlementSummary(items, '2026-10-03');
   assert.equal(summary.claimable.tryTotal, 1000);
   assert.equal(summary.claimable.itemIds.includes('req1'), false);
   assert.equal(summary.requested.tryTotal, 9999);
@@ -180,7 +190,7 @@ test('paid settlements are excluded from every outstanding bucket (claimable, cu
     item({ id:'paid1', status:'paid', originalCurrency:'TRY', originalAmount:5000 }),
     item({ id:'claim1', status:'accrued', claimableAt:'2026-10-01', originalCurrency:'TRY', originalAmount:1000 }),
   ];
-  const summary = _buildCivitatisSettlementSummary(items, {}, '2026-10-03');
+  const summary = _buildCivitatisSettlementSummary(items, '2026-10-03');
   assert.equal(summary.paid.tryTotal, 5000);
   assert.equal(summary.claimable.itemIds.includes('paid1'), false);
   assert.equal(summary.currentMonthAccrual.itemIds.includes('paid1'), false);
@@ -192,7 +202,7 @@ test('adjusted and cancelled settlement items never appear in any bucket at all'
     item({ id:'adj1', status:'adjusted' }),
     item({ id:'canc1', status:'cancelled' }),
   ];
-  const summary = _buildCivitatisSettlementSummary(items, {}, '2026-10-03');
+  const summary = _buildCivitatisSettlementSummary(items, '2026-10-03');
   for (const bucket of [summary.claimable, summary.currentMonthAccrual, summary.requested, summary.paid]) {
     assert.equal(bucket.itemIds.includes('adj1'), false);
     assert.equal(bucket.itemIds.includes('canc1'), false);
@@ -204,7 +214,7 @@ test('current-month accrual only ever includes accrued items whose settlement_pe
     item({ id:'thisMonth', status:'accrued', settlementPeriod:'2026-10-01', claimableAt:'2026-11-01', originalCurrency:'TRY', originalAmount:500 }),
     item({ id:'lastMonthNowClaimable', status:'accrued', settlementPeriod:'2026-09-01', claimableAt:'2026-10-01', originalCurrency:'TRY', originalAmount:700 }),
   ];
-  const summary = _buildCivitatisSettlementSummary(items, {}, '2026-10-03');
+  const summary = _buildCivitatisSettlementSummary(items, '2026-10-03');
   assert.deepEqual(summary.currentMonthAccrual.itemIds, ['thisMonth']);
   assert.equal(summary.currentMonthAccrual.tryTotal, 500);
   assert.equal(summary.claimable.tryTotal, 700);
@@ -215,19 +225,19 @@ test('every total is traceable back to the exact settlement item ids (and theref
     item({ id:'a', reservationId:'res-a', status:'accrued', claimableAt:'2026-10-01', originalCurrency:'TRY', originalAmount:1000 }),
     item({ id:'b', reservationId:'res-b', status:'accrued', claimableAt:'2026-10-01', originalCurrency:'TRY', originalAmount:2000 }),
   ];
-  const summary = _buildCivitatisSettlementSummary(items, {}, '2026-10-03');
+  const summary = _buildCivitatisSettlementSummary(items, '2026-10-03');
   assert.deepEqual(summary.claimable.itemIds.slice().sort(), ['a', 'b']);
   assert.deepEqual(summary.claimable.reservationIds.slice().sort(), ['res-a', 'res-b']);
   assert.equal(summary.claimable.tryTotal, 3000);
   assert.equal(summary.claimable.itemCount, 2);
 });
 
-test('a bucket with a missing-rate item is flagged hasMissingRate, and that item\'s amount is excluded from the total while still being tracked for traceability', () => {
+test('a bucket with an unsupported-currency item is flagged hasMissingRate, and that item\'s amount is excluded from the total while still being tracked for traceability', () => {
   const items = [
     item({ id:'ok', status:'accrued', claimableAt:'2026-10-01', originalCurrency:'TRY', originalAmount:1000 }),
     item({ id:'noRate', status:'accrued', claimableAt:'2026-10-01', originalCurrency:'GBP', originalAmount:50 }),
   ];
-  const summary = _buildCivitatisSettlementSummary(items, { EUR:40 }, '2026-10-03'); // no GBP rate cached
+  const summary = _buildCivitatisSettlementSummary(items, '2026-10-03'); // GBP has no conversion rule at all
   assert.equal(summary.claimable.hasMissingRate, true);
   assert.equal(summary.claimable.tryTotal, 1000); // GBP item's amount never silently folded in
   assert.equal(summary.claimable.itemCount, 2); // but still counted/traced
@@ -239,13 +249,44 @@ test('multiple currencies in the same bucket are preserved separately in origina
     item({ id:'a', status:'accrued', claimableAt:'2026-10-01', originalCurrency:'TRY', originalAmount:1000 }),
     item({ id:'b', status:'accrued', claimableAt:'2026-10-01', originalCurrency:'EUR', originalAmount:50 }),
   ];
-  const summary = _buildCivitatisSettlementSummary(items, { EUR:40 }, '2026-10-03');
+  const summary = _buildCivitatisSettlementSummary(items, '2026-10-03');
   assert.equal(summary.claimable.originalByCurrency.TRY, 1000);
   assert.equal(summary.claimable.originalByCurrency.EUR, 50);
 });
 
+test('mixed 3600 TRY + 154.05 EUR sums to exactly 12072.75 TRY before display rounding (fixed-rate validation case)', () => {
+  // The per-item conversion is exact (checked directly, unrounded); the
+  // bucket's own tryTotal has always been Math.round()'d for display
+  // (pre-existing behavior, unrelated to this phase) — so the aggregate
+  // assertion below checks the correctly-rounded figure, while the exact
+  // underlying sum is verified here first.
+  const tryConversion = _civitatisConvertToTry(3600, 'TRY');
+  const eurConversion = _civitatisConvertToTry(154.05, 'EUR');
+  assert.equal(tryConversion.tryAmount + eurConversion.tryAmount, 12072.75);
+
+  const items = [
+    item({ id:'try1', status:'accrued', claimableAt:'2026-10-01', originalCurrency:'TRY', originalAmount:3600 }),
+    item({ id:'eur1', status:'accrued', claimableAt:'2026-10-01', originalCurrency:'EUR', originalAmount:154.05 }),
+  ];
+  const summary = _buildCivitatisSettlementSummary(items, '2026-10-03');
+  assert.equal(summary.claimable.tryTotal, 12073); // Math.round(12072.75)
+  assert.equal(summary.claimable.hasMissingRate, false);
+});
+
+test('an unsupported currency mixed into a bucket never inflates the TRY total with a fake number, even alongside valid TRY/EUR amounts', () => {
+  const items = [
+    item({ id:'try1', status:'accrued', claimableAt:'2026-10-01', originalCurrency:'TRY', originalAmount:3600 }),
+    item({ id:'eur1', status:'accrued', claimableAt:'2026-10-01', originalCurrency:'EUR', originalAmount:100 }),
+    item({ id:'usd1', status:'accrued', claimableAt:'2026-10-01', originalCurrency:'USD', originalAmount:999 }),
+  ];
+  const summary = _buildCivitatisSettlementSummary(items, '2026-10-03');
+  assert.equal(summary.claimable.tryTotal, 9100); // 3600 + (100*55) only — USD excluded
+  assert.equal(summary.claimable.hasMissingRate, true);
+  assert.ok(summary.claimable.itemIds.includes('usd1')); // still traceable
+});
+
 test('an empty items array produces a fully zeroed, non-throwing summary', () => {
-  const summary = _buildCivitatisSettlementSummary([], {}, '2026-10-03');
+  const summary = _buildCivitatisSettlementSummary([], '2026-10-03');
   for (const bucket of [summary.claimable, summary.currentMonthAccrual, summary.requested, summary.paid]) {
     assert.equal(bucket.tryTotal, 0);
     assert.equal(bucket.itemCount, 0);
@@ -294,10 +335,22 @@ test('claimable priority styling uses the existing gold accent, never red, when 
   assert.doesNotMatch(body, /hasClaimable[\s\S]{0,200}C\.red/);
 });
 
-test('the "Kur bilgisi bekleniyor" fallback appears for every bucket, never a fabricated converted total', () => {
+test('the "Kur bilgisi bekleniyor" fallback still appears for every bucket — it now only fires for a genuinely unsupported currency (not EUR, which has a fixed rate), never a fabricated converted total', () => {
   const body = _panelBody('CivitatisHakedisPanel');
   const occurrences = body.match(/Kur bilgisi bekleniyor/g) || [];
   assert.ok(occurrences.length >= 3, 'expected the fallback note for claimable, current-month accrual, and requested');
+});
+
+test('Phase 1.3: the fixed-rate disclosure note is present but gated behind _civitatisHasEurExposure — never unconditionally shown, never visually prominent', () => {
+  const body = _panelBody('CivitatisHakedisPanel');
+  assert.match(body, /_civitatisHasEurExposure\(data\)/);
+  assert.match(body, /Sabit kur: €1 = ₺55/);
+  // "not visually prominent": small/faint styling, not the large Playfair
+  // money figures this panel uses for its real amounts.
+  const noteBlockStart = body.indexOf('_civitatisHasEurExposure(data)');
+  const noteBlock = body.slice(noteBlockStart, noteBlockStart + 200);
+  assert.match(noteBlock, /color:C\.textFaint/);
+  assert.doesNotMatch(noteBlock, /fontWeight:700/);
 });
 
 test('"Hakedişleri Gör" navigates to the existing Payments page — no new route is introduced in Phase 1', () => {
@@ -329,24 +382,65 @@ test('mobile Civitatis section fetches via the same civitatisSettlement/getSumma
   assert.match(SOURCE, /const \{ data:civitatisSettlement, loading:civSettleLoading, error:civSettleError \} = useRepo\("civitatisSettlement", "getSummary"\);/);
 });
 
+test('Phase 1.3: the mobile fixed-rate disclosure note is also gated behind _civitatisHasEurExposure', () => {
+  const start = SOURCE.indexOf('Civitatis Settlement Engine — Phase 1. Admin/operations only,\n          same eligibility');
+  const end = SOURCE.indexOf('{/* Tour Preparation Intelligence Phase C2D-4', start);
+  const body = SOURCE.slice(start, end);
+  assert.match(body, /_civitatisHasEurExposure\(civitatisSettlement\)/);
+  assert.match(body, /Sabit kur: €1 = ₺55/);
+});
+
 // ═══════════════════════════════════════════════════════════════════════
 // Repo + getActiveRepo wiring
 // ═══════════════════════════════════════════════════════════════════════
 
-test('SupabaseCivitatisSettlementRepo.getSummary fetches civitatis_settlement_items and exchange_rates, and delegates all aggregation to the pure helper — zero business logic of its own', () => {
+test('SupabaseCivitatisSettlementRepo.getSummary fetches civitatis_settlement_items only (Phase 1.3: no longer queries exchange_rates), and delegates all aggregation to the pure helper — zero business logic of its own', () => {
   const start = SOURCE.indexOf('const SupabaseCivitatisSettlementRepo = {');
   const end = SOURCE.indexOf('\n};', start);
   const body = SOURCE.slice(start, end);
   assert.match(body, /\.from\('civitatis_settlement_items'\)\.select\('\*'\)/);
-  assert.match(body, /\.from\('exchange_rates'\)/);
-  assert.match(body, /\.eq\('quote_currency', 'TRY'\)/);
-  assert.match(body, /_buildCivitatisSettlementSummary\(items, latestRateByCurrency, _TODAY_ISO\)/);
+  assert.match(body, /_buildCivitatisSettlementSummary\(items, _TODAY_ISO\)/);
+  // The EUR conversion no longer requires a live/cached exchange rate —
+  // this method must not query exchange_rates at all anymore.
+  assert.doesNotMatch(body, /\.from\(['"]exchange_rates['"]\)/);
+  assert.doesNotMatch(body, /_latestCivitatisRatesByCurrency/);
   // Never writes anywhere — Phase 1 is read-only for this entity.
   assert.doesNotMatch(body, /\.insert\(|\.update\(|\.delete\(|\.upsert\(/);
 });
 
 test('getActiveRepo registers civitatisSettlement with a safe non-Supabase mock fallback that also returns a well-formed empty summary', () => {
-  assert.match(SOURCE, /if\(entity==='civitatisSettlement'\) return useReal \? SupabaseCivitatisSettlementRepo : \{ getSummary: async \(\) => _buildCivitatisSettlementSummary\(\[\], \{\}, _TODAY_ISO\) \};/);
+  assert.match(SOURCE, /if\(entity==='civitatisSettlement'\) return useReal \? SupabaseCivitatisSettlementRepo : \{ getSummary: async \(\) => _buildCivitatisSettlementSummary\(\[\], _TODAY_ISO\) \};/);
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// _civitatisHasEurExposure — gates the fixed-rate disclosure note
+// ═══════════════════════════════════════════════════════════════════════
+
+test('reports no EUR exposure when every visible bucket is TRY/TL-only', () => {
+  const summary = _buildCivitatisSettlementSummary(
+    [item({ id:'a', status:'accrued', claimableAt:'2026-10-01', originalCurrency:'TRY', originalAmount:1000 })],
+    '2026-10-03'
+  );
+  assert.equal(_civitatisHasEurExposure(summary), false);
+});
+
+test('reports EUR exposure when any visible bucket (claimable, current-month accrual, or requested) carries a EUR amount', () => {
+  const claimableEur = _buildCivitatisSettlementSummary(
+    [item({ id:'a', status:'accrued', claimableAt:'2026-10-01', originalCurrency:'EUR', originalAmount:100 })],
+    '2026-10-03'
+  );
+  assert.equal(_civitatisHasEurExposure(claimableEur), true);
+
+  const requestedEur = _buildCivitatisSettlementSummary(
+    [item({ id:'b', status:'requested', originalCurrency:'EUR', originalAmount:100 })],
+    '2026-10-03'
+  );
+  assert.equal(_civitatisHasEurExposure(requestedEur), true);
+});
+
+test('never throws on a null/undefined summary — returns false', () => {
+  assert.equal(_civitatisHasEurExposure(null), false);
+  assert.equal(_civitatisHasEurExposure(undefined), false);
 });
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -396,6 +490,7 @@ test('this phase introduces no sentence-level em or en dash in its new Turkish U
     'Civitatis Hakedişi', 'Talep Edilebilir', 'Bu Ay Biriken', 'Talep Edildi',
     'Hakedişleri Gör', 'Kur bilgisi bekleniyor', 'Civitatis ödemesi bekleniyor',
     'Talep edilebilir hakediş yok', 'Bu ay henüz biriken tutar yok', 'başında talep edilebilir',
+    'Sabit kur: €1 = ₺55',
   ];
   for (const s of uiStrings) {
     assert.doesNotMatch(s, /[–—]/, `"${s}" must not contain an em/en dash`);

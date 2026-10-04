@@ -4187,6 +4187,18 @@ function _BiletHazirliklariMobilePanel({ pendingTickets, navigate }) {
 // unrecognized currency requiring a missing-rate fallback.
 const _CIVITATIS_TRY_EQUIVALENT_CURRENCIES = new Set(['TRY', 'TL']);
 
+// Phase 1.3 business decision: Civitatis settlement DASHBOARD figures
+// convert EUR using a fixed operational rate, not a live market rate —
+// Dese Tour does not need live FX for this calculation. This is a CRM
+// display/aggregation convenience only; it is NEVER written into
+// civitatis_settlement_items.original_amount/original_currency or
+// reservations.total_amount/currency, which remain the untouched source
+// of truth. The exchange_rates table and the ECB fetch infrastructure
+// (api/_fx/*, api/cron-fetch-exchange-rates.js) are deliberately left in
+// place for a possible future live-rate phase — this phase only stops
+// requiring them for the EUR conversion below.
+const _CIVITATIS_FIXED_EUR_TO_TRY_RATE = 55;
+
 // TESTABLE:_civitatisEffectiveSettlementStatus:start
 // The ONLY place "accrued -> claimable" is decided. A pure function of
 // the stored status, the stored claimable_at, and "today" — never a
@@ -4206,25 +4218,27 @@ function _civitatisEffectiveSettlementStatus(item, todayIso) {
 
 // TESTABLE:_civitatisConvertToTry:start
 // Financial correctness over showing a number (Phase 1 brief, section
-// 11): TRY/TL need no conversion at all (rate implicitly 1). Any other
-// currency REQUIRES a same-currency row in latestRateByCurrency (the
-// most recently cached base_currency->TRY rate) — never a guessed rate,
-// never a silent EUR-as-TRY assumption, never an omission that would
+// 11; Phase 1.3 revised the EUR rule to a fixed operational rate, not a
+// live lookup). TRY/TL need no conversion at all (rate implicitly 1).
+// EUR converts at the fixed _CIVITATIS_FIXED_EUR_TO_TRY_RATE above — a
+// business decision, never a live market rate. Any OTHER currency
+// still has no conversion rule at all here: never a guessed rate, never
+// a silent "treat it as TRY" assumption, never an omission that would
 // make a real receivable vanish from a total. Returns { tryAmount:null,
-// missingRate:true } rather than a fabricated number when the rate is
-// unavailable; the caller is responsible for surfacing that honestly
-// (see _buildCivitatisSettlementSummary / "Kur bilgisi bekleniyor").
-function _civitatisConvertToTry(amount, currency, latestRateByCurrency) {
+// missingRate:true } rather than a fabricated number for anything that
+// isn't TRY/TL/EUR; the caller is responsible for surfacing that
+// honestly (see _buildCivitatisSettlementSummary / "Kur bilgisi
+// bekleniyor").
+function _civitatisConvertToTry(amount, currency) {
   const amt = parseFloat(amount);
   if (!Number.isFinite(amt)) return { tryAmount: null, missingRate: true };
   if (_CIVITATIS_TRY_EQUIVALENT_CURRENCIES.has(currency)) {
     return { tryAmount: amt, missingRate: false };
   }
-  const rate = latestRateByCurrency && latestRateByCurrency[currency];
-  if (!rate || !Number.isFinite(rate) || rate <= 0) {
-    return { tryAmount: null, missingRate: true };
+  if (currency === 'EUR') {
+    return { tryAmount: amt * _CIVITATIS_FIXED_EUR_TO_TRY_RATE, missingRate: false };
   }
-  return { tryAmount: amt * rate, missingRate: false };
+  return { tryAmount: null, missingRate: true };
 }
 // TESTABLE:_civitatisConvertToTry:end
 
@@ -4233,6 +4247,12 @@ function _civitatisConvertToTry(amount, currency, latestRateByCurrency) {
 // filtered by the repo's own query) down to ONE rate per base_currency —
 // the most recent rate_date. Never averages, never picks an arbitrary
 // row when several dates exist for the same pair.
+// Phase 1.3: no longer called by the settlement summary path below
+// (EUR now uses the fixed operational rate, not a live lookup) — kept,
+// unused for now, because the exchange_rates table and ECB fetch
+// infrastructure are being retained for a possible future live-rate
+// phase, and this is the one place that already turns its rows into a
+// lookup map.
 function _latestCivitatisRatesByCurrency(rateRows) {
   const latest = {};
   for (const row of (rateRows || [])) {
@@ -4256,7 +4276,7 @@ function _latestCivitatisRatesByCurrency(rateRows) {
 // transitively, reservation ids) that make it up, so any displayed
 // figure can always be traced back to individual settlement items
 // (brief section 26's own validation requirement).
-function _buildCivitatisSettlementSummary(items, latestRateByCurrency, todayIso) {
+function _buildCivitatisSettlementSummary(items, todayIso) {
   const currentPeriod = todayIso.slice(0, 7) + '-01'; // 'YYYY-MM-01' for "today"
 
   const emptyBucket = () => ({
@@ -4280,7 +4300,7 @@ function _buildCivitatisSettlementSummary(items, latestRateByCurrency, todayIso)
     else if (effectiveStatus === 'paid') bucket = paid;
     if (!bucket) continue; // e.g. an 'accrued' item from a period that is neither claimable yet nor the current month (should not occur given the two-state model, but never silently misfiled)
 
-    const { tryAmount, missingRate } = _civitatisConvertToTry(item.originalAmount, item.originalCurrency, latestRateByCurrency);
+    const { tryAmount, missingRate } = _civitatisConvertToTry(item.originalAmount, item.originalCurrency);
     bucket.itemIds.push(item.id);
     bucket.reservationIds.push(item.reservationId);
     bucket.periods.add(item.settlementPeriod);
@@ -4311,6 +4331,21 @@ function _buildCivitatisSettlementSummary(items, latestRateByCurrency, todayIso)
   };
 }
 // TESTABLE:_buildCivitatisSettlementSummary:end
+
+// TESTABLE:_civitatisHasEurExposure:start
+// Whether the fixed-rate disclosure note ("Sabit kur: €1 = ₺55") should
+// render at all. Phase 1.3 explicitly asks for this note where
+// appropriate but never visually prominent — showing it on a settlement
+// set with no EUR amounts at all would just be noise, so it only
+// appears when at least one of the three visible buckets actually
+// carries a EUR-denominated original amount.
+function _civitatisHasEurExposure(summary) {
+  if (!summary) return false;
+  return [summary.claimable, summary.currentMonthAccrual, summary.requested].some(
+    (bucket) => bucket && bucket.originalByCurrency && (bucket.originalByCurrency.EUR || 0) > 0
+  );
+}
+// TESTABLE:_civitatisHasEurExposure:end
 
 // 'YYYY-MM-01' -> 'Eylül 2026', same tr-TR long-month convention this
 // file already uses in several other places (e.g. the weekly dashboard
@@ -4418,6 +4453,11 @@ function CivitatisHakedisPanel() {
           </div>
         )}
       </div>
+      {_civitatisHasEurExposure(data) && (
+        <div style={{ fontSize:10.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:10 }}>
+          Sabit kur: €1 = ₺55
+        </div>
+      )}
     </Card>
   );
 }
@@ -16742,30 +16782,26 @@ const SupabaseReservationPreparationRepo = {
 
 // Civitatis Settlement Engine — Phase 1. Read-only in this phase (the
 // brief's own instruction: "homepage should currently be informational",
-// no requested/paid actions yet). getSummary() fetches the two raw
-// tables and hands them to the pure _buildCivitatisSettlementSummary —
+// no requested/paid actions yet). getSummary() fetches the settlement
+// items and hands them to the pure _buildCivitatisSettlementSummary —
 // zero aggregation logic lives in this repo method itself, so the exact
 // same aggregation is trivially unit-testable without any network call.
+// Phase 1.3: no longer reads exchange_rates at all — EUR now converts
+// at the fixed operational rate inside _civitatisConvertToTry, so this
+// method has one fewer query and one fewer possible failure point. The
+// exchange_rates table itself is untouched and still exists for a
+// possible future live-rate phase; this repo method simply stops
+// depending on it.
 const SupabaseCivitatisSettlementRepo = {
   async getSummary() {
     const sb = getSB();
-    if (!sb) return _buildCivitatisSettlementSummary([], {}, _TODAY_ISO);
+    if (!sb) return _buildCivitatisSettlementSummary([], _TODAY_ISO);
 
     const { data: itemRows, error: itemsError } = await sb.from('civitatis_settlement_items').select('*');
     if (itemsError) throw new Error(itemsError.message);
 
-    // quote_currency filter matches the forward migration's own
-    // exchange_rates shape (base_currency -> TRY); never reads a pair
-    // this project doesn't use.
-    const { data: rateRows, error: ratesError } = await sb.from('exchange_rates')
-      .select('rate_date,base_currency,quote_currency,rate')
-      .eq('quote_currency', 'TRY');
-    if (ratesError) throw new Error(ratesError.message);
-
     const items = (itemRows || []).map(mapCivitatisSettlementItemFromDB);
-    const rates = (rateRows || []).map(mapExchangeRateFromDB);
-    const latestRateByCurrency = _latestCivitatisRatesByCurrency(rates);
-    return _buildCivitatisSettlementSummary(items, latestRateByCurrency, _TODAY_ISO);
+    return _buildCivitatisSettlementSummary(items, _TODAY_ISO);
   },
 };
 
@@ -16791,7 +16827,7 @@ function getActiveRepo(entity) {
   if(entity==='review')     return useReal ? SupabaseReviewRepo       : ReviewRepository;
   if(entity==='staff')      return useReal ? SupabaseStaffRepo       : { getAll: async () => DB.staff };
   if(entity==='reservationPreparation') return useReal ? SupabaseReservationPreparationRepo : { getByReservation: async () => [], getUpcomingPending: async () => [], getRecentCompleted: async () => [], complete: async () => ({ ok:false, reason:'invalid' }), reopen: async () => ({ ok:false, reason:'invalid' }) };
-  if(entity==='civitatisSettlement') return useReal ? SupabaseCivitatisSettlementRepo : { getSummary: async () => _buildCivitatisSettlementSummary([], {}, _TODAY_ISO) };
+  if(entity==='civitatisSettlement') return useReal ? SupabaseCivitatisSettlementRepo : { getSummary: async () => _buildCivitatisSettlementSummary([], _TODAY_ISO) };
   return null;
 }
 
@@ -21750,6 +21786,11 @@ function MobileHomePage({ navigate }) {
                 </div>
               )}
             </div>
+            {_civitatisHasEurExposure(civitatisSettlement) && (
+              <div style={{ fontSize:10, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:12 }}>
+                Sabit kur: €1 = ₺55
+              </div>
+            )}
           </MobileEntityCard>
         </MobileSection>
       )}
