@@ -1,1 +1,1 @@
-window.__DESETOUR_BUILD__ = {"version":"12.38","major":12,"minor":38,"buildTimestamp":"2026-10-04T12:04:46.189Z","commitSha":"a245378e1e7685f765e9d36b3c541cdb001b2c4b","commitShaShort":"a245378","branch":"main"};
+window.__DESETOUR_BUILD__ = {"version":"12.38","major":12,"minor":38,"buildTimestamp":"2026-10-04T16:23:21.753Z","commitSha":"d224869683ce978de6170bac3075a8c580f75004","commitShaShort":"d224869","branch":"main"};

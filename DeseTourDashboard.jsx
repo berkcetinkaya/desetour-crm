@@ -4347,6 +4347,68 @@ function _civitatisHasEurExposure(summary) {
 }
 // TESTABLE:_civitatisHasEurExposure:end
 
+// TESTABLE:_groupCivitatisSettlementItemsByPeriod:start
+// Phase 2 — Payments page "Civitatis Hakedişleri" monthly view. Groups
+// the full joined item list by settlement_period. Adjusted/cancelled
+// items are excluded — the same "never an active receivable" rule
+// _buildCivitatisSettlementSummary already applies: this is a view of
+// outstanding/historical RECEIVABLE periods, not a log of every row
+// that ever existed, so a cancelled booking's period entry simply
+// shrinks by one item rather than showing a dead row staff can do
+// nothing with. Sorted ascending by settlement_period (oldest/most-
+// overdue first) — the longest-outstanding claimable period is the one
+// that needs action first.
+function _groupCivitatisSettlementItemsByPeriod(items, todayIso) {
+  const groups = {};
+  for (const item of (items || [])) {
+    const effectiveStatus = _civitatisEffectiveSettlementStatus(item, todayIso);
+    if (effectiveStatus === 'adjusted' || effectiveStatus === 'cancelled') continue;
+    const period = item.settlementPeriod;
+    if (!period) continue;
+    if (!groups[period]) {
+      groups[period] = { settlementPeriod: period, claimableAt: item.claimableAt, items: [], statuses: new Set(), originalByCurrency: {} };
+    }
+    const g = groups[period];
+    g.items.push(item);
+    g.statuses.add(effectiveStatus);
+    g.originalByCurrency[item.originalCurrency] = (g.originalByCurrency[item.originalCurrency] || 0) + parseFloat(item.originalAmount || 0);
+  }
+
+  return Object.values(groups)
+    .sort((a, b) => a.settlementPeriod.localeCompare(b.settlementPeriod))
+    .map((g) => {
+      // Same fixed-rate/no-fabrication rule as _buildCivitatisSettlementSummary:
+      // TRY/TL pass through, EUR converts at the fixed operational rate,
+      // anything else has no conversion rule — hasUnsupportedCurrency
+      // then means "do not show a combined TRY figure for this period",
+      // never a partially-fabricated total.
+      let tryTotal = 0, hasUnsupportedCurrency = false;
+      for (const item of g.items) {
+        const { tryAmount, missingRate } = _civitatisConvertToTry(item.originalAmount, item.originalCurrency);
+        if (missingRate) hasUnsupportedCurrency = true;
+        else tryTotal += tryAmount;
+      }
+      const guestCount = g.items.reduce((s, it) => s + (it.paxAdult || 0) + (it.paxChild || 0), 0);
+      return {
+        settlementPeriod: g.settlementPeriod,
+        claimableAt: g.claimableAt,
+        // A period transitions atomically as one unit (Phase 2's own
+        // functions guarantee this), so every item in it should share
+        // one effective status in normal operation. 'mixed' is a
+        // defensive fallback, never silently picked one way — the UI
+        // must never offer a transition button when it cannot be sure.
+        effectiveStatus: g.statuses.size === 1 ? Array.from(g.statuses)[0] : 'mixed',
+        reservationCount: g.items.length,
+        guestCount,
+        originalByCurrency: g.originalByCurrency,
+        displayTryTotal: hasUnsupportedCurrency ? null : Math.round(tryTotal),
+        hasUnsupportedCurrency,
+        items: g.items.slice().sort((a, b) => (a.checkIn || '').localeCompare(b.checkIn || '')),
+      };
+    });
+}
+// TESTABLE:_groupCivitatisSettlementItemsByPeriod:end
+
 // 'YYYY-MM-01' -> 'Eylül 2026', same tr-TR long-month convention this
 // file already uses in several other places (e.g. the weekly dashboard
 // header). Never re-derives the month from "today" — always from the
@@ -9934,7 +9996,234 @@ function PaySidebar({ payments }) {
   );
 }
 
+// Phase 2 — Ödemeler now holds two separate financial domains, never
+// merged: Civitatis Hakedişleri (the settlement ledger this phase
+// manages) and Doğrudan Ödemeler (public.payments, completely
+// untouched — same component, same behavior as before this phase).
+// Civitatis is the default view per the brief; a plain tab switcher,
+// not a route change, so "Hakedişleri Gör" links from the homepage
+// card/Dashboard still land here correctly with zero change needed
+// there.
 function PaymentsPage() {
+  const [view, setView] = useState("civitatis");
+  return (
+    <div style={{display:"flex", flexDirection:"column", gap:16}}>
+      <div style={{display:"flex", gap:8, borderBottom:`1px solid ${C.borderLight}`}}>
+        {[
+          { key:"civitatis", label:"Civitatis Hakedişleri" },
+          { key:"direct", label:"Doğrudan Ödemeler" },
+        ].map(t => {
+          const on = view === t.key;
+          return (
+            <button key={t.key} onClick={()=>setView(t.key)} style={{
+              padding:"11px 4px", marginBottom:-1,
+              border:"none", borderBottom: on ? `2px solid ${C.gold}` : "2px solid transparent",
+              background:"transparent", color: on ? C.gold : C.textMuted,
+              fontFamily:"'DM Sans',sans-serif", fontSize:13.5,
+              fontWeight: on ? 600 : 500, cursor:"pointer",
+            }}>{t.label}</button>
+          );
+        })}
+      </div>
+      {view === "civitatis" ? <_CivitatisHakedisleriView/> : <_DogrudanOdemelerView/>}
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// CIVITATIS HAKEDİŞLERİ — Phase 2 settlement management surface.
+// 4 summary tiles (Talep Edilebilir / Bu Ay Biriken / Talep Edildi /
+// Ödenen) + monthly grouping with expandable reservation-level detail.
+// "Talep Edildi Olarak İşaretle" / "Ödendi Olarak İşaretle" call the
+// two atomic, database-enforced period transitions
+// (fn_mark_civitatis_settlement_period_requested/paid) — never a
+// per-row loop of updates from here. Admin/operations only, same
+// gating as the Dashboard homepage card; every other role (explicitly
+// including guide) sees nothing mutable — and even if this check were
+// ever bypassed, the two RPCs enforce the same role check themselves
+// server-side (see the migration's own comments).
+// ──────────────────────────────────────────────────────────────────────
+function _CivitatisHakedisleriView() {
+  const auth = useAuthContext();
+  const eligible = ["Yönetici", "Operasyon"].includes(auth.role);
+  const { data, loading, error, reload } = useRepo("civitatisSettlement", "getDetailed");
+  const { mutate, mutating } = useRepoMutation("civitatisSettlement");
+  const [busyPeriod, setBusyPeriod] = useState(null);
+  const [expanded, setExpanded] = useState(null);
+
+  if (!eligible) {
+    return (
+      <Card>
+        <div style={{padding:"40px 20px", textAlign:"center", color:C.textFaint, fontFamily:"'DM Sans',sans-serif", fontSize:13}}>
+          Bu bölümü görüntüleme yetkiniz yok.
+        </div>
+      </Card>
+    );
+  }
+  if (loading) return <LoadingState label="Civitatis hakedişleri yükleniyor…"/>;
+  if (error) return <ErrorState message={error} onRetry={reload}/>;
+
+  const { summary, periods } = data || { summary:null, periods:[] };
+
+  async function handleTransition(method, period) {
+    setBusyPeriod(period);
+    const { data:res, error:err } = await mutate(method, period);
+    setBusyPeriod(null);
+    if (err) { showToast("İşlem başarısız: " + err); return; }
+    if (res?.result === 'requested' || res?.result === 'paid') {
+      showToast(`${res.affectedCount} kalem güncellendi ✓`);
+    } else {
+      showToast(CIVITATIS_TRANSITION_MESSAGES[res?.result] || "Bu dönem için güncellenecek kalem bulunamadı.");
+    }
+    reload();
+  }
+
+  return (
+    <div style={{display:"flex", flexDirection:"column", gap:16}}>
+      {summary && (
+        <div style={{display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:14}}>
+          {[
+            { label:"Talep Edilebilir", bucket:summary.claimable, color:C.gold },
+            { label:"Bu Ay Biriken",    bucket:summary.currentMonthAccrual, color:C.text },
+            { label:"Talep Edildi",     bucket:summary.requested, color:C.blue },
+            { label:"Ödenen",           bucket:summary.paid, color:C.green },
+          ].map((k,i) => (
+            <div key={i} style={{background:C.white, border:`1px solid ${C.border}`, borderRadius:12, padding:"16px 18px"}}>
+              <div style={{fontSize:11, fontWeight:600, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:6}}>{k.label}</div>
+              <div style={{fontSize:22, fontWeight:700, color:k.color, fontFamily:"'Playfair Display',serif", lineHeight:1.1}}>
+                {fmtMoney(k.bucket.tryTotal, 'TRY')}
+              </div>
+              {k.bucket.hasMissingRate && (
+                <div style={{fontSize:10.5, color:C.amber, fontFamily:"'DM Sans',sans-serif", marginTop:4}}>Kur bilgisi bekleniyor</div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      <Card>
+        <SectionHeader title="Dönemlere Göre Hakedişler"/>
+        {periods.length === 0 ? (
+          <div style={{padding:"40px 20px", textAlign:"center", color:C.textFaint, fontFamily:"'DM Sans',sans-serif", fontSize:13, fontStyle:"italic"}}>
+            Henüz bir Civitatis hakediş kalemi yok.
+          </div>
+        ) : (
+          <div style={{display:"flex", flexDirection:"column", gap:10}}>
+            {periods.map(p => {
+              const isOpen = expanded === p.settlementPeriod;
+              const canRequest = p.effectiveStatus === 'claimable';
+              const canMarkPaid = p.effectiveStatus === 'requested';
+              const busy = mutating && busyPeriod === p.settlementPeriod;
+              return (
+                <div key={p.settlementPeriod} style={{border:`1px solid ${C.borderLight}`, borderRadius:10, overflow:"hidden"}}>
+                  <div
+                    onClick={()=>setExpanded(isOpen ? null : p.settlementPeriod)}
+                    style={{display:"flex", alignItems:"center", justifyContent:"space-between", padding:"14px 16px", cursor:"pointer", background:canRequest ? C.goldPale : C.white}}
+                  >
+                    <div>
+                      <div style={{fontSize:14, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif"}}>
+                        {_formatCivitatisPeriodLabel(p.settlementPeriod)}
+                      </div>
+                      <div style={{fontSize:12, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", marginTop:2}}>
+                        {p.reservationCount} rezervasyon · {p.guestCount} misafir
+                        {p.effectiveStatus === 'accrued' && ` · ${_formatCivitatisNextPeriodLabel(p.settlementPeriod)} talep edilebilir`}
+                      </div>
+                    </div>
+                    <div style={{display:"flex", alignItems:"center", gap:12}}>
+                      <div style={{textAlign:"right"}}>
+                        {p.hasUnsupportedCurrency ? (
+                          <div style={{fontSize:12, color:C.amber, fontFamily:"'DM Sans',sans-serif"}}>Kur bilgisi bekleniyor</div>
+                        ) : (
+                          <div style={{fontSize:16, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif"}}>{fmtMoney(p.displayTryTotal, 'TRY')}</div>
+                        )}
+                      </div>
+                      {canRequest && (
+                        <button onClick={(e)=>{ e.stopPropagation(); handleTransition('markPeriodRequested', p.settlementPeriod); }} disabled={busy} style={{
+                          padding:"8px 12px", borderRadius:8, border:"none", cursor:"pointer",
+                          background:C.navy, color:C.white, fontSize:12, fontWeight:600, fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap",
+                        }}>{busy ? "İşleniyor…" : "Talep Edildi Olarak İşaretle"}</button>
+                      )}
+                      {canMarkPaid && (
+                        <button onClick={(e)=>{ e.stopPropagation(); handleTransition('markPeriodPaid', p.settlementPeriod); }} disabled={busy} style={{
+                          padding:"8px 12px", borderRadius:8, border:"none", cursor:"pointer",
+                          background:C.greenBg, color:C.green, fontSize:12, fontWeight:600, fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap",
+                        }}>{busy ? "İşleniyor…" : "Ödendi Olarak İşaretle"}</button>
+                      )}
+                      {p.effectiveStatus === 'mixed' && (
+                        // Phase 2.1: a period whose actionable rows disagree (e.g. a
+                        // late-arriving item alongside an already-requested/paid one)
+                        // gets NO mutation button at all — only this restrained
+                        // notice. No force-transition control, no row-level bypass.
+                        <span style={{padding:"5px 10px", borderRadius:99, background:C.amber+'22', color:C.amber, fontSize:11.5, fontWeight:600, fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap"}}>Kontrol Gerekli</span>
+                      )}
+                    </div>
+                  </div>
+                  {isOpen && (
+                    <div style={{borderTop:`1px solid ${C.borderLight}`}}>
+                      <table style={{width:"100%", borderCollapse:"collapse"}}>
+                        <thead>
+                          <tr style={{background:C.ivory}}>
+                            {["Rezervasyon","Tur","Tarih","Misafir","Tutar","Durum"].map((h,i)=>(
+                              <th key={i} style={{padding:"8px 12px", textAlign:"left", fontSize:10.5, fontWeight:600, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", textTransform:"uppercase", letterSpacing:"0.06em"}}>{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {p.items.map(it => (
+                            <tr key={it.id} style={{borderTop:`1px solid ${C.borderLight}`}}>
+                              <td style={{padding:"8px 12px", fontSize:12.5, color:C.text, fontFamily:"'DM Mono',monospace"}}>{it.reservationNumber || '—'}</td>
+                              <td style={{padding:"8px 12px", fontSize:12.5, color:C.text, fontFamily:"'DM Sans',sans-serif"}}>{it.destination || '—'}</td>
+                              <td style={{padding:"8px 12px", fontSize:12.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif"}}>{it.checkIn || '—'}</td>
+                              <td style={{padding:"8px 12px", fontSize:12.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif"}}>{(it.paxAdult||0)+(it.paxChild||0)}</td>
+                              <td style={{padding:"8px 12px", fontSize:12.5, color:C.text, fontFamily:"'DM Sans',sans-serif"}}>
+                                {it.originalAmount.toLocaleString('tr-TR')} {it.originalCurrency}
+                                {it.originalCurrency === 'EUR' && (
+                                  <span style={{color:C.textFaint}}> ({fmtMoney(Math.round(it.originalAmount*55), 'TRY')})</span>
+                                )}
+                              </td>
+                              <td style={{padding:"8px 12px", fontSize:12, fontFamily:"'DM Sans',sans-serif"}}>{CIVITATIS_STATUS_LABEL[_civitatisEffectiveSettlementStatus(it, _TODAY_ISO)] || it.status}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </Card>
+      {_civitatisHasEurExposure(summary) && (
+        <div style={{fontSize:10.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>
+          Sabit kur: €1 = ₺55
+        </div>
+      )}
+    </div>
+  );
+}
+
+const CIVITATIS_STATUS_LABEL = {
+  accrued: "Birikiyor", claimable: "Talep Edilebilir", requested: "Talep Edildi",
+  paid: "Ödendi", adjusted: "Düzeltildi", cancelled: "İptal",
+};
+
+// Phase 2.1 — every non-success RPC result maps to one honest, specific
+// Turkish message. 'requested'/'paid' (the two success results) are
+// handled separately by each view's own handleTransition — never
+// routed through this map, and never collapsed into the same generic
+// "nothing happened" text the Phase 2 financial integrity review
+// flagged as ambiguous.
+const CIVITATIS_TRANSITION_MESSAGES = {
+  already_requested: 'Bu dönemin hakediş talebi daha önce kaydedilmiş.',
+  already_paid: 'Bu dönem daha önce ödendi olarak işaretlenmiş.',
+  not_yet_claimable: 'Bu dönem henüz talep edilebilir değil.',
+  mixed_or_ineligible_period: 'Bu dönemde farklı hakediş durumları bulundu. İşlem yapılmadı; kontrol gerekli.',
+  no_actionable_items: 'Bu dönemde işleme uygun hakediş bulunmuyor.',
+  period_not_found: 'Hakediş dönemi bulunamadı.',
+};
+
+function _DogrudanOdemelerView() {
   const [showNewPayment, setShowNewPayment] = useState(false);
   const [_payTick, setPayTick] = useState(0);
   const [activeTab, setActiveTab] = useState("Tümü");
@@ -16154,6 +16443,13 @@ function mapPreparationFromDB(r) {
 // every pure helper above compares them as plain ISO-prefix strings.
 function mapCivitatisSettlementItemFromDB(r) {
   if (!r) return null;
+  // Phase 2: when the caller's select() joins reservations (the
+  // Payments page's monthly-grouping view needs reservation_number/
+  // destination/check_in/pax for display), r.reservation carries that
+  // nested row. getSummary()'s own unjoined select('*') never sets it,
+  // so every field below is simply null there — harmless, since
+  // nothing reading the homepage-card shape ever looks at them.
+  const res = r.reservation || null;
   return {
     id: r.id,
     reservationId: r.reservation_id || null,
@@ -16162,11 +16458,19 @@ function mapCivitatisSettlementItemFromDB(r) {
     originalCurrency: r.original_currency || null,
     claimableAt: r.claimable_at || null,
     status: r.status || 'accrued',
+    requestedAt: r.requested_at || null,
+    paidAt: r.paid_at || null,
     exchangeRateUsed: r.exchange_rate_used != null ? parseFloat(r.exchange_rate_used) : null,
     exchangeRateDate: r.exchange_rate_date || null,
     tryAmount: r.try_amount != null ? parseFloat(r.try_amount) : null,
     createdAt: r.created_at || null,
     updatedAt: r.updated_at || null,
+    reservationNumber: res?.reservation_number || null,
+    destination: res?.destination || null,
+    checkIn: res?.check_in || null,
+    paxAdult: res?.pax_adult != null ? parseInt(res.pax_adult) : null,
+    paxChild: res?.pax_child != null ? parseInt(res.pax_child) : null,
+    externalBookingId: res?.external_booking_id || null,
     _fromDB: true,
   };
 }
@@ -16803,6 +17107,54 @@ const SupabaseCivitatisSettlementRepo = {
     const items = (itemRows || []).map(mapCivitatisSettlementItemFromDB);
     return _buildCivitatisSettlementSummary(items, _TODAY_ISO);
   },
+
+  // Phase 2 — the Payments page's Civitatis Hakedişleri view needs both
+  // the same 4 aggregate totals the homepage card shows AND the full
+  // reservation-level monthly breakdown. One joined query (civitatis_
+  // settlement_items + reservations) feeds BOTH pure helpers, rather
+  // than issuing a second network round trip for detail the first
+  // query could already carry.
+  async getDetailed() {
+    const sb = getSB();
+    if (!sb) return { summary: _buildCivitatisSettlementSummary([], _TODAY_ISO), periods: [] };
+
+    const { data: itemRows, error } = await sb.from('civitatis_settlement_items')
+      .select('*,reservation:reservations(reservation_number,destination,check_in,pax_adult,pax_child,external_booking_id)');
+    if (error) throw new Error(error.message);
+
+    const items = (itemRows || []).map(mapCivitatisSettlementItemFromDB);
+    return {
+      summary: _buildCivitatisSettlementSummary(items, _TODAY_ISO),
+      periods: _groupCivitatisSettlementItemsByPeriod(items, _TODAY_ISO),
+    };
+  },
+
+  // Both transitions are atomic, period-scoped, server/database-enforced
+  // RPCs (supabase_migration_civitatis_settlement_phase2.sql) — never a
+  // per-row loop of table writes issued from this repo. Phase 2.1: both
+  // RPCs now return a structured JSONB {result, affected_count,
+  // settlement_period} instead of a bare integer, so the UI can tell
+  // "already done" apart from "invalid/mixed period" apart from
+  // "nonexistent period" — a real ambiguity the Phase 2 financial
+  // integrity review flagged. A non-"requested"/"paid" result is a
+  // legitimate, non-error outcome (nothing currently eligible, already
+  // done, or the whole period's actionable set disagrees and the call
+  // was correctly rejected rather than moving a subset); only a real
+  // failure (unauthorized role, network) throws.
+  async markPeriodRequested(settlementPeriod) {
+    const sb = getSB();
+    if (!sb) return { result: 'no_actionable_items', affectedCount: 0, settlementPeriod: null };
+    const { data, error } = await sb.rpc('fn_mark_civitatis_settlement_period_requested', { p_settlement_period: settlementPeriod });
+    if (error) throw new Error(error.message);
+    return { result: data?.result || null, affectedCount: data?.affected_count || 0, settlementPeriod: data?.settlement_period || null };
+  },
+  async markPeriodPaid(settlementPeriod) {
+    const sb = getSB();
+    if (!sb) return { result: 'no_actionable_items', affectedCount: 0, settlementPeriod: null };
+    const { data, error } = await sb.rpc('fn_mark_civitatis_settlement_period_paid', { p_settlement_period: settlementPeriod });
+    if (error) throw new Error(error.message);
+    return { result: data?.result || null, affectedCount: data?.affected_count || 0, settlementPeriod: data?.settlement_period || null };
+  },
 };
 
 async function autoLog(entityType, entityId, action, description) {
@@ -16827,7 +17179,12 @@ function getActiveRepo(entity) {
   if(entity==='review')     return useReal ? SupabaseReviewRepo       : ReviewRepository;
   if(entity==='staff')      return useReal ? SupabaseStaffRepo       : { getAll: async () => DB.staff };
   if(entity==='reservationPreparation') return useReal ? SupabaseReservationPreparationRepo : { getByReservation: async () => [], getUpcomingPending: async () => [], getRecentCompleted: async () => [], complete: async () => ({ ok:false, reason:'invalid' }), reopen: async () => ({ ok:false, reason:'invalid' }) };
-  if(entity==='civitatisSettlement') return useReal ? SupabaseCivitatisSettlementRepo : { getSummary: async () => _buildCivitatisSettlementSummary([], _TODAY_ISO) };
+  if(entity==='civitatisSettlement') return useReal ? SupabaseCivitatisSettlementRepo : {
+    getSummary: async () => _buildCivitatisSettlementSummary([], _TODAY_ISO),
+    getDetailed: async () => ({ summary: _buildCivitatisSettlementSummary([], _TODAY_ISO), periods: [] }),
+    markPeriodRequested: async () => ({ result: 'no_actionable_items', affectedCount: 0, settlementPeriod: null }),
+    markPeriodPaid: async () => ({ result: 'no_actionable_items', affectedCount: 0, settlementPeriod: null }),
+  };
   return null;
 }
 
@@ -22114,7 +22471,148 @@ function MobileGuestsPage({ onSelectGuest }) {
    MOBILE PAYMENTS — unpaid/overdue first. Pending and Collected are
    visually separate groups, not just filterable together.
    ══════════════════════════════════════════════════════════════════════ */
+// Phase 2 mobile — same two-domain split as desktop (Civitatis
+// Hakedişleri default, Doğrudan Ödemeler preserved exactly as it was),
+// via a plain tab switcher rather than a route change.
 function MobilePaymentsPage() {
+  const [view, setView] = useState("civitatis");
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+      <div style={{ display:"flex", gap:6, borderBottom:`1px solid ${C.borderLight}` }}>
+        {[
+          { key:"civitatis", label:"Civitatis Hakedişleri" },
+          { key:"direct", label:"Doğrudan Ödemeler" },
+        ].map(t => {
+          const on = view === t.key;
+          return (
+            <button key={t.key} onClick={()=>setView(t.key)} style={{
+              padding:"10px 2px", marginBottom:-1, flex:1,
+              border:"none", borderBottom: on ? `2px solid ${C.gold}` : "2px solid transparent",
+              background:"transparent", color: on ? C.gold : C.textMuted,
+              fontFamily:"'DM Sans',sans-serif", fontSize:12.5,
+              fontWeight: on ? 600 : 500, cursor:"pointer",
+            }}>{t.label}</button>
+          );
+        })}
+      </div>
+      {view === "civitatis" ? <_MobileCivitatisHakedisleriView/> : <_MobileDogrudanOdemelerView/>}
+    </div>
+  );
+}
+
+function _MobileCivitatisHakedisleriView() {
+  const auth = useAuthContext();
+  const eligible = ["Yönetici", "Operasyon"].includes(auth.role);
+  const { data, loading, error, reload } = useRepo("civitatisSettlement", "getDetailed");
+  const { mutate, mutating } = useRepoMutation("civitatisSettlement");
+  const [busyPeriod, setBusyPeriod] = useState(null);
+  const [expanded, setExpanded] = useState(null);
+
+  if (!eligible) {
+    return <MobileEntityCard style={{textAlign:"center", padding:"24px 16px"}}>
+      <div style={{fontSize:12.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>Bu bölümü görüntüleme yetkiniz yok.</div>
+    </MobileEntityCard>;
+  }
+  if (loading) return <LoadingState label="Civitatis hakedişleri yükleniyor…"/>;
+  if (error) return <ErrorState message={error} onRetry={reload}/>;
+
+  const { summary, periods } = data || { summary:null, periods:[] };
+
+  async function handleTransition(method, period) {
+    setBusyPeriod(period);
+    const { data:res, error:err } = await mutate(method, period);
+    setBusyPeriod(null);
+    if (err) { showToast("İşlem başarısız: " + err); return; }
+    if (res?.result === 'requested' || res?.result === 'paid') {
+      showToast(`${res.affectedCount} kalem güncellendi ✓`);
+    } else {
+      showToast(CIVITATIS_TRANSITION_MESSAGES[res?.result] || "Bu dönem için güncellenecek kalem bulunamadı.");
+    }
+    reload();
+  }
+
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+      {summary && (
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+          {[
+            { label:"Talep Edilebilir", bucket:summary.claimable, color:C.gold },
+            { label:"Bu Ay Biriken",    bucket:summary.currentMonthAccrual, color:C.text },
+            { label:"Talep Edildi",     bucket:summary.requested, color:C.blue },
+            { label:"Ödenen",           bucket:summary.paid, color:C.green },
+          ].map((k,i) => (
+            <MobileEntityCard key={i}>
+              <div style={{fontSize:10, fontWeight:600, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:4}}>{k.label}</div>
+              <div style={{fontSize:17, fontWeight:700, color:k.color, fontFamily:"'Playfair Display',serif"}}>{fmtMoney(k.bucket.tryTotal, 'TRY')}</div>
+              {k.bucket.hasMissingRate && <div style={{fontSize:10, color:C.amber, fontFamily:"'DM Sans',sans-serif", marginTop:2}}>Kur bilgisi bekleniyor</div>}
+            </MobileEntityCard>
+          ))}
+        </div>
+      )}
+
+      <MobileSection title="Dönemlere Göre Hakedişler">
+        {periods.length === 0 ? (
+          <MobileEntityCard style={{textAlign:"center", padding:"24px 16px"}}>
+            <div style={{fontSize:12.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>Henüz bir Civitatis hakediş kalemi yok.</div>
+          </MobileEntityCard>
+        ) : periods.map(p => {
+          const isOpen = expanded === p.settlementPeriod;
+          const canRequest = p.effectiveStatus === 'claimable';
+          const canMarkPaid = p.effectiveStatus === 'requested';
+          const busy = mutating && busyPeriod === p.settlementPeriod;
+          return (
+            <MobileEntityCard key={p.settlementPeriod} style={canRequest ? { border:`1.5px solid ${C.gold}`, background:C.goldPale } : undefined}>
+              <div onClick={()=>setExpanded(isOpen ? null : p.settlementPeriod)} style={{cursor:"pointer"}}>
+                <div style={{display:"flex", justifyContent:"space-between", alignItems:"flex-start"}}>
+                  <div style={{fontSize:14, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif"}}>{_formatCivitatisPeriodLabel(p.settlementPeriod)}</div>
+                  {p.hasUnsupportedCurrency ? (
+                    <div style={{fontSize:11.5, color:C.amber, fontFamily:"'DM Sans',sans-serif"}}>Kur bilgisi bekleniyor</div>
+                  ) : (
+                    <div style={{fontSize:15, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif"}}>{fmtMoney(p.displayTryTotal, 'TRY')}</div>
+                  )}
+                </div>
+                <div style={{fontSize:11.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", marginTop:2}}>
+                  {p.reservationCount} rezervasyon · {p.guestCount} misafir
+                  {p.effectiveStatus === 'accrued' && ` · ${_formatCivitatisNextPeriodLabel(p.settlementPeriod)} talep edilebilir`}
+                </div>
+              </div>
+              {isOpen && (
+                <div style={{ marginTop:10, paddingTop:10, borderTop:`1px solid ${C.borderLight}`, display:"flex", flexDirection:"column", gap:8 }}>
+                  {p.items.map(it => (
+                    <div key={it.id} style={{fontSize:11.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", display:"flex", justifyContent:"space-between"}}>
+                      <span>{it.reservationNumber || '—'} · {it.destination || '—'} · {it.checkIn || '—'}</span>
+                      <span>{it.originalAmount.toLocaleString('tr-TR')} {it.originalCurrency}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {canRequest && (
+                <button onClick={(e)=>{ e.stopPropagation(); handleTransition('markPeriodRequested', p.settlementPeriod); }} disabled={busy} style={{
+                  width:"100%", marginTop:10, padding:"9px 0", borderRadius:9, border:"none", cursor:"pointer",
+                  background:C.navy, color:C.white, fontSize:12.5, fontWeight:600, fontFamily:"'DM Sans',sans-serif",
+                }}>{busy ? "İşleniyor…" : "Talep Edildi Olarak İşaretle"}</button>
+              )}
+              {canMarkPaid && (
+                <button onClick={(e)=>{ e.stopPropagation(); handleTransition('markPeriodPaid', p.settlementPeriod); }} disabled={busy} style={{
+                  width:"100%", marginTop:10, padding:"9px 0", borderRadius:9, border:"none", cursor:"pointer",
+                  background:C.greenBg, color:C.green, fontSize:12.5, fontWeight:600, fontFamily:"'DM Sans',sans-serif",
+                }}>{busy ? "İşleniyor…" : "Ödendi Olarak İşaretle"}</button>
+              )}
+              {p.effectiveStatus === 'mixed' && (
+                <div style={{marginTop:10, textAlign:"center", padding:"6px 0", borderRadius:9, background:C.amber+'22', color:C.amber, fontSize:11.5, fontWeight:600, fontFamily:"'DM Sans',sans-serif"}}>Kontrol Gerekli</div>
+              )}
+            </MobileEntityCard>
+          );
+        })}
+      </MobileSection>
+      {_civitatisHasEurExposure(summary) && (
+        <div style={{fontSize:10, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>Sabit kur: €1 = ₺55</div>
+      )}
+    </div>
+  );
+}
+
+function _MobileDogrudanOdemelerView() {
   const { data:repoPays, loading } = useRepo("payment", "getAll");
   const { mutate:mutPay, mutating } = useRepoMutation("payment");
   const [showNew, setShowNew] = useState(false);

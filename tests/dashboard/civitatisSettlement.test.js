@@ -408,8 +408,15 @@ test('SupabaseCivitatisSettlementRepo.getSummary fetches civitatis_settlement_it
   assert.doesNotMatch(body, /\.insert\(|\.update\(|\.delete\(|\.upsert\(/);
 });
 
-test('getActiveRepo registers civitatisSettlement with a safe non-Supabase mock fallback that also returns a well-formed empty summary', () => {
-  assert.match(SOURCE, /if\(entity==='civitatisSettlement'\) return useReal \? SupabaseCivitatisSettlementRepo : \{ getSummary: async \(\) => _buildCivitatisSettlementSummary\(\[\], _TODAY_ISO\) \};/);
+test('getActiveRepo registers civitatisSettlement with a safe non-Supabase mock fallback covering all four methods (getSummary, getDetailed, markPeriodRequested, markPeriodPaid)', () => {
+  const start = SOURCE.indexOf("if(entity==='civitatisSettlement')");
+  const end = SOURCE.indexOf('};', start) + 2;
+  const body = SOURCE.slice(start, end);
+  assert.match(body, /useReal \? SupabaseCivitatisSettlementRepo : \{/);
+  assert.match(body, /getSummary: async \(\) => _buildCivitatisSettlementSummary\(\[\], _TODAY_ISO\)/);
+  assert.match(body, /getDetailed: async \(\) => \(\{ summary: _buildCivitatisSettlementSummary\(\[\], _TODAY_ISO\), periods: \[\] \}\)/);
+  assert.match(body, /markPeriodRequested: async \(\) => \(\{ result: 'no_actionable_items', affectedCount: 0, settlementPeriod: null \}\)/);
+  assert.match(body, /markPeriodPaid: async \(\) => \(\{ result: 'no_actionable_items', affectedCount: 0, settlementPeriod: null \}\)/);
 });
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -471,11 +478,8 @@ test('calculateReportMetrics (Reports page) is untouched by this phase — still
   assert.doesNotMatch(body, /civitatisSettlement|civitatis_settlement_items|exchange_rates/i);
 });
 
-test('PaymentsPage is untouched by this phase — no civitatisSettlement reference inside it', () => {
-  const start = SOURCE.indexOf('function PaymentsPage()');
-  const end = SOURCE.indexOf('\nfunction ', start + 10);
-  const body = SOURCE.slice(start, end);
-  assert.doesNotMatch(body, /civitatisSettlement|civitatis_settlement_items/i);
+test('Phase 2 superseded this invariant on purpose: PaymentsPage now legitimately wires in civitatisSettlement (the Civitatis Hakedişleri tab) — see civitatisSettlementPhase2.test.js for the real, still-true guarantee that direct payments (_DogrudanOdemelerView / public.payments) stay a completely separate domain, never merged with settlement rows', () => {
+  assert.ok(true);
 });
 
 test('reservations.payment_status mapping/update code (_p2App, SupabaseReservationRepo.update field map) is untouched — no civitatisSettlement reference anywhere near it', () => {
