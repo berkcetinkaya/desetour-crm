@@ -48,6 +48,11 @@ const civSecEnd = RP_BODY.indexOf('</RpSection>', civSecStart);
 const CIV_SECTION_BODY = RP_BODY.slice(civSecStart, civSecEnd);
 
 const _buildCivitatisReportsSettlementTotals = extractTestableFn('_buildCivitatisReportsSettlementTotals');
+const _filterReportReservationsByTourPeriod = extractTestableFn('_filterReportReservationsByTourPeriod');
+
+function res(overrides) {
+  return { id: 'R', checkIn: '2026-10-04', opStatus: 'Onaylandı', ...overrides };
+}
 
 function period(overrides) {
   return {
@@ -301,23 +306,177 @@ test('Rehber Performansı action line shows every currency present, not a hardco
 
 // ── Operasyon Analizi / date-filter correctness ─────────────────────────
 
-test('Operasyon Analizi now respects the selected period (built from fRes, not raw all-time _res)', () => {
+test('Operasyon Analizi now respects the selected period (built from fRes/periodReservations, not raw all-time _res)', () => {
   const opsStart = CRM_BODY.indexOf('const opsData = {');
   const opsEnd = CRM_BODY.indexOf('};', opsStart);
   const opsBody = CRM_BODY.slice(opsStart, opsEnd);
-  assert.doesNotMatch(opsBody, /_res\.filter/);
-  assert.match(opsBody, /fRes\.filter/g);
-  assert.equal((opsBody.match(/fRes\.filter/g) || []).length, 5);
+  assert.doesNotMatch(opsBody, /\b_res\.filter/);
+  assert.equal((opsBody.match(/fRes\.filter/g) || []).length, 4, 'upcoming/completed/noGuide/noPickup read fRes');
+  assert.match(opsBody, /cancelled:\s*periodReservations\.filter\(r=>r\.opStatus==="İptal"\)\.length,/);
 });
 
-test('Reports tour-date filtering excludes reservations with no checkIn rather than silently using createdAt', () => {
-  assert.match(CRM_BODY, /_res\.filter\(r=>!!r\.checkIn\)/);
-  assert.match(CRM_BODY, /filterByDateRange\(_res\.filter\(r=>!!r\.checkIn\), "checkIn",\s*period\)/);
+test('periodReservations (status-agnostic) and fRes (active only) are both derived from the one _filterReportReservationsByTourPeriod call, never from filterByDateRange', () => {
+  assert.match(CRM_BODY, /const periodReservations\s*=\s*_filterReportReservationsByTourPeriod\(_res, period, _TODAY_ISO\);/);
+  assert.match(CRM_BODY, /const fRes\s*=\s*periodReservations\.filter\(r => r\.opStatus !== 'İptal'\);/);
+  assert.doesNotMatch(CRM_BODY, /filterByDateRange\(_res\b/);
+  // Only one CALL to the date-window helper — the second population is a
+  // plain .filter() on its result, not a second independent date pass.
+  // (CRM_BODY also contains the helper's own `function ...(` declaration,
+  // which repeats the name once more — count the call pattern instead.)
+  assert.equal((CRM_BODY.match(/_filterReportReservationsByTourPeriod\(_res, period, _TODAY_ISO\)/g) || []).length, 1);
 });
 
-test('the global filterByDateRange helper itself is untouched (the fix is scoped to Reports\' own call site)', () => {
+test('[1][2] a cancelled reservation in the selected period is excluded from Rezervasyon/Operasyon Akışı (both read kpi.reservations, built from fRes)', () => {
+  const periodItems = [res({ id:'Active', opStatus:'Onaylandı' }), res({ id:'Cancelled', opStatus:'İptal' })];
+  const periodRes = _filterReportReservationsByTourPeriod(periodItems, 'Bu Ay', '2026-10-04');
+  const activeRes = periodRes.filter(r => r.opStatus !== 'İptal');
+  assert.deepEqual(periodRes.map(r=>r.id).sort(), ['Active', 'Cancelled'], 'periodReservations keeps both');
+  assert.deepEqual(activeRes.map(r=>r.id), ['Active'], 'fRes (active) drops the cancelled one — this is kpi.reservations/Operasyon Akışı\'s Rezervasyon');
+});
+
+test('[3][4][5][6] Kaynak Performansı/Rehber Performansı/En Çok Satan Turlar/Ülke Analizi all iterate fRes, which excludes cancelled', () => {
+  for (const pattern of [/sourceMap\[src\] = \{ source:src/, /tourMap\[name\] = \{ name, reservations:0/, /countryMap\[country\] = \{ country, flag:countryFlag\(country\)/, /guideMap\[r\.guideId\] = \{ id:r\.guideId/]) {
+    assert.match(CRM_BODY, pattern);
+  }
+  // All four maps are populated inside an `fRes.forEach(...)` — never
+  // `periodReservations.forEach` or `_res.forEach` — so a cancelled
+  // reservation (already dropped from fRes) can never reach any of them.
+  assert.equal((CRM_BODY.match(/fRes\.forEach\(r => \{/g) || []).length, 4);
+  assert.doesNotMatch(CRM_BODY, /periodReservations\.forEach/);
+});
+
+test('[7] the exact same cancelled reservation IS counted by Operasyon Analizi\'s "İptal Edilen" (periodReservations, not fRes)', () => {
+  const periodItems = [res({ id:'Cancelled', checkIn:'2026-10-15', opStatus:'İptal' })];
+  const periodRes = _filterReportReservationsByTourPeriod(periodItems, 'Bu Ay', '2026-10-04');
+  const cancelledCount = periodRes.filter(r => r.opStatus === 'İptal').length;
+  assert.equal(cancelledCount, 1);
+  // And it is NOT in fRes, so it never reaches Rezervasyon etc.
+  assert.equal(periodRes.filter(r => r.opStatus !== 'İptal').length, 0);
+});
+
+test('[8] a cancelled reservation OUTSIDE the selected period is not counted in İptal Edilen either', () => {
+  const outsidePeriod = [res({ id:'CancelledNovember', checkIn:'2026-11-05', opStatus:'İptal' })];
+  const periodRes = _filterReportReservationsByTourPeriod(outsidePeriod, 'Bu Ay', '2026-10-04');
+  assert.equal(periodRes.filter(r => r.opStatus === 'İptal').length, 0, 'November cancellation must not count toward October\'s İptal Edilen');
+});
+
+test('kpi.reservations/confirmed/inProgress/completed derive directly from fRes with no further date restriction (so a future-in-period tour reaches them)', () => {
+  assert.match(CRM_BODY, /reservations:\s*fRes\.length,/);
+  assert.match(CRM_BODY, /confirmed:\s*fRes\.filter\(r=>\["Onaylandı","Tur Günü","Tamamlandı"\]\.includes\(r\.opStatus\)\)\.length,/);
+  assert.match(CRM_BODY, /completed:\s*fRes\.filter\(r=>r\.opStatus==="Tamamlandı"\)\.length,/);
+});
+
+// ── _filterReportReservationsByTourPeriod (the tour-date period fix) ───
+
+test('[1] "Bu Ay" on October 4 includes an October 26 tour (the exact bug the audit found)', () => {
+  const out = _filterReportReservationsByTourPeriod([res({ id:'Oct26', checkIn:'2026-10-26' })], 'Bu Ay', '2026-10-04');
+  assert.deepEqual(out.map(r=>r.id), ['Oct26']);
+});
+
+test('[2] "Bu Ay" on October 4 excludes a November 1 tour', () => {
+  const out = _filterReportReservationsByTourPeriod([res({ id:'Nov1', checkIn:'2026-11-01' })], 'Bu Ay', '2026-10-04');
+  assert.deepEqual(out, []);
+});
+
+test('[3] "Bu Ay" includes the October 1 and October 31 boundary dates', () => {
+  const items = [res({ id:'Oct1', checkIn:'2026-10-01' }), res({ id:'Oct31', checkIn:'2026-10-31' }), res({ id:'Sep30', checkIn:'2026-09-30' })];
+  const out = _filterReportReservationsByTourPeriod(items, 'Bu Ay', '2026-10-04');
+  assert.deepEqual(out.map(r=>r.id).sort(), ['Oct1', 'Oct31']);
+});
+
+test('[4] "Bugün" includes only October 4', () => {
+  const items = [res({ id:'Oct3', checkIn:'2026-10-03' }), res({ id:'Oct4', checkIn:'2026-10-04' }), res({ id:'Oct5', checkIn:'2026-10-05' })];
+  const out = _filterReportReservationsByTourPeriod(items, 'Bugün', '2026-10-04');
+  assert.deepEqual(out.map(r=>r.id), ['Oct4']);
+});
+
+test('[5] "Bu Hafta" includes a future date later in the same (Monday-start) calendar week', () => {
+  // 2026-10-07 is a Wednesday; its Mon-Sun week is Oct 5 - Oct 11.
+  const items = [res({ id:'Mon', checkIn:'2026-10-05' }), res({ id:'Fri', checkIn:'2026-10-09' })];
+  const out = _filterReportReservationsByTourPeriod(items, 'Bu Hafta', '2026-10-07');
+  assert.deepEqual(out.map(r=>r.id).sort(), ['Fri', 'Mon']);
+});
+
+test('[6] "Bu Hafta" excludes dates outside that calendar week', () => {
+  const items = [res({ id:'PrevSun', checkIn:'2026-10-04' }), res({ id:'NextMon', checkIn:'2026-10-12' })];
+  const out = _filterReportReservationsByTourPeriod(items, 'Bu Hafta', '2026-10-07');
+  assert.deepEqual(out, []);
+});
+
+test('[7] "Son 3 Ay" spans the 1st of the month 3 months back through the end of the CURRENT month (never truncated at "today")', () => {
+  const items = [
+    res({ id:'JuneTooEarly', checkIn:'2026-06-30' }),
+    res({ id:'JulyStart', checkIn:'2026-07-01' }),
+    res({ id:'OctFuture', checkIn:'2026-10-31' }),
+    res({ id:'NovTooLate', checkIn:'2026-11-01' }),
+  ];
+  const out = _filterReportReservationsByTourPeriod(items, 'Son 3 Ay', '2026-10-04');
+  assert.deepEqual(out.map(r=>r.id).sort(), ['JulyStart', 'OctFuture']);
+});
+
+test('_filterReportReservationsByTourPeriod is status-agnostic by design (cancellation exclusion is the caller\'s job, not this date-window helper\'s — see periodReservations/fRes in calculateReportMetrics)', () => {
+  const cancelled = res({ id:'Cancelled', checkIn:'2026-10-04', opStatus:'İptal' });
+  for (const p of ['Bugün', 'Bu Hafta', 'Bu Ay', 'Son 3 Ay']) {
+    assert.deepEqual(_filterReportReservationsByTourPeriod([cancelled], p, '2026-10-04').map(r=>r.id), ['Cancelled'], `period ${p} must still return the cancelled reservation — it is in-window`);
+  }
+});
+
+test('[9] a future-in-period confirmed reservation is included in the set that feeds Rezervasyon (fRes.length)', () => {
+  const out = _filterReportReservationsByTourPeriod([res({ id:'FutureConfirmed', checkIn:'2026-10-26', opStatus:'Onaylandı' })], 'Bu Ay', '2026-10-04');
+  assert.equal(out.length, 1);
+});
+
+test('[10] that same future-in-period confirmed reservation is counted by the existing cumulative Onaylanan formula', () => {
+  const out = _filterReportReservationsByTourPeriod([res({ id:'FutureConfirmed', checkIn:'2026-10-26', opStatus:'Onaylandı' })], 'Bu Ay', '2026-10-04');
+  const confirmedCount = out.filter(r => ['Onaylandı','Tur Günü','Tamamlandı'].includes(r.opStatus)).length;
+  assert.equal(confirmedCount, 1);
+});
+
+test('[11] a completed reservation within the period is still included and counted', () => {
+  const out = _filterReportReservationsByTourPeriod([res({ id:'Done', checkIn:'2026-10-02', opStatus:'Tamamlandı' })], 'Bu Ay', '2026-10-04');
+  assert.equal(out.length, 1);
+  assert.equal(out.filter(r=>r.opStatus==='Tamamlandı').length, 1);
+});
+
+test('a reservation with no checkIn at all is excluded (defensive — reservations.check_in is DATE NOT NULL in production)', () => {
+  const out = _filterReportReservationsByTourPeriod([res({ id:'NoDate', checkIn: null })], 'Bu Ay', '2026-10-04');
+  assert.deepEqual(out, []);
+});
+
+test('Kaynak Performansı/En Çok Satan Turlar/Ülke Analizi/Rehber Performansı/Operasyon Analizi all iterate the SAME cancellation-excluding fRes (one source of truth, not five separate filters)', () => {
+  for (const pattern of [/fRes\.forEach\(r => \{\s*\n\s*const cust = _custs\.find\(c=>c\.id===r\.customerId\);\s*\n\s*const src/, /fRes\.forEach\(r => \{\s*\n\s*const name = r\.tour/, /fRes\.forEach\(r => \{\s*\n\s*const cust = _custs\.find\(c=>c\.id===r\.customerId\);\s*\n\s*const country/, /fRes\.forEach\(r => \{\s*\n\s*if \(!r\.guideId\) return;/]) {
+    assert.match(CRM_BODY, pattern);
+  }
+});
+
+// ── [12]/[13]/[14]/[15] isolation guarantees ────────────────────────────
+
+test('[12] the shared filterByDateRange() helper is completely unchanged by this fix', () => {
   assert.match(SOURCE, /function filterByDateRange\(items, dateField, period\) \{\s*\n\s*const now=new Date\(\), todayISO=_TODAY_ISO;/);
   assert.match(SOURCE, /let raw=item\[dateField\]\|\|item\.createdAt\|\|item\.date\|\|"";/);
+  assert.match(SOURCE, /case "Bu Ay":\s*return iso>=moISO&&iso<=todayISO;/);
+  assert.match(CRM_BODY, /const fPays\s*=\s*filterByDateRange\(_pays,\s*"createdAt",\s*period\);/);
+});
+
+test('[13] Calendar logic (useCalendarEvents / CalendarPage) is untouched by this fix', () => {
+  const idx = SOURCE.indexOf('function useCalendarEvents()');
+  const body = SOURCE.slice(idx, SOURCE.indexOf('\nfunction CalendarPage()', idx));
+  assert.match(body, /\.filter\(r => r\.opStatus !== "İptal"\)/);
+  assert.match(body, /const raw = r\.checkIn \|\| r\.travelStart \|\| r\.check_in \|\| r\.date \|\| null;/);
+  assert.doesNotMatch(body, /_filterReportReservationsByTourPeriod/);
+});
+
+test('[14] no Civitatis settlement logic changed (Phase 1/2, the settlement RPCs, the fixed 55 TRY rate, the Civitatis Hakediş Durumu reducer)', () => {
+  assert.doesNotMatch(CRM_BODY, /civitatis_settlement_items|fn_mark_civitatis/);
+  assert.equal((SOURCE.match(/function _buildCivitatisReportsSettlementTotals\(/g) || []).length, 1);
+  assert.equal((SOURCE.match(/_CIVITATIS_FIXED_EUR_TO_TRY_RATE\s*=\s*55/g) || []).length, 1);
+});
+
+test('[15] no Civitatis ingestion code referenced or changed by the new helper', () => {
+  const start = SOURCE.indexOf('// TESTABLE:_filterReportReservationsByTourPeriod:start');
+  const end = SOURCE.indexOf('// TESTABLE:_filterReportReservationsByTourPeriod:end');
+  const body = SOURCE.slice(start, end);
+  assert.doesNotMatch(body, /ingest_civitatis_booking|civitatis_settlement|supabase|getSB\(/i);
 });
 
 // ── Yönetici Özeti ranking inheritance ──────────────────────────────────

@@ -1389,14 +1389,23 @@ const CHANGELOG_CATEGORY_STYLE={'Yeni Özellik':{color:'#2E7D52',bg:'#EBF5EF'},'
 // the full localStorage contract.
 useEffect(()=>{markChangelogViewed();},[]);const buildVersion=typeof window!=='undefined'&&window.__DESETOUR_BUILD__&&window.__DESETOUR_BUILD__.version||CRM_CHANGELOG[0]&&CRM_CHANGELOG[0].version||null;return/*#__PURE__*/React.createElement("div",{style:{display:"flex",flexDirection:"column",gap:0}},/*#__PURE__*/React.createElement("div",{style:{background:`linear-gradient(135deg, ${C.navyDeep} 0%, ${C.navy} 100%)`,borderRadius:12,padding:isMobile?"26px 20px":"40px 44px",marginBottom:isMobile?18:26}},/*#__PURE__*/React.createElement("div",{style:{display:"inline-flex",alignItems:"center",gap:7,padding:"4px 11px",borderRadius:99,background:"rgba(201,168,76,0.18)",marginBottom:15}},/*#__PURE__*/React.createElement("span",{style:{width:5,height:5,borderRadius:"50%",background:C.goldLight}}),/*#__PURE__*/React.createElement("span",{style:{fontSize:10.5,fontWeight:600,letterSpacing:"0.06em",textTransform:"uppercase",color:C.goldLight,fontFamily:"'DM Sans',sans-serif"}},"v",buildVersion||'—')),/*#__PURE__*/React.createElement("h1",{style:{margin:0,fontSize:isMobile?23:32,fontWeight:700,color:C.ivory,fontFamily:"'Playfair Display',serif",marginBottom:11,lineHeight:1.15}},"CRM G\xFCncellemeleri"),/*#__PURE__*/React.createElement("p",{style:{margin:0,maxWidth:580,fontSize:isMobile?13:14.5,color:"rgba(248,245,238,0.72)",fontFamily:"'DM Sans',sans-serif",lineHeight:1.65}},"Dese Tour Operasyon Merkezi'nin geli\u015Fim ge\xE7mi\u015Fi. Yeni \xF6zellikler, otomasyonlar ve operasyonel iyile\u015Ftirmeler.")),CRM_CHANGELOG.length===0?/*#__PURE__*/React.createElement("div",{style:{background:C.white,border:`1px solid ${C.border}`,borderRadius:12,padding:"60px 30px",textAlign:"center"}},/*#__PURE__*/React.createElement("div",{style:{fontSize:13.5,color:C.textFaint,fontFamily:"'DM Sans',sans-serif"}},"Hen\xFCz yay\u0131nlanm\u0131\u015F bir g\xFCncelleme kayd\u0131 yok.")):/*#__PURE__*/React.createElement("div",{style:{display:"flex",flexDirection:"column",gap:isMobile?14:20,maxWidth:760}},CRM_CHANGELOG.map((entry,i)=>/*#__PURE__*/React.createElement(ChangelogReleaseCard,{key:entry.version,entry:entry,isLatest:i===0,isMobile:isMobile}))));}function calculateReportMetrics(period,reservations,payments,customers,sources,guides,guidePayments){const _res=reservations??[];const _pays=payments??[];const _custs=customers??[];const _guides=guides??[];const _gPays=guidePayments??[];// Source lookup must use the live sources list — DB.sources is mock-only
 // data with mock ids, so it never matched a real Supabase source_id.
-const _sources=sources&&sources.length?sources:DB.sources;const srcName=id=>{const s=_sources.find(x=>x.id===id);return s?.name||s?.label||"Diğer";};// Reports Cleanup Phase: filterByDateRange falls back to item.createdAt
-// (or item.date) whenever the requested dateField is empty — a sane
-// default for most callers, but wrong for a report that claims to be
-// tour-date-based. A reservation with no checkIn is excluded here
-// BEFORE calling it, rather than silently landing in a date bucket by
-// its creation date instead — scoped to this one call site, not a
-// change to the shared helper (other pages keep its existing fallback).
-const fRes=filterByDateRange(_res.filter(r=>!!r.checkIn),"checkIn",period);const fPays=filterByDateRange(_pays,"createdAt",period);const kpi={reservations:fRes.length,confirmed:fRes.filter(r=>["Onaylandı","Tur Günü","Tamamlandı"].includes(r.opStatus)).length,inProgress:fRes.filter(r=>r.opStatus==="Tur Günü").length,completed:fRes.filter(r=>r.opStatus==="Tamamlandı").length// Reports Cleanup Phase: "Beklenen Gelir"/"Tahsil Edilen Gelir" (an
+const _sources=sources&&sources.length?sources:DB.sources;const srcName=id=>{const s=_sources.find(x=>x.id===id);return s?.name||s?.label||"Diğer";};// Reports tour-date period fix: the period window itself comes from
+// the dedicated _filterReportReservationsByTourPeriod helper above,
+// never from filterByDateRange — see that helper's own comment for why
+// a prospective field (tour date) cannot share the "start of period ->
+// today" semantics every other (retrospective) caller of
+// filterByDateRange correctly relies on.
+//
+// Two populations, one shared date window: periodReservations is every
+// reservation (any status) in the window; fRes excludes cancelled
+// ("İptal") from it, matching Calendar's own useCalendarEvents() filter,
+// and is what every normal operational metric (Rezervasyon, Onaylanan,
+// Kaynak Performansı, Rehber Performansı, En Çok Satan Turlar, Ülke
+// Analizi, most of Operasyon Analizi) is built from. Operasyon
+// Analizi's "İptal Edilen" is the one deliberate exception — it needs
+// the cancelled rows periodReservations still has, so it reads from
+// that set instead of fRes (see opsData.cancelled below).
+const periodReservations=_filterReportReservationsByTourPeriod(_res,period,_TODAY_ISO);const fRes=periodReservations.filter(r=>r.opStatus!=='İptal');const fPays=filterByDateRange(_pays,"createdAt",period);const kpi={reservations:fRes.length,confirmed:fRes.filter(r=>["Onaylandı","Tur Günü","Tamamlandı"].includes(r.opStatus)).length,inProgress:fRes.filter(r=>r.opStatus==="Tur Günü").length,completed:fRes.filter(r=>r.opStatus==="Tamamlandı").length// Reports Cleanup Phase: "Beklenen Gelir"/"Tahsil Edilen Gelir" (an
 // EUR-only public.payments proxy, blind to any reservation with zero
 // rows in that table — i.e. every Civitatis reservation since
 // Phase 1/2) were removed outright rather than fixed. There is no
@@ -1437,12 +1446,62 @@ const payByCurrency={};fPays.forEach(p=>{const cur=p.currency||'EUR';if(!payByCu
 // set every other operational metric on this page uses), not the raw,
 // all-time _res — the period selector previously had no effect here at
 // all despite the section displaying the selected period as its label.
-const opsData={upcoming:fRes.filter(r=>!["Tamamlandı","İptal"].includes(r.opStatus)).length,completed:fRes.filter(r=>r.opStatus==="Tamamlandı").length,cancelled:fRes.filter(r=>r.opStatus==="İptal").length,noGuide:fRes.filter(r=>!r.guideId&&!r.guide&&!["Tamamlandı","İptal"].includes(r.opStatus)).length,noPickup:fRes.filter(r=>!r.pickup&&!["Tamamlandı","İptal"].includes(r.opStatus)).length};// Guide performance — tours/guests per guide within the selected period,
+// "cancelled" is the one field that deliberately reads periodReservations
+// instead — fRes has no İptal rows left to count (see its own comment
+// above), so this card uses the cancellation-inclusive set to stay a
+// truthful count rather than permanently reading 0.
+const opsData={upcoming:fRes.filter(r=>!["Tamamlandı","İptal"].includes(r.opStatus)).length,completed:fRes.filter(r=>r.opStatus==="Tamamlandı").length,cancelled:periodReservations.filter(r=>r.opStatus==="İptal").length,noGuide:fRes.filter(r=>!r.guideId&&!r.guide&&!["Tamamlandı","İptal"].includes(r.opStatus)).length,noPickup:fRes.filter(r=>!r.pickup&&!["Tamamlandı","İptal"].includes(r.opStatus)).length};// Guide performance — tours/guests per guide within the selected period,
 // derived purely from reservations.guide_id + guides; never a stored
 // counter.
 const guideMap={};fRes.forEach(r=>{if(!r.guideId)return;if(!guideMap[r.guideId]){const g=_guides.find(x=>x.id===r.guideId);guideMap[r.guideId]={id:r.guideId,name:g?.name||r.assignedGuideName||r.guide||"—",tours:0,guests:0};}guideMap[r.guideId].tours++;guideMap[r.guideId].guests+=parseInt(r.pax||0)+parseInt(r.paxChild||0);});const guidesData=Object.values(guideMap).sort((a,b)=>b.tours-a.tours).slice(0,8);// Guide payment summary — per currency (Reports Cleanup Phase: this
 // used to silently drop every non-EUR guide payment from the totals).
-const fGPays=filterByDateRange(_gPays,"paymentDate",period);const guidePayByCurrency={};fGPays.forEach(p=>{const cur=p.currency||'EUR';if(!guidePayByCurrency[cur])guidePayByCurrency[cur]={paid:0,pending:0};const amt=parseFloat(p.amount||0);if(p.status==='Ödendi')guidePayByCurrency[cur].paid+=amt;else if(p.status==='Bekliyor')guidePayByCurrency[cur].pending+=amt;});return{kpi,sources:sourcesData,tours:toursData,countries:countriesData,payments:{byCurrency:payByCurrency},ops:opsData,guides:guidesData,guidePayments:{byCurrency:guidePayByCurrency}};}// Explicit zero/empty shape returned whenever calculateReportMetrics cannot
+const fGPays=filterByDateRange(_gPays,"paymentDate",period);const guidePayByCurrency={};fGPays.forEach(p=>{const cur=p.currency||'EUR';if(!guidePayByCurrency[cur])guidePayByCurrency[cur]={paid:0,pending:0};const amt=parseFloat(p.amount||0);if(p.status==='Ödendi')guidePayByCurrency[cur].paid+=amt;else if(p.status==='Bekliyor')guidePayByCurrency[cur].pending+=amt;});return{kpi,sources:sourcesData,tours:toursData,countries:countriesData,payments:{byCurrency:payByCurrency},ops:opsData,guides:guidesData,guidePayments:{byCurrency:guidePayByCurrency}};}// TESTABLE:_filterReportReservationsByTourPeriod:start
+// Reports' own tour-date (checkIn) period window — deliberately separate
+// from the shared filterByDateRange(), which is intentionally left
+// unchanged. That helper means "start of period -> today" for every
+// caller, which is correct for a retrospective field (e.g. a payment's
+// creation date can never be in the future) but was silently wrong when
+// reused here for checkIn: a reservation's tour date is prospective, so
+// "Bu Ay" on October 4 must still include an October 26 tour, not just
+// Oct 1-4 — this is the exact root cause of Reports showing far fewer
+// October reservations than the Calendar's full-month view. Used by
+// calculateReportMetrics above (a plain function declaration is hoisted,
+// so the call site above can precede this definition in source order).
+//
+// Pure string (YYYY-MM-DD) comparison throughout — reservations.check_in
+// is a DATE column with no time-of-day/timezone component, so comparing
+// its literal stored value lexicographically is exact and introduces no
+// Date-parsing or UTC/local conversion at all. The only Date arithmetic
+// used (week/month/quarter boundary math) runs on explicit numeric
+// (year, monthIndex, day) parts — never on a parsed date STRING — so it
+// is immune to the "new Date('2026-10-04')" UTC-parsing drift that can
+// shift a day backward in a negative-UTC-offset environment.
+//
+// Status-agnostic on purpose: returns every reservation (any opStatus,
+// cancelled included) whose checkIn falls in the window — a single
+// source of truth for "what's in this tour-date period" that both
+// populations calculateReportMetrics needs are derived from:
+//   periodReservations       = this function's return value, as-is
+//   activePeriodReservations = periodReservations minus "İptal"
+// A cancellation-analysis metric (Operasyon Analizi's "İptal Edilen")
+// needs the former; every other operational metric (Rezervasyon,
+// Onaylanan, Kaynak Performansı, etc.) needs the latter, matching
+// Calendar's own useCalendarEvents() filter. Baking the exclusion in
+// here would make the cancelled count permanently unreachable, so the
+// decision is left to the caller instead of duplicated at each site.
+function _filterReportReservationsByTourPeriod(reservations,period,todayISO){const[y,moNum,dayNum]=todayISO.split('-').map(Number);const pad2=n=>String(n).padStart(2,'0');const toISO=d=>`${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`;// Last day of the (1-based) month `moNum` of year `y` — day 0 of the
+// following month, the same idiom computeMonthlyReservationRevenue
+// already uses for "Bu Ay Beklenen Ciro" on the Dashboard.
+const lastDayOfMonthISO=(year,moNum1)=>toISO(new Date(year,moNum1,0));let startISO,endISO;switch(period){case'Bugün':startISO=todayISO;endISO=todayISO;break;case'Bu Hafta':{// Monday-start week — the same week definition filterByDateRange
+// itself already uses for "Bu Hafta" (Mon=0 ... Sun=6), just
+// carried through to a real Sunday end instead of stopping at
+// today.
+const todayDate=new Date(y,moNum-1,dayNum);const dow=todayDate.getDay()===0?6:todayDate.getDay()-1;const weekStart=new Date(y,moNum-1,dayNum-dow);const weekEnd=new Date(y,moNum-1,dayNum-dow+6);startISO=toISO(weekStart);endISO=toISO(weekEnd);break;}case'Bu Ay':startISO=`${y}-${pad2(moNum)}-01`;endISO=lastDayOfMonthISO(y,moNum);break;case'Son 3 Ay':{// Same lower-bound concept filterByDateRange already uses (go
+// back 3 months, 1st of that month) — only the upper bound
+// changes, to the end of the CURRENT month rather than "today",
+// so a future tour later this month is never excluded.
+const q3Start=new Date(y,moNum-1-3,1);startISO=`${q3Start.getFullYear()}-${pad2(q3Start.getMonth()+1)}-01`;endISO=lastDayOfMonthISO(y,moNum);break;}default:startISO=null;endISO=null;}return(reservations||[]).filter(r=>{if(!r.checkIn)return false;if(startISO===null)return true;const iso=r.checkIn.slice(0,10);return iso>=startISO&&iso<=endISO;});}// TESTABLE:_filterReportReservationsByTourPeriod:end
+// Explicit zero/empty shape returned whenever calculateReportMetrics cannot
 // run (or throws) — e.g. an unexpected real-data shape from Supabase.
 // Guarantees ReportsPage always has every field it reads, never fabricates
 // non-zero values, and never crashes.
