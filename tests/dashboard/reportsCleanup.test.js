@@ -117,14 +117,15 @@ test('the section reuses SupabaseCivitatisSettlementRepo.getDetailed() — no ne
 });
 
 test('the section shows all four required buckets with their exact labels', () => {
-  for (const label of ['Biriken Hakediş', 'Talep Edilebilir', 'Talep Edildi', 'Ödenen']) {
+  for (const label of ['Biriken Hakediş', 'Talep Edilebilir', 'Talep Edildi', 'Ödeme Alındı']) {
     assert.match(CIV_SECTION_BODY, new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   }
 });
 
-test('"Ödenen" wording explicitly avoids implying bank reconciliation', () => {
-  assert.match(CIV_SECTION_BODY, /CRM'de ödendi olarak işaretlenen/);
+test('"Ödeme Alındı" wording explicitly avoids implying bank reconciliation (and never reads "Ödendi", which would wrongly imply DeseTour pays Civitatis)', () => {
+  assert.match(CIV_SECTION_BODY, /CRM'de ödeme alındı olarak işaretlenen/);
   assert.doesNotMatch(CIV_SECTION_BODY, /banka|reconcil|mutabakat/i);
+  assert.doesNotMatch(CIV_SECTION_BODY, /label:"Ödendi"/);
 });
 
 test('mixed-status periods are surfaced separately, never silently folded into a total', () => {

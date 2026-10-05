@@ -267,9 +267,10 @@ test('the button label is exactly "Talep Edildi Olarak İşaretle" — never "Ta
   assert.doesNotMatch(body, />Talep Et</);
 });
 
-test('the paid button label is exactly "Ödendi Olarak İşaretle"', () => {
+test('the paid button label is exactly "Ödeme Alındı Olarak İşaretle" — UI terminology cleanup: Civitatis owes DeseTour, so the CRM never implies DeseTour pays Civitatis ("Ödendi")', () => {
   const body = componentBody('_CivitatisHakedisleriView');
-  assert.match(body, /Ödendi Olarak İşaretle/);
+  assert.match(body, /Ödeme Alındı Olarak İşaretle/);
+  assert.doesNotMatch(body, /"Ödendi Olarak İşaretle"/);
 });
 
 test('the requested-transition button only renders when effective status is claimable; the paid-transition button only when requested', () => {
@@ -338,7 +339,7 @@ test('_MobileCivitatisHakedisleriView is gated to Yönetici/Operasyon, uses the 
   assert.match(body, /useRepo\("civitatisSettlement", "getDetailed"\)/);
   assert.match(body, /useRepoMutation\("civitatisSettlement"\)/);
   assert.match(body, /Talep Edildi Olarak İşaretle/);
-  assert.match(body, /Ödendi Olarak İşaretle/);
+  assert.match(body, /Ödeme Alındı Olarak İşaretle/);
   assert.doesNotMatch(body, /["']Talep Et["']/);
 });
 
@@ -363,7 +364,7 @@ test('neither the desktop nor mobile Civitatis view queries exchange_rates — t
 test('this phase introduces no sentence-level em or en dash in its new Turkish UI copy strings', () => {
   const uiStrings = [
     'Civitatis Hakedişleri', 'Doğrudan Ödemeler', 'Dönemlere Göre Hakedişler',
-    'Talep Edildi Olarak İşaretle', 'Ödendi Olarak İşaretle',
+    'Talep Edildi Olarak İşaretle', 'Ödeme Alındı Olarak İşaretle',
     'Bu bölümü görüntüleme yetkiniz yok.', 'Henüz bir Civitatis hakediş kalemi yok.',
     'İşlem başarısız: ', 'kalem güncellendi', 'Bu dönem için güncellenecek kalem bulunamadı.',
   ];
@@ -381,7 +382,7 @@ test('CIVITATIS_TRANSITION_MESSAGES maps every non-success result to a distinct,
   const end = SOURCE.indexOf('\n};', start);
   const body = SOURCE.slice(start, end);
   assert.match(body, /already_requested: 'Bu dönemin hakediş talebi daha önce kaydedilmiş\.'/);
-  assert.match(body, /already_paid: 'Bu dönem daha önce ödendi olarak işaretlenmiş\.'/);
+  assert.match(body, /already_paid: 'Bu dönem daha önce "Ödeme Alındı" olarak işaretlenmiş\.'/);
   assert.match(body, /not_yet_claimable: 'Bu dönem henüz talep edilebilir değil\.'/);
   assert.match(body, /mixed_or_ineligible_period: 'Bu dönemde farklı hakediş durumları bulundu\. İşlem yapılmadı; kontrol gerekli\.'/);
   assert.match(body, /no_actionable_items: 'Bu dönemde işleme uygun hakediş bulunmuyor\.'/);

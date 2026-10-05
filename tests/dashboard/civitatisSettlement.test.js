@@ -363,7 +363,7 @@ test('the desktop panel contains NO requested/paid/edit/delete action — Phase 
   const body = _panelBody('CivitatisHakedisPanel');
   assert.doesNotMatch(body, /mutate\(/);
   assert.doesNotMatch(body, /Talep Edildi Olarak İşaretle/);
-  assert.doesNotMatch(body, /Ödendi Olarak İşaretle/);
+  assert.doesNotMatch(body, /Ödeme Alındı Olarak İşaretle/);
   assert.doesNotMatch(body, /onClick=\{.*(update|delete|mutate)/i);
 });
 

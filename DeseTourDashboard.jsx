@@ -10070,8 +10070,14 @@ function PaymentsPage() {
 // ──────────────────────────────────────────────────────────────────────
 // CIVITATIS HAKEDİŞLERİ — Phase 2 settlement management surface.
 // 4 summary tiles (Talep Edilebilir / Bu Ay Biriken / Talep Edildi /
-// Ödenen) + monthly grouping with expandable reservation-level detail.
-// "Talep Edildi Olarak İşaretle" / "Ödendi Olarak İşaretle" call the
+// Ödeme Alındı) + monthly grouping with expandable reservation-level
+// detail. UI terminology cleanup: user-facing copy never implies
+// DeseTour pays Civitatis — it is the other way around (Civitatis owes
+// DeseTour), so the lifecycle reads Biriken -> Talep Edilebilir ->
+// Talep Edildi -> Ödeme Alındı, never "Ödendi". The underlying DB
+// status, column (paid/paid_at) and RPC result stay "paid" — this is a
+// display-only rename, never a behavioral one.
+// "Talep Edildi Olarak İşaretle" / "Ödeme Alındı Olarak İşaretle" call the
 // two atomic, database-enforced period transitions
 // (fn_mark_civitatis_settlement_period_requested/paid) — never a
 // per-row loop of updates from here. Admin/operations only, same
@@ -10123,7 +10129,7 @@ function _CivitatisHakedisleriView() {
             { label:"Talep Edilebilir", bucket:summary.claimable, color:C.gold },
             { label:"Bu Ay Biriken",    bucket:summary.currentMonthAccrual, color:C.text },
             { label:"Talep Edildi",     bucket:summary.requested, color:C.blue },
-            { label:"Ödenen",           bucket:summary.paid, color:C.green },
+            { label:"Ödeme Alındı",     bucket:summary.paid, color:C.green },
           ].map((k,i) => (
             <div key={i} style={{background:C.white, border:`1px solid ${C.border}`, borderRadius:12, padding:"16px 18px"}}>
               <div style={{fontSize:11, fontWeight:600, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:6}}>{k.label}</div>
@@ -10184,7 +10190,7 @@ function _CivitatisHakedisleriView() {
                         <button onClick={(e)=>{ e.stopPropagation(); handleTransition('markPeriodPaid', p.settlementPeriod); }} disabled={busy} style={{
                           padding:"8px 12px", borderRadius:8, border:"none", cursor:"pointer",
                           background:C.greenBg, color:C.green, fontSize:12, fontWeight:600, fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap",
-                        }}>{busy ? "İşleniyor…" : "Ödendi Olarak İşaretle"}</button>
+                        }}>{busy ? "İşleniyor…" : "Ödeme Alındı Olarak İşaretle"}</button>
                       )}
                       {p.effectiveStatus === 'mixed' && (
                         // Phase 2.1: a period whose actionable rows disagree (e.g. a
@@ -10242,7 +10248,7 @@ function _CivitatisHakedisleriView() {
 
 const CIVITATIS_STATUS_LABEL = {
   accrued: "Birikiyor", claimable: "Talep Edilebilir", requested: "Talep Edildi",
-  paid: "Ödendi", adjusted: "Düzeltildi", cancelled: "İptal",
+  paid: "Ödeme Alındı", adjusted: "Düzeltildi", cancelled: "İptal",
 };
 
 // Phase 2.1 — every non-success RPC result maps to one honest, specific
@@ -10253,7 +10259,7 @@ const CIVITATIS_STATUS_LABEL = {
 // flagged as ambiguous.
 const CIVITATIS_TRANSITION_MESSAGES = {
   already_requested: 'Bu dönemin hakediş talebi daha önce kaydedilmiş.',
-  already_paid: 'Bu dönem daha önce ödendi olarak işaretlenmiş.',
+  already_paid: 'Bu dönem daha önce "Ödeme Alındı" olarak işaretlenmiş.',
   not_yet_claimable: 'Bu dönem henüz talep edilebilir değil.',
   mixed_or_ineligible_period: 'Bu dönemde farklı hakediş durumları bulundu. İşlem yapılmadı; kontrol gerekli.',
   no_actionable_items: 'Bu dönemde işleme uygun hakediş bulunmuyor.',
@@ -14653,7 +14659,7 @@ function ReportsPage() {
                     { key:"accrued",   label:"Biriken Hakediş",   color:C.textMuted, bg:C.ivoryDark, sub:"Henüz talep edilebilir değil" },
                     { key:"claimable", label:"Talep Edilebilir",  color:C.gold,      bg:C.goldPale,  sub:"Talep edilmeyi bekliyor" },
                     { key:"requested", label:"Talep Edildi",      color:C.blue,      bg:C.blueBg,    sub:"Civitatis ödemesi bekleniyor" },
-                    { key:"paid",      label:"Ödenen",            color:C.green,     bg:C.greenBg,   sub:"CRM'de ödendi olarak işaretlenen" },
+                    { key:"paid",      label:"Ödeme Alındı",      color:C.green,     bg:C.greenBg,   sub:"CRM'de ödeme alındı olarak işaretlenen" },
                   ].map((c,i)=>{
                     const b = civTotals[c.key];
                     return (
@@ -22778,7 +22784,7 @@ function _MobileCivitatisHakedisleriView() {
             { label:"Talep Edilebilir", bucket:summary.claimable, color:C.gold },
             { label:"Bu Ay Biriken",    bucket:summary.currentMonthAccrual, color:C.text },
             { label:"Talep Edildi",     bucket:summary.requested, color:C.blue },
-            { label:"Ödenen",           bucket:summary.paid, color:C.green },
+            { label:"Ödeme Alındı",     bucket:summary.paid, color:C.green },
           ].map((k,i) => (
             <MobileEntityCard key={i}>
               <div style={{fontSize:10, fontWeight:600, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:4}}>{k.label}</div>
@@ -22835,7 +22841,7 @@ function _MobileCivitatisHakedisleriView() {
                 <button onClick={(e)=>{ e.stopPropagation(); handleTransition('markPeriodPaid', p.settlementPeriod); }} disabled={busy} style={{
                   width:"100%", marginTop:10, padding:"9px 0", borderRadius:9, border:"none", cursor:"pointer",
                   background:C.greenBg, color:C.green, fontSize:12.5, fontWeight:600, fontFamily:"'DM Sans',sans-serif",
-                }}>{busy ? "İşleniyor…" : "Ödendi Olarak İşaretle"}</button>
+                }}>{busy ? "İşleniyor…" : "Ödeme Alındı Olarak İşaretle"}</button>
               )}
               {p.effectiveStatus === 'mixed' && (
                 <div style={{marginTop:10, textAlign:"center", padding:"6px 0", borderRadius:9, background:C.amber+'22', color:C.amber, fontSize:11.5, fontWeight:600, fontFamily:"'DM Sans',sans-serif"}}>Kontrol Gerekli</div>
