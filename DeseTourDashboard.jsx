@@ -7940,19 +7940,46 @@ const RES_ACTIONS = [
   { label:"Rehber Ata",                      icon:"M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2 M23 21v-2a4 4 0 00-3-3.87 M16 3.13a4 4 0 010 7.75", primary:true },
   { label:"Pickup Bilgisi Ekle",             icon:"M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z M12 10a1 1 0 100-2 1 1 0 000 2z" },
   { label:"Ödeme Kaydı Ekle",               icon:"M2 9a2 2 0 012-2h16a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V9zM2 13h20" },
-  { label:"Görev Oluştur",                   icon:"M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" },
   { label:"Hatırlatma Oluştur",             icon:"M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0" },
   { label:"Turu Tamamlandı Olarak İşaretle", icon:"M22 11.08V12a10 10 0 11-5.93-9.14 M22 4L12 14.01l-3-3", green:true },
 ];
 
+// Small, scoped edit popover for the two pickup columns that already exist
+// on reservations (pickup_location/pickup_time) — reuses the existing
+// reservation update mutation (useRepoMutation("reservation")), whose
+// Store.notify() already refreshes this page's own useRepo("reservation",
+// "getById", resId) read. No new repo method, no schema change.
+function PickupEditModal({ res, onClose }) {
+  const [pickup, setPickup] = useState(res?.pickup || "");
+  const [pickupTime, setPickupTime] = useState((res?.pickupTime && res.pickupTime !== "—") ? res.pickupTime : "");
+  const { mutate: mutRes, mutating } = useRepoMutation("reservation");
+
+  async function handleSubmit() {
+    const { error } = await mutRes("update", res.id, { pickup, pickupTime });
+    if (error) { showToast("Pickup bilgisi kaydedilemedi ✗"); return; }
+    showToast("Pickup bilgisi güncellendi ✓");
+    onClose();
+  }
+
+  return (
+    <Modal title="Pickup Bilgisi Ekle" onClose={onClose} onSubmit={handleSubmit}
+      submitLabel={mutating ? "Kaydediliyor…" : "Kaydet"}>
+      <FRow label="Pickup Lokasyonu">
+        <FText value={pickup} onChange={setPickup} placeholder="Otel adı / adres"/>
+      </FRow>
+      <FRow label="Pickup Saati">
+        <FText value={pickupTime} onChange={setPickupTime} placeholder="08:30"/>
+      </FRow>
+    </Modal>
+  );
+}
+
 function ResQuickActions({ res, onAssignGuide }) {
   const [opStatus, setOpStatus] = useState(res?.opStatus || "Hazırlanıyor");
-
-  function handleOdemeEkle() {
-    if (res) ActivityRepository.create({ entityType:"payment", entityId:res.id, action:"payment", description:`${res.id} için ödeme kaydı oluşturuldu` });
-    if (NAV_REF.fn) NAV_REF.fn("/payments");
-    else window.location.hash = "#/payments";
-  }
+  const [showPickup, setShowPickup] = useState(false);
+  const [showReminder, setShowReminder] = useState(false);
+  const [showPayment, setShowPayment] = useState(false);
+  const { role } = useAuthContext();
 
   async function handleTamamlandi() {
     if (res) {
@@ -7963,12 +7990,29 @@ function ResQuickActions({ res, onAssignGuide }) {
     }
   }
 
+  // Reminder/Payment are real mutations against entities a role may not be
+  // able to reach at all (ROLE_PERMISSIONS has no "reminders"/"payments"
+  // entry for every role — e.g. Rehber has neither, Satış has reminders but
+  // not payments). This panel has no role gate of its own, so without this
+  // filter a role would get a side door into a mutation its own nav/router
+  // access (canAccess) already says it shouldn't have. Pickup/guide-assign/
+  // Tamamlandı stay ungated — they're plain reservation-entity writes, same
+  // as they always were, and every role that can open this page could
+  // already perform them before this filter existed.
+  const visibleActions = RES_ACTIONS.filter(a => {
+    if (a.label === "Hatırlatma Oluştur") return canAccess(role, "reminders");
+    if (a.label === "Ödeme Kaydı Ekle")   return canAccess(role, "payments");
+    return true;
+  });
+
   return (
     <RCard>
       <RCardHead title="Hızlı İşlemler" accent/>
       <div style={{ padding:"12px" }}>
-        {RES_ACTIONS.map((a, i) => {
+        {visibleActions.map((a, i) => {
           const isOdeme = a.label === "Ödeme Kaydı Ekle";
+          const isPickup = a.label === "Pickup Bilgisi Ekle";
+          const isHatirlatma = a.label === "Hatırlatma Oluştur";
           const isTamamlandi = a.green;
           // "Rehber Ata" invokes the EXACT SAME guide-assignment UI already
           // used by Operasyon Bilgileri — onAssignGuide is the parent's
@@ -7976,7 +8020,12 @@ function ResQuickActions({ res, onAssignGuide }) {
           // AssignGuideModal instance. Never a second modal/mutation.
           const isGuideAssign = a.label === "Rehber Ata";
           const label = isGuideAssign ? (res?.guideId ? "Rehberi Değiştir" : "Rehber Ata") : a.label;
-          const onClick = isGuideAssign ? onAssignGuide : isOdeme ? handleOdemeEkle : isTamamlandi ? handleTamamlandi : undefined;
+          const onClick = isGuideAssign ? onAssignGuide
+            : isPickup ? () => setShowPickup(true)
+            : isOdeme ? () => setShowPayment(true)
+            : isHatirlatma ? () => setShowReminder(true)
+            : isTamamlandi ? handleTamamlandi
+            : undefined;
           return (
             <button key={i}
               onMouseEnter={e=>e.currentTarget.style.background=C.ivory}
@@ -7985,7 +8034,7 @@ function ResQuickActions({ res, onAssignGuide }) {
               style={{
                 display:"flex", alignItems:"center", gap:10,
                 width:"100%", padding:"10px 12px",
-                borderRadius:8, marginBottom: i < RES_ACTIONS.length-1 ? 6 : 0,
+                borderRadius:8, marginBottom: i < visibleActions.length-1 ? 6 : 0,
                 border: a.primary ? "none" : a.green ? `1px solid ${C.green}44` : `1px solid ${C.border}`,
                 background: a.primary ? C.navy : a.green ? C.greenBg : C.white,
                 cursor:"pointer",
@@ -8000,6 +8049,19 @@ function ResQuickActions({ res, onAssignGuide }) {
           );
         })}
       </div>
+      {showPickup && <PickupEditModal res={res} onClose={()=>setShowPickup(false)}/>}
+      {showReminder && (
+        <NewReminderModal
+          resId={res?.id} customerId={res?.customerId} customerName={res?.customer||res?.name}
+          onClose={()=>setShowReminder(false)}
+        />
+      )}
+      {showPayment && (
+        <NewPaymentModal
+          resId={res?.id} customerId={res?.customerId} customerName={res?.customer||res?.name}
+          onClose={()=>setShowPayment(false)}
+        />
+      )}
     </RCard>
   );
 }
@@ -16402,12 +16464,12 @@ function EditGuestModal({ onClose, guest }) {
   );
 }
 
-function NewReminderModal({ onClose }) {
+function NewReminderModal({ onClose, resId, customerId, customerName }) {
   const [title,setTitle]=useState("");
-  const [type,setType]=useState("Ödeme Takibi");
+  const [type,setType]=useState(resId ? "Tur Hatırlatma" : "Ödeme Takibi");
   const [priority,setPriority]=useState("Orta");
   const [dueDate,setDueDate]=useState("");
-  const [custId,setCustId]=useState("");
+  const [custId,setCustId]=useState(customerId || "");
   const [assignee,setAssignee]=useState(DB.staff[0]?.id||"STAFF-001");
   const [notes,setNotes]=useState("");
   const [errs,setErrs]=useState({});
@@ -16417,7 +16479,7 @@ function NewReminderModal({ onClose }) {
     const e = validate({ title:{ required:"Başlık zorunludur" } }, { title });
     setErrs(e); if (Object.keys(e).length) return;
     const { error:re } = await mutRem("create", {
-      title, customerId:custId||null, leadId:null, resId:null,
+      title, customerId:custId||null, leadId:null, resId:resId||null,
       type, priority, dueDate:dueDate||"—", assigneeId:assignee, notes,
     });
     if (re) { showToast("Hatırlatma oluşturulamadı ✗"); return; }
@@ -16447,8 +16509,17 @@ function NewReminderModal({ onClose }) {
         </FRow>
       </FGrid>
       <FRow label="İlgili Müşteri">
-        <FSelect value={custId} onChange={setCustId}
-          options={[["","— Seçin —"], ...DB.customers.map(c=>[c.id,c.name])]}/>
+        {customerId ? (
+          <div style={{
+            width:"100%", boxSizing:"border-box", padding:"9px 10px", borderRadius:7,
+            border:`1.5px solid ${C.border}`, fontSize:13.5, color:C.text, background:C.ivory,
+          }}>
+            {customerName || DB.customers.find(c=>c.id===customerId)?.name || customerId}
+          </div>
+        ) : (
+          <FSelect value={custId} onChange={setCustId}
+            options={[["","— Seçin —"], ...DB.customers.map(c=>[c.id,c.name])]}/>
+        )}
       </FRow>
       <FRow label="Notlar">
         <FTextArea value={notes} onChange={setNotes} placeholder="Ek notlar…"/>
@@ -16457,10 +16528,10 @@ function NewReminderModal({ onClose }) {
   );
 }
 
-function NewPaymentModal({ onClose }) {
+function NewPaymentModal({ onClose, resId: presetResId, customerId: presetCustomerId, customerName }) {
   const { isMobile } = useBreakpoint();
-  const [custId,setCustId]=useState(DB.customers[0]?.id||"");
-  const [resId,setResId]=useState("");
+  const [custId,setCustId]=useState(presetCustomerId || DB.customers[0]?.id||"");
+  const [resId,setResId]=useState(presetResId || "");
   const [amount,setAmount]=useState("");
   const [currency,setCurrency]=useState("EUR");
   const [payType,setPayType]=useState("Kapora");
@@ -16485,12 +16556,30 @@ function NewPaymentModal({ onClose }) {
     <FormShell isMobile={isMobile} title="Ödeme Kaydı Ekle" onClose={onClose} onSubmit={handleSubmit}
       submitLabel="Ödemeyi Kaydet" submitting={payMut}>
       <FRow label="Müşteri">
-        <FSelect value={custId} onChange={v=>{setCustId(v);setResId("");}}
-          options={DB.customers.map(c=>[c.id,c.name])}/>
+        {presetCustomerId ? (
+          <div style={{
+            width:"100%", boxSizing:"border-box", padding:"9px 10px", borderRadius:7,
+            border:`1.5px solid ${C.border}`, fontSize:13.5, color:C.text, background:C.ivory,
+          }}>
+            {customerName || DB.customers.find(c=>c.id===presetCustomerId)?.name || presetCustomerId}
+          </div>
+        ) : (
+          <FSelect value={custId} onChange={v=>{setCustId(v);setResId("");}}
+            options={DB.customers.map(c=>[c.id,c.name])}/>
+        )}
       </FRow>
       <FRow label="Rezervasyon">
-        <FSelect value={resId} onChange={setResId}
-          options={[["","— Rezervasyon Seçin —"],...custRes.map(r=>[r.id,`${r.tour} (${r.date})`])]}/>
+        {presetResId ? (
+          <div style={{
+            width:"100%", boxSizing:"border-box", padding:"9px 10px", borderRadius:7,
+            border:`1.5px solid ${C.border}`, fontSize:13.5, color:C.text, background:C.ivory,
+          }}>
+            {presetResId}
+          </div>
+        ) : (
+          <FSelect value={resId} onChange={setResId}
+            options={[["","— Rezervasyon Seçin —"],...custRes.map(r=>[r.id,`${r.tour} (${r.date})`])]}/>
+        )}
       </FRow>
       <FGrid>
         <FRow label="Tutar" required error={errs.amount}>
@@ -16958,7 +17047,7 @@ const SupabaseReservationRepo = {
     return (data||[]).map(mapResFromDB);
   },
   async create(d){const sb=getSB();if(!sb)return ReservationRepository.create(d);let rn=`R-${new Date().getFullYear()}-${String(Date.now()).slice(-4)}`;try{const{data:ref}=await sb.rpc('next_ref_number',{prefix:'R',table_name:'reservations',number_col:'reservation_number'});if(ref)rn=ref;}catch(_){}const row={reservation_number:rn,lead_id:d.leadId||null,quote_id:d.quoteId||null,customer_id:d.customerId,tour_id:d.tourId||null,status:'pending_confirmation',payment_status:'pending',destination:d.tour||d.destination||'',check_in:d.checkIn||d.date||null,check_out:d.checkOut||d.date||null,check_in_time:d.time||null,pax_adult:parseInt(d.pax||d.paxAdult)||1,pax_child:parseInt(d.paxChild)||0,guide_name:d.guide||null,guide_id:d.guideId||null,vehicle_info:d.vehicle||null,driver_name:d.driver||null,pickup_location:d.pickup||null,pickup_time:d.pickupTime||null,tour_language:d.tourLanguage||null,total_amount:parseFloat(d.total)||0,currency:d.currency||'EUR',deposit_amount:parseFloat(d.deposit)||0,notes:d.opNotes||d.notes||null,assigned_to:d.assigneeId||null};const{data:c,error}=await sb.from('reservations').insert(row).select().single();if(error)throw new Error(error.message);await _sbLog('reservation',c.id,'created',`Rezervasyon: ${c.reservation_number}`);return mapResFromDB(c);},
-  async update(id,p){const sb=getSB();if(!sb)return ReservationRepository.update(id,p);const fm={opStatus:'status',payStatus:'payment_status',guide:'guide_name',guideId:'guide_id',vehicle:'vehicle_info',driver:'driver_name',pickup:'pickup_location',opNotes:'notes',total:'total_amount',tourLanguage:'tour_language'};const row={};for(const[k,v]of Object.entries(p)){const col=fm[k]||k;if(col==='status')row[col]=_r2DB(v);else if(col==='payment_status')row[col]=_p2DB(v);else row[col]=v;}if(p.opStatus==='Tamamlandı')row.completed_at=new Date().toISOString();if(p.opStatus==='İptal')row.cancelled_at=new Date().toISOString();const{data:u,error}=await sb.from('reservations').update(row).eq('id',id).select().single();if(error)throw new Error(error.message);await _sbLog('reservation',id,'updated',`Güncellendi: ${Object.keys(p).join(', ')}`);return mapResFromDB(u);},
+  async update(id,p){const sb=getSB();if(!sb)return ReservationRepository.update(id,p);const fm={opStatus:'status',payStatus:'payment_status',guide:'guide_name',guideId:'guide_id',vehicle:'vehicle_info',driver:'driver_name',pickup:'pickup_location',pickupTime:'pickup_time',opNotes:'notes',total:'total_amount',tourLanguage:'tour_language'};const row={};for(const[k,v]of Object.entries(p)){const col=fm[k]||k;if(col==='status')row[col]=_r2DB(v);else if(col==='payment_status')row[col]=_p2DB(v);else row[col]=v;}if(p.opStatus==='Tamamlandı')row.completed_at=new Date().toISOString();if(p.opStatus==='İptal')row.cancelled_at=new Date().toISOString();const{data:u,error}=await sb.from('reservations').update(row).eq('id',id).select().single();if(error)throw new Error(error.message);await _sbLog('reservation',id,'updated',`Güncellendi: ${Object.keys(p).join(', ')}`);return mapResFromDB(u);},
   async delete(id){const sb=getSB();if(!sb)return ReservationRepository.delete(id);const{error}=await sb.from('reservations').update({status:'cancelled',cancelled_at:new Date().toISOString()}).eq('id',id);if(error)throw new Error(error.message);return true;},
 };
 

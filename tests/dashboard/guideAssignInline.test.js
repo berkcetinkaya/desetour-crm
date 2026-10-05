@@ -157,7 +157,10 @@ test('GuideAssignCell shows a small loading indicator and disables further picks
 test('6. the "Rehber Ata" quick action now has a real onClick — previously undefined, now wired to onAssignGuide', () => {
   const body = extractFunctionBody('ResQuickActions', '\nfunction ReservationDetailPage');
   assert.match(body, /const isGuideAssign = a\.label === "Rehber Ata";/);
-  assert.match(body, /const onClick = isGuideAssign \? onAssignGuide : isOdeme \? handleOdemeEkle : isTamamlandi \? handleTamamlandi : undefined;/);
+  // The ternary has since grown branches for "Pickup Bilgisi Ekle" and
+  // "Hatırlatma Oluştur" (both now wired to their own modals too), but
+  // "Rehber Ata" still resolves first, straight to onAssignGuide.
+  assert.match(body, /const onClick = isGuideAssign \? onAssignGuide\s*\n\s*: isPickup \? \(\) => setShowPickup\(true\)\s*\n\s*: isOdeme \? \(\) => setShowPayment\(true\)\s*\n\s*: isHatirlatma \? \(\) => setShowReminder\(true\)\s*\n\s*: isTamamlandi \? handleTamamlandi\s*\n\s*: undefined;/);
 });
 
 test('6. the quick-action label reflects existing assignment state, matching Operasyon Bilgileri\'s own "Ata"/"Değiştir" wording pattern', () => {
