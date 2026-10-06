@@ -21,10 +21,14 @@
 name: Exchange Rates Scheduled Fetch
 
 on:
-  schedule:
-    # Once daily, after the ECB's own ~16:00 CET publication time —
-    # 17:00 UTC comfortably covers both standard and summer time.
-    - cron: '0 17 * * *'
+  # Automatic daily schedule disabled — no active CRM module depends on
+  # live exchange rates (Civitatis settlement and Reports both use the
+  # fixed _CIVITATIS_FIXED_EUR_TO_TRY_RATE=55 operational rate instead;
+  # see DeseTourDashboard.jsx). Running this daily against an unset
+  # FX_CRON_URL/FX_SCHEDULER_SECRET only produced a recurring failure.
+  # Left manually runnable via workflow_dispatch for a possible future
+  # live-rate phase — re-add a `schedule:` trigger here if one is ever
+  # activated.
   workflow_dispatch: {}
 
 permissions: {}
