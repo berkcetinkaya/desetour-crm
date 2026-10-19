@@ -501,6 +501,10 @@ const DB = {
   guides: [],
   guidePayments: [],
   reviews: [],
+  // Acenteler Phase 1 — same convention as guides/reviews above: starts
+  // empty, only ever contains records created through the app's own
+  // "Yeni Acente" form during a mock-mode session. No demo agencies.
+  agencies: [],
 
   reservations: [
     {
@@ -1347,6 +1351,49 @@ const GuideRepository = {
   },
 };
 
+// Acenteler Phase 1 — mock-mode agency directory. No research/discovery,
+// no email sending: this repository only ever does what Phase 1 needs
+// (getAll/getById/create/update), same restraint as the real schema's
+// CHECK constraint on status.
+const AgencyRepository = {
+  getAll(filters = {}) {
+    let items = DB.agencies;
+    if (filters.status && filters.status !== "Tümü") items = items.filter(a => a.status === filters.status);
+    if (filters.country && filters.country !== "Tümü") items = items.filter(a => a.country === filters.country);
+    if (filters.search) {
+      const q = filters.search.toLowerCase();
+      items = items.filter(a =>
+        (a.name||'').toLowerCase().includes(q) ||
+        (a.contactPerson||'').toLowerCase().includes(q) ||
+        (a.email||'').toLowerCase().includes(q) ||
+        (a.city||'').toLowerCase().includes(q)
+      );
+    }
+    return items;
+  },
+  getById(id) { return DB.agencies.find(a => a.id === id) || null; },
+  create(data) {
+    const id = 'AGN-' + String(DB.agencies.length + 1).padStart(3, '0');
+    const record = {
+      id, status:'Aday', languages:[],
+      createdAt:new Date().toISOString().split('T')[0],
+      ...data,
+    };
+    DB.agencies.push(record);
+    ActivityRepository.create({ entityType:'agency', entityId:id, action:'created', description:`Yeni acente: ${record.name}` });
+    Store.notify();
+    return record;
+  },
+  update(id, patch) {
+    const idx = DB.agencies.findIndex(a => a.id === id);
+    if (idx < 0) return null;
+    Object.assign(DB.agencies[idx], patch);
+    ActivityRepository.create({ entityType:'agency', entityId:id, action:'updated', description:`Acente güncellendi: ${Object.keys(patch).join(', ')}` });
+    Store.notify();
+    return DB.agencies[idx];
+  },
+};
+
 const GuidePaymentRepository = {
   getAll(filters = {}) {
     let items = DB.guidePayments;
@@ -1870,6 +1917,7 @@ const NAV_BOT = [
   { id:"payments",   label:"Ödemeler",      badge:null, icon:"M2 9a2 2 0 012-2h16a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V9zM2 13h20" },
   { id:"messages",   label:"Mesajlar",      badge:null, icon:"M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" },
   { id:"reminders",  label:"Hatırlatmalar", badge:null, icon:"M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0" },
+  { id:"agencies",   label:"Acenteler",     badge:null, icon:"M3 21h18 M5 21V7l8-4v18 M19 21V11l-6-4" },
   { id:"reports",    label:"Raporlar",      badge:null, icon:"M18 20V10M12 20V4M6 20v-6" },
 ];
 const NAV_SETTINGS = [
@@ -12517,6 +12565,354 @@ function formatGuideRatingLabel(avgRating, reviewCount) {
 }
 // TESTABLE:formatGuideRatingLabel:end
 
+// ════════════════════════════════════════════════════════════════════════
+// ACENTELER — Phase 1 Foundation (B2B agency acquisition directory)
+// ────────────────────────────────────────────────────────────────────────
+// Deliberately minimal: list + detail + status tracking + internal notes.
+// No research/discovery, no email drafting, no sending — those are later
+// phases (see the architecture audit). Follows the exact same page/modal
+// patterns GuidesPage/GuideDetailPage/NewGuestModal already use elsewhere
+// in this file, never a new design language.
+// ════════════════════════════════════════════════════════════════════════
+
+const AGENCY_STATUS_OPTIONS = ["Aday","İletişime Geçildi","Görüşülüyor","Partner","Uygun Değil"];
+const AGENCY_STATUS_CFG = {
+  "Aday":              { color:C.textMuted, bg:C.ivoryDark },
+  "İletişime Geçildi": { color:C.amber,     bg:C.amberBg },
+  "Görüşülüyor":       { color:C.gold,      bg:C.goldPale },
+  "Partner":           { color:C.green,     bg:C.greenBg },
+  "Uygun Değil":       { color:C.red,       bg:C.redBg },
+};
+
+function AcentelerPage({ onSelect }) {
+  const { isMobile } = useBreakpoint();
+  const { data:repoAgencies, loading, error, reload } = useRepo("agency", "getAll");
+  const [showAdd, setShowAdd]           = useState(false);
+  const [search, setSearch]             = useState("");
+  const [statusFilter, setStatusFilter] = useState("Tümü");
+  const [countryFilter, setCountryFilter] = useState("Tümü");
+
+  const agencies = repoAgencies || [];
+
+  const availableCountries = useMemo(() => {
+    const set = new Set(agencies.map(a=>a.country).filter(Boolean));
+    return [...set].sort((a,b)=>a.localeCompare(b,'tr'));
+  }, [agencies]);
+
+  const filtered = agencies.filter(a => {
+    const stOk = statusFilter === "Tümü" || a.status === statusFilter;
+    const ctOk = countryFilter === "Tümü" || a.country === countryFilter;
+    const srchOk = !search ||
+      (a.name||'').toLowerCase().includes(search.toLowerCase()) ||
+      (a.contactPerson||'').toLowerCase().includes(search.toLowerCase()) ||
+      (a.email||'').toLowerCase().includes(search.toLowerCase()) ||
+      (a.city||'').toLowerCase().includes(search.toLowerCase());
+    return stOk && ctOk && srchOk;
+  });
+
+  const totalAgencies = agencies.length;
+  const partnerCount  = agencies.filter(a=>a.status==="Partner").length;
+
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:20 }}>
+      {showAdd && <NewAgencyModal onClose={()=>{ setShowAdd(false); reload&&reload(); }}/>}
+
+      <div style={{display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", gap:14}}>
+        <div>
+          <h1 style={{margin:0, fontSize:24, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif", marginBottom:5}}>Acenteler</h1>
+          <p style={{margin:0, fontSize:13.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif"}}>
+            DeseTour için uygun olabilecek turizm acenteleri — iletişim durumu ve notlar.
+          </p>
+        </div>
+        <div className="page-header-actions" style={{display:"flex", alignItems:"center", gap:10, flexShrink:0}}>
+          <div style={{position:"relative"}}>
+            <span style={{position:"absolute", left:10, top:"50%", transform:"translateY(-50%)", color:C.textFaint, pointerEvents:"none"}}>
+              <URIc d="M21 21l-4.35-4.35 M17 11A6 6 0 105 11a6 6 0 0012 0z" size={14} sw={1.8}/>
+            </span>
+            <input type="text" value={search} onChange={e=>setSearch(e.target.value)}
+              placeholder="Acente, kişi, e-posta veya şehir ara…"
+              style={{
+                paddingLeft:32, paddingRight:12, paddingTop:8, paddingBottom:8,
+                border:`1px solid ${C.border}`, borderRadius:8, background:C.ivory,
+                fontSize:13, color:C.text, fontFamily:"'DM Sans',sans-serif", outline:"none",
+                width:"min(260px,45vw)", transition:"border-color .15s, box-shadow .15s",
+              }}
+              onFocus={e=>{ e.target.style.borderColor=C.gold; e.target.style.boxShadow=`0 0 0 3px ${C.gold}20`; }}
+              onBlur={e=>{ e.target.style.borderColor=C.border; e.target.style.boxShadow="none"; }}
+            />
+          </div>
+          <button style={{
+            display:"flex", alignItems:"center", gap:7, padding:"9px 16px", borderRadius:8,
+            border:"none", background:C.navy, cursor:"pointer", color:C.white,
+            fontFamily:"'DM Sans',sans-serif", fontSize:13, fontWeight:500,
+          }}
+            onMouseEnter={e=>e.currentTarget.style.background=C.navyHover}
+            onMouseLeave={e=>e.currentTarget.style.background=C.navy}
+            onClick={()=>setShowAdd(true)}
+          >
+            <URIc d="M12 5v14M5 12h14" size={14} sw={2.5} color="#fff"/>
+            Yeni Acente
+          </button>
+        </div>
+      </div>
+
+      <div className="rsp-stat-grid" style={{display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:14}}>
+        {[
+          { label:"Toplam Acente", val:totalAgencies, icon:"M3 21h18 M5 21V7l8-4v18 M19 21V11l-6-4", color:C.text,  bg:C.ivoryDark },
+          { label:"Partner",       val:partnerCount,  icon:"M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11", color:C.green, bg:C.greenBg },
+        ].map((k,i)=>(
+          <div key={i} style={{
+            background:C.white, border:`1px solid ${C.border}`, borderRadius:12,
+            padding:"18px 20px", display:"flex", alignItems:"center", gap:14,
+          }}>
+            <div style={{width:40, height:40, borderRadius:10, flexShrink:0, background:k.bg, display:"flex", alignItems:"center", justifyContent:"center"}}>
+              <URIc d={k.icon} size={18} sw={1.6} color={k.color}/>
+            </div>
+            <div>
+              <div style={{fontSize:24, fontWeight:700, color:k.color, fontFamily:"'Playfair Display',serif", lineHeight:1, marginBottom:3}}>{k.val}</div>
+              <div style={{fontSize:12, color:C.textMuted, fontFamily:"'DM Sans',sans-serif"}}>{k.label}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{background:C.white, border:`1px solid ${C.border}`, borderRadius:12, overflow:"hidden"}}>
+        <div style={{display:"flex", alignItems:"center", gap:10, borderBottom:`1px solid ${C.borderLight}`, padding:"12px 20px", flexWrap:"wrap"}}>
+          <SSelect value={statusFilter} onChange={setStatusFilter} options={["Tümü", ...AGENCY_STATUS_OPTIONS]}/>
+          <SSelect value={countryFilter} onChange={setCountryFilter} options={["Tümü", ...availableCountries]}/>
+          <div style={{marginLeft:"auto", fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>{filtered.length} acente</div>
+        </div>
+
+        {loading ? (
+          <LoadingState label="Acenteler yükleniyor…"/>
+        ) : error ? (
+          <div style={{padding:"40px 24px", textAlign:"center", color:C.red, fontFamily:"'DM Sans',sans-serif", fontSize:13}}>Acenteler yüklenemedi: {error}</div>
+        ) : filtered.length===0 ? (
+          <div style={{padding:"60px 40px", textAlign:"center"}}>
+            <div style={{fontSize:36, opacity:.2, marginBottom:12}}>🤝</div>
+            <div style={{fontSize:15, fontWeight:600, color:C.text, fontFamily:"'Playfair Display',serif", marginBottom:6}}>Acente bulunamadı.</div>
+          </div>
+        ) : (
+          <>
+          <table className="rsp-table" style={{width:"100%", borderCollapse:"collapse"}}>
+            <thead>
+              <tr style={{borderBottom:`1px solid ${C.border}`, background:C.ivory}}>
+                {["Acente","Ülke / Şehir","İletişim","Durum","Son Temas"].map((h,i)=>(
+                  <th key={i} style={{
+                    padding: i===0?"11px 16px 11px 22px":"11px 12px",
+                    textAlign:"left", fontSize:10.5, fontWeight:600, color:C.textFaint,
+                    fontFamily:"'DM Sans',sans-serif", textTransform:"uppercase", letterSpacing:"0.07em", whiteSpace:"nowrap",
+                  }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((a,i)=>{
+                const isLast = i===filtered.length-1;
+                return (
+                  <tr key={a.id} className="dt-row" onClick={()=>onSelect?onSelect(a.id):(NAV_REF.fn&&NAV_REF.fn('/agencies/'+a.id))}
+                    style={{background:C.white, cursor:"pointer"}}>
+                    <td style={{padding:"14px 16px 14px 22px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle"}}>
+                      <div style={{fontSize:13.5, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif"}}>{a.name}</div>
+                      {a.website && <div style={{fontSize:11.5, color:C.textFaint, fontFamily:"'DM Mono',monospace", marginTop:2}}>{a.website}</div>}
+                    </td>
+                    <td style={{padding:"14px 12px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle"}}>
+                      <span style={{fontSize:13, color:C.textMid, fontFamily:"'DM Sans',sans-serif"}}>
+                        {[a.country, a.city].filter(Boolean).join(" / ") || "—"}
+                      </span>
+                    </td>
+                    <td style={{padding:"14px 12px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle"}}>
+                      <div style={{fontSize:13, color:C.textMid, fontFamily:"'DM Sans',sans-serif"}}>{a.contactPerson || "—"}</div>
+                      <div style={{fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:2}}>{a.email || "—"}</div>
+                    </td>
+                    <td style={{padding:"14px 12px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle"}}>
+                      <RBadge label={a.status} map={AGENCY_STATUS_CFG} small/>
+                    </td>
+                    <td style={{padding:"14px 12px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle"}}>
+                      <span style={{fontSize:12.5, color:C.textMid, fontFamily:"'DM Sans',sans-serif"}}>
+                        {a.lastContactAt ? new Date(a.lastContactAt).toLocaleDateString('tr-TR',{day:'2-digit',month:'short',year:'numeric'}) : "—"}
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          <div className="rsp-cards"><MobileCardList items={filtered} renderCard={(a) => {
+            const scm = AGENCY_STATUS_CFG[a.status]||{color:C.textMuted,bg:C.ivoryDark};
+            return (
+              <MobileCard key={a.id} onClick={()=>onSelect?onSelect(a.id):(NAV_REF.fn&&NAV_REF.fn('/agencies/'+a.id))}>
+                <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
+                  <div style={{fontSize:14,fontWeight:600,color:C.text,fontFamily:"'DM Sans',sans-serif"}}>{a.name}</div>
+                  <span style={{fontSize:11,padding:"2px 7px",borderRadius:99,color:scm.color,background:scm.bg,fontFamily:"'DM Sans',sans-serif",fontWeight:500,flexShrink:0}}>{a.status}</span>
+                </div>
+                <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+                  <span style={{fontSize:12,color:C.textMuted,fontFamily:"'DM Sans',sans-serif"}}>{[a.country,a.city].filter(Boolean).join(' / ')||'—'}</span>
+                  <span style={{fontSize:12,color:C.textMuted,fontFamily:"'DM Sans',sans-serif"}}>{a.contactPerson||'—'}</span>
+                </div>
+              </MobileCard>
+            );
+          }}/></div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Fields match the architecture audit's minimal agency-field list exactly.
+// Only name is required — the brief explicitly says "do not require every
+// field." languages uses the SAME FMultiSelect widget/LANGUAGES dataset as
+// guides, but stores plain display names (agencies.languages is a TEXT[],
+// not a relational child table — see the migration file header).
+function NewAgencyModal({ onClose }) {
+  const { isMobile } = useBreakpoint();
+  const [name,setName]=useState("");
+  const [country,setCountry]=useState("");
+  const [city,setCity]=useState("");
+  const [website,setWebsite]=useState("");
+  const [contactPerson,setContactPerson]=useState("");
+  const [email,setEmail]=useState("");
+  const [phone,setPhone]=useState("");
+  const [languages,setLanguages]=useState([]);
+  const [fitNote,setFitNote]=useState("");
+  const [internalNotes,setInternalNotes]=useState("");
+  const [errs,setErrs]=useState({});
+  const { mutate:mutAgency, mutating } = useRepoMutation("agency");
+
+  async function handleSubmit() {
+    const e = validate({name:{required:"Acente adı zorunludur"},email:{email:true}},{name,email});
+    setErrs(e); if (Object.keys(e).length) return;
+    const { error } = await mutAgency("create", {
+      name, country:country||"", city:city||"", website:website||"",
+      contactPerson:contactPerson||"", email:email||"", phone:phone||"",
+      languages: languages.map(l=>l.name), fitNote:fitNote||"", internalNotes:internalNotes||"",
+    });
+    if (error) {
+      console.error('[NewAgencyModal] agency create failed:', error);
+      showToast("Acente kaydedilemedi: " + error);
+      return;
+    }
+    showToast("Acente oluşturuldu ✓"); onClose();
+  }
+  return (
+    <FormShell isMobile={isMobile} title="Yeni Acente Ekle" onClose={onClose} onSubmit={handleSubmit}
+      submitLabel="Acenteyi Kaydet" submitting={mutating}>
+      <FRow label="Acente Adı" required error={errs.name}><FText value={name} onChange={setName} placeholder="Örn. Blue Horizon Travel"/></FRow>
+      <FGrid>
+        <FRow label="Ülke"><FSelect value={country} onChange={setCountry}
+          options={[["","— Seçin —"], ...COUNTRY_OPTIONS.map(c=>[c.name,`${c.flag} ${c.name}`])]}/></FRow>
+        <FRow label="Şehir"><FText value={city} onChange={setCity} placeholder="Örn. Barcelona"/></FRow>
+        <FRow label="Website"><FText value={website} onChange={setWebsite} placeholder="https://…"/></FRow>
+        <FRow label="İletişim Kişisi"><FText value={contactPerson} onChange={setContactPerson} placeholder="Ad Soyad"/></FRow>
+        <FRow label="E-posta" error={errs.email}><FText value={email} onChange={setEmail} placeholder="email@example.com" type="email"/></FRow>
+        <FRow label="Telefon"><FText value={phone} onChange={setPhone} placeholder="+34 600 000 000" mono/></FRow>
+      </FGrid>
+      <FRow label="Diller"><FMultiSelect value={languages} onChange={setLanguages} options={LANGUAGES} placeholder="Acentenin çalıştığı diller…"/></FRow>
+      <FRow label="Neden Uygun Olabilir"><FTextArea value={fitNote} onChange={setFitNote} placeholder="Bu acente neden DeseTour için uygun bir partner olabilir?"/></FRow>
+      <FRow label="İç Not"><FTextArea value={internalNotes} onChange={setInternalNotes} placeholder="Ek notlar…"/></FRow>
+    </FormShell>
+  );
+}
+
+// Keep it simple per the product brief: only status and internal notes are
+// editable in Phase 1 (both save immediately through the existing agency
+// update mutation). Basic info/fit fields are set at creation and shown
+// read-only here — no separate "Edit Agency" form in this phase, no email
+// history UI, no Prepare/Send Email actions. Those belong to later phases.
+function AcenteDetailPage({ agencyId, onBack }) {
+  const { data:agency, loading, error } = useRepo("agency", "getById", agencyId);
+  const { mutate:mutAgency, mutating } = useRepoMutation("agency");
+  const [notesDraft, setNotesDraft] = useState("");
+  const [notesDirty, setNotesDirty] = useState(false);
+
+  useEffect(() => {
+    if (agency && !notesDirty) setNotesDraft(agency.internalNotes || "");
+  }, [agency, notesDirty]);
+
+  if (loading) return <LoadingState label="Acente yükleniyor…"/>;
+  if (error)   return <ErrorState message={error} onRetry={()=>{}}/>;
+  if (!agency) return <NotFoundCard entityType="Acente" entityId={agencyId} onBack={onBack}/>;
+
+  async function handleStatusChange(newStatus) {
+    const { error:e } = await mutAgency("update", agency.id, { status:newStatus });
+    if (e) { showToast("Durum güncellenemedi: " + e); return; }
+    showToast("Durum güncellendi ✓");
+  }
+
+  async function handleSaveNotes() {
+    const { error:e } = await mutAgency("update", agency.id, { internalNotes:notesDraft });
+    if (e) { showToast("Not kaydedilemedi: " + e); return; }
+    setNotesDirty(false);
+    showToast("Not kaydedildi ✓");
+  }
+
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:20 }}>
+      <div style={{display:"flex", alignItems:"center", gap:14, flexWrap:"wrap"}}>
+        <button onClick={onBack} style={{
+          display:"flex", alignItems:"center", gap:6,
+          background:C.ivory, border:`1px solid ${C.border}`,
+          borderRadius:7, padding:"6px 12px", cursor:"pointer",
+          color:C.textMid, fontFamily:"'DM Sans',sans-serif", fontSize:12.5,
+        }}>
+          <URIc d="M19 12H5M12 19l-7-7 7-7" size={14} sw={1.8}/>
+          Acenteler
+        </button>
+        <h1 style={{margin:0, fontSize:20, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif"}}>{agency.name}</h1>
+        <RBadge label={agency.status} map={AGENCY_STATUS_CFG}/>
+      </div>
+
+      <RCard>
+        <RCardHead title="Acente Bilgileri" accent/>
+        <RInfoRow label="Acente Adı" value={agency.name} bold/>
+        <RInfoRow label="Ülke" value={agency.country || "—"}/>
+        <RInfoRow label="Şehir" value={agency.city || "—"}/>
+        <RInfoRow label="Website" value={agency.website || "—"}/>
+        <RInfoRow label="İletişim Kişisi" value={agency.contactPerson || "—"}/>
+        <RInfoRow label="E-posta" value={agency.email || "—"} mono/>
+        <RInfoRow label="Telefon" value={agency.phone || "—"} mono/>
+        <RInfoRow label="Diller" value={(agency.languages||[]).join(", ") || "—"}/>
+      </RCard>
+
+      <RCard>
+        <RCardHead title="Uygunluk" accent/>
+        <div style={{padding:"16px 20px", fontSize:13.5, color:C.textMid, fontFamily:"'DM Sans',sans-serif", lineHeight:1.6}}>
+          {agency.fitNote || <span style={{color:C.textFaint}}>Henüz bir uygunluk notu girilmedi.</span>}
+        </div>
+      </RCard>
+
+      <RCard>
+        <RCardHead title="Durum" accent/>
+        <div style={{padding:"16px 20px"}}>
+          <SSelect value={agency.status} onChange={handleStatusChange} options={AGENCY_STATUS_OPTIONS}/>
+        </div>
+      </RCard>
+
+      <RCard>
+        <RCardHead title="İç Notlar" accent/>
+        <div style={{padding:"16px 20px", display:"flex", flexDirection:"column", gap:10}}>
+          <FTextArea value={notesDraft} onChange={v=>{ setNotesDraft(v); setNotesDirty(true); }} placeholder="Bu acente hakkında iç notlar…"/>
+          <div>
+            <button onClick={handleSaveNotes} disabled={!notesDirty || mutating} style={{
+              padding:"8px 16px", borderRadius:7, border:"none",
+              background: (!notesDirty||mutating) ? C.ivoryDark : C.navy,
+              color: (!notesDirty||mutating) ? C.textFaint : C.white,
+              cursor: (!notesDirty||mutating) ? "not-allowed" : "pointer",
+              fontFamily:"'DM Sans',sans-serif", fontSize:13, fontWeight:500,
+            }}>{mutating ? "Kaydediliyor…" : "Notu Kaydet"}</button>
+          </div>
+        </div>
+      </RCard>
+
+      <RCard>
+        <RCardHead title="Son Temas" accent/>
+        <RInfoRow label="Son Temas Tarihi" value={agency.lastContactAt ? new Date(agency.lastContactAt).toLocaleDateString('tr-TR',{day:'2-digit',month:'short',year:'numeric'}) : "—"}/>
+      </RCard>
+    </div>
+  );
+}
+
 function GuidesPage({ onSelect }) {
   const { isMobile } = useBreakpoint();
   const { data:repoGuides, loading, error, reload }   = useRepo("guide", "getAll");
@@ -17114,6 +17510,75 @@ const SupabaseGuideRepo = {
   async delete(id){const sb=getSB();if(!sb)return GuideRepository.delete(id);const{error}=await sb.from('guides').update({status:'inactive'}).eq('id',id);if(error)throw new Error(error.message);return true;},
 };
 
+// Acenteler Phase 1 — mapResFromDB-style plain field mapping, no joins
+// (languages is a plain TEXT[] column, not a relational child table —
+// see the migration file header for why guides' guide_languages pattern
+// doesn't apply here).
+function mapAgencyFromDB(a) {
+  if (!a) return null;
+  return {
+    id:a.id, name:a.name||'', country:a.country||'', city:a.city||'',
+    website:a.website||'', contactPerson:a.contact_person||'',
+    email:a.email||'', phone:a.phone||'',
+    languages:a.languages||[], fitNote:a.fit_note||'',
+    status:a.status||'Aday', lastContactAt:a.last_contact_at||null,
+    internalNotes:a.internal_notes||'', createdBy:a.created_by||null,
+    createdAt:a.created_at?a.created_at.split('T')[0]:'',
+    updatedAt:a.updated_at||null, _fromDB:true,
+  };
+}
+function mapAgencyToDB(d) {
+  const row = {};
+  if(d.name!==undefined)          row.name = d.name;
+  if(d.country!==undefined)       row.country = d.country||null;
+  if(d.city!==undefined)          row.city = d.city||null;
+  if(d.website!==undefined)       row.website = d.website||null;
+  if(d.contactPerson!==undefined) row.contact_person = d.contactPerson||null;
+  if(d.email!==undefined)         row.email = d.email||null;
+  if(d.phone!==undefined)         row.phone = d.phone||null;
+  if(d.languages!==undefined)     row.languages = d.languages||[];
+  if(d.fitNote!==undefined)       row.fit_note = d.fitNote||null;
+  if(d.status!==undefined)        row.status = d.status;
+  if(d.internalNotes!==undefined) row.internal_notes = d.internalNotes||null;
+  // last_contact_at is deliberately NOT mapped here in Phase 1 — see the
+  // migration file header: nothing in this phase ever sets it.
+  return row;
+}
+
+const SupabaseAgencyRepo = {
+  async getAll(f={}){
+    const sb=getSB(); if(!sb) return AgencyRepository.getAll(f);
+    let q=sb.from('agencies').select('*').order('name',{ascending:true});
+    if(f.status && f.status!=="Tümü") q=q.eq('status',f.status);
+    if(f.country && f.country!=="Tümü") q=q.eq('country',f.country);
+    if(f.search) q=q.or(`name.ilike.%${f.search}%,contact_person.ilike.%${f.search}%,email.ilike.%${f.search}%,city.ilike.%${f.search}%`);
+    const{data,error}=await q; if(error) throw new Error(error.message);
+    return (data||[]).map(mapAgencyFromDB);
+  },
+  async getById(id){
+    const sb=getSB(); if(!sb) return AgencyRepository.getById(id);
+    const{data,error}=await sb.from('agencies').select('*').eq('id',id).maybeSingle();
+    if(error) throw new Error(error.message);
+    return mapAgencyFromDB(data);
+  },
+  async create(d){
+    const sb=getSB(); if(!sb) return AgencyRepository.create(d);
+    const row=mapAgencyToDB(d); if(!row.name) row.name=d.name||'Bilinmiyor'; if(!row.status) row.status='Aday';
+    const{data:a,error}=await sb.from('agencies').insert(row).select().single();
+    if(error) throw new Error(error.message);
+    await _sbLog('agency', a.id, 'created', `Yeni acente: ${a.name}`);
+    return mapAgencyFromDB(a);
+  },
+  async update(id,p){
+    const sb=getSB(); if(!sb) return AgencyRepository.update(id,p);
+    const row=mapAgencyToDB(p);
+    const{data:a,error}=await sb.from('agencies').update(row).eq('id',id).select().single();
+    if(error) throw new Error(error.message);
+    await _sbLog('agency', id, 'updated', `Acente güncellendi: ${Object.keys(p).join(', ')}`);
+    return mapAgencyFromDB(a);
+  },
+};
+
 const SupabaseGuidePaymentRepo = {
   async getAll(f={}){
     const sb=getSB(); if(!sb) return GuidePaymentRepository.getAll(f);
@@ -17510,6 +17975,7 @@ function getActiveRepo(entity) {
   if(entity==='tour')       return useReal ? SupabaseTourRepo        : TourRepository;
   if(entity==='guide')      return useReal ? SupabaseGuideRepo       : GuideRepository;
   if(entity==='guidePayment')return useReal ? SupabaseGuidePaymentRepo : GuidePaymentRepository;
+  if(entity==='agency')     return useReal ? SupabaseAgencyRepo       : AgencyRepository;
   if(entity==='review')     return useReal ? SupabaseReviewRepo       : ReviewRepository;
   if(entity==='staff')      return useReal ? SupabaseStaffRepo       : { getAll: async () => DB.staff };
   if(entity==='reservationPreparation') return useReal ? SupabaseReservationPreparationRepo : { getByReservation: async () => [], getUpcomingPending: async () => [], getRecentCompleted: async () => [], complete: async () => ({ ok:false, reason:'invalid' }), reopen: async () => ({ ok:false, reason:'invalid' }) };
@@ -17617,7 +18083,7 @@ function DataSourceBadge() {
 // Customer, or Messages page.
 const ROLE_PERMISSIONS = {
   "Yönetici": null, // null = all pages
-  "Satış":    ["dashboard","customers","reservations","guides","leads","quotes","reminders","messages","reports","more","changelog"],
+  "Satış":    ["dashboard","customers","reservations","guides","leads","quotes","reminders","agencies","messages","reports","more","changelog"],
   "Operasyon":["dashboard","reservations","calendar","tours","guides","leads","quotes","reminders","payments","reports","more","changelog"],
   "Rehber":   ["dashboard","calendar","reservations","more","changelog"],
 };
@@ -21766,6 +22232,9 @@ function PageRouter({ base, param, isMobile, navigate }) {
     if (base === "guides" && param) return <GuideDetailPage guideId={param} onBack={()=>navigate('/guides')}/>;
     if (base === "guides") return <GuidesPage onSelect={id=>navigate('/guides/'+id)}/>;
 
+    if (base === "agencies" && param) return <AcenteDetailPage agencyId={param} onBack={()=>navigate('/agencies')}/>;
+    if (base === "agencies") return <AcentelerPage onSelect={id=>navigate('/agencies/'+id)}/>;
+
     if (base === "payments") return <MobilePaymentsPage/>;
     if (base === "reminders") return <MobileTasksQueuePage/>;
   }
@@ -21800,6 +22269,10 @@ function PageRouter({ base, param, isMobile, navigate }) {
   if (base === "guides" && param)
     return <GuideDetailPage guideId={param} onBack={()=>navigate('/guides')}/>;
   if (base === "guides")    return <GuidesPage onSelect={id=>navigate('/guides/'+id)}/>;
+
+  if (base === "agencies" && param)
+    return <AcenteDetailPage agencyId={param} onBack={()=>navigate('/agencies')}/>;
+  if (base === "agencies")  return <AcentelerPage onSelect={id=>navigate('/agencies/'+id)}/>;
 
   if (base === "calendar")  return <CalendarPage/>;
   if (base === "payments")  return <PaymentsPage/>;
@@ -22177,7 +22650,7 @@ function FormShell({ isMobile, title, onClose, onSubmit, submitLabel, submitting
 const MOBILE_PAGE_TITLES = {
   dashboard:"Bugün", leads:"Talep", customers:"Misafirler", quotes:"Teklif",
   reservations:"Rezervasyonlar", calendar:"Takvim", tours:"Turlar", guides:"Rehberlerimiz",
-  payments:"Ödemeler", reminders:"Hatırlatmalar", reports:"Raporlar", settings:"Ayarlar",
+  payments:"Ödemeler", reminders:"Hatırlatmalar", agencies:"Acenteler", reports:"Raporlar", settings:"Ayarlar",
   messages:"Mesajlar", more:"Diğer", changelog:"CRM Güncellemeleri",
 };
 const BOTTOM_NAV_ITEMS = [
@@ -22228,6 +22701,7 @@ function MobileMorePage({ navigate }) {
     { id:"guides",     label:"Rehberlerimiz",  icon:"M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2 M23 21v-2a4 4 0 00-3-3.87 M16 3.13a4 4 0 010 7.75 M12 11a4 4 0 100-8 4 4 0 000 8z" },
     { id:"payments",   label:"Ödemeler",       icon:"M2 9a2 2 0 012-2h16a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V9zM2 13h20" },
     { id:"reminders",  label:"Hatırlatmalar",  icon:"M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0" },
+    { id:"agencies",   label:"Acenteler",      icon:"M3 21h18 M5 21V7l8-4v18 M19 21V11l-6-4" },
     { id:"messages",   label:"Mesajlar",       icon:"M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" },
     { id:"reports",    label:"Raporlar",       icon:"M18 20V10M12 20V4M6 20v-6" },
     { id:"settings",   label:"Ayarlar",        icon:"M12 15a3 3 0 100-6 3 3 0 000 6z M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" },

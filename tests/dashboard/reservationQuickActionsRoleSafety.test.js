@@ -137,7 +137,11 @@ test('[5] a "Rehber" (guide) role never sees "Ödeme Kaydı Ekle" (or "Hatırlat
 
 test('ROLE_PERMISSIONS itself is untouched by this pass — only ResQuickActions now consults it', () => {
   assert.match(SOURCE, /const ROLE_PERMISSIONS = \{\s*\n\s*"Yönetici": null,/);
-  assert.match(SOURCE, /"Satış":\s*\["dashboard","customers","reservations","guides","leads","quotes","reminders","messages","reports","more","changelog"\]/);
+  // "agencies" was added to Satış by the later Acenteler Phase 1 foundation
+  // work (a separate, explicitly-scoped change) — this assertion is
+  // updated to match, not re-litigated; Operasyon/Rehber are untouched by
+  // that work too, same as they were untouched by this pass.
+  assert.match(SOURCE, /"Satış":\s*\["dashboard","customers","reservations","guides","leads","quotes","reminders","agencies","messages","reports","more","changelog"\]/);
   assert.match(SOURCE, /"Operasyon":\s*\["dashboard","reservations","calendar","tours","guides","leads","quotes","reminders","payments","reports","more","changelog"\]/);
   assert.match(SOURCE, /"Rehber":\s*\["dashboard","calendar","reservations","more","changelog"\]/);
 });
