@@ -28,10 +28,29 @@
  *   2. This module verifies that token against Supabase Auth
  *      (supabase.auth.getUser(token)) to resolve a real, currently-valid
  *      user id — never trusts a client-supplied id directly.
- *   3. Looks up that user's role in staff_users using the service_role
- *      client (the same elevated-privilege pattern already used by
- *      api/_civitatis/supabaseAdmin.js and api/_fx/supabaseAdmin.js).
- *   4. Returns ok:true only if that role is 'admin' or 'sales'.
+ *   3. Looks up that user's role AND is_active in staff_users using the
+ *      service_role client (the same elevated-privilege pattern already
+ *      used by api/_civitatis/supabaseAdmin.js and api/_fx/supabaseAdmin.js).
+ *   4. Returns ok:true only if a staff row exists, is_active is not
+ *      false, AND that role is 'admin' or 'sales'.
+ *
+ * SECURITY FOUNDATION FOLLOW-UP (is_active check): the Security
+ * Foundation Phase 1 audit found this module verified identity and role
+ * but never checked is_active — an admin/sales staff member deactivated
+ * via staff_users.is_active=false could still call these two endpoints.
+ * Fixed here with the smallest possible change: one extra selected
+ * column, one extra early-return, same status code (403) and the same
+ * overall shape every existing caller already handles. ALLOWED_ROLES is
+ * unchanged — this does not broaden who may call these endpoints, it
+ * only narrows who counts as a valid admin/sales staff member.
+ * api/_shared/authorize.js (built for api/send-email.js in the same
+ * phase) already does this is_active check in its own generalized
+ * module, but is deliberately NOT reused here: swapping this file for
+ * that one would change the exact error-message text returned for each
+ * failure case (this file's own, more specific "Agency research/
+ * outreach is restricted to Yönetici/Satış." vs. the shared module's
+ * generic messages), which is a visible behavior change this phase was
+ * explicitly asked to avoid for the two already-shipped Agency endpoints.
  * ─────────────────────────────────────────────────────────────────────────
  */
 'use strict';
@@ -93,13 +112,19 @@ async function requireAgencyRole(req, deps = {}) {
   const adminClient = createClient(url, serviceRoleKey);
   const { data: staffRow, error: staffError } = await adminClient
     .from('staff_users')
-    .select('role')
+    .select('role, is_active')
     .eq('id', userId)
     .maybeSingle();
   if (staffError) {
     return { ok: false, status: 502, error: 'Failed to resolve staff role.' };
   }
-  const role = staffRow && staffRow.role;
+  if (!staffRow) {
+    return { ok: false, status: 403, error: 'Agency research/outreach is restricted to Yönetici/Satış.' };
+  }
+  if (staffRow.is_active === false) {
+    return { ok: false, status: 403, error: 'Staff account is inactive.' };
+  }
+  const role = staffRow.role;
   if (!role || !ALLOWED_ROLES.includes(role)) {
     return { ok: false, status: 403, error: 'Agency research/outreach is restricted to Yönetici/Satış.' };
   }

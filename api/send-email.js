@@ -4,14 +4,35 @@
  * Dese Tour Operations Center — Secure Email Gateway with PDF Attachment
  * Sprint 15: Full PDF attachment support via base64 content
  *
- * SECURITY MODEL:
- *   • RESEND_API_KEY lives ONLY in Vercel env vars (server-side)
- *   • Browser sends { to, subject, html, attachments?, metadata? }
- *   • This function validates, sanitizes, and proxies to Resend
+ * SECURITY MODEL (Security Foundation Phase 1 — real caller identity):
+ *   • RESEND_API_KEY lives ONLY in Vercel env vars (server-side); never
+ *     exposed to the browser, never logged.
+ *   • SUPABASE_SERVICE_ROLE_KEY lives ONLY in Vercel env vars, used only
+ *     server-side inside api/_shared/authorize.js to resolve the caller's
+ *     staff_users row — never returned to the browser, never logged.
+ *   • Browser sends { to, subject, html, attachments?, metadata? } PLUS
+ *     an `Authorization: Bearer <access_token>` header — the same
+ *     Supabase session token the frontend already holds after login.
+ *   • This function first verifies that token identifies a real,
+ *     currently-authenticated, ACTIVE staff member whose role is
+ *     admin, sales, or operations (see ALLOWED_ROLES below for exactly
+ *     why those three and not guide) — before touching Resend at all.
+ *     The audit found this endpoint previously relied ONLY on an
+ *     Origin-header allowlist, which verifies nothing about WHO is
+ *     calling — any non-browser caller can set its own Origin header.
+ *     Origin is no longer trusted as an identity signal; CORS headers
+ *     below exist only for browser preflight behavior, not security.
+ *   • Never trusts a browser-supplied role, staff ID, or email domain —
+ *     identity is resolved exclusively via the bearer token, by Auth
+ *     user ID, through api/_shared/authorize.js.
+ *   • This function validates, sanitizes, and proxies to Resend exactly
+ *     as before — zero change to the actual email-sending behavior for
+ *     an authorized caller.
  *   • Attachments: only application/pdf accepted; max 5MB per attachment
  *
  * FLOW:
- *   Browser → POST /api/send-email → Vercel → Resend API → Inbox
+ *   Browser (with bearer token) → POST /api/send-email → authorize →
+ *   Vercel → Resend API → Inbox
  *
  * LIMITS (see EMAIL_SETUP.md for details):
  *   • Vercel function payload: 4.5MB (Hobby) / unlimited (Pro)
@@ -21,6 +42,20 @@
  */
 
 const { Resend } = require('resend');
+const { requireStaffRole, ConfigurationError } = require('./_shared/authorize');
+
+// Determined from the current, proven legitimate call sites only — see
+// the implementation report for the exact audit trail. EmailService.
+// sendProposal() is reachable from ProposalPreviewModal, itself only
+// reachable through the Quotes feature — per ROLE_PERMISSIONS in
+// DeseTourDashboard.jsx, that is Yönetici (admin), Satış (sales), and
+// Operasyon (operations); Rehber (guide) has no "quotes" access and can
+// never reach this call site at all. sendReminder()/sendReviewRequest()
+// share this same endpoint and have no current call site, but would hit
+// the same three roles if wired up. Do not expand this list without a
+// newly-proven legitimate call site — guide access to email-sending was
+// never a thing this app does today.
+const ALLOWED_ROLES = ['admin', 'sales', 'operations'];
 
 // ─── Environment variables ────────────────────────────────────────────────────
 const RESEND_API_KEY   = process.env.RESEND_API_KEY;
@@ -149,6 +184,24 @@ module.exports = async function handler(req, res) {
 
   if (req.method !== 'POST') {
     return res.status(405).set(corsHeaders).json({ error: 'Method not allowed.' });
+  }
+
+  // Real caller-identity check — see header comment / ALLOWED_ROLES above.
+  // Runs before anything else: an unauthorized caller gets no information
+  // about whether Resend is configured, no rate-limit consumption, no
+  // validation feedback — just a 401/403.
+  let auth;
+  try {
+    auth = await requireStaffRole(req, ALLOWED_ROLES);
+  } catch (err) {
+    if (err instanceof ConfigurationError) {
+      return res.status(503).set(corsHeaders).json({ error: err.message, stage: 'auth_configuration' });
+    }
+    console.error('[send-email] Authorization check error:', err.message);
+    return res.status(500).set(corsHeaders).json({ error: 'Authorization check failed unexpectedly. See function logs for details.' });
+  }
+  if (!auth.ok) {
+    return res.status(auth.status).set(corsHeaders).json({ error: auth.error });
   }
 
   // Check key is configured

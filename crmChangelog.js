@@ -101,6 +101,20 @@ const CRM_CHANGELOG_CATEGORIES = [
 // Newest first. See the release convention above before editing.
 const CRM_CHANGELOG = [
   {
+    version: '12.41',
+    date: '2026-10-20',
+    title: 'Güvenlik ve İşlem Geçmişi Güçlendirildi',
+    summary: 'CRM\'in işlem geçmişi ve kimlik doğrulama altyapısı güçlendirildi. İşlemi yapan personelin bilgisi artık kalıcı olarak saklanıyor, e-posta gönderimi ve acente araştırma servisleri yalnızca yetkili ve aktif personel tarafından kullanılabiliyor.',
+    categories: ['Altyapı', 'İyileştirme'],
+    highlights: [
+      'İşlem geçmişinde işlemi yapan personelin adı ve rolü artık kalıcı olarak saklanıyor',
+      'E-posta gönderimi gerçek kullanıcı kimliği ve personel yetkisi doğrulanarak yapılıyor',
+      'Pasif personel hesaplarının Acenteler araştırma servislerine erişimi engellendi',
+      'Rehberlerin, rezervasyonlarda yetkileri dışında kalan finansal veya yönetimsel alanları değiştirmesi veritabanı seviyesinde engellendi',
+    ],
+    author: 'Berk',
+  },
+  {
     version: '12.40',
     date: '2026-10-20',
     title: 'Acenteler Modülü Geliştirildi',
@@ -261,20 +275,6 @@ const CRM_CHANGELOG = [
       'Rezervasyona rehber ataması',
       'Rehber hakediş/ödeme kayıtlarının takip edilebilmesi',
       'Rehber bilgilerinin rezervasyon ve takvim ekranlarında görünmesi',
-    ],
-    author: 'Berk',
-  },
-  {
-    version: '12.05',
-    date: '2026-09-14',
-    title: 'Yeni Operasyon Arayüzü',
-    summary: 'Dese Tour\'un premium marka diliyle uyumlu, sade ve masaüstü öncelikli yeni bir operasyon arayüzü hayata geçti; mobil kullanım deneyimi de baştan tasarlandı.',
-    categories: ['Arayüz', 'İyileştirme'],
-    highlights: [
-      'Lacivert, fildişi ve altın tonlarında sade, premium bir tasarım dili',
-      'Sadeleştirilmiş yan menü ve yeniden tasarlanan Ana Sayfa',
-      'Masaüstü öncelikli, yoğun operasyon ekranları',
-      'Mobil cihazlarda kullanılabilirliği artıran ayrı bir mobil deneyim',
     ],
     author: 'Berk',
   },

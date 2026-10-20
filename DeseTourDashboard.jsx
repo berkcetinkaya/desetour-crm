@@ -17427,6 +17427,25 @@ function getSB() {
   } catch(e) { console.warn('[DeseTour]', e.message); return null; }
 }
 
+// Security Foundation Phase 1 — activity_logs actor snapshot. Pure
+// function (no I/O, no auth lookup of its own) so it's directly
+// unit-testable with a plain object: reads ONLY the already-resolved
+// staff_users row useAuth() already cached (never re-resolves identity
+// by email, never issues a new network call). staff_users.role is
+// stored and returned here as its raw DB value ('admin'/'sales'/
+// 'operations'/'guide'), not the Turkish display label the UI shows,
+// so it stays directly comparable to get_current_staff_role() /
+// is_admin() etc. on the database side. Returns nulls (never invented
+// values) when no staff profile is cached yet — see
+// supabase_migration_activity_logs_actor_snapshot.sql for why NULL here
+// is correct and expected, never backfilled.
+// TESTABLE:_actorSnapshotFromStaff:start
+function _actorSnapshotFromStaff(staff) {
+  if (!staff) return { actorName: null, actorRole: null };
+  return { actorName: staff.full_name || null, actorRole: staff.role || null };
+}
+// TESTABLE:_actorSnapshotFromStaff:end
+
 async function _sbLog(type, id, action, desc) {
   const sb = getSB(); if (!sb || !id) return;
   try {
@@ -17435,8 +17454,10 @@ async function _sbLog(type, id, action, desc) {
       const { data } = await sb.auth.getSession();
       uid = data?.session?.user?.id || null;
     }
+    const { actorName, actorRole } = _actorSnapshotFromStaff(_authCache?.staff);
     const { error } = await sb.from('activity_logs')
-      .insert({ entity_type:type, entity_id:id, action, description:desc, performed_by:uid });
+      .insert({ entity_type:type, entity_id:id, action, description:desc, performed_by:uid,
+        actor_name:actorName, actor_role:actorRole, source:'crm_user' });
     if (error) console.error('[_sbLog] activity_logs insert failed:', error.message, { type, id, action });
   } catch(e) {
     console.error('[_sbLog] unexpected error:', e);
@@ -17660,7 +17681,13 @@ function mapActivityFromDB(r) {
     description:r.description, type:tm[r.entity_type]||r.entity_type, detail:r.description,
     date:dt.toLocaleDateString('tr-TR',{day:'2-digit',month:'short'}),
     time:dt.toLocaleTimeString('tr-TR',{hour:'2-digit',minute:'2-digit'}),
-    who:r.performer?.full_name||r.performed_by||'—', performedBy:r.performed_by,
+    // Security Foundation Phase 1 — prefer the permanent actor_name
+    // snapshot over the live staff_users join, which a later identity
+    // change (role change, Deniz-style recreation, deletion) can erase.
+    // Old rows (actor_name NULL) fall through to the exact same chain
+    // as before this phase — never a behavior change for them.
+    who:r.actor_name||r.performer?.full_name||r.performed_by||'—', performedBy:r.performed_by,
+    actorName:r.actor_name||null, actorRole:r.actor_role||null, source:r.source||null,
     createdAt:r.created_at, _fromDB:true };
 }
 
@@ -18121,7 +18148,7 @@ const SupabaseReminderRepo = {
 const SupabaseActivityRepo = {
   async getAll(f={}){const sb=getSB();if(!sb)return ActivityRepository.getAll(f);let q=sb.from('activity_logs').select('*,performer:staff_users!performed_by(id,full_name)').order('created_at',{ascending:false});if(f.entityType&&f.entityId)q=q.eq('entity_type',f.entityType).eq('entity_id',f.entityId);if(f.limit)q=q.limit(f.limit);const{data,error}=await q;if(error)throw new Error(error.message);return(data||[]).map(mapActivityFromDB);},
   async getByCustomerId(cid){const sb=getSB();if(!sb)return ActivityRepository.getAll({customerId:cid});const[{data:leads},{data:res},{data:pays}]=await Promise.all([sb.from('leads').select('id').eq('customer_id',cid),sb.from('reservations').select('id').eq('customer_id',cid),sb.from('payments').select('id').eq('customer_id',cid)]);const ids=[...((leads||[]).map(r=>r.id)),...((res||[]).map(r=>r.id)),...((pays||[]).map(r=>r.id)),cid];const{data,error}=await sb.from('activity_logs').select('*,performer:staff_users!performed_by(id,full_name)').in('entity_id',ids).order('created_at',{ascending:false}).limit(50);if(error)throw new Error(error.message);return(data||[]).map(mapActivityFromDB);},
-  async create(d){const sb=getSB();if(!sb)return ActivityRepository.create(d);const row={entity_type:d.entityType,entity_id:d.entityId,action:d.action,description:d.description,old_value:d.oldValue||null,new_value:d.newValue||null,metadata:d.metadata||null,performed_by:d.performedBy||null};const{data:c,error}=await sb.from('activity_logs').insert(row).select().single();if(error)throw new Error(error.message);return mapActivityFromDB(c);},
+  async create(d){const sb=getSB();if(!sb)return ActivityRepository.create(d);const row={entity_type:d.entityType,entity_id:d.entityId,action:d.action,description:d.description,old_value:d.oldValue||null,new_value:d.newValue||null,metadata:d.metadata||null,performed_by:d.performedBy||null,actor_name:d.actorName||null,actor_role:d.actorRole||null,source:d.source||null};const{data:c,error}=await sb.from('activity_logs').insert(row).select().single();if(error)throw new Error(error.message);return mapActivityFromDB(c);},
   // System-generated "new reservation" notifications — auto_ingested
   // Civitatis rows (both new_booking and cancellation), additively covers
   // any future auto-ingestion source the same way. Embedding
@@ -18399,7 +18426,15 @@ const SupabaseCivitatisSettlementRepo = {
 
 async function autoLog(entityType, entityId, action, description) {
   if (!entityId) return;
-  try { await Promise.resolve(getActiveRepo('activity').create({entityType,entityId,action,description})); }
+  // Security Foundation Phase 1 — same actor-snapshot discipline as
+  // _sbLog: reads only the already-resolved staff identity useAuth()
+  // cached, never re-resolves by email, never a new network call. This
+  // path previously never set performed_by at all (every autoLog() row
+  // was completely unattributed) — now attributed exactly like every
+  // other human CRM write.
+  const performedBy = _authCache?.session?.user?.id || null;
+  const { actorName, actorRole } = _actorSnapshotFromStaff(_authCache?.staff);
+  try { await Promise.resolve(getActiveRepo('activity').create({entityType,entityId,action,description,performedBy,actorName,actorRole,source:'crm_user'})); }
   catch(_) {}
 }
 
@@ -21106,6 +21141,24 @@ const SupabaseStaffRepo = {
   },
 };
 
+// Security Foundation Phase 1 — api/send-email.js now verifies a real
+// caller identity (see api/_shared/authorize.js) instead of trusting the
+// Origin header alone. Every call site below must attach the browser's
+// own current Supabase session token, exactly the same pattern already
+// established for the Agency research/draft endpoints (AgencyResearchModal/
+// AcenteDetailPage). Returns null in mock mode (no Supabase configured) —
+// ResendEmailProvider is only ever installed when AppConfig.useResend is
+// true, which requires Supabase to be configured, so this should always
+// resolve a real token for every real call; null safely degrades to an
+// unauthenticated request, which api/send-email.js now correctly rejects
+// rather than silently proceeding.
+async function _getSupabaseAccessToken() {
+  const sb = getSB();
+  if (!sb) return null;
+  const { data } = await sb.auth.getSession();
+  return data?.session?.access_token || null;
+}
+
 const EmailService = {
   _provider: null,
 
@@ -21329,9 +21382,10 @@ const ResendEmailProvider = {
         }];
       }
 
+      const token = await _getSupabaseAccessToken();
       const res  = await fetch(AppConfig.emailEndpoint, {
         method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
         body:    JSON.stringify(body),
       });
 
@@ -21378,9 +21432,10 @@ const ResendEmailProvider = {
     </div>`;
 
     try {
+      const token = await _getSupabaseAccessToken();
       const res = await fetch(AppConfig.emailEndpoint, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
         body: JSON.stringify({ to: email, subject, html,
           metadata: { quoteId: quote?.id, type: 'reminder' } }),
       });
@@ -21409,9 +21464,10 @@ const ResendEmailProvider = {
     </div>`;
 
     try {
+      const token = await _getSupabaseAccessToken();
       const res = await fetch(AppConfig.emailEndpoint, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
         body: JSON.stringify({ to: email, subject, html,
           metadata: { reservationId: reservation?.id, type: 'review' } }),
       });
