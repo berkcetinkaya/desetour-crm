@@ -21,7 +21,7 @@
       "memory": 512
     },
     "api/agency-research.js": {
-      "maxDuration": 60,
+      "maxDuration": 300,
       "memory": 512
     },
     "api/agency-draft-outreach.js": {

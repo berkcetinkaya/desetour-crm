@@ -12919,7 +12919,17 @@ function AgencyResearchModal({ existingAgencies, onClose }) {
         body: JSON.stringify({ country, language, limit: parseInt(limit, 10) || 1, minimumFit }),
       });
       const payload = await resp.json().catch(() => ({}));
-      if (!resp.ok) { setError(payload.error || `Araştırma başarısız oldu (${resp.status}).`); return; }
+      if (!resp.ok) {
+        // 504 means the platform's own function-execution timeout killed the
+        // request (see vercel.json's maxDuration) before api/agency-research.js
+        // ever got to write a response — resp.json() above already failed on
+        // Vercel's non-JSON gateway-timeout body, so payload is always {} here.
+        // This is never thrown by the app itself; the plain "(504)" fallback
+        // below would otherwise be the only thing shown, which is accurate but
+        // unnecessarily opaque for what is, in practice, always a timeout.
+        if (resp.status === 504) { setError("Araştırma beklenenden uzun sürdü. Lütfen tekrar deneyin."); return; }
+        setError(payload.error || `Araştırma başarısız oldu (${resp.status}).`); return;
+      }
       setCandidates(payload.candidates || []);
     } catch (err) {
       setError("Araştırma isteği gönderilemedi: " + err.message);

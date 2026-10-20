@@ -101,6 +101,19 @@ const CRM_CHANGELOG_CATEGORIES = [
 // Newest first. See the release convention above before editing.
 const CRM_CHANGELOG = [
   {
+    version: '12.43',
+    date: '2026-10-20',
+    title: 'Pazar Araştırmasında Zaman Aşımı Sorunu Giderildi',
+    summary: 'Acenteler modülündeki pazar araştırması, çok adaylı veya kapsamlı aramalarda bazen zaman aşımına uğrayıp hata veriyordu. Bu sorun giderildi; araştırma artık daha uzun süren aramalarda da güvenilir şekilde tamamlanıyor.',
+    categories: ['Altyapı', 'İyileştirme'],
+    highlights: [
+      'Pazar araştırması artık daha uzun süren veya çok adaylı aramalarda zaman aşımına uğramıyor',
+      'Zaman aşımı durumunda kullanıcıya anlaşılır bir Türkçe bilgi mesajı gösteriliyor',
+      'Araştırma kalitesi, kanıt zorunluluğu ve uygunluk değerlendirmesi hiçbir şekilde değişmedi',
+    ],
+    author: 'Berk',
+  },
+  {
     version: '12.42',
     date: '2026-10-20',
     title: 'Acenteler Araştırması Geliştirildi',
@@ -262,20 +275,6 @@ const CRM_CHANGELOG = [
       'Bir turun birden fazla dile ve kanala göre ayrı ayrı eşleştirilebilmesi',
       'Civitatis, Tripadvisor, Google, Viator, Musement, Airbnb Experiences gibi farklı kanal ve kaynakların sistemde tanımlanabilmesi',
       'Tur listesinde dil ve platform bazlı görünüm',
-    ],
-    author: 'Berk',
-  },
-  {
-    version: '12.13',
-    date: '2026-09-17',
-    title: 'Değerlendirme ve Rehber Performansı',
-    summary: 'Rezervasyonlara değerlendirme eklenebiliyor; bu değerlendirmeler rehber performansına otomatik olarak yansıyor.',
-    categories: ['Yeni Özellik', 'Operasyon'],
-    highlights: [
-      'Bir rezervasyona birden fazla değerlendirme eklenebilmesi',
-      'Değerlendirmelerde dil/kaynak bilgisinin kaydedilmesi',
-      'Rehber profilinde gerçek değerlendirmelere dayanan performans özeti',
-      'Rehber detay sayfasında tur ve değerlendirme geçmişinin bir arada görünmesi',
     ],
     author: 'Berk',
   },
