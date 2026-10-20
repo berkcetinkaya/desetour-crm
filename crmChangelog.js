@@ -101,6 +101,21 @@ const CRM_CHANGELOG_CATEGORIES = [
 // Newest first. See the release convention above before editing.
 const CRM_CHANGELOG = [
   {
+    version: '12.44',
+    date: '2026-10-20',
+    title: 'Acente Araştırma Sonuçları Daha Güvenilir Hale Getirildi',
+    summary: 'Acenteler modülündeki pazar araştırması sonuçlarının işlenmesi güçlendirildi. Uzun ve kapsamlı aramalarda oluşabilen sonuç işleme hataları giderildi; araştırma başarısız olduğunda kullanıcıya anlaşılır bir Türkçe uyarı gösteriliyor.',
+    categories: ['Altyapı', 'İyileştirme'],
+    highlights: [
+      'Uzun ve kapsamlı pazar araştırmalarında oluşabilen sonuç işleme hataları giderildi',
+      'Araştırma sonuçlarının farklı yanıt biçimlerinde güvenilir şekilde okunabilmesi sağlandı',
+      'Çok sayıda aday içeren araştırmalar için çıktı kapasitesi artırıldı',
+      'Araştırma başarısız olduğunda kullanıcıya teknik detaylar yerine anlaşılır bir Türkçe uyarı gösteriliyor',
+      'Uygunluk, kanıt ve kaynak kuralları değiştirilmedi',
+    ],
+    author: 'Berk',
+  },
+  {
     version: '12.43',
     date: '2026-10-20',
     title: 'Pazar Araştırmasında Zaman Aşımı Sorunu Giderildi',
@@ -261,20 +276,6 @@ const CRM_CHANGELOG = [
       'Rezervasyon sahibi (iletişim kişisi) ile yolcuların birbirinden ayrıştırılması',
       'Yorumlanan rezervasyon bilgisinin CRM\'e aktarılabilmesi',
       'Aktarılan rezervasyonların takvim ve operasyon ekranlarında diğer rezervasyonlarla birlikte görünmesi',
-    ],
-    author: 'Berk',
-  },
-  {
-    version: '12.18',
-    date: '2026-09-18',
-    title: 'Tur ve Satış Kanalı Mimarisi',
-    summary: 'Turlar, dış satış ve değerlendirme kanallarından ayrı bir kimliğe kavuştu. Bir tur artık farklı dillere ve kanallara göre ayrı ayrı eşleştirilebiliyor.',
-    categories: ['Altyapı', 'Operasyon'],
-    highlights: [
-      'CRM turlarının dış satış/değerlendirme kanallarından ayrı bir kimlik kazanması',
-      'Bir turun birden fazla dile ve kanala göre ayrı ayrı eşleştirilebilmesi',
-      'Civitatis, Tripadvisor, Google, Viator, Musement, Airbnb Experiences gibi farklı kanal ve kaynakların sistemde tanımlanabilmesi',
-      'Tur listesinde dil ve platform bazlı görünüm',
     ],
     author: 'Berk',
   },

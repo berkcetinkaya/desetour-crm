@@ -86,9 +86,10 @@ test('no client-side timeout (AbortController/Promise.race/setTimeout/signal) cu
 
 // ═══════════════ [2] Research provider behavior unchanged ═══════════════
 
-test('[2] the Anthropic request shape (model, max_tokens, web_search tool) is byte-for-byte unchanged', () => {
+test('[2] the model and web_search tool are byte-for-byte unchanged; max_tokens was deliberately raised (8192) in the parser-reliability follow-up to remove a proven truncation risk, not lowered or left at the value that risk was found at', () => {
   assert.match(RESEARCH_PROVIDER_SRC, /const ANTHROPIC_MODEL = 'claude-opus-5-5';/);
-  assert.match(RESEARCH_PROVIDER_SRC, /max_tokens: 4096,/);
+  assert.match(RESEARCH_PROVIDER_SRC, /max_tokens: 8192,/);
+  assert.doesNotMatch(RESEARCH_PROVIDER_SRC, /max_tokens: 4096,/);
   assert.match(RESEARCH_PROVIDER_SRC, /tools: \[\{ type: 'web_search_20250305', name: 'web_search' \}\],/);
 });
 
@@ -143,7 +144,21 @@ test('[6][7] an HTTP error from the provider raises ProviderError, not a silent 
 
 test('the handler maps ProviderError to 502 and ConfigurationError to 503 — never swallowed into a fabricated 200 with candidates', () => {
   assert.match(AGENCY_RESEARCH_SRC, /if \(err instanceof researchProvider\.ConfigurationError\) \{\s*\n\s*return res\.status\(503\)/);
-  assert.match(AGENCY_RESEARCH_SRC, /if \(err instanceof researchProvider\.ProviderError\) \{\s*\n\s*return res\.status\(502\)/);
+  // ProviderError's branch now logs server-side (see the parser-reliability
+  // follow-up: the browser must never see the raw internal parser message)
+  // before returning, so the `{` and `return res.status(502)` are no longer
+  // on adjacent lines — matched anywhere within the if-block instead of
+  // requiring immediate adjacency.
+  const idx = AGENCY_RESEARCH_SRC.indexOf('if (err instanceof researchProvider.ProviderError) {');
+  assert.ok(idx !== -1);
+  assert.match(AGENCY_RESEARCH_SRC.slice(idx, idx + 900), /return res\.status\(502\)/);
+});
+
+test('the ProviderError branch returns a clean Turkish message, never the raw internal parser/provider diagnostic', () => {
+  const idx = AGENCY_RESEARCH_SRC.indexOf('if (err instanceof researchProvider.ProviderError) {');
+  const block = AGENCY_RESEARCH_SRC.slice(idx, idx + 900);
+  assert.match(block, /error: 'Araştırma sonucu işlenemedi\. Lütfen tekrar deneyin\.'/);
+  assert.doesNotMatch(block, /error: err\.message/);
 });
 
 // ═══════════════ [8] Timeout UX exposes nothing internal ════════════════
