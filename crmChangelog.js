@@ -101,6 +101,21 @@ const CRM_CHANGELOG_CATEGORIES = [
 // Newest first. See the release convention above before editing.
 const CRM_CHANGELOG = [
   {
+    version: '12.40',
+    date: '2026-10-20',
+    title: 'Acenteler Modülü Geliştirildi',
+    summary: 'Acenteler modülüne pazar araştırması, uygunluk değerlendirmesi ve kişiselleştirilmiş ilk temas taslağı altyapısı eklendi. Acenteler ülke ve dil bazında araştırılabilecek, uygun adaylar CRM\'e eklenebilecek ve her acente için araştırma bulguları ile kaynak bilgileri saklanabilecek. İngilizce, İspanyolca, Portekizce ve İtalyanca ilk temas taslakları hazırlanabilecek.',
+    categories: ['Yeni Özellik', 'Operasyon'],
+    highlights: [
+      'Ülke ve dil bazlı acente araştırması',
+      'Yüksek, Orta ve Düşük Uyum değerlendirmesi',
+      'Araştırma bulgusu ve kaynak kaydı',
+      'Seçilen adayları CRM\'e ekleme',
+      'Dört dilde kişiselleştirilmiş ilk temas taslağı',
+    ],
+    author: 'Berk',
+  },
+  {
     version: '12.39',
     date: '2026-10-04',
     title: 'Civitatis Hakediş Yönetimi',
@@ -260,19 +275,6 @@ const CRM_CHANGELOG = [
       'Sadeleştirilmiş yan menü ve yeniden tasarlanan Ana Sayfa',
       'Masaüstü öncelikli, yoğun operasyon ekranları',
       'Mobil cihazlarda kullanılabilirliği artıran ayrı bir mobil deneyim',
-    ],
-    author: 'Berk',
-  },
-  {
-    version: '12.01',
-    date: '2026-09-13',
-    title: 'Dese Tour Operasyon Merkezi',
-    summary: 'Dese Tour CRM\'in temel operasyon akışı kuruldu: Misafirler, Rezervasyonlar, Turlar, Rehberler ve Ödemeler tek bir sistemde birleşti.',
-    categories: ['Altyapı', 'Operasyon'],
-    highlights: [
-      'Misafir, rezervasyon, tur, rehber ve ödeme kayıtlarının tek bir operasyon merkezinde birleşmesi',
-      'Genel bir satış hunisi mantığından turizm operasyonuna özel bir yapıya geçilmesi',
-      'Gerçek verilerle çalışan, gösterim amaçlı sahte verilerden arındırılmış bir temel kurulması',
     ],
     author: 'Berk',
   },
