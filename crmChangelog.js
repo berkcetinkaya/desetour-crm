@@ -101,6 +101,21 @@ const CRM_CHANGELOG_CATEGORIES = [
 // Newest first. See the release convention above before editing.
 const CRM_CHANGELOG = [
   {
+    version: '12.42',
+    date: '2026-10-20',
+    title: 'Acenteler Araştırması Türkçeleştirildi',
+    summary: 'Acenteler modülündeki pazar araştırması sonuçları artık daha anlaşılır bir şekilde sunuluyor. Firma bilgileri ve kaynaklar orijinal haliyle korunurken, değerlendirme metinleri DeseTour ekibi için Türkçe hazırlanıyor.',
+    categories: ['Arayüz', 'İyileştirme'],
+    highlights: [
+      'Pazar araştırması sonuçlarındaki iç değerlendirmeler artık Türkçe gösteriliyor',
+      'Her aday için "Ne yapıyor?", "Neden DeseTour\'a uygun?", "Kanıt" ve "İş Birliği Fırsatı" bölümleri eklendi',
+      'Firma adı, web sitesi, iletişim bilgileri ve kaynaklar orijinal haliyle korunuyor',
+      'İngilizce, İspanyolca, Portekizce ve İtalyanca ilk temas taslakları hedef dilde hazırlanmaya devam ediyor',
+      'Yüksek Uyum değerlendirmesinde kaynak ve kanıt zorunluluğu korunuyor',
+    ],
+    author: 'Berk',
+  },
+  {
     version: '12.41',
     date: '2026-10-20',
     title: 'Güvenlik ve İşlem Geçmişi Güçlendirildi',
@@ -261,20 +276,6 @@ const CRM_CHANGELOG = [
       'Değerlendirmelerde dil/kaynak bilgisinin kaydedilmesi',
       'Rehber profilinde gerçek değerlendirmelere dayanan performans özeti',
       'Rehber detay sayfasında tur ve değerlendirme geçmişinin bir arada görünmesi',
-    ],
-    author: 'Berk',
-  },
-  {
-    version: '12.08',
-    date: '2026-09-15',
-    title: 'Rehber Yönetimi',
-    summary: 'Rehberlerimiz modülü ile rehber profilleri, konuştukları diller ve rezervasyon atamaları tek bir yerden yönetilebiliyor.',
-    categories: ['Yeni Özellik', 'Operasyon'],
-    highlights: [
-      'Rehber profilleri ve konuştukları diller',
-      'Rezervasyona rehber ataması',
-      'Rehber hakediş/ödeme kayıtlarının takip edilebilmesi',
-      'Rehber bilgilerinin rezervasyon ve takvim ekranlarında görünmesi',
     ],
     author: 'Berk',
   },

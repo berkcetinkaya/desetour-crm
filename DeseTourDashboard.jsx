@@ -12941,7 +12941,10 @@ function AgencyResearchModal({ existingAgencies, onClose }) {
       phone: candidate.phone || "",
       languages: candidate.language ? [candidate.language] : [],
       // Human-readable fit reason only — source metadata goes into its own
-      // fields below, never packed into this free-text note.
+      // fields below, never packed into this free-text note. Both
+      // fit_reason and evidence_summary are already Turkish by this point
+      // (see researchProvider.js's OUTPUT LANGUAGE RULE) — no translation
+      // step needed here, this is a plain pass-through.
       fitNote: candidate.fit_reason || "",
       researchEvidence: candidate.evidence_summary || "",
       researchSourceUrl: candidate.source_url || "",
@@ -12984,6 +12987,15 @@ function AgencyResearchModal({ existingAgencies, onClose }) {
             const importedNow = importedKeys.has(key);
             const alreadyInCrm = !!c.existingAgencyId;
             const fcm = AGENCY_FIT_LEVEL_CFG[c.fit_level] || { color:C.textMuted, bg:C.ivoryDark };
+            // Each analytical section (Ne yapıyor? / Neden DeseTour'a
+            // uygun? / Kanıt / İş Birliği Fırsatı) renders only when the
+            // provider actually returned that field — never a placeholder
+            // dash, never an invented value. Same rule for the contact
+            // block below: the whole block, and each row inside it, is
+            // hidden entirely when empty rather than shown as "—".
+            const sectionLabelStyle = { fontSize:10.5, fontWeight:600, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", textTransform:"uppercase", letterSpacing:"0.04em" };
+            const sectionTextStyle = { fontSize:12.5, color:C.textMid, fontFamily:"'DM Sans',sans-serif", marginTop:2, lineHeight:1.5 };
+            const hasContact = !!(c.email || c.contact_person || c.phone);
             return (
               <div key={i} style={{ border:`1px solid ${C.border}`, borderRadius:10, padding:"14px 16px" }}>
                 <div style={{ display:"flex", justifyContent:"space-between", gap:10, alignItems:"flex-start" }}>
@@ -12997,12 +13009,49 @@ function AgencyResearchModal({ existingAgencies, onClose }) {
                     {c.fit_level}
                   </span>
                 </div>
-                {c.fit_reason && <div style={{ fontSize:12.5, color:C.textMid, fontFamily:"'DM Sans',sans-serif", marginTop:8 }}>{c.fit_reason}</div>}
-                {c.evidence_summary && <div style={{ fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:4 }}>Kanıt: {c.evidence_summary}</div>}
-                {c.source_url && <div style={{ fontSize:11, color:C.textFaint, fontFamily:"'DM Mono',monospace", marginTop:4 }}>Kaynak: {c.source_url}</div>}
-                <div style={{ fontSize:12, color:C.textMid, fontFamily:"'DM Sans',sans-serif", marginTop:6 }}>
-                  E-posta: {c.email || "—"} · İletişim: {c.contact_person || "—"} · Dil: {c.language || "—"}
+
+                <div style={{ marginTop:10, display:"flex", flexDirection:"column", gap:8 }}>
+                  {c.travel_focus && (
+                    <div>
+                      <div style={sectionLabelStyle}>Ne yapıyor?</div>
+                      <div style={sectionTextStyle}>{c.travel_focus}</div>
+                    </div>
+                  )}
+                  {c.fit_reason && (
+                    <div>
+                      <div style={sectionLabelStyle}>Neden DeseTour'a uygun?</div>
+                      <div style={sectionTextStyle}>{c.fit_reason}</div>
+                    </div>
+                  )}
+                  {c.evidence_summary && (
+                    <div>
+                      <div style={sectionLabelStyle}>Kanıt</div>
+                      <div style={sectionTextStyle}>{c.evidence_summary}</div>
+                    </div>
+                  )}
+                  {c.cooperation_angle && (
+                    <div>
+                      <div style={sectionLabelStyle}>İş Birliği Fırsatı</div>
+                      <div style={sectionTextStyle}>{c.cooperation_angle}</div>
+                    </div>
+                  )}
                 </div>
+
+                {hasContact && (
+                  <div style={{ marginTop:10, paddingTop:9, borderTop:`1px solid ${C.borderLight}`, display:"flex", flexDirection:"column", gap:3 }}>
+                    {c.email && <div style={{ fontSize:12, color:C.textMid, fontFamily:"'DM Sans',sans-serif" }}><span style={{color:C.textFaint}}>E-posta:</span> {c.email}</div>}
+                    {c.contact_person && <div style={{ fontSize:12, color:C.textMid, fontFamily:"'DM Sans',sans-serif" }}><span style={{color:C.textFaint}}>İletişim kişisi:</span> {c.contact_person}</div>}
+                    {c.phone && <div style={{ fontSize:12, color:C.textMid, fontFamily:"'DM Sans',sans-serif" }}><span style={{color:C.textFaint}}>Telefon:</span> {c.phone}</div>}
+                  </div>
+                )}
+
+                {c.source_url && (
+                  <div style={{ marginTop:8, fontSize:11, fontFamily:"'DM Sans',sans-serif" }}>
+                    <span style={{color:C.textFaint}}>Kaynak:</span>{' '}
+                    <a href={c.source_url} target="_blank" rel="noopener noreferrer" style={{color:C.navy, textDecoration:"underline", fontFamily:"'DM Mono',monospace"}}>{c.source_url}</a>
+                  </div>
+                )}
+
                 <div style={{ marginTop:10 }}>
                   {alreadyInCrm ? (
                     <button onClick={()=>{ onClose(); if (NAV_REF.fn) NAV_REF.fn('/agencies/'+c.existingAgencyId); }} style={{

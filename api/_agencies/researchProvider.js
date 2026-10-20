@@ -30,6 +30,19 @@
  * be checked without re-browsing the web: output shape, the exact three
  * fit levels (never a numeric score), the requested minimum-fit filter,
  * and the hard cap on candidate count.
+ *
+ * LANGUAGE SEPARATION (UX follow-up): research/search still happens in the
+ * requested market's own language/sources (e.g. Portuguese sources for
+ * Brazil) — that part of buildUserPrompt is unchanged. But the five
+ * analytical fields a DeseTour (Turkish-speaking) CRM user actually reads —
+ * travel_focus, turkiye_signal, fit_reason, evidence_summary,
+ * cooperation_angle — must be written in Turkish by the prompt, regardless
+ * of the research language. name/website/city/contact_person/email/phone/
+ * source_url are never translated. This is a prompt-level instruction only
+ * (same caveat as EVIDENCE DISCIPLINE above — not independently verified
+ * here) plus one new field, cooperation_angle, sanitized the same way as
+ * every other free-text field. It does NOT participate in the Yüksek Uyum
+ * evidence gate below — only evidence_summary + source_url do, unchanged.
  * ─────────────────────────────────────────────────────────────────────────
  */
 'use strict';
@@ -153,6 +166,7 @@ function sanitizeCandidate(raw) {
     fit_level: effectiveFitLevel,
     fit_reason: str(raw.fit_reason),
     evidence_summary: evidenceSummary,
+    cooperation_angle: str(raw.cooperation_angle),
     source_url: sourceUrl,
   };
 }
@@ -192,6 +206,11 @@ function buildSystemPrompt() {
     'cooperation partners for Türkiye and Istanbul tour operations (private tours, small groups, guiding,',
     'custom itineraries, group handling, transfers, shore excursions, Türkiye ground handling).',
     '',
+    "Research using the requested country's own local sources and the requested market language (e.g.",
+    'Portuguese-language sources for Brazil, Italian-language sources for Italy) — this is how you find and',
+    'verify real, relevant companies. This research-language rule is separate from the OUTPUT LANGUAGE RULE',
+    'below; follow both at once.',
+    '',
     'Positive signals: Türkiye tours, Istanbul tours, Cappadocia/Türkiye cultural programs, outbound travel,',
     'cultural tourism, small-group travel, private/tailor-made travel, premium leisure travel, organized',
     'groups, cruise/shore-excursion customers, international travel programs, local-partner/ground-handling needs.',
@@ -210,8 +229,23 @@ function buildSystemPrompt() {
     '  address pattern (e.g. never invent info@domain.com unless you actually saw it published).',
     '- Never fabricate company size, number of customers, annual revenue, awards, specialization, destination',
     '  list, group volume, or client profile. Only state what you found evidence for.',
-    '- evidence_summary must be short (one or two factual sentences) and specific, e.g. "Official website',
-    '  lists Istanbul and Cappadocia cultural tours and offers small-group international programs."',
+    '- evidence_summary must be short (one or two factual sentences) and specific, e.g. "Resmi web sitesinde',
+    '  İstanbul ve Kapadokya kültür turları ile küçük grup uluslararası programları listeleniyor."',
+    '',
+    'OUTPUT LANGUAGE RULE — CRITICAL, applies regardless of the research language above:',
+    "DeseTour's own CRM staff work in Turkish. The following five analytical fields must be written in",
+    'natural, fluent TURKISH: travel_focus, turkiye_signal, fit_reason, evidence_summary, cooperation_angle.',
+    'Write them the way a Turkish business-development colleague would explain the company to a teammate —',
+    'never a literal machine translation, never generic, never marketing language. Each must explain',
+    'something SPECIFIC about this company, not a generic statement true of any travel agency.',
+    'Bad (never write like this): "Bu şirket yüksek uyumludur çünkü Türkiye turları sunmaktadır."',
+    'Good (write like this): "Türkiye paketlerinde İstanbul konaklaması, rehberlik ve transfer hizmetleri',
+    'bulunuyor. Bu operasyonları yerel bir partner üzerinden yürütme ihtiyacı DeseTour için doğrudan iş',
+    'birliği fırsatı oluşturuyor."',
+    '',
+    'Do NOT translate or alter these fields — keep them exactly as found, in their original language/script,',
+    'never inventing a Turkish version of a name: name, website, city, contact_person, email, phone,',
+    'source_url.',
     '',
     'FIT LEVELS — use exactly one of these three strings, never a number or any other label:',
     '"Yüksek Uyum": clear evidence the agency already works with Türkiye/Istanbul, or a business model',
@@ -220,12 +254,18 @@ function buildSystemPrompt() {
     '  travel and could reasonably need a Türkiye partner.',
     '"Düşük Uyum": weak commercial overlap, domestic-only, ticket/hotel-only, non-agency, inactive, or',
     '  otherwise a poor match.',
-    'fit_reason must be 1 to 3 concise, concrete sentences — never abstract scoring language.',
+    'fit_reason must be 1 to 3 concise, concrete Turkish sentences — never abstract scoring language, never',
+    'a literal translation of a generic template.',
+    '',
+    'cooperation_angle: ONE concise Turkish sentence describing a realistic, specific commercial angle —',
+    'what DeseTour could concretely offer THIS company (e.g. local Istanbul ground handling, private',
+    'guiding, group transfers, shore-excursion handling) based specifically on what you found. Leave it as',
+    'an empty string if the evidence is too thin to support a specific angle — never invent one.',
     '',
     'Respond with ONLY a JSON array (no prose before or after), where each element has exactly these keys:',
     'name, website, country, city, contact_person, email, phone, language, travel_focus, turkiye_signal,',
-    'fit_level, fit_reason, evidence_summary, source_url. Use an empty string "" for anything you could not',
-    'verify — never null, never a guess.',
+    'fit_level, fit_reason, evidence_summary, cooperation_angle, source_url. Use an empty string "" for',
+    'anything you could not verify — never null, never a guess.',
   ].join('\n');
 }
 

@@ -24,6 +24,17 @@
  *     ProviderError rather than silently shipping generic boilerplate.
  *   - no emojis — HARD enforced the same way.
  *   - exactly the 4 supported languages.
+ *
+ * LANGUAGE SEPARATION (UX follow-up to researchProvider.js): the grounding
+ * context this module reads (agency.fitNote/researchEvidence) is now
+ * Turkish by contract (DeseTour's internal CRM language — see
+ * researchProvider.js's OUTPUT LANGUAGE RULE). This module's own output
+ * language is unchanged: still exactly `language` from the request, never
+ * Turkish, never the research language. The system prompt below gained one
+ * clarifying note telling the model the context may be Turkish and must be
+ * understood for its meaning, never copied verbatim into the (differently-
+ * languaged) outgoing email. No change to ALLOWED_LANGUAGES, no change to
+ * any enforcement function, no change to the output shape.
  * ─────────────────────────────────────────────────────────────────────────
  */
 'use strict';
@@ -200,6 +211,10 @@ function buildSystemPrompt() {
     '',
     'Write the email in the target language given in the user message below — it must read as naturally',
     'written by a native business speaker of that language, never like a literal machine translation.',
+    'The agency context below (fit/context notes, research evidence) may be written in Turkish — that is',
+    "DeseTour's own internal CRM language, not the outreach language. Understand its MEANING and write the",
+    'email entirely in the target language; never copy Turkish words or phrases into the email, and never',
+    'switch languages mid-email.',
     '',
     'Respond with ONLY a JSON object (no prose before or after) with exactly these keys: subject, body,',
     'personalization_signal (the one specific fact you used to open, or "" if you opened generally),',
