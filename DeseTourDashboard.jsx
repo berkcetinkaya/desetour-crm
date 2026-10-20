@@ -505,6 +505,10 @@ const DB = {
   // empty, only ever contains records created through the app's own
   // "Yeni Acente" form during a mock-mode session. No demo agencies.
   agencies: [],
+  // Acenteler Phase 2 — draft-only outreach history. Never seeded, never
+  // auto-populated by research (research results stay transient until
+  // "CRM'e Ekle"); only ever grows via "Taslağı Kaydet" in mock mode.
+  agencyEmails: [],
 
   reservations: [
     {
@@ -1391,6 +1395,36 @@ const AgencyRepository = {
     ActivityRepository.create({ entityType:'agency', entityId:id, action:'updated', description:`Acente güncellendi: ${Object.keys(patch).join(', ')}` });
     Store.notify();
     return DB.agencies[idx];
+  },
+};
+
+// Acenteler Phase 2 — mock-mode outreach-draft history. create() never
+// sets sentAt and never touches DB.agencies' lastContactAt — draft
+// creation is not a real contact, same rule the real schema enforces
+// (agency_emails.sent_at stays NULL, agencies.last_contact_at untouched).
+const AgencyEmailRepository = {
+  getByAgencyId(agencyId) {
+    return DB.agencyEmails
+      .filter(e => e.agencyId === agencyId)
+      .sort((a, b) => (b.createdAt||'').localeCompare(a.createdAt||''));
+  },
+  create(data) {
+    const id = 'AEM-' + String(DB.agencyEmails.length + 1).padStart(3, '0');
+    const record = {
+      id, direction:'outbound', status:'draft', sentAt:null,
+      createdAt:new Date().toISOString(),
+      ...data,
+    };
+    DB.agencyEmails.push(record);
+    Store.notify();
+    return record;
+  },
+  update(id, patch) {
+    const idx = DB.agencyEmails.findIndex(e => e.id === id);
+    if (idx < 0) return null;
+    Object.assign(DB.agencyEmails[idx], patch);
+    Store.notify();
+    return DB.agencyEmails[idx];
   },
 };
 
@@ -12584,10 +12618,29 @@ const AGENCY_STATUS_CFG = {
   "Uygun Değil":       { color:C.red,       bg:C.redBg },
 };
 
+// Acenteler Phase 2 — market research. Mirrors the exact allow-lists the
+// server (api/_agencies/researchProvider.js) validates against — kept in
+// sync by hand since this file has no shared import with the API layer.
+const AGENCY_RESEARCH_LANGUAGES = ["English","Spanish","Portuguese","Italian"];
+const AGENCY_MINIMUM_FIT_OPTIONS = ["Yüksek Uyum","Orta Uyum ve Üzeri"];
+const AGENCY_FIT_LEVEL_CFG = {
+  "Yüksek Uyum": { color:C.green, bg:C.greenBg },
+  "Orta Uyum":   { color:C.amber, bg:C.amberBg },
+  "Düşük Uyum":  { color:C.red,   bg:C.redBg },
+};
+// Only "draft" is ever produced in Phase 2 — no send feature exists yet —
+// but "sent" is included so the badge renders correctly once sending is
+// built in a later phase, without needing another edit here.
+const AGENCY_EMAIL_STATUS_CFG = {
+  draft: { color:C.amber, bg:C.amberBg },
+  sent:  { color:C.green, bg:C.greenBg },
+};
+
 function AcentelerPage({ onSelect }) {
   const { isMobile } = useBreakpoint();
   const { data:repoAgencies, loading, error, reload } = useRepo("agency", "getAll");
   const [showAdd, setShowAdd]           = useState(false);
+  const [showResearch, setShowResearch] = useState(false);
   const [search, setSearch]             = useState("");
   const [statusFilter, setStatusFilter] = useState("Tümü");
   const [countryFilter, setCountryFilter] = useState("Tümü");
@@ -12616,6 +12669,7 @@ function AcentelerPage({ onSelect }) {
   return (
     <div style={{ display:"flex", flexDirection:"column", gap:20 }}>
       {showAdd && <NewAgencyModal onClose={()=>{ setShowAdd(false); reload&&reload(); }}/>}
+      {showResearch && <AgencyResearchModal existingAgencies={agencies} onClose={()=>{ setShowResearch(false); reload&&reload(); }}/>}
 
       <div style={{display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", gap:14}}>
         <div>
@@ -12641,6 +12695,18 @@ function AcentelerPage({ onSelect }) {
               onBlur={e=>{ e.target.style.borderColor=C.border; e.target.style.boxShadow="none"; }}
             />
           </div>
+          <button style={{
+            display:"flex", alignItems:"center", gap:7, padding:"9px 16px", borderRadius:8,
+            border:`1px solid ${C.border}`, background:C.white, cursor:"pointer", color:C.text,
+            fontFamily:"'DM Sans',sans-serif", fontSize:13, fontWeight:500,
+          }}
+            onMouseEnter={e=>e.currentTarget.style.background=C.ivory}
+            onMouseLeave={e=>e.currentTarget.style.background=C.white}
+            onClick={()=>setShowResearch(true)}
+          >
+            <URIc d="M21 21l-4.35-4.35 M17 11A6 6 0 105 11a6 6 0 0012 0z" size={14} sw={1.8}/>
+            Pazar Araştırması
+          </button>
           <button style={{
             display:"flex", alignItems:"center", gap:7, padding:"9px 16px", borderRadius:8,
             border:"none", background:C.navy, cursor:"pointer", color:C.white,
@@ -12815,6 +12881,155 @@ function NewAgencyModal({ onClose }) {
   );
 }
 
+// Acenteler Phase 2 — market research. Calls the server-side
+// /api/agency-research endpoint (NEVER runs research from the browser —
+// see api/_agencies/researchProvider.js). Results are shown here for
+// review only; nothing is written to public.agencies until the user
+// clicks "CRM'e Ekle" on a specific candidate, which goes through the
+// EXACT SAME getActiveRepo("agency").create() mutation Phase 1 already
+// built — no new agency-creation code path, no auto-import of the full
+// result set.
+function AgencyResearchModal({ existingAgencies, onClose }) {
+  const [country, setCountry] = useState("");
+  const [language, setLanguage] = useState(AGENCY_RESEARCH_LANGUAGES[0]);
+  const [limit, setLimit] = useState("10");
+  const [minimumFit, setMinimumFit] = useState(AGENCY_MINIMUM_FIT_OPTIONS[1]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [candidates, setCandidates] = useState(null); // null = no search run yet
+  const [importedKeys, setImportedKeys] = useState(() => new Set());
+  const [importingKey, setImportingKey] = useState(null);
+  const { mutate: mutAgency } = useRepoMutation("agency");
+
+  function candidateKey(c) { return (c.website || c.email || c.name || '').toLowerCase(); }
+
+  async function handleResearch() {
+    if (!country) { setError("Lütfen bir ülke seçin."); return; }
+    setLoading(true); setError(null); setCandidates(null);
+    try {
+      const sb = getSB();
+      let token = null;
+      if (sb) {
+        const { data } = await sb.auth.getSession();
+        token = data?.session?.access_token || null;
+      }
+      const resp = await fetch('/api/agency-research', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ country, language, limit: parseInt(limit, 10) || 1, minimumFit }),
+      });
+      const payload = await resp.json().catch(() => ({}));
+      if (!resp.ok) { setError(payload.error || `Araştırma başarısız oldu (${resp.status}).`); return; }
+      setCandidates(payload.candidates || []);
+    } catch (err) {
+      setError("Araştırma isteği gönderilemedi: " + err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleImport(candidate) {
+    const key = candidateKey(candidate);
+    setImportingKey(key);
+    const { error: e } = await mutAgency("create", {
+      name: candidate.name,
+      country: candidate.country || country,
+      city: candidate.city || "",
+      website: candidate.website || "",
+      contactPerson: candidate.contact_person || "",
+      email: candidate.email || "",
+      phone: candidate.phone || "",
+      languages: candidate.language ? [candidate.language] : [],
+      // Human-readable fit reason only — source metadata goes into its own
+      // fields below, never packed into this free-text note.
+      fitNote: candidate.fit_reason || "",
+      researchEvidence: candidate.evidence_summary || "",
+      researchSourceUrl: candidate.source_url || "",
+    });
+    setImportingKey(null);
+    if (e) { showToast("Acente eklenemedi: " + e); return; }
+    setImportedKeys(prev => { const next = new Set(prev); next.add(key); return next; });
+    showToast("Acente CRM'e eklendi ✓");
+  }
+
+  return (
+    <Modal title="Pazar Araştırması" onClose={onClose} onSubmit={handleResearch}
+      submitLabel={loading ? "Araştırılıyor…" : "Araştır"} wide>
+      <FGrid>
+        <FRow label="Ülke" required>
+          <FSelect value={country} onChange={setCountry}
+            options={[["","— Seçin —"], ...COUNTRY_OPTIONS.map(c=>[c.name,`${c.flag} ${c.name}`])]}/>
+        </FRow>
+        <FRow label="Dil"><FSelect value={language} onChange={setLanguage} options={AGENCY_RESEARCH_LANGUAGES}/></FRow>
+        <FRow label="Acente Sayısı (en fazla 20)"><FText value={limit} onChange={setLimit} placeholder="10" mono/></FRow>
+        <FRow label="Minimum Uyum"><FSelect value={minimumFit} onChange={setMinimumFit} options={AGENCY_MINIMUM_FIT_OPTIONS}/></FRow>
+      </FGrid>
+
+      {error && (
+        <div style={{ marginTop:14, padding:"10px 14px", borderRadius:8, background:C.redBg, color:C.red, fontSize:13, fontFamily:"'DM Sans',sans-serif" }}>
+          {error}
+        </div>
+      )}
+
+      {candidates && candidates.length === 0 && !error && (
+        <div style={{ marginTop:16, fontSize:13, color:C.textFaint, fontFamily:"'DM Sans',sans-serif" }}>
+          Bu kriterlere uyan aday bulunamadı.
+        </div>
+      )}
+
+      {candidates && candidates.length > 0 && (
+        <div style={{ marginTop:16, display:"flex", flexDirection:"column", gap:10 }}>
+          {candidates.map((c, i) => {
+            const key = candidateKey(c);
+            const importedNow = importedKeys.has(key);
+            const alreadyInCrm = !!c.existingAgencyId;
+            const fcm = AGENCY_FIT_LEVEL_CFG[c.fit_level] || { color:C.textMuted, bg:C.ivoryDark };
+            return (
+              <div key={i} style={{ border:`1px solid ${C.border}`, borderRadius:10, padding:"14px 16px" }}>
+                <div style={{ display:"flex", justifyContent:"space-between", gap:10, alignItems:"flex-start" }}>
+                  <div>
+                    <div style={{ fontWeight:600, fontSize:14, color:C.text, fontFamily:"'DM Sans',sans-serif" }}>{c.name}</div>
+                    <div style={{ fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:2 }}>
+                      {[c.country, c.city].filter(Boolean).join(" / ") || "—"} · {c.website || "—"}
+                    </div>
+                  </div>
+                  <span style={{ fontSize:11, padding:"3px 9px", borderRadius:99, color:fcm.color, background:fcm.bg, fontFamily:"'DM Sans',sans-serif", fontWeight:500, flexShrink:0, whiteSpace:"nowrap" }}>
+                    {c.fit_level}
+                  </span>
+                </div>
+                {c.fit_reason && <div style={{ fontSize:12.5, color:C.textMid, fontFamily:"'DM Sans',sans-serif", marginTop:8 }}>{c.fit_reason}</div>}
+                {c.evidence_summary && <div style={{ fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:4 }}>Kanıt: {c.evidence_summary}</div>}
+                {c.source_url && <div style={{ fontSize:11, color:C.textFaint, fontFamily:"'DM Mono',monospace", marginTop:4 }}>Kaynak: {c.source_url}</div>}
+                <div style={{ fontSize:12, color:C.textMid, fontFamily:"'DM Sans',sans-serif", marginTop:6 }}>
+                  E-posta: {c.email || "—"} · İletişim: {c.contact_person || "—"} · Dil: {c.language || "—"}
+                </div>
+                <div style={{ marginTop:10 }}>
+                  {alreadyInCrm ? (
+                    <button onClick={()=>{ onClose(); if (NAV_REF.fn) NAV_REF.fn('/agencies/'+c.existingAgencyId); }} style={{
+                      padding:"7px 14px", borderRadius:7, border:`1px solid ${C.border}`, background:C.ivory,
+                      color:C.textMid, fontSize:12.5, fontFamily:"'DM Sans',sans-serif", cursor:"pointer",
+                    }}>Zaten CRM'de — Aç</button>
+                  ) : importedNow ? (
+                    <span style={{ fontSize:12.5, color:C.green, fontFamily:"'DM Sans',sans-serif", fontWeight:500 }}>Eklendi ✓</span>
+                  ) : (
+                    <button onClick={()=>handleImport(c)} disabled={importingKey===key} style={{
+                      padding:"7px 14px", borderRadius:7, border:"none",
+                      background: importingKey===key ? C.ivoryDark : C.navy,
+                      color: importingKey===key ? C.textFaint : C.white,
+                      fontSize:12.5, fontFamily:"'DM Sans',sans-serif", fontWeight:500,
+                      cursor: importingKey===key ? "not-allowed" : "pointer",
+                    }}>{importingKey===key ? "Ekleniyor…" : "CRM'e Ekle"}</button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </Modal>
+  );
+}
+
 // Keep it simple per the product brief: only status and internal notes are
 // editable in Phase 1 (both save immediately through the existing agency
 // update mutation). Basic info/fit fields are set at creation and shown
@@ -12825,6 +13040,20 @@ function AcenteDetailPage({ agencyId, onBack }) {
   const { mutate:mutAgency, mutating } = useRepoMutation("agency");
   const [notesDraft, setNotesDraft] = useState("");
   const [notesDirty, setNotesDirty] = useState(false);
+
+  // Outreach drafting (Phase 2) — a single editable draft at a time, either
+  // freshly generated via /api/agency-draft-outreach or loaded from an
+  // existing agency_emails row for editing. Saving never sets sentAt and
+  // never touches agency.lastContactAt — creating a draft is not contact.
+  const { data:emailHistory, loading:emailsLoading, error:emailsError, reload:reloadEmails } = useRepo("agencyEmail", "getByAgencyId", agencyId);
+  const { mutate:mutAgencyEmail, mutating:emailMutating } = useRepoMutation("agencyEmail");
+  const [draftLanguage, setDraftLanguage] = useState(AGENCY_RESEARCH_LANGUAGES[0]);
+  const [draftLoading, setDraftLoading] = useState(false);
+  const [draftError, setDraftError] = useState(null);
+  const [draftSubject, setDraftSubject] = useState("");
+  const [draftBody, setDraftBody] = useState("");
+  const [draftMeta, setDraftMeta] = useState(null);
+  const [editingEmailId, setEditingEmailId] = useState(null);
 
   useEffect(() => {
     if (agency && !notesDirty) setNotesDraft(agency.internalNotes || "");
@@ -12845,6 +13074,64 @@ function AcenteDetailPage({ agencyId, onBack }) {
     if (e) { showToast("Not kaydedilemedi: " + e); return; }
     setNotesDirty(false);
     showToast("Not kaydedildi ✓");
+  }
+
+  async function handleGenerateDraft() {
+    setDraftLoading(true); setDraftError(null);
+    try {
+      const sb = getSB();
+      let token = null;
+      if (sb) {
+        const { data } = await sb.auth.getSession();
+        token = data?.session?.access_token || null;
+      }
+      const resp = await fetch('/api/agency-draft-outreach', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({
+          agency: {
+            name: agency.name, country: agency.country, city: agency.city,
+            website: agency.website, languages: agency.languages, fitNote: agency.fitNote,
+            researchEvidence: agency.researchEvidence, researchSourceUrl: agency.researchSourceUrl,
+          },
+          language: draftLanguage,
+        }),
+      });
+      const payload = await resp.json().catch(() => ({}));
+      if (!resp.ok) { setDraftError(payload.error || `Taslak oluşturulamadı (${resp.status}).`); return; }
+      setEditingEmailId(null);
+      setDraftSubject(payload.subject || "");
+      setDraftBody(payload.body || "");
+      setDraftMeta(payload);
+    } catch (err) {
+      setDraftError("Taslak isteği gönderilemedi: " + err.message);
+    } finally {
+      setDraftLoading(false);
+    }
+  }
+
+  async function handleSaveDraft() {
+    if (editingEmailId) {
+      const { error:e } = await mutAgencyEmail("update", editingEmailId, { subject:draftSubject, body:draftBody });
+      if (e) { showToast("Taslak güncellenemedi: " + e); return; }
+      showToast("Taslak güncellendi ✓");
+    } else {
+      const { error:e } = await mutAgencyEmail("create", {
+        agencyId: agency.id, subject:draftSubject, body:draftBody,
+        createdBy: getAuthContext()?.staff?.id || null,
+      });
+      if (e) { showToast("Taslak kaydedilemedi: " + e); return; }
+      showToast("Taslak kaydedildi ✓");
+    }
+    reloadEmails && reloadEmails();
+  }
+
+  function handleOpenHistoryItem(email) {
+    setEditingEmailId(email.id);
+    setDraftSubject(email.subject || "");
+    setDraftBody(email.body || "");
+    setDraftMeta(null);
+    setDraftError(null);
   }
 
   return (
@@ -12880,6 +13167,21 @@ function AcenteDetailPage({ agencyId, onBack }) {
         <div style={{padding:"16px 20px", fontSize:13.5, color:C.textMid, fontFamily:"'DM Sans',sans-serif", lineHeight:1.6}}>
           {agency.fitNote || <span style={{color:C.textFaint}}>Henüz bir uygunluk notu girilmedi.</span>}
         </div>
+        {(agency.researchEvidence || agency.researchSourceUrl) && (
+          <div style={{padding:"0 20px 16px", display:"flex", flexDirection:"column", gap:6, borderTop:`1px solid ${C.borderLight}`, marginTop:2, paddingTop:12}}>
+            {agency.researchEvidence && (
+              <div style={{fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", lineHeight:1.5}}>
+                <strong style={{color:C.textMuted, fontWeight:600}}>Araştırma Bulgusu:</strong> {agency.researchEvidence}
+              </div>
+            )}
+            {agency.researchSourceUrl && (
+              <div style={{fontSize:11.5, fontFamily:"'DM Sans',sans-serif"}}>
+                <strong style={{color:C.textMuted, fontWeight:600}}>Kaynak:</strong>{' '}
+                <a href={agency.researchSourceUrl} target="_blank" rel="noopener noreferrer" style={{color:C.navy, textDecoration:"underline"}}>{agency.researchSourceUrl}</a>
+              </div>
+            )}
+          </div>
+        )}
       </RCard>
 
       <RCard>
@@ -12908,6 +13210,98 @@ function AcenteDetailPage({ agencyId, onBack }) {
       <RCard>
         <RCardHead title="Son Temas" accent/>
         <RInfoRow label="Son Temas Tarihi" value={agency.lastContactAt ? new Date(agency.lastContactAt).toLocaleDateString('tr-TR',{day:'2-digit',month:'short',year:'numeric'}) : "—"}/>
+      </RCard>
+
+      <RCard>
+        <RCardHead title="İlk Temas Taslağı" accent/>
+        <div style={{padding:"16px 20px", display:"flex", flexDirection:"column", gap:12}}>
+          <div style={{display:"flex", alignItems:"center", gap:10, flexWrap:"wrap"}}>
+            <SSelect value={draftLanguage} onChange={setDraftLanguage} options={AGENCY_RESEARCH_LANGUAGES}/>
+            <button onClick={handleGenerateDraft} disabled={draftLoading} style={{
+              padding:"8px 16px", borderRadius:7, border:"none",
+              background: draftLoading ? C.ivoryDark : C.navy,
+              color: draftLoading ? C.textFaint : C.white,
+              cursor: draftLoading ? "not-allowed" : "pointer",
+              fontFamily:"'DM Sans',sans-serif", fontSize:13, fontWeight:500,
+            }}>{draftLoading ? "Oluşturuluyor…" : "Taslak Oluştur"}</button>
+            {editingEmailId && (
+              <span style={{fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>
+                Kayıtlı taslak düzenleniyor — Kaydet güncelleyecek.
+              </span>
+            )}
+          </div>
+
+          {draftError && (
+            <div style={{padding:"10px 14px", borderRadius:7, background:C.redBg, color:C.red, fontSize:12.5, fontFamily:"'DM Sans',sans-serif"}}>
+              {draftError}
+            </div>
+          )}
+
+          {(draftSubject || draftBody) && (
+            <>
+              <div>
+                <label style={{display:"block", fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginBottom:5}}>Konu</label>
+                <FText value={draftSubject} onChange={setDraftSubject}/>
+              </div>
+              <div>
+                <label style={{display:"block", fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginBottom:5}}>Gövde</label>
+                <FTextArea value={draftBody} onChange={setDraftBody} rows={8}/>
+              </div>
+              {draftMeta && draftMeta.personalization_signal && (
+                <div style={{fontSize:12, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", lineHeight:1.5}}>
+                  <strong>Kişiselleştirme sinyali:</strong> {draftMeta.personalization_signal}
+                  {draftMeta.angle_reason && <> — <strong>Yaklaşım:</strong> {draftMeta.angle_reason}</>}
+                </div>
+              )}
+              <div>
+                <button onClick={handleSaveDraft} disabled={emailMutating || !draftSubject || !draftBody} style={{
+                  padding:"8px 16px", borderRadius:7, border:"none",
+                  background: (emailMutating||!draftSubject||!draftBody) ? C.ivoryDark : C.gold,
+                  color: (emailMutating||!draftSubject||!draftBody) ? C.textFaint : C.white,
+                  cursor: (emailMutating||!draftSubject||!draftBody) ? "not-allowed" : "pointer",
+                  fontFamily:"'DM Sans',sans-serif", fontSize:13, fontWeight:500,
+                }}>{emailMutating ? "Kaydediliyor…" : (editingEmailId ? "Taslağı Güncelle" : "Taslağı Kaydet")}</button>
+              </div>
+            </>
+          )}
+        </div>
+      </RCard>
+
+      <RCard>
+        <RCardHead title="E-posta Geçmişi" accent/>
+        {emailsLoading ? (
+          <LoadingState label="E-postalar yükleniyor…"/>
+        ) : emailsError ? (
+          <div style={{padding:"20px", color:C.red, fontSize:13, fontFamily:"'DM Sans',sans-serif"}}>E-posta geçmişi yüklenemedi: {emailsError}</div>
+        ) : !emailHistory || emailHistory.length===0 ? (
+          <div style={{padding:"20px", color:C.textFaint, fontSize:13, fontFamily:"'DM Sans',sans-serif"}}>Henüz bir e-posta taslağı oluşturulmadı.</div>
+        ) : (
+          <div style={{display:"flex", flexDirection:"column"}}>
+            {emailHistory.map(email => (
+              <div key={email.id} style={{
+                display:"flex", alignItems:"center", justifyContent:"space-between", gap:12,
+                padding:"12px 20px", borderTop:`1px solid ${C.borderLight}`,
+              }}>
+                <div style={{minWidth:0}}>
+                  <div style={{fontSize:13.5, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}}>
+                    {email.subject || "(konu yok)"}
+                  </div>
+                  <div style={{fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:2}}>
+                    {email.createdAt ? new Date(email.createdAt).toLocaleDateString('tr-TR',{day:'2-digit',month:'short',year:'numeric'}) : "—"}
+                  </div>
+                </div>
+                <div style={{display:"flex", alignItems:"center", gap:10, flexShrink:0}}>
+                  <RBadge label={email.status} map={AGENCY_EMAIL_STATUS_CFG}/>
+                  <button onClick={()=>handleOpenHistoryItem(email)} style={{
+                    padding:"6px 12px", borderRadius:6, border:`1px solid ${C.border}`,
+                    background:C.ivory, cursor:"pointer", color:C.textMid,
+                    fontFamily:"'DM Sans',sans-serif", fontSize:12,
+                  }}>Aç</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </RCard>
     </div>
   );
@@ -17521,6 +17915,10 @@ function mapAgencyFromDB(a) {
     website:a.website||'', contactPerson:a.contact_person||'',
     email:a.email||'', phone:a.phone||'',
     languages:a.languages||[], fitNote:a.fit_note||'',
+    // Phase 2 — set only when imported from market research via "CRM'e
+    // Ekle" (see supabase_migration_agencies_phase2_research_evidence.sql);
+    // '' for any manually-added or pre-Phase-2 agency.
+    researchEvidence:a.research_evidence||'', researchSourceUrl:a.research_source_url||'',
     status:a.status||'Aday', lastContactAt:a.last_contact_at||null,
     internalNotes:a.internal_notes||'', createdBy:a.created_by||null,
     createdAt:a.created_at?a.created_at.split('T')[0]:'',
@@ -17538,6 +17936,8 @@ function mapAgencyToDB(d) {
   if(d.phone!==undefined)         row.phone = d.phone||null;
   if(d.languages!==undefined)     row.languages = d.languages||[];
   if(d.fitNote!==undefined)       row.fit_note = d.fitNote||null;
+  if(d.researchEvidence!==undefined)   row.research_evidence = d.researchEvidence||null;
+  if(d.researchSourceUrl!==undefined)  row.research_source_url = d.researchSourceUrl||null;
   if(d.status!==undefined)        row.status = d.status;
   if(d.internalNotes!==undefined) row.internal_notes = d.internalNotes||null;
   // last_contact_at is deliberately NOT mapped here in Phase 1 — see the
@@ -17576,6 +17976,47 @@ const SupabaseAgencyRepo = {
     if(error) throw new Error(error.message);
     await _sbLog('agency', id, 'updated', `Acente güncellendi: ${Object.keys(p).join(', ')}`);
     return mapAgencyFromDB(a);
+  },
+};
+
+// Acenteler Phase 2 — agency_emails read/write. create() deliberately
+// NEVER sets sent_at and NEVER touches agencies.last_contact_at — saving
+// a draft is not a real contact (see the Phase 2 migration-free design:
+// this table already exists from Phase 1's foundation migration).
+function mapAgencyEmailFromDB(r) {
+  if (!r) return null;
+  return {
+    id:r.id, agencyId:r.agency_id||null, direction:r.direction||'outbound',
+    subject:r.subject||'', body:r.body||'', status:r.status||'draft',
+    sentAt:r.sent_at||null, createdBy:r.created_by||null, createdAt:r.created_at||null,
+    _fromDB:true,
+  };
+}
+const SupabaseAgencyEmailRepo = {
+  async getByAgencyId(agencyId){
+    const sb=getSB(); if(!sb) return AgencyEmailRepository.getByAgencyId(agencyId);
+    const{data,error}=await sb.from('agency_emails').select('*').eq('agency_id',agencyId).order('created_at',{ascending:false});
+    if(error) throw new Error(error.message);
+    return (data||[]).map(mapAgencyEmailFromDB);
+  },
+  async create(d){
+    const sb=getSB(); if(!sb) return AgencyEmailRepository.create(d);
+    const row={
+      agency_id:d.agencyId, direction:'outbound', subject:d.subject||null,
+      body:d.body||null, status:'draft', created_by:d.createdBy||null,
+    };
+    const{data:e,error}=await sb.from('agency_emails').insert(row).select().single();
+    if(error) throw new Error(error.message);
+    return mapAgencyEmailFromDB(e);
+  },
+  async update(id,p){
+    const sb=getSB(); if(!sb) return AgencyEmailRepository.update(id,p);
+    const row={};
+    if(p.subject!==undefined) row.subject=p.subject;
+    if(p.body!==undefined) row.body=p.body;
+    const{data:e,error}=await sb.from('agency_emails').update(row).eq('id',id).select().single();
+    if(error) throw new Error(error.message);
+    return mapAgencyEmailFromDB(e);
   },
 };
 
@@ -17976,6 +18417,7 @@ function getActiveRepo(entity) {
   if(entity==='guide')      return useReal ? SupabaseGuideRepo       : GuideRepository;
   if(entity==='guidePayment')return useReal ? SupabaseGuidePaymentRepo : GuidePaymentRepository;
   if(entity==='agency')     return useReal ? SupabaseAgencyRepo       : AgencyRepository;
+  if(entity==='agencyEmail')return useReal ? SupabaseAgencyEmailRepo  : AgencyEmailRepository;
   if(entity==='review')     return useReal ? SupabaseReviewRepo       : ReviewRepository;
   if(entity==='staff')      return useReal ? SupabaseStaffRepo       : { getAll: async () => DB.staff };
   if(entity==='reservationPreparation') return useReal ? SupabaseReservationPreparationRepo : { getByReservation: async () => [], getUpcomingPending: async () => [], getRecentCompleted: async () => [], complete: async () => ({ ok:false, reason:'invalid' }), reopen: async () => ({ ok:false, reason:'invalid' }) };

@@ -235,22 +235,25 @@ test('[20] existing Leads/Quotes remain retired — not resurrected by this phas
   assert.doesNotMatch(ACENTELER_PAGE_BODY + NEW_AGENCY_MODAL_BODY + ACENTE_DETAIL_BODY, /getActiveRepo\("lead"\)|getActiveRepo\("quote"\)|useRepo\("lead"|useRepo\("quote"/);
 });
 
-// ── 21-22. deferred capabilities have zero footprint ─────────────────────
+// ── 21-22. send transport and direct-provider calls stay out of the frontend ──
+// Phase 1 shipped with zero email/AI footprint by design. Phase 2 (approved
+// separately) legitimately adds agency_emails draft storage and a
+// server-side research/drafting boundary (api/_agencies/*). These two tests
+// now assert what must remain true indefinitely rather than "doesn't exist
+// yet": no code path here actually transmits an email, and the frontend
+// never talks to an AI provider or an external URL directly — only to this
+// app's own /api endpoints, which enforce auth and validation server-side.
 
-test('[21] no email send behavior exists in this phase', () => {
+test('[21] no automatic/direct email send transport in the agency UI', () => {
   const acenteSource = ACENTELER_PAGE_BODY + NEW_AGENCY_MODAL_BODY + ACENTE_DETAIL_BODY;
-  assert.doesNotMatch(acenteSource, /EmailService|ResendEmailProvider|send-email|sendProposal|sendAgencyOutreach/i);
-  assert.doesNotMatch(acenteSource, /agency_emails/i);
-  assert.doesNotMatch(SOURCE, /getActiveRepo\("agencyEmail"\)|useRepo\("agencyEmail"/);
-  // The migration creates agency_emails but no application code reads/writes it yet.
-  assert.doesNotMatch(SOURCE, /from\('agency_emails'\)/);
+  assert.doesNotMatch(acenteSource, /EmailService|ResendEmailProvider|send-email|sendProposal|sendAgencyOutreach|sendReminder|sendReviewRequest/i);
 });
 
-test('[22] no AI/discovery behavior exists in this phase', () => {
+test('[22] agency research/drafting never calls an AI provider directly from the frontend', () => {
   const acenteSource = ACENTELER_PAGE_BODY + NEW_AGENCY_MODAL_BODY + ACENTE_DETAIL_BODY;
-  assert.doesNotMatch(acenteSource, /anthropic|openai|claude|gpt|fetch\(['"]https?:\/\//i);
-  assert.doesNotMatch(acenteSource, /discover|research|scrape|crawl/i);
-  assert.match(NEW_AGENCY_MODAL_BODY, /Neden Uygun Olabilir/, 'fit_note is a plain manually-typed field in Phase 1, not AI-generated');
+  assert.doesNotMatch(acenteSource, /anthropic|openai|claude-|gpt-/i);
+  assert.doesNotMatch(acenteSource, /fetch\(['"]https?:\/\//i, "research/drafting must call this app's own /api endpoint, never an external URL directly from the browser");
+  assert.match(NEW_AGENCY_MODAL_BODY, /Neden Uygun Olabilir/, 'fit_note remains a plain manually-typed field on manual creation, not AI-generated');
 });
 
 // ── no em/en dash introduced in new UI copy ──────────────────────────────
