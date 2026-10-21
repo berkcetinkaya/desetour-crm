@@ -359,7 +359,10 @@ test('[35] requireAgencyRole returns 403 for a role outside admin/sales (e.g. Op
 test('[36] requireAgencyRole returns ok:true for admin and sales roles', async () => {
   for (const role of ['admin', 'sales']) {
     const fakeCreateClient = () => ({
-      auth: { getUser: async () => ({ data: { user: { id: 'u1' } }, error: null }) },
+      auth: {
+        getUser: async () => ({ data: { user: { id: 'u1' } }, error: null }),
+        mfa: { getAuthenticatorAssuranceLevel: async () => ({ data: { currentLevel: 'aal2', nextLevel: 'aal2', currentAuthenticationMethods: [] }, error: null }) },
+      },
       from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { role }, error: null }) }) }) }),
     });
     const result = await authorize.requireAgencyRole({ headers: { authorization: 'Bearer faketoken' } }, { createClient: fakeCreateClient });

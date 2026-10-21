@@ -18891,6 +18891,110 @@ async function _resolveStaffState(s, loadFn = loadStaffData, isStale = () => fal
 }
 // TESTABLE:_resolveStaffState:end
 
+// TESTABLE:_resolveMfaState:start
+// TOTP MFA — resolves { mfaLoading:false, mfaCurrentLevel, mfaNextLevel,
+// mfaVerifiedTotpFactors, mfaQueryError } for an ACTIVE, linked staff
+// session, using ONLY the official Supabase MFA API:
+//   - supabase.auth.mfa.getAuthenticatorAssuranceLevel(jwt) — the
+//     documented way to read the session's current/next Authenticator
+//     Assurance Level. Never decodes the session JWT by hand; this is
+//     exactly what the task/security review asked to prefer, and it's
+//     what the installed SDK's own _getAuthenticatorAssuranceLevel does
+//     internally (proven from node_modules/@supabase/auth-js's
+//     GoTrueClient.js — decodeJWT only for the `aal`/`amr` claims, then
+//     cross-checked against the user's actual factor list it fetches
+//     itself).
+//   - supabase.auth.mfa.listFactors() — returns { all, totp, phone,
+//     webauthn, recovery_code }. Proven from the same source: the `totp`
+//     (etc.) buckets are populated ONLY with factors whose
+//     status === 'verified'; everything else (including an abandoned,
+//     never-completed enrollment attempt) lands only in `.all`. Reading
+//     `.totp` here is therefore already the correct, SDK-enforced
+//     "verified factors only" list — an unverified factor can never leak
+//     into mfaVerifiedTotpFactors and be mistaken for completed MFA.
+// Fails CLOSED: any error from either call returns mfaQueryError set and
+// an EMPTY verified-factor list with null levels — never guesses "probably
+// fine" and never lets a transient API failure fall through to granting
+// access. See AuthGuard's mfaQueryError branch, which blocks access and
+// offers a retry rather than silently treating the error as "no MFA
+// needed".
+async function _resolveMfaState(sb, session) {
+  if (!sb || !session?.access_token) {
+    return { mfaLoading:false, mfaCurrentLevel:null, mfaNextLevel:null, mfaVerifiedTotpFactors:[], mfaQueryError:null };
+  }
+  try {
+    const [aalResult, factorsResult] = await Promise.all([
+      sb.auth.mfa.getAuthenticatorAssuranceLevel(session.access_token),
+      sb.auth.mfa.listFactors(),
+    ]);
+    if (aalResult.error) {
+      return { mfaLoading:false, mfaCurrentLevel:null, mfaNextLevel:null, mfaVerifiedTotpFactors:[], mfaQueryError: aalResult.error.message };
+    }
+    if (factorsResult.error) {
+      return { mfaLoading:false, mfaCurrentLevel:null, mfaNextLevel:null, mfaVerifiedTotpFactors:[], mfaQueryError: factorsResult.error.message };
+    }
+    return {
+      mfaLoading: false,
+      mfaCurrentLevel: aalResult.data.currentLevel,
+      mfaNextLevel: aalResult.data.nextLevel,
+      mfaVerifiedTotpFactors: (factorsResult.data && factorsResult.data.totp) || [],
+      mfaQueryError: null,
+    };
+  } catch (e) {
+    return { mfaLoading:false, mfaCurrentLevel:null, mfaNextLevel:null, mfaVerifiedTotpFactors:[], mfaQueryError: e.message };
+  }
+}
+// TESTABLE:_resolveMfaState:end
+
+// TESTABLE:_findStaleUnverifiedTotpFactor:start
+// From listFactors()'s `.all` bucket (every factor regardless of status
+// — see _resolveMfaState above), finds an abandoned, never-completed TOTP
+// enrollment attempt. An unverified factor has no security value (nothing
+// can sign in with it) and Supabase never returns its QR/secret again
+// after the original enroll() call — that material is issued exactly
+// once, at creation — so the only safe way to let a user retry setup is
+// to discard the stale attempt and enroll a fresh one. This is what
+// MfaEnrollmentScreen uses to stop repeated visits to the enrollment
+// screen (a page refresh mid-setup, navigating away and back, etc.) from
+// accumulating an unbounded number of dead, unverified factors server-side.
+function _findStaleUnverifiedTotpFactor(allFactors) {
+  if (!Array.isArray(allFactors)) return null;
+  return allFactors.find(f => f && f.factor_type === 'totp' && f.status !== 'verified') || null;
+}
+// TESTABLE:_findStaleUnverifiedTotpFactor:end
+
+// TESTABLE:_computeMfaGate:start
+// Pure decision function — the ENTIRE "which screen does AuthGuard show"
+// truth table for TOTP MFA, in one place, directly testable with plain
+// objects (no React, no network). Mirrors _computeAuthResolution's own
+// role in the staff-resolution pipeline: the actual gating logic lives
+// here, not scattered across JSX conditionals.
+//   - mfaGateApplies: only once staff is CONFIRMED active+linked AND the
+//     MFA/AAL lookup itself has settled without error — never while
+//     still loading, never after a failed lookup (fail CLOSED: a failed
+//     lookup is surfaced by AuthGuard's own mfaQueryError branch, never
+//     silently treated as "no MFA needed").
+//   - mfaEnrollmentRequired: the gate applies AND there is no verified
+//     TOTP factor at all (mfaVerifiedTotpFactors is already pre-filtered
+//     to status==='verified' by _resolveMfaState/listFactors — an
+//     unverified/abandoned enrollment attempt can never satisfy this).
+//   - mfaVerificationRequired: the gate applies AND a verified factor
+//     EXISTS, but mfaCurrentLevel !== 'aal2' — covers 'aal1' and also
+//     `null` (no aal claim at all), never treating an unknown level as
+//     already satisfied.
+// Exactly one of {enrollment, verification, neither} is ever true at
+// once; "neither" (both false) is what lets AuthGuard fall through to
+// rendering the actual CRM content.
+function _computeMfaGate(mfaState, staffLinked, staffInactive) {
+  const hasVerifiedTotp = (mfaState.mfaVerifiedTotpFactors || []).length > 0;
+  const gateApplies = staffLinked && !staffInactive && !mfaState.mfaLoading && !mfaState.mfaQueryError;
+  return {
+    mfaEnrollmentRequired: gateApplies && !hasVerifiedTotp,
+    mfaVerificationRequired: gateApplies && hasVerifiedTotp && mfaState.mfaCurrentLevel !== 'aal2',
+  };
+}
+// TESTABLE:_computeMfaGate:end
+
 // TESTABLE:_signInWithPassword:start
 // The actual Supabase Auth call login() makes, extracted so it's directly
 // testable with a fake `sb` (same dependency-injection style
@@ -19024,6 +19128,57 @@ function useAuth() {
     setAuthState(_authCache);
     _notifyAuthListeners();
   }
+
+  // TOTP MFA — deliberately a PLAIN component-local useState, never the
+  // module-level _authCache: this state must start fresh (mfaLoading:true)
+  // on every single mount, with no memory of a prior MFA pass. _authCache
+  // is module-level specifically so staff/session survive remounts (see
+  // the big comment on the subscribe-effect below) — but surviving a
+  // remount is exactly what MFA must NEVER do. A page refresh (or a fresh
+  // AuthGuard mount after /login) re-mounts this hook, resets this state,
+  // and the effect below re-derives everything from the live Supabase
+  // session's current Authenticator Assurance Level again — there is no
+  // "mfaVerified" flag anywhere that a refresh, a new tab, or localStorage
+  // could ever short-circuit.
+  const [mfaState, setMfaState] = useState({
+    mfaLoading: true, mfaCurrentLevel: null, mfaNextLevel: null, mfaVerifiedTotpFactors: [], mfaQueryError: null,
+  });
+
+  // Re-runs only the MFA/AAL lookup for the current session — used by the
+  // "Tekrar Dene" button on the MFA-query-failed screen, mirroring
+  // retryStaffLookup above exactly (same shape, same reasoning), just for
+  // the MFA resolution instead of the staff_users one.
+  async function retryMfaResolution() {
+    const sb = getSB();
+    if (!sb || !session) return;
+    setMfaState(prev => ({ ...prev, mfaLoading: true }));
+    const patch = await _resolveMfaState(sb, session);
+    setMfaState(patch);
+  }
+
+  // Resolves MFA/AAL state fresh from the live Supabase session whenever
+  // the session's own access token changes, or staff linkage/active
+  // status changes — never cached beyond that, never derived from
+  // anything the browser itself asserts. Gated to an ACTIVE, linked staff
+  // session: a blocked/inactive/unlinked session is already denied by
+  // AuthGuard before it would ever look at these fields (see AuthGuard's
+  // branch order), so there is no reason to spend a network round-trip
+  // resolving MFA for a session about to be rejected anyway — and no mock
+  // mode fallback either, since Supabase's MFA API has nothing to call in
+  // mock/demo mode (no real Supabase project behind it).
+  useEffect(() => {
+    const sb = getSB();
+    if (!sb || !session?.access_token || !staff || staffInactive) {
+      setMfaState({ mfaLoading: false, mfaCurrentLevel: null, mfaNextLevel: null, mfaVerifiedTotpFactors: [], mfaQueryError: null });
+      return;
+    }
+    let cancelled = false;
+    setMfaState(prev => ({ ...prev, mfaLoading: true }));
+    _resolveMfaState(sb, session).then(patch => {
+      if (!cancelled) setMfaState(patch);
+    });
+    return () => { cancelled = true; };
+  }, [session?.access_token, !!staff, staffInactive]);
 
   useEffect(() => {
     // Subscribe to future auth changes
@@ -19285,7 +19440,18 @@ function useAuth() {
   const role    = rawRole ? (ROLE_MAP[rawRole] || rawRole) : null;
   const staffLinked = !!staff;
 
-  return { session, staff, authLoading, authError, staffQueryError, staffRefreshError, staffInactive, retryStaffLookup, login, logout, displayName, initials, role, staffLinked, isLoggedIn:!!session };
+  // TOTP MFA — see _computeMfaGate's own comment for the exact decision
+  // table. Derived purely from the fresh mfaState resolved above, never
+  // from a flag set once and remembered.
+  const { mfaEnrollmentRequired, mfaVerificationRequired } = _computeMfaGate(mfaState, staffLinked, staffInactive);
+
+  return {
+    session, staff, authLoading, authError, staffQueryError, staffRefreshError, staffInactive, retryStaffLookup,
+    login, logout, displayName, initials, role, staffLinked, isLoggedIn:!!session,
+    mfaLoading: mfaState.mfaLoading, mfaCurrentLevel: mfaState.mfaCurrentLevel, mfaNextLevel: mfaState.mfaNextLevel,
+    mfaVerifiedTotpFactors: mfaState.mfaVerifiedTotpFactors, mfaQueryError: mfaState.mfaQueryError,
+    mfaEnrollmentRequired, mfaVerificationRequired, retryMfaResolution,
+  };
 }
 
 const AuthContext = createContext(null);
@@ -19608,6 +19774,274 @@ function AccessDenied({ page }) {
   );
 }
 
+// Shared visual shell for the MFA verification/enrollment screens below —
+// the exact same navy-gradient-background + white-card pattern every other
+// AuthGuard-rendered screen (staff-blocked, staff-inactive, profile-not-
+// linked) already uses, just factored out once since these two screens
+// share it identically rather than duplicating it a third/fourth time.
+function MfaScreenShell({ maxWidth, children }) {
+  return (
+    <div style={{
+      minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center",
+      background:`linear-gradient(135deg, ${C.navyDeep} 0%, ${C.navy} 100%)`, padding:20,
+    }}>
+      <div style={{
+        maxWidth: maxWidth || 440, width:"100%", background:C.white, borderRadius:14,
+        padding:"32px 30px", textAlign:"center", boxShadow:"0 20px 60px rgba(0,0,0,0.3)",
+      }}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+// A plain <input> that only ever holds 0-6 digits — used identically by
+// both the verification and enrollment screens below. autoComplete is
+// "one-time-code" per the WHATWG spec token for exactly this kind of
+// field (lets a browser/password-manager offer an SMS/authenticator code
+// autofill where supported); inputMode "numeric" brings up a numeric
+// keypad on mobile without changing the underlying value's type.
+function TotpCodeInput({ value, onChange, autoFocus }) {
+  return (
+    <input
+      type="text" inputMode="numeric" autoComplete="one-time-code" maxLength={6}
+      autoFocus={!!autoFocus}
+      value={value}
+      onChange={e => onChange(e.target.value.replace(/\D/g, "").slice(0, 6))}
+      placeholder="000000"
+      style={{
+        width:"100%", boxSizing:"border-box", padding:"13px 14px", borderRadius:9,
+        border:`1.5px solid ${C.border}`, fontSize:22, letterSpacing:"0.3em", textAlign:"center",
+        color:C.text, fontFamily:"'DM Mono',monospace", outline:"none", background:C.white,
+      }}
+    />
+  );
+}
+
+// CASE A — active staff, a verified TOTP factor exists, but this session
+// has not yet reached aal2 (see useAuth's mfaVerificationRequired). Shows
+// NOTHING but the 6-digit prompt — no operational CRM navigation, no
+// data, nothing behind this gate (see AuthGuard: this is rendered INSTEAD
+// of children, not alongside them).
+function MfaVerificationScreen({ auth }) {
+  const [code, setCode] = useState("");
+  const [verifying, setVerifying] = useState(false);
+  const [error, setError] = useState("");
+
+  // Always the first verified TOTP factor — this phase does not add
+  // self-service multi-factor selection/management (explicitly out of
+  // scope), and DeseTour staff are only ever asked to enroll exactly one.
+  const factorId = auth.mfaVerifiedTotpFactors?.[0]?.id || null;
+
+  async function handleVerify() {
+    if (!factorId) { setError("Doğrulama başlatılamadı. Lütfen tekrar giriş yapın."); return; }
+    if (!/^\d{6}$/.test(code)) { setError("Lütfen 6 haneli kodu girin."); return; }
+    setVerifying(true);
+    setError("");
+    const sb = getSB();
+    try {
+      const { error: err } = await sb.auth.mfa.challengeAndVerify({ factorId, code });
+      if (err) {
+        console.error('[MFA] verification rejected:', err.message);
+        setError("Kod doğrulanamadı. Lütfen tekrar deneyin.");
+        setCode("");
+        return;
+      }
+      // Success — challengeAndVerify() already saved the new aal2 session
+      // and fired MFA_CHALLENGE_VERIFIED through the normal
+      // onAuthStateChange pipeline; useAuth's own effect picks up the
+      // fresh session and re-resolves mfaCurrentLevel on its own. Nothing
+      // else to do here.
+    } catch (e) {
+      console.error('[MFA] verification request failed (network/connection):', e);
+      setError("Bağlantı hatası. İnternet bağlantınızı kontrol edip tekrar deneyin.");
+    } finally {
+      setVerifying(false);
+    }
+  }
+
+  return (
+    <MfaScreenShell>
+      <div style={{
+        width:52, height:52, borderRadius:"50%", background:C.ivory, margin:"0 auto 16px",
+        display:"flex", alignItems:"center", justifyContent:"center",
+      }}>
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={C.navy} strokeWidth="2" strokeLinecap="round">
+          <rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 118 0v4"/>
+        </svg>
+      </div>
+      <div style={{fontSize:17, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif", marginBottom:8}}>
+        Doğrulama Kodu
+      </div>
+      <div style={{fontSize:13.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", lineHeight:1.6, marginBottom:20}}>
+        Kimlik doğrulama uygulamanızdaki 6 haneli kodu girin.
+      </div>
+      {error && (
+        <div style={{padding:"10px 14px", borderRadius:8, marginBottom:16, background:"#FDF2F2", border:"1px solid #FECACA", fontSize:13, color:C.red, fontFamily:"'DM Sans',sans-serif"}}>
+          {error}
+        </div>
+      )}
+      <div style={{marginBottom:20}}>
+        <TotpCodeInput value={code} onChange={setCode} autoFocus/>
+      </div>
+      <div style={{display:"flex", flexDirection:"column", gap:10}}>
+        <button onClick={handleVerify} disabled={verifying} style={{
+          padding:"12px", borderRadius:9, border:"none",
+          background:`linear-gradient(135deg,${C.navyDeep},${C.navy})`,
+          color:C.white, fontSize:14.5, fontWeight:600,
+          fontFamily:"'DM Sans',sans-serif", cursor:verifying?"not-allowed":"pointer",
+        }}>{verifying ? "Doğrulanıyor…" : "Doğrula"}</button>
+        <button onClick={auth.logout} style={{
+          padding:"10px", borderRadius:9, border:`1px solid ${C.border}`,
+          background:C.white, color:C.textMid, fontSize:13.5, fontWeight:500,
+          fontFamily:"'DM Sans',sans-serif", cursor:"pointer",
+        }}>Çıkış Yap</button>
+      </div>
+    </MfaScreenShell>
+  );
+}
+
+// CASE B — active staff, NO verified TOTP factor at all (see useAuth's
+// mfaEnrollmentRequired). MFA is mandatory for DeseTour staff, so there is
+// no "skip for now" action — only enroll, or sign out.
+function MfaEnrollmentScreen({ auth }) {
+  const [factorId, setFactorId] = useState(null);
+  const [qrCodeUri, setQrCodeUri] = useState(null);
+  const [secret, setSecret] = useState(null);
+  const [bootstrapping, setBootstrapping] = useState(true);
+  const [bootstrapError, setBootstrapError] = useState("");
+  const [code, setCode] = useState("");
+  const [verifying, setVerifying] = useState(false);
+  const [verifyError, setVerifyError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    async function bootstrap() {
+      const sb = getSB();
+      if (!sb) { setBootstrapError("Kurulum bu modda kullanılamıyor."); setBootstrapping(false); return; }
+      try {
+        // Discard any abandoned, never-verified enrollment attempt first
+        // (a previous visit to this exact screen that was never finished)
+        // — see _findStaleUnverifiedTotpFactor's own comment for why this
+        // is the only safe way to prevent dead factors from accumulating.
+        // Best-effort: if this fails, enroll() below still runs, and will
+        // itself surface any real problem.
+        const { data: listData } = await sb.auth.mfa.listFactors();
+        const stale = _findStaleUnverifiedTotpFactor(listData && listData.all);
+        if (stale) {
+          await sb.auth.mfa.unenroll({ factorId: stale.id }).catch(() => {});
+        }
+        if (cancelled) return;
+        const { data: enrollData, error: enrollError } = await sb.auth.mfa.enroll({ factorType: 'totp', issuer: 'DeseTour CRM' });
+        if (enrollError) throw enrollError;
+        if (cancelled) return;
+        setFactorId(enrollData.id);
+        setQrCodeUri((enrollData.totp && enrollData.totp.qr_code) || null);
+        setSecret((enrollData.totp && enrollData.totp.secret) || null);
+      } catch (e) {
+        if (!cancelled) {
+          console.error('[MFA] enrollment setup failed:', e && e.message);
+          setBootstrapError("Kurulum başlatılamadı. Lütfen tekrar deneyin.");
+        }
+      } finally {
+        if (!cancelled) setBootstrapping(false);
+      }
+    }
+    bootstrap();
+    return () => { cancelled = true; };
+  }, []);
+
+  async function handleVerify() {
+    if (!factorId) { setVerifyError("Kurulum tamamlanamadı. Lütfen sayfayı yenileyin."); return; }
+    if (!/^\d{6}$/.test(code)) { setVerifyError("Lütfen 6 haneli kodu girin."); return; }
+    setVerifying(true);
+    setVerifyError("");
+    const sb = getSB();
+    try {
+      const { error: err } = await sb.auth.mfa.challengeAndVerify({ factorId, code });
+      if (err) {
+        console.error('[MFA] enrollment verification rejected:', err.message);
+        setVerifyError("Kod doğrulanamadı. Lütfen tekrar deneyin.");
+        setCode("");
+        return;
+      }
+      // Success — clear the sensitive enrollment material (QR/secret) from
+      // memory now that it's no longer needed; this component never wrote
+      // it anywhere else (see the module header note on QR/secret
+      // handling). challengeAndVerify() already saved the new aal2
+      // session; useAuth's own effect re-resolves on its own from here.
+      setQrCodeUri(null);
+      setSecret(null);
+      setCode("");
+    } catch (e) {
+      console.error('[MFA] enrollment verification request failed (network/connection):', e);
+      setVerifyError("Bağlantı hatası. İnternet bağlantınızı kontrol edip tekrar deneyin.");
+    } finally {
+      setVerifying(false);
+    }
+  }
+
+  return (
+    <MfaScreenShell maxWidth={420}>
+      <div style={{fontSize:17, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif", marginBottom:8}}>
+        İki Aşamalı Doğrulama
+      </div>
+      <div style={{fontSize:13.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", lineHeight:1.6, marginBottom:20}}>
+        DeseTour CRM hesabınızı korumak için bir kimlik doğrulama uygulamasıyla iki aşamalı doğrulamayı etkinleştirin.
+      </div>
+
+      {bootstrapping && (
+        <div style={{padding:"30px 0", color:C.textFaint, fontSize:13.5, fontFamily:"'DM Sans',sans-serif"}}>
+          Kurulum hazırlanıyor…
+        </div>
+      )}
+
+      {!bootstrapping && bootstrapError && (
+        <div style={{padding:"10px 14px", borderRadius:8, marginBottom:16, background:"#FDF2F2", border:"1px solid #FECACA", fontSize:13, color:C.red, fontFamily:"'DM Sans',sans-serif"}}>
+          {bootstrapError}
+        </div>
+      )}
+
+      {!bootstrapping && !bootstrapError && qrCodeUri && (
+        <>
+          <div style={{display:"flex", justifyContent:"center", marginBottom:14}}>
+            <img src={qrCodeUri} alt="Kimlik doğrulama uygulaması QR kodu" style={{width:176, height:176, border:`1px solid ${C.border}`, borderRadius:10}}/>
+          </div>
+          <div style={{fontSize:12.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", lineHeight:1.6, marginBottom:8}}>
+            Google Authenticator veya uyumlu bir kimlik doğrulama uygulamasıyla bu kodu tarayın.
+          </div>
+          {secret && (
+            <div style={{fontSize:11.5, color:C.textFaint, fontFamily:"'DM Mono',monospace", wordBreak:"break-all", marginBottom:18, background:C.ivory, borderRadius:7, padding:"8px 10px"}}>
+              Manuel giriş: {secret}
+            </div>
+          )}
+          {verifyError && (
+            <div style={{padding:"10px 14px", borderRadius:8, marginBottom:16, background:"#FDF2F2", border:"1px solid #FECACA", fontSize:13, color:C.red, fontFamily:"'DM Sans',sans-serif"}}>
+              {verifyError}
+            </div>
+          )}
+          <div style={{marginBottom:20}}>
+            <TotpCodeInput value={code} onChange={setCode}/>
+          </div>
+          <button onClick={handleVerify} disabled={verifying} style={{
+            width:"100%", padding:"12px", borderRadius:9, border:"none",
+            background:`linear-gradient(135deg,${C.navyDeep},${C.navy})`,
+            color:C.white, fontSize:14.5, fontWeight:600,
+            fontFamily:"'DM Sans',sans-serif", cursor:verifying?"not-allowed":"pointer",
+            marginBottom:10,
+          }}>{verifying ? "Doğrulanıyor…" : "Doğrulamayı Etkinleştir"}</button>
+        </>
+      )}
+
+      <button onClick={auth.logout} style={{
+        width:"100%", padding:"10px", borderRadius:9, border:`1px solid ${C.border}`,
+        background:C.white, color:C.textMid, fontSize:13.5, fontWeight:500,
+        fontFamily:"'DM Sans',sans-serif", cursor:"pointer",
+      }}>Çıkış Yap</button>
+    </MfaScreenShell>
+  );
+}
+
 function AuthGuard({ children }) {
   const auth = useAuth();
 
@@ -19773,6 +20207,89 @@ function AuthGuard({ children }) {
         </div>
       </div>
     );
+  }
+
+  // TOTP MFA — reached only once staff is confirmed active and linked
+  // (every branch above this one already returned otherwise). Still
+  // resolving the MFA/AAL lookup itself — a fresh network round-trip via
+  // the official Supabase MFA API, not a cached flag — so children must
+  // not render yet; same "Yükleniyor…" treatment as auth.authLoading.
+  if (auth.mfaLoading) {
+    return (
+      <div style={{
+        minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center",
+        background:`linear-gradient(135deg, ${C.navyDeep} 0%, ${C.navy} 100%)`,
+      }}>
+        <div style={{textAlign:"center"}}>
+          <div style={{
+            width:44, height:44, borderRadius:"50%",
+            border:"3px solid rgba(201,168,76,0.3)", borderTopColor:C.gold,
+            animation:"spin .8s linear infinite", margin:"0 auto 16px",
+          }}/>
+          <div style={{fontSize:14, color:"rgba(248,245,238,0.7)", fontFamily:"'DM Sans',sans-serif"}}>
+            Yükleniyor…
+          </div>
+          <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+        </div>
+      </div>
+    );
+  }
+
+  // The MFA/AAL lookup itself failed (listFactors/getAuthenticatorAssuranceLevel
+  // errored) — fail CLOSED: an unknown assurance level is never treated as
+  // satisfied. Offer a retry, never expose the raw Supabase error.
+  if (auth.mfaQueryError) {
+    return (
+      <div style={{
+        minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center",
+        background:`linear-gradient(135deg, ${C.navyDeep} 0%, ${C.navy} 100%)`, padding:20,
+      }}>
+        <div style={{
+          maxWidth:440, width:"100%", background:C.white, borderRadius:14,
+          padding:"32px 30px", textAlign:"center", boxShadow:"0 20px 60px rgba(0,0,0,0.3)",
+        }}>
+          <div style={{
+            width:52, height:52, borderRadius:"50%", background:C.amberBg, margin:"0 auto 16px",
+            display:"flex", alignItems:"center", justifyContent:"center",
+          }}>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={C.amber} strokeWidth="2" strokeLinecap="round">
+              <path d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
+            </svg>
+          </div>
+          <div style={{fontSize:17, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif", marginBottom:8}}>
+            Doğrulama Durumu Kontrol Edilemedi
+          </div>
+          <div style={{fontSize:13.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", lineHeight:1.6, marginBottom:20}}>
+            Kimlik doğrulama durumunuz kontrol edilirken bir sorun oluştu. Lütfen tekrar deneyin.
+          </div>
+          <div style={{display:"flex", gap:10, justifyContent:"center"}}>
+            <button onClick={auth.retryMfaResolution} style={{
+              padding:"10px 22px", borderRadius:9, border:"none",
+              background:`linear-gradient(135deg,${C.navyDeep},${C.navy})`,
+              color:C.white, fontSize:13.5, fontWeight:500,
+              fontFamily:"'DM Sans',sans-serif", cursor:"pointer",
+            }}>Tekrar Dene</button>
+            <button onClick={auth.logout} style={{
+              padding:"10px 22px", borderRadius:9, border:`1px solid ${C.border}`,
+              background:C.white, color:C.textMid, fontSize:13.5, fontWeight:500,
+              fontFamily:"'DM Sans',sans-serif", cursor:"pointer",
+            }}>Çıkış Yap</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // No verified TOTP factor at all — MFA is mandatory for DeseTour staff.
+  // Mandatory enrollment, no "skip for now".
+  if (auth.mfaEnrollmentRequired) {
+    return <MfaEnrollmentScreen auth={auth}/>;
+  }
+
+  // A verified TOTP factor exists, but this session has not reached aal2
+  // yet — require the 6-digit code before anything else can render.
+  if (auth.mfaVerificationRequired) {
+    return <MfaVerificationScreen auth={auth}/>;
   }
 
   return (

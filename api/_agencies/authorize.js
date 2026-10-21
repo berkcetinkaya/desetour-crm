@@ -51,9 +51,19 @@
  * outreach is restricted to Yönetici/Satış." vs. the shared module's
  * generic messages), which is a visible behavior change this phase was
  * explicitly asked to avoid for the two already-shipped Agency endpoints.
+ *
+ * TOTP MFA FOLLOW-UP: after the existing identity/role/is_active checks
+ * succeed, this now also requires the caller's session to be at AAL2 —
+ * via the SAME shared api/_shared/requireAal2.js helper api/_shared/
+ * authorize.js uses, reused here directly (unlike requireStaffRole
+ * itself, which this file deliberately does NOT reuse — see the note
+ * above) because the AAL2 check has no endpoint-specific error-message
+ * history to preserve; it is brand new to every endpoint at once.
  * ─────────────────────────────────────────────────────────────────────────
  */
 'use strict';
+
+const { requireAal2 } = require('../_shared/requireAal2');
 
 class ConfigurationError extends Error {
   constructor(message) {
@@ -128,6 +138,9 @@ async function requireAgencyRole(req, deps = {}) {
   if (!role || !ALLOWED_ROLES.includes(role)) {
     return { ok: false, status: 403, error: 'Agency research/outreach is restricted to Yönetici/Satış.' };
   }
+
+  const aal = await requireAal2(token, { url, anonKey }, deps);
+  if (!aal.ok) return aal;
 
   return { ok: true, role, userId };
 }

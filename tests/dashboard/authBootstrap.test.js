@@ -568,8 +568,14 @@ test('REGRESSION 6: a successful verified staff lookup authorizes normally — s
 //    "must always (re)subscribe" regression below) — it falls through to
 //    the real Supabase path, so it shares that same cleanup.
 test('REGRESSION 7: the useAuth() mount effect always returns a cleanup function that unsubscribes onAuthStateChange, clears the boot timer, and removes the listener', () => {
-  const useAuthIdx = SOURCE.indexOf('function useAuth()');
-  const effectIdx = SOURCE.indexOf('useEffect(() => {', useAuthIdx);
+  // Anchored on this effect's own unique leading comment, not just "the
+  // first useEffect after useAuth()" — the TOTP MFA follow-up added a
+  // second, EARLIER, unrelated useEffect inside useAuth() (the MFA/AAL
+  // resolution one) with its own plain `cancelled` cleanup that has
+  // nothing to do with _authListeners, so a search that just grabbed the
+  // first useEffect would wrongly pull that one in too.
+  const effectIdx = SOURCE.indexOf('// Subscribe to future auth changes');
+  assert.ok(effectIdx !== -1, 'the bootstrap effect\'s anchor comment was not found');
   const effectEndIdx = SOURCE.indexOf('}, []);', effectIdx);
   const body = SOURCE.slice(effectIdx, effectEndIdx);
   const cleanups = body.match(/return \(\) => \{[^}]*\};/g) || [];

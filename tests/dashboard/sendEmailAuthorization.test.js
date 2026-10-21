@@ -43,9 +43,16 @@ function withEnv(fn) {
   }
 }
 
-function fakeClientFor({ userId = 'u1', userError = null, staffRow, staffError = null }) {
+// aalLevel/aalError default to a successful AAL2 session — every PRE-
+// EXISTING test in this file is about identity/role, not AAL2, so it must
+// keep passing exactly as before the AAL2 follow-up; dedicated AAL2
+// denial tests pass aalLevel:'aal1' or aalError explicitly.
+function fakeClientFor({ userId = 'u1', userError = null, staffRow, staffError = null, aalLevel = 'aal2', aalError = null }) {
   return () => ({
-    auth: { getUser: async () => ({ data: userError ? null : { user: { id: userId } }, error: userError }) },
+    auth: {
+      getUser: async () => ({ data: userError ? null : { user: { id: userId } }, error: userError }),
+      mfa: { getAuthenticatorAssuranceLevel: async () => (aalError ? { data: null, error: aalError } : { data: { currentLevel: aalLevel, nextLevel: aalLevel, currentAuthenticationMethods: [] }, error: null }) },
+    },
     from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: staffRow, error: staffError }) }) }) }),
   });
 }

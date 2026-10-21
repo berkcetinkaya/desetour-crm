@@ -37,9 +37,17 @@
  * Identity is resolved by Auth user ID throughout — never by email, per
  * the project's own stated security requirement that email/domain must
  * never be an authorization signal.
+ *
+ * TOTP MFA FOLLOW-UP: after the existing identity/role/is_active checks
+ * succeed, this now also requires the caller's session to be at AAL2 (see
+ * api/_shared/requireAal2.js) — closing the exact bypass the frontend's
+ * new mandatory-MFA gate would otherwise have against this endpoint
+ * (a still-valid AAL1 token called directly, skipping the UI entirely).
  * ─────────────────────────────────────────────────────────────────────────
  */
 'use strict';
+
+const { requireAal2 } = require('./requireAal2');
 
 class ConfigurationError extends Error {
   constructor(message) {
@@ -112,6 +120,9 @@ async function requireStaffRole(req, allowedRoles, deps = {}) {
   if (!allowedRoles.includes(staffRow.role)) {
     return { ok: false, status: 403, error: 'Not authorized for this action.' };
   }
+
+  const aal = await requireAal2(token, { url, anonKey }, deps);
+  if (!aal.ok) return aal;
 
   return { ok: true, role: staffRow.role, userId };
 }

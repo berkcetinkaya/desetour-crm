@@ -101,6 +101,21 @@ const CRM_CHANGELOG_CATEGORIES = [
 // Newest first. See the release convention above before editing.
 const CRM_CHANGELOG = [
   {
+    version: '12.45',
+    date: '2026-10-21',
+    title: 'CRM Güvenliği İki Aşamalı Doğrulama ile Güçlendirildi',
+    summary: 'DeseTour CRM giriş güvenliği güçlendirildi. Kullanıcılar artık e-posta ve şifre ile giriş yaptıktan sonra kimlik doğrulama uygulamasındaki tek kullanımlık kodla oturumlarını doğruluyor. Yetkili CRM işlemleri ve operasyon verileri ek güvenlik katmanlarıyla korunuyor.',
+    categories: ['Altyapı', 'İyileştirme'],
+    highlights: [
+      'CRM girişlerine iki aşamalı doğrulama eklendi',
+      'Google Authenticator ve standart TOTP uygulamaları destekleniyor',
+      'Operasyonel CRM erişimi doğrulanmış güvenli oturum gerektiriyor',
+      'Yetkisiz veya devre dışı bırakılmış kullanıcıların doğrudan veri erişimi ek olarak sınırlandırıldı',
+      'Kullanıcıların kendi yetki veya aktiflik durumlarını değiştirebilmesine karşı veritabanı koruması eklendi',
+    ],
+    author: 'Berk',
+  },
+  {
     version: '12.44',
     date: '2026-10-20',
     title: 'Acente Araştırma Sonuçları Daha Güvenilir Hale Getirildi',
@@ -262,20 +277,6 @@ const CRM_CHANGELOG = [
       'Rezervasyon numaralarının otomatik ve çakışmasız üretilmesi',
       'Mevcut misafir kayıtlarıyla kontrollü, temkinli eşleştirme',
       'Bir aktarım sırasında sorun yaşanırsa yapılan değişikliklerin bütünüyle geri alınması',
-    ],
-    author: 'Berk',
-  },
-  {
-    version: '12.24',
-    date: '2026-09-21',
-    title: 'Civitatis Rezervasyon Altyapısı',
-    summary: 'Civitatis\'ten e-posta yoluyla gelen rezervasyon bildirimleri artık CRM tarafından otomatik olarak yorumlanabiliyor.',
-    categories: ['Otomasyon', 'Altyapı'],
-    highlights: [
-      'Civitatis rezervasyon bildirimlerinin CRM tarafından otomatik yorumlanması',
-      'Rezervasyon sahibi (iletişim kişisi) ile yolcuların birbirinden ayrıştırılması',
-      'Yorumlanan rezervasyon bilgisinin CRM\'e aktarılabilmesi',
-      'Aktarılan rezervasyonların takvim ve operasyon ekranlarında diğer rezervasyonlarla birlikte görünmesi',
     ],
     author: 'Berk',
   },
