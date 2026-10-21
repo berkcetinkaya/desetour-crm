@@ -13113,6 +13113,11 @@ function AcenteDetailPage({ agencyId, onBack }) {
   const [draftBody, setDraftBody] = useState("");
   const [draftMeta, setDraftMeta] = useState(null);
   const [editingEmailId, setEditingEmailId] = useState(null);
+  // Agency Draft Flow completion — tracks the status of whichever row
+  // editingEmailId currently points at, so the UI can render a sent
+  // email read-only (see "Already sent emails" below) without a second
+  // network round-trip just to find out.
+  const [editingEmailStatus, setEditingEmailStatus] = useState(null);
 
   // Agency Mailbox Phase A — human-approved send. A deliberate two-click
   // flow: "E-postayı Gönder" opens a review panel (recipient/subject/
@@ -13128,6 +13133,24 @@ function AcenteDetailPage({ agencyId, onBack }) {
   useEffect(() => {
     if (agency && !notesDirty) setNotesDraft(agency.internalNotes || "");
   }, [agency, notesDirty]);
+
+  // Draft selection default: once email history loads, if nothing is
+  // currently open for editing, open the MOST RECENT row automatically
+  // (emailHistory is already ordered newest-first by
+  // SupabaseAgencyEmailRepo.getByAgencyId). Never overwrites an in-
+  // progress edit — editingEmailId only starts null and, once anything
+  // is opened or a new draft is generated, this effect's own guard keeps
+  // it from ever re-firing for this page visit.
+  useEffect(() => {
+    if (!editingEmailId && emailHistory && emailHistory.length > 0) {
+      const mostRecent = emailHistory[0];
+      setEditingEmailId(mostRecent.id);
+      setEditingEmailStatus(mostRecent.status || 'draft');
+      setDraftSubject(mostRecent.subject || "");
+      setDraftBody(mostRecent.body || "");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [emailHistory]);
 
   if (loading) return <LoadingState label="Acente yükleniyor…"/>;
   if (error)   return <ErrorState message={error} onRetry={()=>{}}/>;
@@ -13146,6 +13169,13 @@ function AcenteDetailPage({ agencyId, onBack }) {
     showToast("Not kaydedildi ✓");
   }
 
+  // Generates a draft via the existing api/agency-draft-outreach.js
+  // (unchanged provider/role/AAL2 rules) AND immediately persists it as
+  // a real agency_emails row (direction=outbound, status=draft) — a
+  // generated draft is never left as purely local component state, so
+  // the Send flow (which requires a saved row id) is usable right away.
+  // Never touches agencies.status or agencies.last_contact_at — creating
+  // a draft is not contact. Never sends anything.
   async function handleGenerateDraft() {
     setDraftLoading(true); setDraftError(null);
     try {
@@ -13169,13 +13199,37 @@ function AcenteDetailPage({ agencyId, onBack }) {
       });
       const payload = await resp.json().catch(() => ({}));
       if (!resp.ok) { setDraftError(payload.error || `Taslak oluşturulamadı (${resp.status}).`); return; }
-      setEditingEmailId(null);
-      setDraftSubject(payload.subject || "");
-      setDraftBody(payload.body || "");
+      const subject = payload.subject || "";
+      const body = payload.body || "";
+
+      // Persist immediately. Regeneration always INSERTS a new row — it
+      // never updates whatever was previously open (including a sent
+      // row), so history is always preserved and a sent email can never
+      // be mutated by generating again.
+      const { data:createdRow, error:createErr } = await mutAgencyEmail("create", {
+        agencyId: agency.id, subject, body,
+        createdBy: getAuthContext()?.staff?.id || null,
+      });
+      if (createErr || !createdRow) {
+        // Provider succeeded but persistence failed — a DISTINCT error
+        // from a generation failure. Never pretend a draft exists in the
+        // CRM, and never fall back to local-only state the Send flow
+        // could be confused into treating as real.
+        setDraftError("Taslak oluşturuldu ancak CRM'e kaydedilemedi: " + (createErr || "bilinmeyen hata"));
+        return;
+      }
+
+      setEditingEmailId(createdRow.id);
+      setEditingEmailStatus('draft');
+      setDraftSubject(subject);
+      setDraftBody(body);
       setDraftMeta(payload);
       setShowSendConfirm(false);
       setSendError(null);
       setSentInfo(null);
+      _sbLog('agency_email', createdRow.id, 'draft_created', 'Yeni e-posta taslağı oluşturuldu.',
+        { agency_id: agency.id, agency_email_id: createdRow.id, language: draftLanguage });
+      reloadEmails && reloadEmails();
     } catch (err) {
       setDraftError("Taslak isteği gönderilemedi: " + err.message);
     } finally {
@@ -13183,24 +13237,24 @@ function AcenteDetailPage({ agencyId, onBack }) {
     }
   }
 
+  // Updates ONLY the currently-selected draft row — never creates a
+  // second row (generation above is the only create path) and never
+  // touches a row whose status is 'sent' (enforced in the UI too: the
+  // Kaydet button isn't rendered at all once editingEmailStatus==='sent'
+  // — see the read-only branch below).
   async function handleSaveDraft() {
-    if (editingEmailId) {
-      const { error:e } = await mutAgencyEmail("update", editingEmailId, { subject:draftSubject, body:draftBody });
-      if (e) { showToast("Taslak güncellenemedi: " + e); return; }
-      showToast("Taslak güncellendi ✓");
-    } else {
-      const { error:e } = await mutAgencyEmail("create", {
-        agencyId: agency.id, subject:draftSubject, body:draftBody,
-        createdBy: getAuthContext()?.staff?.id || null,
-      });
-      if (e) { showToast("Taslak kaydedilemedi: " + e); return; }
-      showToast("Taslak kaydedildi ✓");
-    }
+    if (!editingEmailId || editingEmailStatus === 'sent') return;
+    const { error:e } = await mutAgencyEmail("update", editingEmailId, { subject:draftSubject, body:draftBody });
+    if (e) { showToast("Taslak güncellenemedi: " + e); return; }
+    showToast("Taslak güncellendi ✓");
+    _sbLog('agency_email', editingEmailId, 'draft_updated', 'E-posta taslağı güncellendi.',
+      { agency_id: agency.id, agency_email_id: editingEmailId });
     reloadEmails && reloadEmails();
   }
 
   function handleOpenHistoryItem(email) {
     setEditingEmailId(email.id);
+    setEditingEmailStatus(email.status || 'draft');
     setDraftSubject(email.subject || "");
     setDraftBody(email.body || "");
     setDraftMeta(null);
@@ -13236,6 +13290,7 @@ function AcenteDetailPage({ agencyId, onBack }) {
       if (!resp.ok) { setSendError(payload.error || `E-posta gönderilemedi (${resp.status}).`); return; }
       setShowSendConfirm(false);
       setSentInfo({ sentAt: payload.sentAt || new Date().toISOString(), alreadySent: !!payload.alreadySent });
+      setEditingEmailStatus('sent');
       showToast(payload.alreadySent ? "Bu e-posta zaten gönderilmişti." : "E-posta gönderildi ✓");
       reloadEmails && reloadEmails();
       // Refreshes this page's own agency useRepo (status/last_contact_at
@@ -13339,7 +13394,7 @@ function AcenteDetailPage({ agencyId, onBack }) {
               cursor: draftLoading ? "not-allowed" : "pointer",
               fontFamily:"'DM Sans',sans-serif", fontSize:13, fontWeight:500,
             }}>{draftLoading ? "Oluşturuluyor…" : "Taslak Oluştur"}</button>
-            {editingEmailId && (
+            {editingEmailId && editingEmailStatus !== 'sent' && (
               <span style={{fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>
                 Kayıtlı taslak düzenleniyor — Kaydet güncelleyecek.
               </span>
@@ -13352,7 +13407,23 @@ function AcenteDetailPage({ agencyId, onBack }) {
             </div>
           )}
 
-          {(draftSubject || draftBody) && (
+          {/* Already-sent emails are read-only: no editable inputs, no
+              Kaydet, no Gönder — a sent row can never be mutated or
+              re-sent from here. Regenerating (Taslak Oluştur) still
+              always creates a brand-new draft row regardless. */}
+          {editingEmailStatus === 'sent' && (draftSubject || draftBody) && (
+            <div style={{padding:"12px 14px", borderRadius:7, background:"rgba(76,175,80,0.08)", border:"1px solid rgba(76,175,80,0.25)", display:"flex", flexDirection:"column", gap:10}}>
+              <div style={{fontSize:12.5, fontWeight:600, color:"#2E7D32", fontFamily:"'DM Sans',sans-serif"}}>
+                ✓ Bu e-posta gönderildi — artık düzenlenemez.
+              </div>
+              <RInfoRow label="Konu" value={draftSubject}/>
+              <div style={{whiteSpace:"pre-wrap", fontSize:13, color:C.text, fontFamily:"'DM Sans',sans-serif", lineHeight:1.6, background:C.white, border:`1px solid ${C.border}`, borderRadius:7, padding:"10px 12px"}}>
+                {draftBody}
+              </div>
+            </div>
+          )}
+
+          {editingEmailStatus !== 'sent' && (draftSubject || draftBody) && (
             <>
               <div>
                 <label style={{display:"block", fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginBottom:5}}>Konu</label>
@@ -13375,7 +13446,7 @@ function AcenteDetailPage({ agencyId, onBack }) {
                   color: (emailMutating||!draftSubject||!draftBody) ? C.textFaint : C.white,
                   cursor: (emailMutating||!draftSubject||!draftBody) ? "not-allowed" : "pointer",
                   fontFamily:"'DM Sans',sans-serif", fontSize:13, fontWeight:500,
-                }}>{emailMutating ? "Kaydediliyor…" : (editingEmailId ? "Taslağı Güncelle" : "Taslağı Kaydet")}</button>
+                }}>{emailMutating ? "Kaydediliyor…" : "Taslağı Güncelle"}</button>
 
                 {/* Agency Mailbox Phase A — only a SAVED draft row (a
                     real agency_emails id) can be sent; the server
@@ -17628,7 +17699,7 @@ function _actorSnapshotFromStaff(staff) {
 }
 // TESTABLE:_actorSnapshotFromStaff:end
 
-async function _sbLog(type, id, action, desc) {
+async function _sbLog(type, id, action, desc, metadata) {
   const sb = getSB(); if (!sb || !id) return;
   try {
     let uid = (typeof _authCache !== 'undefined' && _authCache?.session?.user?.id) || null;
@@ -17639,7 +17710,8 @@ async function _sbLog(type, id, action, desc) {
     const { actorName, actorRole } = _actorSnapshotFromStaff(_authCache?.staff);
     const { error } = await sb.from('activity_logs')
       .insert({ entity_type:type, entity_id:id, action, description:desc, performed_by:uid,
-        actor_name:actorName, actor_role:actorRole, source:'crm_user' });
+        actor_name:actorName, actor_role:actorRole, source:'crm_user',
+        ...(metadata ? { metadata } : {}) });
     if (error) console.error('[_sbLog] activity_logs insert failed:', error.message, { type, id, action });
   } catch(e) {
     console.error('[_sbLog] unexpected error:', e);
