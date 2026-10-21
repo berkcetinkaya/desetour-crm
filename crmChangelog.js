@@ -101,6 +101,21 @@ const CRM_CHANGELOG_CATEGORIES = [
 // Newest first. See the release convention above before editing.
 const CRM_CHANGELOG = [
   {
+    version: '12.46',
+    date: '2026-10-21',
+    title: 'Acentelere CRM Üzerinden E-posta Gönderimi Eklendi',
+    summary: 'Acenteler modülünde hazırlanan ilk temas e-postaları artık CRM içinden insan onayıyla hello@desetour.com adresinden gönderilebiliyor. Gönderim sonrası iletişim durumu ve ilgili acente bilgileri otomatik olarak güncelleniyor.',
+    categories: ['Yeni Özellik', 'İyileştirme'],
+    highlights: [
+      'Hazırlanan acente e-posta taslakları gönderim öncesinde son kez incelenebiliyor',
+      'Onaylanan e-postalar hello@desetour.com üzerinden gönderiliyor',
+      'Aynı e-postanın yanlışlıkla birden fazla kez gönderilmesine karşı koruma eklendi',
+      'Başarılı gönderim sonrası son iletişim zamanı ve acente durumu otomatik güncelleniyor',
+      'Acentelerle ilgili işlem kayıtları daha güvenilir hale getirildi',
+    ],
+    author: 'Berk',
+  },
+  {
     version: '12.45',
     date: '2026-10-21',
     title: 'CRM Güvenliği İki Aşamalı Doğrulama ile Güçlendirildi',
@@ -262,21 +277,6 @@ const CRM_CHANGELOG = [
       'Tur adının her zaman gerçek ürün/iç kod bilgisini yansıtması',
       'Rezervasyon fiyatının, oluşturulan turun taban fiyatı olarak kullanılmaması',
       'Otomatik oluşturulan turların taslak (draft) durumunda başlayıp ekibin gözden geçirmesini beklemesi',
-    ],
-    author: 'Berk',
-  },
-  {
-    version: '12.30',
-    date: '2026-09-22',
-    title: 'Güvenli Rezervasyon İşleme',
-    summary: 'Civitatis\'ten gelen rezervasyonların CRM\'e güvenli, tekrarsız ve tutarlı şekilde aktarılmasını sağlayan altyapı tamamlandı.',
-    categories: ['Altyapı', 'Otomasyon'],
-    highlights: [
-      'Aynı rezervasyonun yanlışlıkla birden fazla kez oluşturulmasının engellenmesi',
-      'Rezervasyon kimliğinin güvenli ve tutarlı biçimde eşleştirilmesi',
-      'Rezervasyon numaralarının otomatik ve çakışmasız üretilmesi',
-      'Mevcut misafir kayıtlarıyla kontrollü, temkinli eşleştirme',
-      'Bir aktarım sırasında sorun yaşanırsa yapılan değişikliklerin bütünüyle geri alınması',
     ],
     author: 'Berk',
   },

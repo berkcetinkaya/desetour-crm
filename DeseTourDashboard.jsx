@@ -13114,6 +13114,17 @@ function AcenteDetailPage({ agencyId, onBack }) {
   const [draftMeta, setDraftMeta] = useState(null);
   const [editingEmailId, setEditingEmailId] = useState(null);
 
+  // Agency Mailbox Phase A — human-approved send. A deliberate two-click
+  // flow: "E-postayı Gönder" opens a review panel (recipient/subject/
+  // body, read-only, exactly what will be sent) and only its own
+  // "Gönderimi Onayla" button calls the server. Nothing here ever sends
+  // automatically — draft generation/saving above is completely
+  // unaffected and still never sends anything.
+  const [showSendConfirm, setShowSendConfirm] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [sendError, setSendError] = useState(null);
+  const [sentInfo, setSentInfo] = useState(null);
+
   useEffect(() => {
     if (agency && !notesDirty) setNotesDraft(agency.internalNotes || "");
   }, [agency, notesDirty]);
@@ -13162,6 +13173,9 @@ function AcenteDetailPage({ agencyId, onBack }) {
       setDraftSubject(payload.subject || "");
       setDraftBody(payload.body || "");
       setDraftMeta(payload);
+      setShowSendConfirm(false);
+      setSendError(null);
+      setSentInfo(null);
     } catch (err) {
       setDraftError("Taslak isteği gönderilemedi: " + err.message);
     } finally {
@@ -13191,6 +13205,48 @@ function AcenteDetailPage({ agencyId, onBack }) {
     setDraftBody(email.body || "");
     setDraftMeta(null);
     setDraftError(null);
+    setShowSendConfirm(false);
+    setSendError(null);
+    setSentInfo(null);
+  }
+
+  // Agency Mailbox Phase A — calls the server, which re-verifies
+  // identity/role/is_active/AAL2 (requireAgencyRole, unchanged) and does
+  // the actual Gmail send; nothing here ever sends directly from the
+  // browser. editingEmailId is required: the draft must already be a
+  // saved agency_emails row (via "Taslağı Kaydet") before it can be sent
+  // — the server authorizes by that row's id, never by raw subject/body
+  // text handed to it fresh.
+  async function handleSendEmail() {
+    if (!editingEmailId) return;
+    setSending(true); setSendError(null);
+    try {
+      const sb = getSB();
+      let token = null;
+      if (sb) {
+        const { data } = await sb.auth.getSession();
+        token = data?.session?.access_token || null;
+      }
+      const resp = await fetch('/api/agency-send-email', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ agency_id: agency.id, agency_email_id: editingEmailId }),
+      });
+      const payload = await resp.json().catch(() => ({}));
+      if (!resp.ok) { setSendError(payload.error || `E-posta gönderilemedi (${resp.status}).`); return; }
+      setShowSendConfirm(false);
+      setSentInfo({ sentAt: payload.sentAt || new Date().toISOString(), alreadySent: !!payload.alreadySent });
+      showToast(payload.alreadySent ? "Bu e-posta zaten gönderilmişti." : "E-posta gönderildi ✓");
+      reloadEmails && reloadEmails();
+      // Refreshes this page's own agency useRepo (status/last_contact_at
+      // may have just changed server-side) the same way every other
+      // mutation in this app already triggers a refetch.
+      Store.notify();
+    } catch (err) {
+      setSendError("İstek gönderilemedi: " + err.message);
+    } finally {
+      setSending(false);
+    }
   }
 
   return (
@@ -13312,7 +13368,7 @@ function AcenteDetailPage({ agencyId, onBack }) {
                   {draftMeta.angle_reason && <> — <strong>Yaklaşım:</strong> {draftMeta.angle_reason}</>}
                 </div>
               )}
-              <div>
+              <div style={{display:"flex", alignItems:"center", gap:10, flexWrap:"wrap"}}>
                 <button onClick={handleSaveDraft} disabled={emailMutating || !draftSubject || !draftBody} style={{
                   padding:"8px 16px", borderRadius:7, border:"none",
                   background: (emailMutating||!draftSubject||!draftBody) ? C.ivoryDark : C.gold,
@@ -13320,7 +13376,74 @@ function AcenteDetailPage({ agencyId, onBack }) {
                   cursor: (emailMutating||!draftSubject||!draftBody) ? "not-allowed" : "pointer",
                   fontFamily:"'DM Sans',sans-serif", fontSize:13, fontWeight:500,
                 }}>{emailMutating ? "Kaydediliyor…" : (editingEmailId ? "Taslağı Güncelle" : "Taslağı Kaydet")}</button>
+
+                {/* Agency Mailbox Phase A — only a SAVED draft row (a
+                    real agency_emails id) can be sent; the server
+                    authorizes and sends by that row's id, never by
+                    fresh subject/body text handed to it directly. */}
+                {editingEmailId && !sentInfo && (
+                  <button onClick={()=>{ setShowSendConfirm(true); setSendError(null); }} disabled={sending || !draftSubject || !draftBody} style={{
+                    padding:"8px 16px", borderRadius:7, border:"none",
+                    background: (sending||!draftSubject||!draftBody) ? C.ivoryDark : C.navy,
+                    color: (sending||!draftSubject||!draftBody) ? C.textFaint : C.white,
+                    cursor: (sending||!draftSubject||!draftBody) ? "not-allowed" : "pointer",
+                    fontFamily:"'DM Sans',sans-serif", fontSize:13, fontWeight:500,
+                  }}>E-postayı Gönder</button>
+                )}
               </div>
+
+              {sendError && (
+                <div style={{padding:"10px 14px", borderRadius:7, background:C.redBg, color:C.red, fontSize:12.5, fontFamily:"'DM Sans',sans-serif"}}>
+                  {sendError}
+                </div>
+              )}
+
+              {sentInfo && (
+                <div style={{padding:"12px 14px", borderRadius:7, background:"rgba(76,175,80,0.08)", border:"1px solid rgba(76,175,80,0.25)", display:"flex", flexDirection:"column", gap:4}}>
+                  <div style={{fontSize:13, fontWeight:600, color:"#2E7D32", fontFamily:"'DM Sans',sans-serif"}}>
+                    ✓ Gönderildi{sentInfo.alreadySent ? " (daha önce gönderilmişti)" : ""}
+                  </div>
+                  <div style={{fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>
+                    {new Date(sentInfo.sentAt).toLocaleString('tr-TR', { day:'2-digit', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit' })}
+                  </div>
+                </div>
+              )}
+
+              {/* Human-approval review step — the deliberate second click
+                  this phase requires before anything is actually sent.
+                  Shows exactly what will be sent: recipient, subject,
+                  body — read-only, no silent edits between review and
+                  send. */}
+              {showSendConfirm && !sentInfo && (
+                <div style={{padding:"14px 16px", borderRadius:9, background:C.ivory, border:`1.5px solid ${C.navy}`, display:"flex", flexDirection:"column", gap:10}}>
+                  <div style={{fontSize:13, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif"}}>
+                    Gönderimden Önce Son Kontrol
+                  </div>
+                  <RInfoRow label="Alıcı" value={agency.email || "—"} mono/>
+                  <RInfoRow label="Konu" value={draftSubject}/>
+                  <div>
+                    <label style={{display:"block", fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginBottom:5}}>Gövde</label>
+                    <div style={{whiteSpace:"pre-wrap", fontSize:13, color:C.text, fontFamily:"'DM Sans',sans-serif", lineHeight:1.6, background:C.white, border:`1px solid ${C.border}`, borderRadius:7, padding:"10px 12px"}}>
+                      {draftBody}
+                    </div>
+                  </div>
+                  <div style={{display:"flex", gap:10}}>
+                    <button onClick={handleSendEmail} disabled={sending} style={{
+                      padding:"9px 18px", borderRadius:7, border:"none",
+                      background: sending ? C.ivoryDark : C.navy,
+                      color: sending ? C.textFaint : C.white,
+                      cursor: sending ? "not-allowed" : "pointer",
+                      fontFamily:"'DM Sans',sans-serif", fontSize:13, fontWeight:600,
+                    }}>{sending ? "Gönderiliyor…" : "Gönderimi Onayla"}</button>
+                    <button onClick={()=>setShowSendConfirm(false)} disabled={sending} style={{
+                      padding:"9px 18px", borderRadius:7, border:`1px solid ${C.border}`,
+                      background:C.white, color:C.textMid,
+                      cursor: sending ? "not-allowed" : "pointer",
+                      fontFamily:"'DM Sans',sans-serif", fontSize:13, fontWeight:500,
+                    }}>Vazgeç</button>
+                  </div>
+                </div>
+              )}
             </>
           )}
         </div>

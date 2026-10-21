@@ -238,15 +238,29 @@ test('[20] existing Leads/Quotes remain retired — not resurrected by this phas
 // ── 21-22. send transport and direct-provider calls stay out of the frontend ──
 // Phase 1 shipped with zero email/AI footprint by design. Phase 2 (approved
 // separately) legitimately adds agency_emails draft storage and a
-// server-side research/drafting boundary (api/_agencies/*). These two tests
-// now assert what must remain true indefinitely rather than "doesn't exist
-// yet": no code path here actually transmits an email, and the frontend
-// never talks to an AI provider or an external URL directly — only to this
-// app's own /api endpoints, which enforce auth and validation server-side.
+// server-side research/drafting boundary (api/_agencies/*). Agency Mailbox
+// Phase A (approved separately, after Phase 2) legitimately adds ONE
+// human-approved send path: a fetch to this app's own /api/agency-send-email
+// endpoint (api/agency-send-email.js), which re-verifies identity/role/
+// is_active/AAL2 server-side (requireAgencyRole, unchanged) and performs the
+// actual Gmail API call — never Resend, never any direct provider transport
+// from the browser. These two tests now assert what must remain true
+// indefinitely rather than "doesn't exist yet": no code path here bypasses
+// that one endpoint with a DIRECT email transport (EmailService/Resend/a
+// provider SDK called straight from the browser), and the frontend never
+// talks to an AI provider or an external URL directly — only to this app's
+// own /api endpoints, which enforce auth and validation server-side.
 
-test('[21] no automatic/direct email send transport in the agency UI', () => {
+test('[21] no DIRECT/bypassing email send transport in the agency UI — only the one proper /api/agency-send-email call', () => {
   const acenteSource = ACENTELER_PAGE_BODY + NEW_AGENCY_MODAL_BODY + ACENTE_DETAIL_BODY;
-  assert.doesNotMatch(acenteSource, /EmailService|ResendEmailProvider|send-email|sendProposal|sendAgencyOutreach|sendReminder|sendReviewRequest/i);
+  assert.doesNotMatch(acenteSource, /EmailService|ResendEmailProvider|sendProposal|sendAgencyOutreach|sendReminder|sendReviewRequest/i);
+  // "send-email" alone would also catch the new, legitimate
+  // "/api/agency-send-email" call — excluded here specifically, and
+  // re-asserted as the ONLY sanctioned send-shaped string below.
+  const sendEmailMentions = acenteSource.match(/[\w/-]*send-email[\w-]*/gi) || [];
+  for (const mention of sendEmailMentions) {
+    assert.match(mention, /^\/api\/agency-send-email$/, `unexpected send-email-shaped reference: "${mention}"`);
+  }
 });
 
 test('[22] agency research/drafting never calls an AI provider directly from the frontend', () => {
