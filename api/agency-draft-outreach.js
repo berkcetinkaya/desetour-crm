@@ -60,7 +60,15 @@ async function handler(req, res) {
       return res.status(503).json({ error: err.message, stage: 'provider_configuration' });
     }
     if (err instanceof outreachDraftProvider.ProviderError) {
-      return res.status(502).json({ error: err.message, stage: 'provider_response' });
+      // Never echo err.message to the browser — it is an internal parser/
+      // validation diagnostic (e.g. "...did not contain a parseable draft
+      // object"), in English, meaningless to a CRM user, and not something
+      // the UI should surface verbatim. The real detail is already logged
+      // server-side (see outreachDraftProvider.js's draftOutreach, which
+      // logs safe structural diagnostics on exactly this failure) — here
+      // the browser gets one clean, generic Turkish message instead.
+      console.error('[agency-draft-outreach] Provider error:', err.message);
+      return res.status(502).json({ error: 'E posta taslağı işlenemedi. Lütfen tekrar deneyin.', stage: 'provider_response' });
     }
     console.error('[agency-draft-outreach] Unexpected error:', err.message);
     return res.status(500).json({ error: 'Outreach drafting failed unexpectedly. See function logs for details.' });
