@@ -399,8 +399,27 @@ function extractDraftObject(text) {
   if (typeof text !== 'string') throw new ProviderError('Draft provider returned no text content.');
 
   for (const candidateText of [text, stripMarkdownFence(text)]) {
-    const result = parseDraftJson(candidateText.trim());
-    if (result) return result;
+    const trimmed = candidateText.trim();
+    let parsed;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch (err) {
+      continue; // not valid JSON on its own — fall through to the balanced-brace scan below
+    }
+    // The whole (optionally fence-wrapped) response IS valid JSON by
+    // itself. The draft contract requires a top-level OBJECT — a
+    // top-level array must be rejected outright here, never reached into
+    // for an object it happens to contain, even one that is otherwise a
+    // fully valid draft (e.g. `[{"subject":"a","body":"b"}]`). That
+    // reach-in-and-unwrap behavior is only correct for prose SURROUNDING
+    // a JSON object (handled by the balanced-brace scan below, which
+    // never runs for input that is already valid JSON on its own) — it
+    // is never correct for a value NESTED one level inside a JSON
+    // structure the model chose to return instead of an object.
+    if (Array.isArray(parsed)) {
+      throw new ProviderError('Draft provider response was a JSON array, not a draft object.');
+    }
+    if (parsed && typeof parsed === 'object') return parsed;
   }
 
   let firstValidObject = null;

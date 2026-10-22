@@ -220,6 +220,23 @@ test('[20] a bare JSON array (no object at all in the text) fails closed with Pr
   assert.throws(() => extractDraftObject('[1,2,3]'), ProviderError);
 });
 
+test('[20b] a top-level JSON array that CONTAINS an otherwise fully valid draft object is still rejected — the array wrapper is never reached into and unwrapped', () => {
+  // This is the specific gap the previous review flagged: [1,2,3] above
+  // never has a '{' at all, so it never actually exercised the balanced-
+  // brace scanner's reach-into-an-array behavior. This one does.
+  assert.throws(() => extractDraftObject(JSON.stringify([VALID_DRAFT])), ProviderError);
+  assert.throws(() => extractDraftObject('[{"subject":"a","body":"b"}]'), ProviderError);
+});
+
+test('[20c] the same top-level array rejection applies when it is wrapped in a markdown fence', () => {
+  const fenced = '```json\n' + JSON.stringify([VALID_DRAFT]) + '\n```';
+  assert.throws(() => extractDraftObject(fenced), ProviderError);
+});
+
+test('[20d] end to end: a response whose content is a top-level array of one valid draft object is rejected by draftOutreach, never returned as a successful draft', async () => {
+  await assert.rejects(draftWith([textBlock(JSON.stringify([VALID_DRAFT]))]), ProviderError);
+});
+
 test('[21] a bare JSON null (no object at all in the text) fails closed with ProviderError', () => {
   assert.throws(() => extractDraftObject('null'), ProviderError);
 });
