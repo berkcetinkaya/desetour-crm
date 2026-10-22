@@ -78,6 +78,29 @@ function getHashPath() {
   } catch(e) { return '/dashboard'; }
 }
 
+// Supabase's password-recovery redirect, on failure (expired/already-used/
+// invalid link), replaces the ENTIRE hash with its own flat
+// "#error=...&error_code=...&error_description=..." fragment — it does
+// NOT preserve the "/reset-password" path our own redirectTo asked for.
+// getHashPath() above has no way to recognize this (it has no leading
+// "/", so it is treated as one opaque, unmatched route segment and falls
+// through to the normal app). This reads the SAME window.location.hash
+// independently and purely for recovery-error detection, so App() can
+// intercept it BEFORE that fallback happens — never after. Only `error`/
+// `error_code` are returned; `error_description` is deliberately never
+// read by the caller into any rendered UI (it is Supabase's own internal
+// diagnostic english text, not something to show a CRM user).
+function getRecoveryCallbackError() {
+  try {
+    const raw = window.location.hash.replace(/^#/, '');
+    if (!raw) return null;
+    const params = new URLSearchParams(raw);
+    const error = params.get('error');
+    if (!error) return null;
+    return { error, errorCode: params.get('error_code') || '' };
+  } catch (e) { return null; }
+}
+
 function useHashRouter() {
   const [path, setPath] = useState(getHashPath);
 
@@ -751,6 +774,12 @@ const SESSION = {
 
 const NAV_REF   = { fn: null };
 const TOAST_REF = { show: null };
+// Consumed-once signal from RecoveryErrorPage's "back to login" action (or
+// anywhere else that wants the forgot-password panel pre-opened) to
+// LoginPage's own initial resetMode state — same one-shot-ref shape as
+// NAV_REF/TOAST_REF above, kept separate from SESSION's quote-wizard
+// prefill slot since the two are unrelated flows.
+const LOGIN_INTENT_REF = { openReset: false };
 function showToast(msg) { try { if (TOAST_REF.show) TOAST_REF.show(msg); else console.info("[Toast]", msg); } catch(e) { console.info("[Toast]", msg); } }
 
 function IDLink({ id, type }) {
@@ -19492,6 +19521,24 @@ function useAuth() {
     // still discards it via the existing stale-reqId check — no second,
     // competing race-protection mechanism.
     const { data:{ subscription } } = sb.auth.onAuthStateChange((ev, s) => {
+      // PASSWORD_RECOVERY: Supabase has just validated a one-time recovery
+      // link in the URL and minted a short-lived session purely so
+      // ResetPasswordPage can call updateUser({password}) — this is NEVER
+      // an ordinary "the user signed in" session and must never reach the
+      // staff-bootstrap/dashboard path below, nor be confused with a
+      // normal SIGNED_IN. Route straight to ResetPasswordPage by the real
+      // Supabase event itself (never by hoping "/reset-password" is still
+      // sitting in window.location.hash — it usually isn't: Supabase's own
+      // redirect overwrites the hash with its token/type=recovery payload,
+      // see getRecoveryCallbackError's comment above) and stop here,
+      // before any of the dedup/staff-lookup machinery below runs for it.
+      // Still fully synchronous, same constraint as the rest of this
+      // callback.
+      if (ev === 'PASSWORD_RECOVERY') {
+        if (typeof NAV_REF.fn === 'function') NAV_REF.fn('/reset-password');
+        return;
+      }
+
       bootstrapped = true;
       clearTimeout(bootTimer);
 
@@ -19658,7 +19705,15 @@ function LoginPage({ onLogin, connectionError }) {
   const [error,      setError]      = useState("");
   const [loading,    setLoading]    = useState(false);
   const [showPass,   setShowPass]   = useState(false);
-  const [resetMode,  setResetMode]  = useState(false);
+  // Consumes LOGIN_INTENT_REF.openReset once (see its own comment) so a
+  // RecoveryErrorPage "back to login" click lands with the forgot-password
+  // panel already open, instead of the user having to find and click
+  // "Şifremi unuttum" again right after being told their link expired.
+  const [resetMode,  setResetMode]  = useState(() => {
+    const open = LOGIN_INTENT_REF.openReset;
+    LOGIN_INTENT_REF.openReset = false;
+    return open;
+  });
   const [resetSent,  setResetSent]  = useState(false);
   const [resetEmail, setResetEmail] = useState("");
   const [resetBusy,  setResetBusy]  = useState(false);
@@ -22999,6 +23054,60 @@ const PDFService = {
   },
 };
 
+// Dedicated recovery-callback-error state — rendered by App() whenever
+// getRecoveryCallbackError() finds an `error` param in the hash, BEFORE
+// the normal route fallback (the AuthGuard wrapper -> plain LoginPage) ever runs.
+// Never renders Supabase's own error_description text (English, internal,
+// not something to show a CRM user) — only a fixed, safe Turkish message,
+// specialized for the known otp_expired case and generic otherwise.
+function RecoveryErrorPage({ errorCode }) {
+  const isExpired = errorCode === 'otp_expired';
+
+  function handleBackToLogin() {
+    LOGIN_INTENT_REF.openReset = true;
+    if (typeof NAV_REF.fn === 'function') NAV_REF.fn('/login');
+  }
+
+  return (
+    <div style={{
+      minHeight:'100vh', display:'flex', alignItems:'center', justifyContent:'center',
+      background:`linear-gradient(135deg,${C.navyDeep} 0%,${C.navy} 100%)`, padding:20,
+    }}>
+      <div style={{
+        background:C.white, borderRadius:16, padding:'44px 40px',
+        width:'100%', maxWidth:400, boxShadow:'0 24px 80px rgba(13,27,62,0.45)',
+        textAlign:'center',
+      }}>
+        <div style={{
+          width:52, height:52, borderRadius:'50%', background:C.redBg, margin:'0 auto 16px',
+          display:'flex', alignItems:'center', justifyContent:'center',
+        }}>
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={C.red} strokeWidth="2" strokeLinecap="round">
+            <circle cx="12" cy="12" r="10"/><path d="M12 8v4m0 4h.01"/>
+          </svg>
+        </div>
+        <div style={{fontSize:18, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif", marginBottom:10, lineHeight:1.4}}>
+          {isExpired
+            ? 'Şifre sıfırlama bağlantısının süresi dolmuş veya bağlantı zaten kullanılmış.'
+            : 'Şifre sıfırlama bağlantısıyla ilgili bir sorun oluştu.'}
+        </div>
+        <div style={{fontSize:13.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", lineHeight:1.6, marginBottom:24}}>
+          {isExpired
+            ? 'Güvenlik nedeniyle bu bağlantı yalnızca bir kez kullanılabilir. Lütfen yeni bir şifre sıfırlama bağlantısı isteyin.'
+            : 'Lütfen yeni bir şifre sıfırlama bağlantısı isteyin.'}
+        </div>
+        <button onClick={handleBackToLogin} style={{
+          padding:'11px 28px', borderRadius:9, border:'none', cursor:'pointer',
+          background:`linear-gradient(135deg,${C.navyDeep},${C.navy})`,
+          color:C.white, fontSize:14, fontWeight:600, fontFamily:"'DM Sans',sans-serif",
+        }}>
+          Giriş Ekranına Dön
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function ResetPasswordPage() {
   const [password,  setPassword]  = useState('');
   const [password2, setPassword2] = useState('');
@@ -23020,6 +23129,22 @@ function ResetPasswordPage() {
     if (sb) {
       const { error: err } = await sb.auth.updateUser({ password });
       if (err) { setError('Şifre güncellenemedi: ' + err.message); setLoading(false); return; }
+      // The update above just succeeded using THIS short-lived
+      // PASSWORD_RECOVERY session — established purely by possessing the
+      // one-time email link, never by a real email+password login, and
+      // carrying only the lower assurance that implies. Left active
+      // (persistSession:true keeps it in storage across reloads/new
+      // tabs), it could later be used — via manual navigation to any
+      // authenticated route, not just this one — to reach the AuthGuard
+      // wrapper and pass its mandatory two-factor check (enrollment or
+      // verification, itself never skipped either way) without the user
+      // ever re-entering credentials. Explicitly end it now, AFTER the
+      // password change has already succeeded, so it can never affect
+      // that result — the "Giriş Yap" button below still only ever leads
+      // to /login, which
+      // now requires a genuinely fresh login to create a new session,
+      // re-entering that exact same mandatory two-factor check from a clean start.
+      await sb.auth.signOut();
     } else {
       await new Promise(r => setTimeout(r, 800));
     }
@@ -23570,6 +23695,21 @@ function App() {
 
   if (base === "reset-password") {
     return <ResetPasswordPage/>;
+  }
+
+  // Detected BEFORE the normal fallback below (the AuthGuard wrapper ->
+  // plain LoginPage for anyone without a session) so an expired/invalid/already-
+  // used recovery link's #error=...&error_code=... hash — which never
+  // matches "login" or "reset-password" above — gets its own dedicated,
+  // safe Turkish error state instead of silently looking like a generic,
+  // unexplained login screen. A successful recovery link never reaches
+  // here: it's routed to "reset-password" via the real PASSWORD_RECOVERY
+  // auth event itself (see useAuth's onAuthStateChange), not via this hash
+  // check, since Supabase's own success redirect also doesn't preserve
+  // the "/reset-password" path in the hash.
+  const recoveryCallbackError = getRecoveryCallbackError();
+  if (recoveryCallbackError) {
+    return <RecoveryErrorPage errorCode={recoveryCallbackError.errorCode}/>;
   }
 
   return (
