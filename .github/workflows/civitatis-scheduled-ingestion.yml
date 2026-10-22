@@ -104,3 +104,41 @@ jobs:
             echo "::error::Civitatis ingestion endpoint returned a non-2xx status (${http_status})"
             exit 1
           fi
+
+          # ── Business-level outcome check ─────────────────────────────
+          # A 2xx HTTP status only proves the endpoint itself ran — it
+          # does NOT mean every Civitatis booking inside this run
+          # succeeded (see api/cron-ingest-civitatis-write.js's own
+          # `summary` field). summary.failed > 0 is a genuine, unexpected
+          # RPC/SQL-level error and DOES fail this job. summary.
+          # needsReview > 0 is a routine, retryable, now-always-persisted
+          # business outcome (an ambiguous identity match, a chain parse
+          # failure, an unmapped tour mapping, etc.) and must NEVER fail
+          # this job — only a visible, non-blocking warning. A missing or
+          # malformed summary (an older deployed endpoint version, or a
+          # genuinely corrupt response) fails closed rather than silently
+          # reporting green, so this check can never itself become the
+          # next hidden silent-loss gap.
+          if ! jq -e '.summary' response.json > /dev/null 2>&1; then
+            echo "::error::Response JSON has no 'summary' field — cannot verify booking-level outcomes. Failing closed rather than reporting a silent green."
+            exit 1
+          fi
+
+          failed_count=$(jq -r 'if (.summary.failed | type) == "number" then (.summary.failed | tostring) else "null" end' response.json)
+          needs_review_count=$(jq -r 'if (.summary.needsReview | type) == "number" then (.summary.needsReview | tostring) else "null" end' response.json)
+
+          if [ "${failed_count}" = "null" ]; then
+            echo "::error::summary.failed is missing or not a number — failing closed rather than reporting a silent green."
+            exit 1
+          fi
+
+          if [ "${needs_review_count}" != "null" ] && [ "${needs_review_count}" -gt 0 ]; then
+            needs_review_ids=$(jq -r '(.summary.needsReviewBookingIds // []) | join(", ")' response.json)
+            echo "::warning::${needs_review_count} Civitatis booking(s) need manual review: ${needs_review_ids}"
+          fi
+
+          if [ "${failed_count}" -gt 0 ]; then
+            failed_ids=$(jq -r '(.summary.failedBookingIds // []) | join(", ")' response.json)
+            echo "::error::${failed_count} Civitatis booking(s) failed unexpectedly: ${failed_ids}"
+            exit 1
+          fi

@@ -326,6 +326,40 @@ test('the scheduled workflow fails the step visibly on a non-2xx response', () =
   assert.match(workflowText, /exit 1/);
 });
 
+// ── Business-level outcome policy (Part 7/9 of the Civitatis silent-loss
+// fix): a 2xx status is checked first (above), then the response body's
+// summary is inspected. failed>0 fails the job; needsReview>0 only
+// warns; a missing/malformed summary fails closed. Static text
+// assertions only, same convention as every other workflow test in this
+// file — no YAML parser dependency added. ───────────────────────────────
+test('the scheduled workflow fails closed when the response has no summary field at all', () => {
+  assert.match(workflowText, /jq -e '\.summary' response\.json/);
+  assert.match(workflowText, /Response JSON has no 'summary' field/);
+});
+
+test('the scheduled workflow fails the job when summary.failed is greater than zero, including naming the failed booking ids', () => {
+  assert.match(workflowText, /summary\.failed/);
+  assert.match(workflowText, /if \[ "\$\{failed_count\}" -gt 0 \]/);
+  assert.match(workflowText, /failedBookingIds/);
+});
+
+test('the scheduled workflow NEVER fails the job merely for summary.needsReview > 0 — it only emits a GitHub Actions warning', () => {
+  assert.match(workflowText, /summary\.needsReview/);
+  assert.match(workflowText, /::warning::/);
+  assert.match(workflowText, /needsReviewBookingIds/);
+  // The needsReview branch must not itself contain an `exit 1` — only
+  // the failed_count branch below it is allowed to fail the job.
+  const needsReviewBlock = workflowText.slice(
+    workflowText.indexOf('if [ "${needs_review_count}" != "null"'),
+    workflowText.indexOf('if [ "${failed_count}" -gt 0 ]')
+  );
+  assert.doesNotMatch(needsReviewBlock, /exit 1/);
+});
+
+test('the scheduled workflow fails closed when summary.failed is missing or not a number, rather than silently reporting green', () => {
+  assert.match(workflowText, /summary\.failed is missing or not a number/);
+});
+
 test('the scheduled workflow requests minimal GITHUB_TOKEN permissions', () => {
   assert.match(workflowText, /permissions:\s*\{\}/);
 });

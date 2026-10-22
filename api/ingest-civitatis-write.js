@@ -139,6 +139,61 @@ function isManualWriteAuthorized({ configuredSecret, providedSecret }) {
   return !!configuredSecret && typeof providedSecret === 'string' && providedSecret === configuredSecret;
 }
 
+/** The two supported identityDecision values — see
+ * parseIdentityDecisionRequest below. Exhaustive; anything else is
+ * rejected. */
+const SUPPORTED_IDENTITY_DECISIONS = new Set(['existing_customer', 'new_customer']);
+
+/**
+ * Pure, injectable validator for the explicit two-way identity-decision
+ * request parameters (identityDecisionFor/identityDecision/
+ * confirmedCustomerId) — the replacement for the earlier, one-way
+ * confirmNotSameCustomerFor override, which always forced customerId to
+ * null and could silently create a duplicate customer for what might be
+ * the SAME real traveler. This function performs only the PURELY
+ * SYNTACTIC checks (shape of the three parameters relative to each
+ * other and to externalBookingId, and the "manual write-mode only"
+ * requirement) — all of which are answerable with no Gmail/Supabase
+ * call. It deliberately does NOT validate that confirmedCustomerId is
+ * an actual name-match candidate — that requires the read-only planning
+ * stage (parsed Gmail messages + a repo lookup) and is instead checked
+ * inside writeAdapter.js's planCivitatisIngestion itself, which aborts
+ * with `{ok:false, stage:'identity_decision_invalid_candidate'}` for an
+ * invalid id (mapped to a 400 by the HTTP handler below) — still always
+ * before any write RPC is ever reached.
+ *
+ * Returns `{ok:true, decision:null}` when no identity-decision
+ * parameter was supplied at all (the normal, default path — untouched).
+ * Returns `{ok:true, decision:{externalBookingId, decision,
+ * confirmedCustomerId}}` when a well-formed, write-mode-eligible
+ * decision was supplied. Returns `{ok:false, error}` for every
+ * malformed combination, fails closed.
+ */
+function parseIdentityDecisionRequest({ externalBookingId, identityDecisionFor, identityDecision, confirmedCustomerId, requestedWrite }) {
+  const anySupplied = identityDecisionFor != null || identityDecision != null || confirmedCustomerId != null;
+  if (!anySupplied) return { ok: true, decision: null };
+
+  if (!identityDecisionFor || !identityDecision) {
+    return { ok: false, error: 'identityDecisionFor and identityDecision must both be supplied together.' };
+  }
+  if (identityDecisionFor !== externalBookingId) {
+    return { ok: false, error: 'identityDecisionFor must exactly equal externalBookingId — it can never apply to a different or unscoped booking.' };
+  }
+  if (!SUPPORTED_IDENTITY_DECISIONS.has(identityDecision)) {
+    return { ok: false, error: `Unsupported identityDecision "${identityDecision}" — must be exactly "existing_customer" or "new_customer".` };
+  }
+  if (identityDecision === 'existing_customer' && !confirmedCustomerId) {
+    return { ok: false, error: 'identityDecision=existing_customer requires confirmedCustomerId.' };
+  }
+  if (identityDecision === 'new_customer' && confirmedCustomerId) {
+    return { ok: false, error: 'identityDecision=new_customer must not supply confirmedCustomerId.' };
+  }
+  if (!requestedWrite) {
+    return { ok: false, error: 'Identity decisions are manual write-mode operations only — add write=true and a valid x-civitatis-write-secret header.' };
+  }
+  return { ok: true, decision: { externalBookingId, decision: identityDecision, confirmedCustomerId: confirmedCustomerId || null } };
+}
+
 /**
  * Single-booking manual mode filter. Calls the EXISTING, UNMODIFIED
  * parser purely to read `externalBookingId` off each message for
@@ -214,7 +269,17 @@ function decorateCallResult(call, eventType) {
 function buildDryRunResults(plan) {
   return plan.plans.map(entry => {
     if (!entry.eligible) {
-      return { externalBookingId: entry.externalBookingId, skipped: true, reason: entry.reason, stoppedEarly: false, calls: [] };
+      // wouldMarkNeedsReview: what WOULD be persisted via
+      // mark_civitatis_email_needs_review if this same request ran with
+      // write=true — reported here WITHOUT ever calling that RPC. A
+      // plain dry run (this function) never executes any marker call;
+      // only write-mode orchestration does (see buildWriteResults /
+      // executeCivitatisIngestionPlan's markNeedsReviewRpcCaller).
+      const wouldMarkNeedsReview = (entry.needsReviewMarkers || []).map(m => ({
+        gmailMessageId: m.p_gmail_message_id,
+        reasonCode: m.p_reason_code,
+      }));
+      return { externalBookingId: entry.externalBookingId, skipped: true, reason: entry.reason, stoppedEarly: false, calls: [], wouldMarkNeedsReview };
     }
     return {
       externalBookingId: entry.externalBookingId,
@@ -237,19 +302,43 @@ function buildDryRunResults(plan) {
   });
 }
 
+/** Shapes one executed needs_review-marker call's result — same never-
+ * leak-PII/never-leak-payload discipline as decorateCallResult, but for
+ * mark_civitatis_email_needs_review's much smaller result vocabulary.
+ * `processingStatus` (added for buildIngestionSummary's
+ * classifyMarkerOutcome below) mirrors decorateCallResult's own field
+ * of the same name — needed specifically to tell an `already_processed`
+ * marker result (the row genuinely is 'processed', a benign duplicate)
+ * apart from any other, unexpected processing_status value on that same
+ * result (fails closed — see classifyMarkerOutcome). */
+function decorateMarkerResult(marker) {
+  const rpcResult = (marker && marker.rpcResult) || {};
+  const resultValue = rpcResult.result;
+  return {
+    gmailMessageId: marker.gmailMessageId,
+    reasonCode: marker.reasonCode,
+    decision: marker.unknownResult ? 'UNKNOWN_RPC_RESULT (failed closed)' : (resultValue || 'UNKNOWN'),
+    ingestionId: rpcResult.ingestion_id || null,
+    processingStatus: rpcResult.processing_status || null,
+    error: rpcResult.error || null,
+  };
+}
+
 /** Write-mode reporting: decorates executeCivitatisIngestionPlan's own
  * (unmodified) results with eventType and the flattened field set this
  * endpoint promises. */
 function buildWriteResults(executedResults, eventTypeByGmailId) {
   return executedResults.map(entry => {
+    const markerResults = (entry.markerResults || []).map(decorateMarkerResult);
     if (entry.skipped) {
-      return { externalBookingId: entry.externalBookingId, skipped: true, reason: entry.reason, stoppedEarly: false, calls: [] };
+      return { externalBookingId: entry.externalBookingId, skipped: true, reason: entry.reason, stoppedEarly: false, calls: [], markerResults };
     }
     return {
       externalBookingId: entry.externalBookingId,
       skipped: false,
       stoppedEarly: entry.stoppedEarly,
       calls: entry.calls.map(c => decorateCallResult(c, eventTypeByGmailId.get(c.gmailMessageId))),
+      markerResults,
     };
   });
 }
@@ -324,16 +413,31 @@ function decorateCancellationResult(entry) {
  * below) does not even construct real ones in that case, so there is no
  * real RPC wrapper in existence at all for a disabled request, not merely
  * an unused one.
+ *
+ * `markNeedsReviewRpcCaller` (write mode only, exactly like rpcCaller/
+ * cancellationRpcCaller) is passed straight through to
+ * executeCivitatisIngestionPlan as its optional third argument — see
+ * that function's own doc comment. A dry run never receives one and
+ * never needs to: buildDryRunResults reports what WOULD be marked
+ * purely from `plan.plans[].needsReviewMarkers`, with zero RPC calls.
+ *
+ * `identityDecision` (write mode only) is forwarded to
+ * planCivitatisIngestion unchanged — see api/ingest-civitatis-write.js's
+ * own handler for the full identityDecisionFor/identityDecision/
+ * confirmedCustomerId validation this value must already have passed
+ * before reaching here. A `{ok:false, stage:'identity_decision_invalid_candidate'}`
+ * result from planCivitatisIngestion (an invalid confirmedCustomerId)
+ * is passed straight through so the HTTP handler can map it to a 400.
  */
-async function runCivitatisWriteOrchestration({ messages, repo, externalBookingId, writeModeActive, rpcCaller, cancellationRpcCaller }) {
+async function runCivitatisWriteOrchestration({ messages, repo, externalBookingId, writeModeActive, rpcCaller, cancellationRpcCaller, markNeedsReviewRpcCaller, identityDecision = null }) {
   const filteredMessages = externalBookingId
     ? filterMessagesByExternalBookingId(messages, externalBookingId)
     : (messages || []);
 
   const { cancellations: cancellationMessages, other: bookingMessages } = splitCancellationMessages(filteredMessages);
 
-  const plan = await planCivitatisIngestion({ messages: bookingMessages, repo });
-  if (!plan.ok) return { ok: false, error: plan.error };
+  const plan = await planCivitatisIngestion({ messages: bookingMessages, repo, identityDecision });
+  if (!plan.ok) return { ok: false, error: plan.error, stage: plan.stage };
 
   const cancellationPlan = await planCivitatisCancellations({ messages: cancellationMessages, repo });
   if (!cancellationPlan.ok) return { ok: false, error: cancellationPlan.error };
@@ -343,7 +447,7 @@ async function runCivitatisWriteOrchestration({ messages, repo, externalBookingI
   }
 
   const eventTypeByGmailId = buildEventTypeMap(plan);
-  const executed = await executeCivitatisIngestionPlan(plan, rpcCaller);
+  const executed = await executeCivitatisIngestionPlan(plan, rpcCaller, markNeedsReviewRpcCaller);
 
   // Tour Preparation Intelligence Phase B3: automatic Activity/meal-modality
   // enrichment, run ONLY here — after the booking domain write has already
@@ -433,6 +537,174 @@ function buildRealCancellationRpcCaller() {
   };
 }
 
+/** The ONLY place a real needs_review-marker RPC call is ever
+ * constructed — deliberately a THIRD, separate function calling a
+ * THIRD, separate, structurally-write-incapable RPC
+ * (mark_civitatis_email_needs_review — see
+ * supabase_migration_civitatis_write_v14_mark_needs_review.sql), never
+ * routed through either of the other two real-RPC builders above. Same
+ * call-level-error-to-{result:'failed'} translation, for the same
+ * reason: executeCivitatisIngestionPlan's existing fail-closed
+ * unknownResult handling already treats any value outside
+ * KNOWN_MARK_NEEDS_REVIEW_RESULTS (writeAdapter.js) correctly without
+ * needing special-case logic here. Only ever constructed when write
+ * mode is active — see the HTTP handler below. */
+function buildRealMarkNeedsReviewRpcCaller() {
+  const sb = getServiceRoleClient();
+  return async function markNeedsReviewRpcCaller(payload) {
+    const { data, error } = await sb.rpc('mark_civitatis_email_needs_review', payload);
+    if (error) {
+      return { result: 'failed', error: `RPC call error: ${error.message}` };
+    }
+    return data;
+  };
+}
+
+/**
+ * Classifies ONE already-executed, already-decorated needs_review-
+ * marker result (decorateMarkerResult's own output shape) into exactly
+ * one of 'needsReview' | 'duplicate' | 'failed' — never inferred merely
+ * from "a marker call happened at all". This is the pre-production
+ * review's FIX 1: `markerResults.length > 0` is NOT sufficient evidence
+ * of a successful needs_review mark — the marker RPC call itself can
+ * return `result:'failed'` (a genuine SQL/runtime error inside
+ * mark_civitatis_email_needs_review), an unrecognized value, or fail at
+ * the Supabase-call level (translated to `{result:'failed', error}` by
+ * buildRealMarkNeedsReviewRpcCaller, exactly like the real booking
+ * RPC's own call-level error handling) — every one of those must count
+ * as a genuine failure, never a silent "needs review" success.
+ *   - 'manual_review_required' / 'already_needs_review' -> needsReview
+ *     (both are successful, correctly-recorded review states — the
+ *     second just means THIS call found it already there and wrote
+ *     nothing new; see the V14 migration's own retry-noise fix).
+ *   - 'already_processed' -> 'duplicate' ONLY when the row's own
+ *     reported processing_status is genuinely 'processed' (the
+ *     ambiguity was actually resolved through the normal flow in the
+ *     meantime — a benign, successful outcome, not invented success);
+ *     any other/missing processing_status on an already_processed
+ *     result is unexpected and fails closed.
+ *   - 'failed', 'UNKNOWN_RPC_RESULT (failed closed)', or anything else
+ *     unrecognized -> 'failed'.
+ */
+function classifyMarkerOutcome(marker) {
+  const decision = marker && marker.decision;
+  if (decision === 'manual_review_required' || decision === 'already_needs_review') return 'needsReview';
+  if (decision === 'already_processed') {
+    return (marker && marker.processingStatus) === 'processed' ? 'duplicate' : 'failed';
+  }
+  return 'failed'; // 'failed', 'UNKNOWN_RPC_RESULT (failed closed)', or any other/missing value
+}
+
+/**
+ * Safe, PII-free counts summarizing one orchestration outcome — added
+ * so the cron's GitHub Actions workflow (and any human reading a
+ * manual response) can see partial-failure/needs-review signals
+ * without parsing every individual call result. Works identically
+ * against a dry-run outcome (reporting what WOULD happen — no real
+ * marker RPC result exists yet, so classifyMarkerOutcome is never
+ * consulted for those; `wouldMarkNeedsReview`'s mere presence IS the
+ * correct signal there, since nothing has actually been attempted) and
+ * a write-mode outcome (reporting what DID happen, via
+ * classifyMarkerOutcome for every real marker result).
+ *
+ * `needsReview`/`needsReviewBookingIds` (FIX 2): a booking-level count
+ * of DISTINCT external_booking_ids needing review — a chain with
+ * several Gmail messages (e.g. a PARSE_FAILURE_CHAIN or
+ * POSSIBLE_EXISTING_MATCH_CONTACT_CONFLICT booking, which mark EVERY
+ * message in the chain) must contribute exactly ONE entry, never one
+ * per message/marker. A booking that fails closed is reported under
+ * `failed`/`failedBookingIds` instead, never both (failure takes
+ * precedence over needsReview for the SAME booking — "a booking must
+ * appear in failedBookingIds if any required marker call for that
+ * booking fails"). A marker/call with NO resolvable externalBookingId
+ * (the EXTERNAL_BOOKING_ID_UNRESOLVED case) is NEVER invented a
+ * booking id — it is counted separately in
+ * `needsReviewUnresolvedMessages`, which is message-level by
+ * necessity (there is no booking to dedupe by).
+ *
+ * Only booking/cancellation ids and reason codes are ever included —
+ * never an email address, phone number, passenger name, or raw email
+ * body/subject.
+ */
+function buildIngestionSummary({ results, cancellations, discoveredCount }) {
+  let created = 0, updated = 0, duplicates = 0, failed = 0, skipped = 0;
+  let needsReviewUnresolvedMessages = 0;
+  const needsReviewBookingIds = new Set();
+  const failedBookingIds = new Set();
+
+  for (const entry of results || []) {
+    if (entry.skipped) {
+      skipped += 1;
+
+      // Dry run: nothing was actually executed — report purely from
+      // the plan's own wouldMarkNeedsReview list (never
+      // classifyMarkerOutcome, which requires a real executed result).
+      if (entry.wouldMarkNeedsReview && entry.wouldMarkNeedsReview.length > 0) {
+        if (entry.externalBookingId) needsReviewBookingIds.add(entry.externalBookingId);
+        else needsReviewUnresolvedMessages += entry.wouldMarkNeedsReview.length;
+        continue;
+      }
+
+      // Write mode: classify EVERY actual marker result explicitly.
+      // Failure anywhere in this booking's markers wins over needsReview
+      // for this booking (never both for the same booking).
+      let bookingFailed = false;
+      let bookingNeedsReview = false;
+      for (const marker of (entry.markerResults || [])) {
+        const outcome = classifyMarkerOutcome(marker);
+        if (outcome === 'failed') bookingFailed = true;
+        else if (outcome === 'needsReview') bookingNeedsReview = true;
+        else if (outcome === 'duplicate') duplicates += 1;
+      }
+      if (bookingFailed) {
+        failed += 1;
+        if (entry.externalBookingId) failedBookingIds.add(entry.externalBookingId);
+      } else if (bookingNeedsReview) {
+        if (entry.externalBookingId) needsReviewBookingIds.add(entry.externalBookingId);
+        else needsReviewUnresolvedMessages += 1;
+      }
+      continue;
+    }
+    for (const call of entry.calls || []) {
+      const decision = call.decision || call.rpcResult;
+      if (decision === 'created') created += 1;
+      else if (decision === 'updated') updated += 1;
+      else if (decision === 'already_processed') duplicates += 1;
+      else if (decision === 'manual_review_required') {
+        if (entry.externalBookingId) needsReviewBookingIds.add(entry.externalBookingId);
+        else needsReviewUnresolvedMessages += 1;
+      } else if (decision === 'failed' || call.decision === 'UNKNOWN_RPC_RESULT (failed closed)') {
+        failed += 1;
+        if (entry.externalBookingId) failedBookingIds.add(entry.externalBookingId);
+      }
+    }
+  }
+
+  for (const entry of cancellations || []) {
+    const decision = entry.decision || entry.rpcResult;
+    if (decision === 'failed' || decision === 'UNKNOWN_RPC_RESULT (failed closed)') {
+      failed += 1;
+      if (entry.externalBookingId) failedBookingIds.add(entry.externalBookingId);
+    } else if (decision === 'manual_review_required') {
+      if (entry.externalBookingId) needsReviewBookingIds.add(entry.externalBookingId);
+      else needsReviewUnresolvedMessages += 1;
+    }
+  }
+
+  const needsReviewBookingIdsArray = [...needsReviewBookingIds];
+  const failedBookingIdsArray = [...failedBookingIds];
+
+  return {
+    discovered: discoveredCount,
+    created, updated, duplicates,
+    needsReview: needsReviewBookingIdsArray.length, // distinct booking ids, never message/call count
+    needsReviewUnresolvedMessages, // messages with no resolvable externalBookingId — tracked separately, never folded into needsReview
+    failed, skipped,
+    needsReviewBookingIds: needsReviewBookingIdsArray,
+    failedBookingIds: failedBookingIdsArray,
+  };
+}
+
 // ── HTTP handler ─────────────────────────────────────────────────────────
 
 async function handler(req, res) {
@@ -451,6 +723,31 @@ async function handler(req, res) {
 
   const writeEnvValue = process.env.CIVITATIS_WRITE_ENABLED;
   const requestedWrite = parseRequestedWrite(q.write);
+
+  // Explicit two-way identity decision (identityDecisionFor/
+  // identityDecision/confirmedCustomerId) — replaces the earlier,
+  // removed confirmNotSameCustomerFor one-way override, which always
+  // forced a new customer and could silently create a duplicate for
+  // what might be the SAME real traveler. Pure-syntax validation only
+  // here, BEFORE any Gmail/Supabase call — a malformed combination (or
+  // a request missing write=true) is rejected with 400 immediately.
+  // confirmedCustomerId-matches-an-actual-candidate validation happens
+  // later, inside planCivitatisIngestion, which requires the read-only
+  // planning stage — see runCivitatisWriteOrchestration below.
+  const identityDecisionValidation = parseIdentityDecisionRequest({
+    externalBookingId,
+    identityDecisionFor: q.identityDecisionFor ? String(q.identityDecisionFor).trim() : null,
+    identityDecision: q.identityDecision ? String(q.identityDecision).trim() : null,
+    confirmedCustomerId: q.confirmedCustomerId ? String(q.confirmedCustomerId).trim() : null,
+    requestedWrite,
+  });
+  if (!identityDecisionValidation.ok) {
+    return res.status(400).json({
+      error: identityDecisionValidation.error,
+      stage: 'identity_decision_validation',
+    });
+  }
+  const identityDecision = identityDecisionValidation.decision; // null, or {externalBookingId, decision, confirmedCustomerId}
 
   // Fail fast, before any Gmail/Supabase call: a write=true request with
   // no valid secret is rejected outright, not silently downgraded to a
@@ -501,10 +798,12 @@ async function handler(req, res) {
 
   let rpcCaller = null;
   let cancellationRpcCaller = null;
+  let markNeedsReviewRpcCaller = null;
   if (writeModeActive) {
     try {
       rpcCaller = buildRealRpcCaller();
       cancellationRpcCaller = buildRealCancellationRpcCaller();
+      markNeedsReviewRpcCaller = buildRealMarkNeedsReviewRpcCaller();
     } catch (err) {
       if (err instanceof ConfigurationError) {
         return res.status(503).json({ error: err.message, stage: 'supabase_configuration' });
@@ -515,15 +814,27 @@ async function handler(req, res) {
 
   let outcome;
   try {
-    outcome = await runCivitatisWriteOrchestration({ messages, repo, externalBookingId, writeModeActive, rpcCaller, cancellationRpcCaller });
+    outcome = await runCivitatisWriteOrchestration({
+      messages, repo, externalBookingId, writeModeActive, rpcCaller, cancellationRpcCaller,
+      markNeedsReviewRpcCaller, identityDecision,
+    });
   } catch (err) {
     console.error('[ingest-civitatis-write] Orchestration error:', err.message);
     return res.status(500).json({ error: 'Ingestion failed unexpectedly. See function logs for details.', stage: 'orchestration' });
   }
 
   if (!outcome.ok) {
-    return res.status(422).json({ error: outcome.error, stage: 'planning_precondition' });
+    // An invalid confirmedCustomerId (planCivitatisIngestion's own
+    // candidate-list check, which requires the read-only planning
+    // stage and so can never happen before this point) is a genuine
+    // 400-level request error, never a 422 "something about the
+    // deployment's own configuration is missing" precondition —
+    // distinguished by the stage planCivitatisIngestion itself reports.
+    const status = outcome.stage === 'identity_decision_invalid_candidate' ? 400 : 422;
+    return res.status(status).json({ error: outcome.error, stage: outcome.stage || 'planning_precondition' });
   }
+
+  const summary = buildIngestionSummary({ results: outcome.results, cancellations: outcome.cancellations, discoveredCount: messages.length });
 
   if (externalBookingId && outcome.results.length === 0 && outcome.cancellations.length === 0) {
     return res.status(200).json({
@@ -533,6 +844,7 @@ async function handler(req, res) {
       externalBookingId,
       results: [],
       cancellations: [],
+      summary,
       message: `No Gmail messages matching external booking id "${externalBookingId}" were found in this fetched page (maxMessages=${maxMessages}${pageToken ? ', pageToken supplied' : ''}). Try a larger maxMessages or supply pageToken to look further back.`,
       pagination: { requestedMaxMessages: maxMessages, nextPageToken: nextPageToken || null },
     });
@@ -545,6 +857,7 @@ async function handler(req, res) {
     externalBookingId: externalBookingId || null,
     results: outcome.results,
     cancellations: outcome.cancellations,
+    summary,
     pagination: { requestedMaxMessages: maxMessages, nextPageToken: nextPageToken || null },
   });
 }
@@ -557,11 +870,15 @@ async function handler(req, res) {
 handler.isWriteModeActive = isWriteModeActive;
 handler.parseRequestedWrite = parseRequestedWrite;
 handler.isManualWriteAuthorized = isManualWriteAuthorized;
+handler.parseIdentityDecisionRequest = parseIdentityDecisionRequest;
 handler.filterMessagesByExternalBookingId = filterMessagesByExternalBookingId;
 handler.buildEventTypeMap = buildEventTypeMap;
 handler.decorateCallResult = decorateCallResult;
 handler.buildDryRunResults = buildDryRunResults;
 handler.buildWriteResults = buildWriteResults;
+handler.decorateMarkerResult = decorateMarkerResult;
+handler.classifyMarkerOutcome = classifyMarkerOutcome;
+handler.buildIngestionSummary = buildIngestionSummary;
 handler.runCivitatisWriteOrchestration = runCivitatisWriteOrchestration;
 handler.splitCancellationMessages = splitCancellationMessages;
 handler.buildCancellationDryRunResults = buildCancellationDryRunResults;
@@ -570,6 +887,7 @@ handler.decorateCancellationResult = decorateCancellationResult;
 // entry point duplicates none of this ingestion/RPC logic.
 handler.buildRealRpcCaller = buildRealRpcCaller;
 handler.buildRealCancellationRpcCaller = buildRealCancellationRpcCaller;
+handler.buildRealMarkNeedsReviewRpcCaller = buildRealMarkNeedsReviewRpcCaller;
 handler.DEFAULT_MAX_MESSAGES = DEFAULT_MAX_MESSAGES;
 handler.HARD_MAX_MESSAGES = HARD_MAX_MESSAGES;
 

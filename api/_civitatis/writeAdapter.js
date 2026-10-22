@@ -61,6 +61,55 @@ const KNOWN_RPC_RESULTS = new Set([
   'failed',
 ]);
 
+// The complete, exhaustive vocabulary public.mark_civitatis_email_
+// needs_review(...) can return. Same fail-closed philosophy as
+// KNOWN_RPC_RESULTS above — an unrecognized value is never assumed
+// safe. 'already_needs_review' (added by the pre-production review's
+// retry-noise fix) means the row was ALREADY needs_review and was left
+// completely untouched — a known, successful, zero-write outcome, not
+// a failure — see api/ingest-civitatis-write.js's classifyMarkerOutcome
+// for how this is actually counted in the reported summary.
+const KNOWN_MARK_NEEDS_REVIEW_RESULTS = new Set([
+  'manual_review_required',
+  'already_needs_review',
+  'already_processed',
+  'failed',
+]);
+
+/**
+ * Builds the exact parameter object public.mark_civitatis_email_
+ * needs_review(...) expects for ONE Gmail message that a pre-RPC
+ * safety gate (POSSIBLE_EXISTING_MATCH in any of its three variants,
+ * a booking-chain parse failure, or an unresolved external booking id)
+ * has decided must never reach ingest_civitatis_booking automatically.
+ * `reasonDetail` carries only safe, non-PII identifiers (a candidate
+ * customer/reservation id, a count, a parser-reported reason string) —
+ * never an email address, phone number, or passenger name; callers are
+ * responsible for keeping it that way, exactly as every call site in
+ * this file already does.
+ *
+ * @param {{event: object, rawBody: string|null, civitatisSourceId: string, reasonCode: string, reasonDetail: string}} args
+ *   `event` is a parsed message object (parseCivitatisEmail's own
+ *   result) — ok:true or ok:false alike; only gmailMessageId is
+ *   strictly required for the marker RPC's own idempotency key, so this
+ *   is safe to call even for an event whose externalBookingId/eventType
+ *   are null.
+ */
+function buildMarkNeedsReviewPayload({ event, rawBody, civitatisSourceId, reasonCode, reasonDetail }) {
+  return {
+    p_gmail_message_id: event.gmailMessageId,
+    p_gmail_thread_id: event.gmailThreadId,
+    p_received_at: event.receivedAt,
+    p_raw_subject: event.rawSubject,
+    p_raw_body_snapshot: rawBody == null ? null : String(rawBody),
+    p_source_id: civitatisSourceId,
+    p_external_booking_id: event.externalBookingId || null,
+    p_event_type: event.eventType || null,
+    p_reason_code: reasonCode,
+    p_reason_detail: reasonDetail,
+  };
+}
+
 /**
  * Builds the exact parameter object public.ingest_civitatis_booking(...)
  * expects for ONE parsed Civitatis event (one Gmail message).
@@ -166,10 +215,41 @@ function buildRpcPayload({ parsedEvent, rawBody, civitatisSourceId, tourId, cust
  * same repo interface api/_civitatis/supabaseAdmin.js already implements
  * for the dry-run endpoint). Never calls anything write-shaped.
  *
- * @param {{messages: Array, repo: object}} args
- * @returns {Promise<{ok:true, civitatisSourceId:string, plans:Array} | {ok:false, error:string}>}
+ * @param {{messages: Array, repo: object, identityDecision?: {externalBookingId:string, decision:'existing_customer'|'new_customer', confirmedCustomerId:string|null}|null}} args
+ *   `identityDecision`: a narrowly-scoped, EXPLICIT two-way operator
+ *   decision, set ONLY by api/ingest-civitatis-write.js's
+ *   identityDecisionFor/identityDecision/confirmedCustomerId request
+ *   parameters (themselves gated on write=true + the manual write
+ *   secret + identityDecisionFor exactly equaling the request's own
+ *   externalBookingId — see that file's own doc comment). Applies
+ *   ONLY to the exact-normalized-name customer match gate
+ *   (POSSIBLE_EXISTING_MATCH_EXACT_NAME) for the ONE booking named by
+ *   `identityDecision.externalBookingId` — never for a contact
+ *   conflict, a legacy-reservation match, a parse failure, or a tour-
+ *   mapping problem, all of which remain fully enforced regardless of
+ *   this value, and structurally unreachable from here (each of those
+ *   gates `continue`s before this gate is ever evaluated). Two
+ *   supported decisions:
+ *     - `'existing_customer'`: `confirmedCustomerId` MUST exactly equal
+ *       one of the ids `matchCustomerByName` actually returned as a
+ *       candidate for THIS booking — never an arbitrary operator-
+ *       supplied id. An invalid candidate id aborts planning entirely
+ *       with `{ok:false, stage:'identity_decision_invalid_candidate'}`
+ *       (the HTTP layer maps this to a 400, before any write RPC).
+ *       When valid, `customerId` is set to exactly that confirmed id —
+ *       the existing customer is reused, never auto-merged or modified.
+ *     - `'new_customer'`: `customerId` stays null, so the RPC creates a
+ *       genuinely new customer from the booking's own contact fields —
+ *       identical to the pre-existing "no match at all" path.
+ *   Omit/null (the default, every existing caller of this function is
+ *   unaffected) for every normal call: the exact-name gate then takes
+ *   its original, unmodified path — ineligible, with a persisted
+ *   needs_review marker (see buildMarkNeedsReviewPayload) — exactly as
+ *   the V14 silent-loss fix established, with no identity assumption
+ *   made either way.
+ * @returns {Promise<{ok:true, civitatisSourceId:string, plans:Array} | {ok:false, error:string, stage?:string}>}
  */
-async function planCivitatisIngestion({ messages, repo }) {
+async function planCivitatisIngestion({ messages, repo, identityDecision = null }) {
   const civitatisSource = await repo.getCivitatisSource();
   if (!civitatisSource) {
     return { ok: false, error: 'No Civitatis source found — cannot plan any writes.' };
@@ -185,15 +265,47 @@ async function planCivitatisIngestion({ messages, repo }) {
     parsedEvents.push({ parsed: parseCivitatisEmail(message), rawBody: message.body || null });
   }
 
+  const plans = [];
   const groups = new Map();
   for (const item of parsedEvents) {
     const bookingId = item.parsed.externalBookingId;
-    if (!bookingId) continue; // standalone ignored/needs_review/parse_error — never plannable
+    if (!bookingId) {
+      // A genuinely non-Civitatis-booking message (ignored, or a
+      // cancellation event that slipped through) carries no eventType
+      // at all — parseCivitatisEmail only ever sets eventType once a
+      // message has already passed eventDetector's new_booking/
+      // modified classification (see parser.js). Such a message was
+      // never a booking to begin with, so it correctly leaves zero
+      // trace here, exactly as before.
+      //
+      // A message that WAS classified new_booking/modified but still
+      // has no resolvable externalBookingId (the EXTERNAL_BOOKING_ID_
+      // UNRESOLVED case — e.g. the body's own stated "Reservation
+      // number:" disagreeing with the subject's) cannot be grouped
+      // into any booking chain (there is no booking id to group by),
+      // but its gmailMessageId is always known regardless — Gmail
+      // itself supplies it, independent of parsing. So this is the one
+      // case persisted directly as its own single-message plan entry,
+      // rather than inside a booking group.
+      const isBookingShaped = item.parsed.eventType === 'new_booking' || item.parsed.eventType === 'modified';
+      if (isBookingShaped) {
+        const reasonDetail = (item.parsed.reasons || []).join('; ') || 'external booking id could not be resolved';
+        plans.push({
+          externalBookingId: null,
+          eligible: false,
+          reason: `EXTERNAL_BOOKING_ID_UNRESOLVED: ${reasonDetail}`,
+          needsReviewMarkers: [buildMarkNeedsReviewPayload({
+            event: item.parsed, rawBody: item.rawBody, civitatisSourceId: civitatisSource.id,
+            reasonCode: 'EXTERNAL_BOOKING_ID_UNRESOLVED', reasonDetail,
+          })],
+        });
+      }
+      continue;
+    }
     if (!groups.has(bookingId)) groups.set(bookingId, []);
     groups.get(bookingId).push(item);
   }
 
-  const plans = [];
   for (const [externalBookingId, items] of groups) {
     // Gmail's own listing order is NOT guaranteed chronological (in
     // practice it is typically newest-first) — every event within a
@@ -214,7 +326,25 @@ async function planCivitatisIngestion({ messages, repo }) {
 
     const failed = items.filter(it => !it.parsed.ok);
     if (failed.length > 0) {
-      plans.push({ externalBookingId, eligible: false, reason: 'one or more events in this booking\'s chain failed to parse (NEEDS_REVIEW/PARSE_ERROR) — never written' });
+      // Every message in this chain — including one that itself parsed
+      // fine — is claimed and marked needs_review, one marker call per
+      // gmailMessageId. This preserves the existing, deliberate rule
+      // that a chain with any parse failure is never partially written
+      // through the real booking RPC (order/completeness genuinely
+      // matters for a chronological sequence of events on one
+      // reservation), while still ensuring every one of its Gmail
+      // messages leaves a persisted, queryable trace rather than
+      // silently relying on indefinite Gmail rediscovery.
+      const chainReasonDetail = `booking chain contains ${failed.length} of ${items.length} unparseable event(s)`;
+      plans.push({
+        externalBookingId, eligible: false,
+        reason: `PARSE_FAILURE_CHAIN: one or more events in this booking's chain failed to parse (NEEDS_REVIEW/PARSE_ERROR) — never written`,
+        needsReviewMarkers: items.map(it => buildMarkNeedsReviewPayload({
+          event: it.parsed, rawBody: it.rawBody, civitatisSourceId: civitatisSource.id,
+          reasonCode: 'PARSE_FAILURE_CHAIN',
+          reasonDetail: it.parsed.ok ? chainReasonDetail : `${chainReasonDetail}; this event's own parse reasons: ${(it.parsed.reasons || []).join('; ')}`,
+        })),
+      });
       continue;
     }
 
@@ -285,7 +415,16 @@ async function planCivitatisIngestion({ messages, repo }) {
         candidateReservations
       );
       if (legacyMatch.possible) {
-        plans.push({ externalBookingId, eligible: false, reason: `POSSIBLE_EXISTING_MATCH (unlinked legacy reservation): ${legacyMatch.reason}` });
+        const candidateIds = legacyMatch.candidates.map(r => r.id).join(', ');
+        const reasonDetail = `${legacyMatch.reason} (candidate reservation id(s): ${candidateIds})`;
+        plans.push({
+          externalBookingId, eligible: false,
+          reason: `POSSIBLE_EXISTING_MATCH (unlinked legacy reservation): ${legacyMatch.reason}`,
+          needsReviewMarkers: items.map(it => buildMarkNeedsReviewPayload({
+            event: it.parsed, rawBody: it.rawBody, civitatisSourceId: civitatisSource.id,
+            reasonCode: 'POSSIBLE_EXISTING_MATCH_LEGACY_RESERVATION', reasonDetail,
+          })),
+        });
         continue;
       }
     }
@@ -305,14 +444,65 @@ async function planCivitatisIngestion({ messages, repo }) {
       if (customerMatch.matched) {
         customerId = customerMatch.customer.id;
       } else if (customerMatch.conflict) {
-        plans.push({ externalBookingId, eligible: false, reason: `POSSIBLE_EXISTING_MATCH (contact conflict): ${customerMatch.reason}` });
+        const candidateIds = customerMatch.candidates.map(c => c.id).join(', ');
+        const reasonDetail = `${customerMatch.reason} (candidate customer id(s): ${candidateIds})`;
+        plans.push({
+          externalBookingId, eligible: false,
+          reason: `POSSIBLE_EXISTING_MATCH (contact conflict): ${customerMatch.reason}`,
+          needsReviewMarkers: items.map(it => buildMarkNeedsReviewPayload({
+            event: it.parsed, rawBody: it.rawBody, civitatisSourceId: civitatisSource.id,
+            reasonCode: 'POSSIBLE_EXISTING_MATCH_CONTACT_CONFLICT', reasonDetail,
+          })),
+        });
         continue;
       } else if (mergedState.clientFullName) {
         const nameCandidates = await repo.findCustomersByName({ fullName: mergedState.clientFullName });
         const nameMatch = matchCustomerByName({ fullName: mergedState.clientFullName, customers: nameCandidates });
         if (nameMatch.matched) {
-          plans.push({ externalBookingId, eligible: false, reason: `POSSIBLE_EXISTING_MATCH (exact normalized name): ${nameMatch.reason}` });
-          continue;
+          const hasExplicitDecisionForThisBooking = identityDecision && identityDecision.externalBookingId === externalBookingId;
+
+          if (!hasExplicitDecisionForThisBooking) {
+            // Default, production behavior (the V14 silent-loss fix):
+            // no identity assumption is ever made either way — persist
+            // a retryable needs_review marker for every message in this
+            // booking's chain, never auto-bind, never discard.
+            const candidateIds = nameMatch.candidates.map(c => c.id).join(', ');
+            const reasonDetail = `${nameMatch.reason} (candidate customer id(s): ${candidateIds})`;
+            plans.push({
+              externalBookingId, eligible: false,
+              reason: `POSSIBLE_EXISTING_MATCH (exact normalized name): ${nameMatch.reason}`,
+              needsReviewMarkers: items.map(it => buildMarkNeedsReviewPayload({
+                event: it.parsed, rawBody: it.rawBody, civitatisSourceId: civitatisSource.id,
+                reasonCode: 'POSSIBLE_EXISTING_MATCH_EXACT_NAME', reasonDetail,
+              })),
+            });
+            continue;
+          }
+
+          if (identityDecision.decision === 'existing_customer') {
+            // confirmedCustomerId MUST be exactly one of the candidates
+            // matchCustomerByName itself just returned for THIS
+            // booking's own contact name — never an arbitrary operator-
+            // supplied id. An invalid candidate aborts planning
+            // entirely (never a silent fallback to needs_review or an
+            // unchecked bind) — the HTTP layer maps this to a 400,
+            // before any write RPC is ever reached.
+            const candidateIds = nameMatch.candidates.map(c => c.id);
+            if (!candidateIds.includes(identityDecision.confirmedCustomerId)) {
+              return {
+                ok: false,
+                stage: 'identity_decision_invalid_candidate',
+                error: `confirmedCustomerId "${identityDecision.confirmedCustomerId}" is not among the exact-normalized-name match candidates for booking ${externalBookingId} (candidate id(s): ${candidateIds.join(', ')}).`,
+              };
+            }
+            customerId = identityDecision.confirmedCustomerId; // reuse the operator-confirmed existing customer — never modified, never merged
+          }
+          // else identityDecision.decision === 'new_customer':
+          // customerId stays null (unchanged) — the RPC creates a
+          // genuinely new customer, identical to the pre-existing
+          // "no match at all" path. Either way, fall through to the
+          // normal eligible plan below — never push an ineligible
+          // entry, never continue.
         }
       }
       // else: customerId stays null — the RPC creates a new customer from
@@ -324,7 +514,11 @@ async function planCivitatisIngestion({ messages, repo }) {
       eligible: true,
       tourId: resolvedTourId,
       autoProvisionTour,
-      customerId, // null means "the RPC should create one"
+      customerId, // null means "the RPC should create one"; for an
+                  // identityDecision.decision==='existing_customer'
+                  // booking this is exactly the operator-confirmed
+                  // candidate id set two blocks above — never any other
+                  // candidate, never an arbitrary id.
       calls: items.map(it => buildRpcPayload({
         parsedEvent: it.parsed,
         rawBody: it.rawBody,
@@ -361,10 +555,25 @@ async function planCivitatisIngestion({ messages, repo }) {
  * earlier result risks skipping real intermediate state — an unknown
  * result is never assumed safe to continue past (fail closed).
  *
+ * `markNeedsReviewRpcCaller`, when provided, is called once per entry in
+ * `entry.needsReviewMarkers` (an eligible entry never has any — see
+ * planCivitatisIngestion) — in production this would call
+ * supabase.rpc('mark_civitatis_email_needs_review', payload). This is
+ * the ONLY place that function is ever called. When omitted (the
+ * default), markers are simply not executed and `entry.markerResults`
+ * is reported as an empty array for every entry — this is deliberate:
+ * a read-only dry run (see api/ingest-civitatis-write.js's
+ * buildDryRunResults/buildCancellationDryRunResults, which never call
+ * this function at all) never reaches this code path in the first
+ * place, and every existing caller of this function that does not care
+ * about markers continues to work completely unchanged by simply never
+ * passing one.
+ *
  * @param {{ok:true, plans:Array}} plan - from planCivitatisIngestion
  * @param {(payload:object) => Promise<object>} rpcCaller
+ * @param {((payload:object) => Promise<object>)|undefined} [markNeedsReviewRpcCaller]
  */
-async function executeCivitatisIngestionPlan(plan, rpcCaller) {
+async function executeCivitatisIngestionPlan(plan, rpcCaller, markNeedsReviewRpcCaller) {
   if (!plan || plan.ok !== true) {
     throw new Error('executeCivitatisIngestionPlan requires a successful plan from planCivitatisIngestion');
   }
@@ -374,8 +583,21 @@ async function executeCivitatisIngestionPlan(plan, rpcCaller) {
 
   const results = [];
   for (const entry of plan.plans) {
+    const markerResults = [];
+    if (typeof markNeedsReviewRpcCaller === 'function') {
+      for (const markerPayload of (entry.needsReviewMarkers || [])) {
+        const rpcResult = await markNeedsReviewRpcCaller(markerPayload);
+        const resultValue = rpcResult && rpcResult.result;
+        markerResults.push({
+          gmailMessageId: markerPayload.p_gmail_message_id,
+          reasonCode: markerPayload.p_reason_code,
+          rpcResult,
+          unknownResult: !KNOWN_MARK_NEEDS_REVIEW_RESULTS.has(resultValue),
+        });
+      }
+    }
     if (!entry.eligible) {
-      results.push({ externalBookingId: entry.externalBookingId, skipped: true, reason: entry.reason });
+      results.push({ externalBookingId: entry.externalBookingId, skipped: true, reason: entry.reason, markerResults });
       continue;
     }
     const callResults = [];
@@ -390,13 +612,15 @@ async function executeCivitatisIngestionPlan(plan, rpcCaller) {
         break;
       }
     }
-    results.push({ externalBookingId: entry.externalBookingId, skipped: false, calls: callResults, stoppedEarly });
+    results.push({ externalBookingId: entry.externalBookingId, skipped: false, calls: callResults, stoppedEarly, markerResults });
   }
   return results;
 }
 
 module.exports = {
   buildRpcPayload,
+  buildMarkNeedsReviewPayload,
   planCivitatisIngestion,
   executeCivitatisIngestionPlan,
+  KNOWN_MARK_NEEDS_REVIEW_RESULTS,
 };

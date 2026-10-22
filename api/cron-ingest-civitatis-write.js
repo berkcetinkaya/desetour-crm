@@ -222,10 +222,12 @@ async function handler(req, res) {
 
   let rpcCaller = null;
   let cancellationRpcCaller = null;
+  let markNeedsReviewRpcCaller = null;
   if (writeModeActive) {
     try {
       rpcCaller = writeEndpoint.buildRealRpcCaller();
       cancellationRpcCaller = writeEndpoint.buildRealCancellationRpcCaller();
+      markNeedsReviewRpcCaller = writeEndpoint.buildRealMarkNeedsReviewRpcCaller();
     } catch (err) {
       if (err instanceof ConfigurationError) {
         return res.status(503).json({ error: err.message, stage: 'supabase_configuration' });
@@ -237,9 +239,14 @@ async function handler(req, res) {
   let outcome;
   try {
     // externalBookingId: null — a scheduled run is never scoped to one
-    // booking, unlike the manual endpoint's diagnostic single-booking mode.
+    // booking, unlike the manual endpoint's diagnostic single-booking
+    // mode. identityDecision: never set here either — an explicit
+    // existing_customer/new_customer decision is exclusively a manual,
+    // explicitly-requested, single-booking recovery action; a scheduled
+    // run never applies one.
     outcome = await writeEndpoint.runCivitatisWriteOrchestration({
       messages, repo, externalBookingId: null, writeModeActive, rpcCaller, cancellationRpcCaller,
+      markNeedsReviewRpcCaller,
     });
   } catch (err) {
     console.error('[cron-ingest-civitatis-write] Orchestration error:', err.message);
@@ -250,12 +257,17 @@ async function handler(req, res) {
     return res.status(422).json({ error: outcome.error, stage: 'planning_precondition' });
   }
 
+  const summary = writeEndpoint.buildIngestionSummary({
+    results: outcome.results, cancellations: outcome.cancellations, discoveredCount: messages.length,
+  });
+
   return res.status(200).json({
     trigger: 'scheduler',
     mode: writeModeActive ? 'write' : 'dryRun',
     writeEnabled: writeEnvValue === 'true',
     results: outcome.results,
     cancellations: outcome.cancellations,
+    summary,
     discovery: {
       sinceUnixSeconds,
       overlapWindowMs: OVERLAP_WINDOW_MS,

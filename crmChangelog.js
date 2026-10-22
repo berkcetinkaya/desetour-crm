@@ -101,6 +101,21 @@ const CRM_CHANGELOG_CATEGORIES = [
 // Newest first. See the release convention above before editing.
 const CRM_CHANGELOG = [
   {
+    version: '12.48',
+    date: '2026-10-22',
+    title: 'Civitatis Rezervasyon Alım Sürecinde Sessiz Kayıp Önleme',
+    summary: 'Civitatis üzerinden gelen rezervasyonlardan müşteri eşleşmesi belirsiz olanlar veya başka bir güvenlik kontrolüne takılanlar artık hiçbir koşulda sistemden sessizce kaybolmuyor; bu rezervasyonlar "incelemeye alındı" durumunda kayıt altına alınıyor ve operasyon ekibi tarafından görülebiliyor.',
+    categories: ['Operasyon', 'Altyapı'],
+    highlights: [
+      'Müşteri eşleşmesi belirsiz olan veya diğer güvenlik kontrollerine takılan Civitatis rezervasyonları artık sessizce kaybolmuyor, "incelemeye alındı" olarak kayıt altına alınıyor',
+      'Otomatik kontrol (cron) süreci artık başarısız olan veya incelemeye alınan rezervasyonları daha güvenilir şekilde raporluyor',
+      'Aynı belirsiz rezervasyon için tekrarlanan otomatik kontrollerde gereksiz tekrar kayıt oluşturulmuyor',
+      'Operasyon ekibi, şüpheli bir müşteri eşleşmesini inceleyip mevcut müşteriyle mi yoksa yeni bir müşteriyle mi ilişkilendirileceğine açıkça karar verebiliyor',
+      'Hiçbir müşteri kaydı otomatik olarak birleştirilmiyor veya varsayılan olarak eşleştirilmiyor',
+    ],
+    author: 'Berk',
+  },
+  {
     version: '12.47',
     date: '2026-10-21',
     title: 'Acente E-posta Taslak Akışı İyileştirildi',
@@ -264,21 +279,6 @@ const CRM_CHANGELOG = [
     ],
     author: 'Berk',
     technicalNote: 'Rehberler yalnızca kendilerine atanmış rezervasyonların tur bilgilerini görebiliyor; ticari satış kanalı ve fiyat bilgileri bu görünümde yer almıyor, düzenleme yapamıyorlar.',
-  },
-  {
-    version: '12.36',
-    date: '2026-09-28',
-    title: 'Portekizce Civitatis Desteği',
-    summary: 'Civitatis üzerinden gelen Portekizce rezervasyonlar ve yeni rezervasyon formatları artık CRM tarafından güvenli şekilde işlenebiliyor.',
-    categories: ['Otomasyon', 'İyileştirme'],
-    highlights: [
-      'Portekizce rezervasyon desteği',
-      'Yeni yolcu adı formatları desteği',
-      'EUR fiyat formatı desteği',
-      'Saati belirtilmeyen rezervasyonlarda doğru gösterim',
-    ],
-    author: 'Berk',
-    technicalNote: 'Rezervasyon e-postasında tur saati belirtilmediğinde CRM artık uydurma bir saat göstermek yerine bunu net şekilde belirtiyor.',
   },
 ];
 

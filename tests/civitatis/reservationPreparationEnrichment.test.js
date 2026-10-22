@@ -412,7 +412,12 @@ test('the orchestration calls materializeReservationPreparationsForBookingPlan A
   });
   const code = codeLines.join('\n');
 
-  const writeCallIndex = code.indexOf('await executeCivitatisIngestionPlan(plan, rpcCaller)');
+  // Matches the call site regardless of its exact trailing argument list
+  // (api/_civitatis/writeAdapter.js's executeCivitatisIngestionPlan
+  // later gained an optional markNeedsReviewRpcCaller third argument —
+  // the Civitatis silent-loss fix — which must not break this
+  // ordering check).
+  const writeCallIndex = code.indexOf('await executeCivitatisIngestionPlan(plan, rpcCaller');
   const materializeCallIndex = code.indexOf('await materializeReservationPreparationsForBookingPlan(');
   assert.ok(writeCallIndex >= 0, 'expected a call site for executeCivitatisIngestionPlan');
   assert.ok(materializeCallIndex >= 0, 'expected a call site for materializeReservationPreparationsForBookingPlan');
