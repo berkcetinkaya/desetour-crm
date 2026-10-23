@@ -242,63 +242,18 @@ test('the review/confirm panel also shows a reply indication before the final se
   assert.match(reviewSection, /replyTargetEmail\s*&&/);
 });
 
-// ═══════════════ Phase 10 — MobileHomePage Agency CRM+ section ═══════════
-
-function mobileHomePageBody() {
-  return sliceFunction('MobileHomePage');
-}
-
-function mobileAgencySectionBody() {
-  const body = mobileHomePageBody();
-  const idx = body.indexOf('"Agency CRM+"');
-  // The section is self-closing JSX ended by the matching "</MobileSection>"
-  // right before the next Civitatis Settlement comment block.
-  const end = body.indexOf('</MobileSection>', idx) + '</MobileSection>'.length;
-  return body.slice(idx - 400, end);
-}
-
-test('the mobile Agency CRM+ section is gated by the same canAccess(auth.role, "agencies") check as the desktop section', () => {
-  const body = mobileHomePageBody();
-  const sectionIdx = body.indexOf('"Agency CRM+"');
-  const guardSlice = body.slice(Math.max(0, sectionIdx - 200), sectionIdx);
-  assert.match(guardSlice, /canAccess\(auth\.role,\s*["']agencies["']\)/);
-});
-
-test('the mobile section reuses the exact same computeAgencyCrmPlusSummary selector and the same bounded sinceDays:14 query as the desktop section', () => {
-  const body = mobileHomePageBody();
-  assert.match(body, /computeAgencyCrmPlusSummary\(/);
-  assert.match(body, /useRepo\(\s*["']agencyEmail["'],\s*["']getAll["'],\s*\{\s*sinceDays:\s*14\s*\}\s*\)/);
-});
-
-test('the mobile section renders all 4 KPI numbers from the shared summary object, in a 2x2 grid', () => {
-  const section = mobileAgencySectionBody();
-  assert.match(section, /gridTemplateColumns:\s*"1fr 1fr"/);
-  for (const field of ['newAgenciesTodayCount', 'sentTodayCount', 'repliesTodayCount', 'followUpCount']) {
-    assert.match(section, new RegExp(`agencyCrmPlusSummary\\.${field}`));
-  }
-});
-
-test('the mobile section lists up to 3 recent replies, each navigating to that agency\'s detail page on tap', () => {
-  const section = mobileAgencySectionBody();
-  assert.match(section, /agencyCrmPlusSummary\.recentReplies\.slice\(0,\s*3\)\.map\(/);
-  assert.match(section, /onClick=\{\(\)\s*=>\s*navigate\('\/agencies\/'\+reply\.agencyId\)\}/);
-  assert.match(section, /<MobileStatusChip label="Yanıt Geldi" tone="info"\/>/);
-});
-
-test('the mobile section lists up to 3 follow-up agencies, each navigating to that agency\'s detail page on tap', () => {
-  const section = mobileAgencySectionBody();
-  assert.match(section, /agencyCrmPlusSummary\.followUpItems\.slice\(0,\s*3\)\.map\(/);
-  assert.match(section, /onClick=\{\(\)\s*=>\s*navigate\('\/agencies\/'\+agency\.id\)\}/);
-  assert.match(section, /<MobileStatusChip label="Takip" tone="warn"\/>/);
-});
-
-test('the mobile Agency CRM+ section is placed before the Civitatis Hakedişi/Settlement mobile section, mirroring the desktop order', () => {
-  const body = mobileHomePageBody();
-  const agencyIdx = body.indexOf('"Agency CRM+"');
-  // The JSX render block's own Civitatis comment, not the earlier
-  // useRepo("civitatisSettlement", ...) hook-declaration comment near the
-  // top of the function (which always precedes Agency CRM+ positionally).
-  const civitatisIdx = body.indexOf('Civitatis Settlement Engine', agencyIdx);
-  assert.ok(agencyIdx !== -1 && civitatisIdx !== -1);
-  assert.ok(agencyIdx < civitatisIdx, 'Agency CRM+ must render above the Civitatis Hakedişi/Settlement mobile section');
+// ═══════════════ MobileHomePage Agency CRM+ section (REMOVED) ═══════════
+// The mobile-homepage redesign ("simpler operational philosophy" phase)
+// removed Agency CRM+ (and Civitatis Hakedişi, Son Bildirimler, Son
+// Hareketler, Hızlı İşlemler) from MobileHomePage entirely — the new
+// hierarchy is Bugünkü/Yarınki Turlar, Yaklaşan Rezervasyonlar, Bilet/
+// Yemek Hazırlıkları, optional Dikkat Gerekenler, nothing else competing
+// with them. The feature itself (computeAgencyCrmPlusSummary, the 4 KPIs,
+// recent replies/follow-ups) is completely untouched — desktop's
+// AgencyCrmPlusSection and the Acenteler module are unaffected — and
+// still reachable from mobile via Acenteler (the "Diğer" page).
+test('MobileHomePage no longer renders an "Agency CRM+" section or the Agency Mailbox summary wiring — the desktop AgencyCrmPlusSection/computeAgencyCrmPlusSummary themselves are untouched', () => {
+  const body = sliceFunction('MobileHomePage');
+  assert.doesNotMatch(body, /MobileSection title="Agency CRM\+"/);
+  assert.doesNotMatch(body, /computeAgencyCrmPlusSummary\(/);
 });

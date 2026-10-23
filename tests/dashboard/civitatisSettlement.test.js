@@ -28,6 +28,8 @@ const path = require('path');
 
 const SOURCE_PATH = path.join(__dirname, '..', '..', 'DeseTourDashboard.jsx');
 const SOURCE = fs.readFileSync(SOURCE_PATH, 'utf8');
+const { extractFunctionSource } = require('./extractTestableFn');
+const _mobileHomePageBody = () => extractFunctionSource('MobileHomePage');
 
 // The settlement-math helpers are contiguous in the source and the later
 // ones depend on the earlier ones (and on the module-level
@@ -367,27 +369,19 @@ test('the desktop panel contains NO requested/paid/edit/delete action — Phase 
   assert.doesNotMatch(body, /onClick=\{.*(update|delete|mutate)/i);
 });
 
-test('the mobile Civitatis section is also gated to Yönetici/Operasyon, reuses the same repo call and the same pure summary, and has no action buttons either', () => {
-  const start = SOURCE.indexOf('Civitatis Settlement Engine — Phase 1. Admin/operations only,\n          same eligibility');
-  assert.ok(start !== -1, 'mobile Civitatis section comment not found');
-  const end = SOURCE.indexOf('{/* Tour Preparation Intelligence Phase C2D-4', start);
-  const body = SOURCE.slice(start, end);
-  assert.match(body, /\["Yönetici","Operasyon"\]\.includes\(auth\.role\)/);
-  assert.match(body, /civitatisSettlement\.claimable\.tryTotal/);
-  assert.doesNotMatch(body, /mutate\(/);
-  assert.match(body, /navigate\('\/payments'\)/);
-});
-
-test('mobile Civitatis section fetches via the same civitatisSettlement/getSummary repo call used on desktop — no separate query', () => {
-  assert.match(SOURCE, /const \{ data:civitatisSettlement, loading:civSettleLoading, error:civSettleError \} = useRepo\("civitatisSettlement", "getSummary"\);/);
-});
-
-test('Phase 1.3: the mobile fixed-rate disclosure note is also gated behind _civitatisHasEurExposure', () => {
-  const start = SOURCE.indexOf('Civitatis Settlement Engine — Phase 1. Admin/operations only,\n          same eligibility');
-  const end = SOURCE.indexOf('{/* Tour Preparation Intelligence Phase C2D-4', start);
-  const body = SOURCE.slice(start, end);
-  assert.match(body, /_civitatisHasEurExposure\(civitatisSettlement\)/);
-  assert.match(body, /Sabit kur: €1 = ₺55/);
+// A later mobile-homepage redesign (the "simpler operational philosophy"
+// phase) deliberately removed Civitatis Hakedişi from MobileHomePage
+// entirely — financial settlement summaries don't belong on the mobile
+// homepage's operational-overview hierarchy (Bugünkü/Yarınki Turlar,
+// Yaklaşan Rezervasyonlar, Bilet/Yemek Hazırlıkları). The feature itself
+// is untouched and still fully reachable on mobile via Ödemeler
+// (MobilePaymentsPage → _MobileCivitatisHakedisleriView), so this is a
+// presentation-only removal, not a feature deletion — see that view's
+// own tests for its (unchanged) gating/behavior.
+test('MobileHomePage no longer renders a Civitatis Hakedişi/Settlement section — removed from the mobile homepage, still reachable via Ödemeler', () => {
+  const body = _mobileHomePageBody();
+  assert.doesNotMatch(body, /Civitatis Hakedişi/);
+  assert.doesNotMatch(body, /civitatisSettlement/);
 });
 
 // ═══════════════════════════════════════════════════════════════════════

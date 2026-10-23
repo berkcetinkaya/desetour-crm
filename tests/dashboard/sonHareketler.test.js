@@ -249,14 +249,17 @@ test('SonHareketlerPanel renders nothing while loading or once empty, caps at SO
   assert.match(SOURCE, /const SON_HAREKETLER_HOME_MAX = 8;/);
 });
 
-test('mobile: the "Son Hareketler" MobileSection is mounted in MobileHomePage, after the Agency CRM+ mobile section, using the SAME useRecentActivity hook', () => {
-  const mobileIdx = SOURCE.indexOf('function MobileHomePage({ navigate }) {');
-  const mobileBody = SOURCE.slice(mobileIdx, SOURCE.indexOf('\nfunction MobileEntityCard', mobileIdx));
-  const agencyIdx = mobileBody.indexOf('MobileSection title="Agency CRM+"');
-  const hareketIdx = mobileBody.indexOf('MobileSection title="Son Hareketler"');
-  assert.ok(agencyIdx > -1 && hareketIdx > -1);
-  assert.ok(agencyIdx < hareketIdx);
-  assert.match(mobileBody, /useRecentActivity\(\)/);
+// The mobile-homepage redesign ("simpler operational philosophy" phase)
+// removed the "Son Hareketler" MobileSection from MobileHomePage
+// entirely (along with Agency CRM+, which it used to be ordered after) —
+// the new homepage hierarchy (Bugünkü/Yarınki Turlar, Yaklaşan
+// Rezervasyonlar, Bilet/Yemek Hazırlıkları) isn't meant to compete with
+// it. useRecentActivity() and the dedicated /activity page (SonHareketlerPage)
+// are completely untouched — still one tap away via Diğer.
+test('MobileHomePage no longer renders a "Son Hareketler" section — removed from the mobile homepage, still reachable via the dedicated /activity page', () => {
+  const mobileBody = require('./extractTestableFn').extractFunctionSource('MobileHomePage');
+  assert.doesNotMatch(mobileBody, /MobileSection title="Son Hareketler"/);
+  assert.doesNotMatch(mobileBody, /useRecentActivity\(\)/);
 });
 
 // ── useRecentActivity / useAgencyActivity: shared query, client-side filter only ──

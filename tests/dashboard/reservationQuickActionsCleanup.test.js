@@ -157,10 +157,15 @@ test('[15] reservation-context payment creation shows locked customer + reservat
   assert.match(resBlock, /\{presetResId \? \(/);
 });
 
-test('[16] existing standalone NewPaymentModal usages (Payments page, mobile quick actions) are untouched', () => {
+test('[16] existing standalone NewPaymentModal usages (Reservation Detail, Doğrudan Ödemeler) are untouched', () => {
   assert.match(SOURCE, /\{showNewPayment \? \(<NewPaymentModal onClose=\{\(\)=>\{ setShowNewPayment\(false\); setPayTick\(n=>n\+1\); reloadPays && reloadPays\(\); \}\}\/>\) : null\}/);
-  assert.match(SOURCE, /\{quickAction === "payment" && <NewPaymentModal onClose=\{\(\)=>setQuickAction\(null\)\}\/>\}/);
   assert.match(SOURCE, /\{showNew && <NewPaymentModal onClose=\{\(\)=>setShowNew\(false\)\}\/>\}/);
+  // The mobile-homepage redesign ("simpler operational philosophy" phase)
+  // removed MobileHomePage's own Hızlı İşlemler quick-action dispatcher
+  // (quickAction === "payment") — _MobileDogrudanOdemelerView's own
+  // "+" button (the `showNew` usage asserted above) already gives mobile
+  // staff the same "Ödeme Ekle" entry point, so no capability was lost.
+  assert.doesNotMatch(SOURCE, /quickAction === "payment" && <NewPaymentModal/);
 });
 
 // ── 17. No Civitatis settlement code was touched ─────────────────────────

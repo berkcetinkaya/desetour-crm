@@ -485,61 +485,65 @@ test('no database write and no materialization RPC anywhere in the new grouping/
 // business logic, only presentation differs)
 // ═══════════════════════════════════════════════════════════════════════
 
-test('MobileHomePage reuses useTurHazirliklariRows and the same grouping/summary helpers — no separate query, no separate filtering logic', () => {
+// The mobile-homepage redesign ("simpler operational philosophy" phase)
+// replaced the always-expanded, tabbed _BiletHazirliklariMobilePanel /
+// _MobileTicketPrepRow (which also fetched a redundant getRecentCompleted
+// "Tamamlananlar" tab the new homepage doesn't need) with a collapsed-by-
+// default _MobileAccordionSection — "N Bekliyor" visible without opening,
+// pending-only rows, same underlying data. Both dead components were
+// removed outright (nothing else referenced them); the desktop panel and
+// useBiletHazirliklariTabs/_canCompletePreparation/the completion mutation
+// itself are completely untouched.
+test('MobileHomePage reuses useTurHazirliklariRows and _groupTourPreparationRows — no separate query, no separate filtering logic', () => {
   const start = SOURCE.indexOf('function MobileHomePage(');
   const end = SOURCE.indexOf('\nfunction ', start + 10);
   const body = SOURCE.slice(start, end);
   assert.match(body, /useTurHazirliklariRows\(\)/);
   assert.match(body, /_groupTourPreparationRows\(/);
-  // Phase C2G: the ticket summary now comes from the SAME shared
-  // useBiletHazirliklariTabs hook / _summarizePendingTicketRows helper
-  // the desktop panel uses too (via _BiletHazirliklariMobilePanel) —
-  // MobileHomePage itself no longer calls _summarizeTicketPreparations
-  // directly, same as the desktop TurHazirliklari() no longer does.
-  assert.match(body, /<_BiletHazirliklariMobilePanel\b/);
-  assert.match(body, /_summarizeMealPreparations\(/);
-  assert.match(body, /Yemek Hazırlıkları/);
+  assert.match(body, /<_MobileAccordionSection title="Bilet Hazırlıkları"/);
+  assert.match(body, /<_MobileAccordionSection title="Yemek Hazırlıkları"/);
+  assert.match(body, /_formatMealQuantityLabel\(/);
   // Never a second, independent useRepo("reservationPreparation", ...)
-  // or useRepo("reservation", "getUpcomingMealIncluded") call site inside
-  // MobileHomePage itself — it must come from the shared hooks only.
-  assert.doesNotMatch(body, /useRepo\("reservationPreparation"/);
+  // (beyond the completion mutation, which uses useRepoMutation, a
+  // different call) or useRepo("reservation", "getUpcomingMealIncluded")
+  // call site inside MobileHomePage itself — it must come from the
+  // shared useTurHazirliklariRows hook only.
+  assert.doesNotMatch(body, /useRepo\("reservationPreparation",\s*"getUpcomingPending"\)/);
   assert.doesNotMatch(body, /useRepo\("reservation",\s*"getUpcomingMealIncluded"\)/);
+  assert.doesNotMatch(body, /_BiletHazirliklariMobilePanel|_MobileTicketPrepRow/, 'the retired tabbed mobile panel/row must not still be referenced');
 });
 
-// Phase C2G superseded this C2D-4-era expectation the same way the
-// desktop test above was updated: the mobile ticket panel now DOES
-// support completion, via the shared architecture — but MobileHomePage's
-// own orchestration body still has none directly, and the meal section
-// still has none at all.
-test('MobileHomePage() itself still has no completion action directly — it only renders the ticket/meal sub-components', () => {
+// Unlike the old architecture (where MobileHomePage delegated completion
+// entirely to _BiletHazirliklariMobilePanel), the new accordion's
+// completion action is wired directly in MobileHomePage — same role gate,
+// same mutation, same feedback helper, just no longer behind a second
+// component boundary (the accordion is presentation-only, like
+// MobileSection/MobileEntityCard).
+test('MobileHomePage wires the Bilet Hazırlıkları completion action directly, reusing the existing role gate/mutation/feedback helper', () => {
   const start = SOURCE.indexOf('function MobileHomePage(');
   const end = SOURCE.indexOf('\nfunction ', start + 10);
   const body = SOURCE.slice(start, end);
-  assert.doesNotMatch(body, /_canCompletePreparation|handleCompletePreparation|useRepoMutation/);
+  assert.match(body, /useRepoMutation\("reservationPreparation"\)/);
+  assert.match(body, /_completePreparationWithFeedback\(/);
+  assert.match(body, /_canCompletePreparation\(auth\.role,\s*row\)/);
 });
 
-test('the ticket panel (mobile) now supports the completion action via the existing shared architecture', () => {
-  const panelStart = SOURCE.indexOf('function _BiletHazirliklariMobilePanel(');
-  const panelBody = SOURCE.slice(panelStart, SOURCE.indexOf('\n}', panelStart));
-  assert.match(panelBody, /_canCompletePreparation\(/);
-
-  const rowStart = SOURCE.indexOf('function _MobileTicketPrepRow(');
+test('the ticket accordion row component renders the completion button only when canComplete, reusing _canCompletePreparation\'s caller-supplied gate', () => {
+  const rowStart = SOURCE.indexOf('function _MobileAccordionTicketRow(');
+  assert.ok(rowStart > -1, 'expected _MobileAccordionTicketRow to exist');
   const rowBody = SOURCE.slice(rowStart, SOURCE.indexOf('\n}', rowStart));
+  assert.match(rowBody, /canComplete\s*&&/);
   assert.match(rowBody, /Hazırlandı/);
-
-  // Same shared hook as desktop — asserted already in the desktop test
-  // above, not repeated verbatim here, but confirmed structurally: the
-  // mobile panel calls the identical useBiletHazirliklariTabs hook.
-  assert.match(panelBody, /useBiletHazirliklariTabs\(/);
+  assert.doesNotMatch(rowBody, /_canCompletePreparation\(/, 'the gate is decided by the caller (MobileHomePage), not re-derived inside the row');
 });
 
-test('the mobile meal section (hasMeals block) still has no completion action of any kind', () => {
+test('the mobile meal accordion rows still have no completion action of any kind', () => {
   const start = SOURCE.indexOf('function MobileHomePage(');
   const end = SOURCE.indexOf('\nfunction ', start + 10);
   const body = SOURCE.slice(start, end);
-  const mealStart = body.indexOf('{hasMeals && (');
-  assert.ok(mealStart !== -1, 'expected a {hasMeals && (...)} block');
-  const mealEnd = body.indexOf('\n            )}', mealStart);
+  const mealStart = body.indexOf('<_MobileAccordionSection title="Yemek Hazırlıkları"');
+  assert.ok(mealStart !== -1, 'expected the Yemek Hazırlıkları accordion block');
+  const mealEnd = body.indexOf('</_MobileAccordionSection>', mealStart);
   const mealBody = body.slice(mealStart, mealEnd === -1 ? undefined : mealEnd);
-  assert.doesNotMatch(mealBody, /_canCompletePreparation|handleCompletePreparation|useRepoMutation|Hazırlandı|<button/);
+  assert.doesNotMatch(mealBody, /_canCompletePreparation|handleCompletePreparation|Hazırlandı|<button/);
 });

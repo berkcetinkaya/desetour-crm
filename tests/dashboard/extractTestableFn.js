@@ -34,4 +34,22 @@ function extractTestableFn(name) {
   return factory();
 }
 
-module.exports = { extractTestableFn };
+// Shared across the several mobile-homepage test files that need to
+// assert what IS and ISN'T rendered by MobileHomePage specifically (not
+// some other component) — one extraction, reused, instead of each test
+// file re-deriving its own start/end slice of the same function.
+function extractFunctionSource(name) {
+  const source = fs.readFileSync(SOURCE_PATH, 'utf8');
+  const startMarker = `function ${name}(`;
+  const startIdx = source.indexOf(startMarker);
+  if (startIdx === -1) {
+    throw new Error(`extractFunctionSource: "${startMarker}" not found in DeseTourDashboard.jsx`);
+  }
+  const nextFnIdx = source.indexOf('\nfunction ', startIdx + startMarker.length);
+  if (nextFnIdx === -1) {
+    throw new Error(`extractFunctionSource: could not find the end of "${name}" (no following top-level function)`);
+  }
+  return source.slice(startIdx, nextFnIdx);
+}
+
+module.exports = { extractTestableFn, extractFunctionSource };

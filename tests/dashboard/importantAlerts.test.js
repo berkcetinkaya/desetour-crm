@@ -229,19 +229,29 @@ test('13b. a non-cancellation activity still reaches NotificationBell — the fi
   assert.match(repoLine, /action:l\.action/, 'the shared repo method must expose action so the client-side filter can use it');
 });
 
-// ── 14. Mobile layout does not overflow ─────────────────────────────────
+// ── 14. Desktop layout does not overflow ────────────────────────────────
+// Second mobile-homepage simplification pass: Önemli Uyarılar is no
+// longer rendered on the mobile homepage at all (not even a compact
+// version) — this is a concise, current/near-future tour-operations
+// screen, not a general alert surface. The feature itself is untouched
+// and still fully functional on the desktop Dashboard via OnemliUyarilar/
+// CancellationAlertCard; no other mobile surface currently exposes it.
+test('14. the desktop cancellation alert card buttons wrap/flex (no fixed px width that could overflow) via CancellationAlertCard', () => {
+  const idx = SOURCE.indexOf('function CancellationAlertCard({ alert, onView, onMarkRead }) {');
+  assert.ok(idx > -1);
+  const body = SOURCE.slice(idx, SOURCE.indexOf('\nfunction ', idx + 10));
+  assert.match(body, /flexWrap:"wrap"/);
+  assert.doesNotMatch(body, /width:\s*\d{3,}/);
+});
 
-test('14. mobile alert card buttons stack vertically at full width (no fixed px width that could overflow) and reuse MobileEntityCard/MobileSection', () => {
-  const mobileIdx = SOURCE.indexOf('{}\n      {!alertsLoading && !alertsError && importantAlerts.length > 0 && (');
-  assert.ok(mobileIdx > -1, 'expected the mobile Önemli Uyarılar block in MobileHomePage');
-  const mobileBlock = SOURCE.slice(mobileIdx, SOURCE.indexOf('{}\n      {urgentItems.length > 0 && (', mobileIdx));
-  assert.match(mobileBlock, /MobileSection title="Önemli Uyarılar"/);
-  assert.match(mobileBlock, /MobileEntityCard key=\{alert\.id\}/);
-  assert.match(mobileBlock, /flexDirection:"column"/);
-  assert.match(mobileBlock, /width:"100%"/);
-  // No hardcoded pixel width on the card or its buttons that could force
-  // horizontal overflow on a narrow viewport.
-  assert.doesNotMatch(mobileBlock, /width:\s*\d{3,}/);
+test('Önemli Uyarılar is no longer rendered anywhere in MobileHomePage (removed from the mobile homepage, not deleted from the CRM)', () => {
+  const mobileBody = require('./extractTestableFn').extractFunctionSource('MobileHomePage');
+  assert.doesNotMatch(mobileBody, /MobileSection title="Önemli Uyarılar"/);
+  assert.doesNotMatch(mobileBody, /useUnreadImportantAlerts\(\)/);
+  assert.doesNotMatch(mobileBody, /CancellationAlertBody/);
+  // Still a real, working desktop feature.
+  assert.match(SOURCE, /function OnemliUyarilar\(\) \{/);
+  assert.match(SOURCE, /<OnemliUyarilar\/>/);
 });
 
 test('the global box-sizing:border-box reset (relied on by the mobile 100%-width buttons) is in place', () => {
@@ -255,10 +265,6 @@ test('15. a query error on the desktop section returns null (renders nothing) ra
   const idx = SOURCE.indexOf('function OnemliUyarilar()');
   const body = SOURCE.slice(idx, SOURCE.indexOf('\nfunction ', idx + 10));
   assert.match(body, /if \(loading \|\| error \|\| alerts\.length === 0\) return null;/);
-});
-
-test('15b. a query error on the mobile section is guarded the same way (!alertsError)', () => {
-  assert.match(SOURCE, /\{!alertsLoading && !alertsError && importantAlerts\.length > 0 && \(/);
 });
 
 test('15c. every other Dashboard widget fetches independently via its own useRepo call — a failure in the alerts query cannot cascade', () => {
@@ -288,21 +294,28 @@ test('desktop: Önemli Uyarılar is placed after Welcome and before KpiRow/stati
   assert.ok(alertsIdx < kpiIdx, 'Önemli Uyarılar must come before normal dashboard statistics');
 });
 
-test('mobile: Önemli Uyarılar is placed after the greeting header and before "Dikkat Gerektiren"', () => {
-  const mobileIdx = SOURCE.indexOf('function MobileHomePage({ navigate }) {');
-  const mobileBody = SOURCE.slice(mobileIdx, SOURCE.indexOf('\nfunction MobileEntityCard', mobileIdx));
-  const greetingIdx = mobileBody.indexOf('{greeting}{firstName');
-  const alertsIdx = mobileBody.indexOf('MobileSection title="Önemli Uyarılar"');
-  const urgentIdx = mobileBody.indexOf('MobileSection title="Dikkat Gerektiren"');
-  assert.ok(greetingIdx > -1 && alertsIdx > -1 && urgentIdx > -1);
-  assert.ok(greetingIdx < alertsIdx && alertsIdx < urgentIdx);
+// The mobile-homepage redesign went through two passes. The first pass
+// kept a compact Önemli Uyarılar block on mobile (right after the
+// greeting). A second, further-simplification pass removed the greeting
+// AND Önemli Uyarılar AND the renamed "Dikkat Gerekenler" entirely from
+// the mobile homepage, leaving exactly 5 sections: Bugünkü Turlar,
+// Yarınki Turlar, Yaklaşan Rezervasyonlar, Bilet/Yemek Hazırlıkları. The
+// feature itself is untouched — still fully working on the desktop
+// Dashboard — just not presented on this concise operational screen.
+test('mobile: Bugünkü Turlar is the first content section on the homepage — no greeting and no Önemli Uyarılar render above or anywhere on it', () => {
+  const mobileBody = require('./extractTestableFn').extractFunctionSource('MobileHomePage');
+  assert.doesNotMatch(mobileBody, /\{greeting\}/);
+  assert.doesNotMatch(mobileBody, /MobileSection title="Önemli Uyarılar"/);
+  const returnIdx = mobileBody.indexOf('return (');
+  const todayIdx = mobileBody.indexOf('MobileSection title="Bugünkü Turlar"');
+  assert.ok(returnIdx > -1 && todayIdx > -1);
+  assert.doesNotMatch(mobileBody.slice(returnIdx, todayIdx), /MobileSection title=/);
 });
 
 // ── Section/card copy and reusability ───────────────────────────────────
 
-test('the section heading is exactly "Önemli Uyarılar" (desktop SectionHeader + mobile MobileSection)', () => {
+test('the section heading is exactly "Önemli Uyarılar" (desktop SectionHeader — the only surface it renders on now)', () => {
   assert.match(SOURCE, /<SectionHeader title="Önemli Uyarılar"\/>/);
-  assert.match(SOURCE, /<MobileSection title="Önemli Uyarılar">/);
 });
 
 test('the cancellation card carries the fixed "Rezervasyon İptali" label (visually uppercased via CSS textTransform, not a hardcoded literal) and the exact required action buttons', () => {

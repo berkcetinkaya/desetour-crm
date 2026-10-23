@@ -829,6 +829,13 @@ function IDLink({ id, type }) {
 
 const _TODAY_STR = new Date().toLocaleDateString("tr-TR",{day:"2-digit",month:"short",year:"numeric"});
 const _TODAY_ISO = new Date().toISOString().split("T")[0];
+// Same module-init-time, same dual format (tr-TR display string +
+// ISO) as _TODAY_STR/_TODAY_ISO above — reservations carry one or the
+// other depending on source, so every "is this today/tomorrow" check
+// in the app already compares against both; Yarınki Turlar follows
+// that exact existing convention instead of inventing a new one.
+const _TOMORROW_STR = new Date(Date.now()+86400000).toLocaleDateString("tr-TR",{day:"2-digit",month:"short",year:"numeric"});
+const _TOMORROW_ISO = new Date(Date.now()+86400000).toISOString().split("T")[0];
 
 function filterByDateRange(items, dateField, period) {
   const now=new Date(), todayISO=_TODAY_ISO;
@@ -5094,114 +5101,6 @@ function _BiletHazirliklariDesktopPanel({ pendingTickets, badgeMap, accentColor 
         </div>
       )}
     </>
-  );
-}
-
-// Mobile ticket row — same shape/data as _TicketPrepRow above, adapted to
-// MobileEntityCard/MobileStatusChip (the existing mobile wrapper
-// primitives) instead of the desktop div/RBadge, same "shared hook, only
-// the wrapper components differ" convention this file already uses for
-// the rest of the mobile dashboard.
-function _MobileTicketPrepRow({ row, navigate, canComplete, completing, onComplete, completedMeta }) {
-  const GOLD_ACCENT = "#8A6D1F";
-  return (
-    <MobileEntityCard onClick={completedMeta ? undefined : () => navigate('/reservations/' + row.reservationId)}>
-      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:10 }}>
-        <div style={{ minWidth:0, flex:1 }}>
-          <div style={{ fontSize:13, fontWeight:600, color:C.text, fontFamily:"'Geist',sans-serif", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{row.tourName}</div>
-          <div style={{ fontSize:11, color:C.textFaint, fontFamily:"'DM Mono',monospace", marginTop:1 }}>{row.reservationNumber}</div>
-          <div style={{ fontSize:11.5, color:C.textMuted, fontFamily:"'Geist',sans-serif", marginTop:3 }}>{row.label}</div>
-        </div>
-        <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:5, flexShrink:0 }}>
-          <div style={{ fontSize:14, fontWeight:700, color:GOLD_ACCENT, fontFamily:"'Geist',sans-serif", whiteSpace:"nowrap" }}>
-            {_formatTicketQuantityLabel(row.quantity)}
-          </div>
-          {completedMeta ? (
-            <div style={{ fontSize:10, color:C.textFaint, fontFamily:"'Geist',sans-serif", textAlign:"right", lineHeight:1.4 }}>
-              {completedMeta}
-            </div>
-          ) : canComplete ? (
-            <button
-              onClick={(e) => { e.stopPropagation(); onComplete(); }}
-              disabled={completing}
-              style={{
-                padding:"6px 14px", borderRadius:T.radiusSm,
-                border:`1px solid ${C.green}66`, background:C.greenBg, color:C.green,
-                cursor: completing ? "default" : "pointer",
-                opacity: completing ? 0.6 : 1,
-                fontSize:12, fontWeight:600, fontFamily:"'Geist',sans-serif",
-                whiteSpace:"nowrap", minHeight:30,
-              }}
-            >{completing ? "…" : "Hazırlandı ✓"}</button>
-          ) : (
-            <MobileStatusChip label={row.statusLabel} tone="gold"/>
-          )}
-        </div>
-      </div>
-    </MobileEntityCard>
-  );
-}
-
-// Mobile panel body — called from inside MobileHomePage's existing
-// {hasTickets && (...)} branch, same role as _BiletHazirliklariDesktopPanel
-// for desktop: all tab/completed-history/completion logic lives here via
-// the SAME shared useBiletHazirliklariTabs hook, only the JSX wrapper
-// components differ.
-function _BiletHazirliklariMobilePanel({ pendingTickets, navigate }) {
-  const auth = useAuthContext();
-  const {
-    tab, setTab, completedTickets, completedLoading, completedError,
-    pendingSummary, completedSummary, completingId, handleComplete,
-  } = useBiletHazirliklariTabs(pendingTickets);
-
-  const { visible:visiblePending, remaining:remainingPending } = _paginateDashboardPreparationRows(pendingTickets, MAX_VISIBLE_TICKET_PREPARATIONS);
-  const { visible:visibleCompleted, remaining:remainingCompleted } = _paginateDashboardPreparationRows(completedTickets, MAX_VISIBLE_COMPLETED_TICKET_PREPARATIONS);
-
-  const isPending = tab === 'pending';
-  const activeRows = isPending ? visiblePending : visibleCompleted;
-  const remaining = isPending ? remainingPending : remainingCompleted;
-  const summaryText = isPending ? _formatPendingTicketSummary(pendingSummary) : _formatCompletedTicketSummary(completedSummary);
-
-  return (
-    <MobileSection title="Bilet Hazırlıkları">
-      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:8, padding:"0 2px" }}>
-        <div style={{ fontSize:11.5, color:C.textMuted, fontFamily:"'Geist',sans-serif" }}>
-          {summaryText}
-        </div>
-        <div style={{ display:"flex", gap:2, background:C.ivory, border:`1px solid ${C.borderLight}`, borderRadius:T.radiusSm, padding:2 }}>
-          <_TicketTabButton active={isPending} onClick={()=>setTab('pending')}>Bekleyenler</_TicketTabButton>
-          <_TicketTabButton active={!isPending} onClick={()=>setTab('completed')}>Tamamlananlar</_TicketTabButton>
-        </div>
-      </div>
-      {!isPending && completedLoading ? (
-        <div style={{ fontSize:11.5, color:C.textFaint, fontFamily:"'Geist',sans-serif", padding:"8px 2px" }}>Yükleniyor…</div>
-      ) : !isPending && completedError ? null : (
-        activeRows.map((row, i) => (
-          <_MobileTicketPrepRow
-            key={`${tab}-${row.id || row.reservationId}-${row.label}-${i}`}
-            row={row}
-            navigate={navigate}
-            canComplete={isPending && _canCompletePreparation(auth.role, row)}
-            completing={completingId === row.id}
-            onComplete={() => handleComplete(row.id)}
-            completedMeta={!isPending ? [
-              _formatCompletedAtLabel(row.completedAt),
-              _formatCompletedByLabel(row.completedByName),
-            ].filter(Boolean).join(' · ') : null}
-          />
-        ))
-      )}
-      {remaining > 0 && isPending && (
-        <div style={{ fontSize:11.5, color:C.textMuted, fontFamily:"'Geist',sans-serif", padding:"0 2px" }}>
-          + {remaining} diğer bilet hazırlığı
-        </div>
-      )}
-      {remaining > 0 && !isPending && (
-        <div style={{ fontSize:11.5, color:C.textMuted, fontFamily:"'Geist',sans-serif", padding:"0 2px" }}>
-          + {remaining} diğer tamamlanan hazırlık
-        </div>
-      )}
-    </MobileSection>
   );
 }
 
@@ -25280,18 +25179,31 @@ function App() {
         <div style={{
           position:"fixed", top:0, left:0, right:0, zIndex:200,
           background:`linear-gradient(135deg,${C.navyDeep} 0%,${C.navy} 100%)`,
-          padding:"env(safe-area-inset-top, 0px) 16px 0",
+          padding:"env(safe-area-inset-top, 0px) 10px 0 6px",
           height:"calc(48px + env(safe-area-inset-top, 0px))",
-          display:"flex", alignItems:"center", justifyContent:"space-between",
+          display:"flex", alignItems:"center", justifyContent:"space-between", gap:4,
           boxShadow:"0 2px 12px rgba(13,27,62,0.3)",
         }}>
-          <div style={{fontSize:15,fontWeight:600,color:C.onDark,fontFamily:"'Geist',sans-serif"}}>
+          {/* Menu control — visually primary, leftmost. Routes to the
+              existing "Diğer" page (the real nav-drawer of this mobile
+              IA; BottomNav's own comment documents it as having already
+              replaced a hamburger side-drawer), so this is a second
+              entry point into existing navigation, never new navigation
+              behavior or a reopened drawer. */}
+          <button onClick={()=>navigate('/more')} aria-label="Menü" style={{
+            border:"none", background:"transparent", color:C.onDark,
+            cursor:"pointer", padding:8, display:"flex", flexShrink:0,
+          }}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M3 6h18M3 12h18M3 18h18"/>
+            </svg>
+          </button>
+          <div style={{fontSize:15,fontWeight:600,color:C.onDark,fontFamily:"'Geist',sans-serif", flex:1, minWidth:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>
             {MOBILE_PAGE_TITLES[base] || "Dese Tour"}
           </div>
-          <div style={{display:"flex", alignItems:"center", gap:2}}>
+          <div style={{display:"flex", alignItems:"center", gap:2, flexShrink:0}}>
             <ThemeToggle theme={theme} onToggle={toggleTheme} size={17} color="rgba(248,245,238,0.75)"/>
             <MobileNotificationBell/>
-            <img src="/seffafdeselogo.png" alt="Dese Tour" style={{height:20, width:"auto", opacity:0.9, marginLeft:2}}/>
           </div>
         </div>
       )}
@@ -25414,15 +25326,21 @@ function MobileEntityCard({ children, onClick, style }) {
 /* Calm section wrapper: a small caption-style title, optional trailing
    action, and vertically stacked content. No border/box by default —
    sections are separated by rhythm (spacing), not chrome. */
-function MobileSection({ title, action, onAction, children, tight }) {
+function MobileSection({ title, action, onAction, children, tight, prominent }) {
   return (
     <div style={{ display:"flex", flexDirection:"column", gap: tight ? 8 : 10 }}>
       {(title || action) && (
         <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"0 2px" }}>
           {title && (
-            <div style={{ fontSize:13, fontWeight:600, color:C.textMid, fontFamily:"'Geist',sans-serif", textTransform:"uppercase", letterSpacing:"0.04em" }}>
-              {title}
-            </div>
+            prominent ? (
+              <div style={{ fontSize:18, fontWeight:700, color:C.text, fontFamily:"'Instrument Serif',serif" }}>
+                {title}
+              </div>
+            ) : (
+              <div style={{ fontSize:13, fontWeight:600, color:C.textMid, fontFamily:"'Geist',sans-serif", textTransform:"uppercase", letterSpacing:"0.04em" }}>
+                {title}
+              </div>
+            )
           )}
           {action && (
             <button onClick={onAction} style={{
@@ -25435,6 +25353,86 @@ function MobileSection({ title, action, onAction, children, tight }) {
       )}
       <div style={{ display:"flex", flexDirection:"column", gap:10 }}>{children}</div>
     </div>
+  );
+}
+
+/* Mobile homepage operational-preparation accordion (Bilet Hazırlıkları /
+   Yemek Hazırlıkları) — collapsed by default, pending count visible
+   without opening, CSS grid-template-rows for a smooth-but-restrained
+   expand (no JS height measurement). When there is nothing pending, it
+   collapses to one quiet, non-interactive row instead of an openable-
+   but-empty accordion, per "without taking much vertical space". Pure
+   presentation: the pending rows/count are computed by the caller from
+   the SAME useTurHazirliklariRows data the rest of the homepage (and
+   the desktop Tur Hazırlıkları panel) already fetch — no new query. */
+function _MobileAccordionSection({ title, count, countLabel, children, emptyLabel }) {
+  const [open, setOpen] = useState(false);
+  const hasItems = count > 0;
+  return (
+    <div style={{
+      background:C.white, borderRadius:14,
+      boxShadow:"0 1px 2px rgba(15,29,53,0.05), 0 1px 8px rgba(15,29,53,0.05)",
+      overflow:"hidden",
+    }}>
+      <button
+        onClick={hasItems ? () => setOpen(o => !o) : undefined}
+        aria-expanded={hasItems ? open : undefined}
+        style={{
+          width:"100%", display:"flex", alignItems:"center", justifyContent:"space-between",
+          gap:10, minHeight:52, padding:"14px 16px", border:"none", background:"transparent",
+          cursor: hasItems ? "pointer" : "default", textAlign:"left", WebkitTapHighlightColor:"transparent",
+        }}
+      >
+        <span style={{ fontSize:14, fontWeight:600, color:C.text, fontFamily:"'Geist',sans-serif" }}>{title}</span>
+        <span style={{ display:"flex", alignItems:"center", gap:8, flexShrink:0 }}>
+          <MobileStatusChip label={hasItems ? `${count} ${countLabel}` : emptyLabel} tone={hasItems ? "warn" : "good"}/>
+          {hasItems && (
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={C.textFaint} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+              style={{ transform: open ? "rotate(180deg)" : "rotate(0deg)", transition:"transform 0.2s ease" }}>
+              <path d="M6 9l6 6 6-6"/>
+            </svg>
+          )}
+        </span>
+      </button>
+      {hasItems && (
+        <div style={{ display:"grid", gridTemplateRows: open ? "1fr" : "0fr", transition:"grid-template-rows 0.25s cubic-bezier(0.4,0,0.2,1)" }}>
+          <div style={{ overflow:"hidden" }}>
+            <div style={{ padding:"0 16px 14px", display:"flex", flexDirection:"column", gap:8 }}>
+              {children}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* Shared Bugünkü/Yarınki Turlar card — same visual language and same
+   essential fields for both sections (only the enclosing MobileSection's
+   title emphasis differs, giving Bugünkü the higher visual priority).
+   prepPending is a plain boolean the caller derives from the SAME
+   turHazirliklariRows data the preparation accordions use — no separate
+   query. */
+function _MobileTourDayCard({ t, navigate, prepPending }) {
+  const PAY_TONE = { "Ödendi":"good", "Kapora Ödendi":"warn", "Bekliyor":"bad" };
+  return (
+    <MobileEntityCard onClick={()=>navigate('/reservations/'+t.id)}>
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:8, marginBottom:6 }}>
+        <span style={{ fontSize:14, fontWeight:700, color:C.text, fontFamily:"'Geist',sans-serif" }}>{fmtResTime(t.time)}</span>
+        <MobileStatusChip label={t.payStatus||"—"} tone={PAY_TONE[t.payStatus]||"neutral"}/>
+      </div>
+      <div style={{ fontSize:14, fontWeight:600, color:C.text, fontFamily:"'Geist',sans-serif" }}>{t.tour || "—"}</div>
+      <div style={{ fontSize:12.5, color:C.textMuted, fontFamily:"'Geist',sans-serif", marginTop:2 }}>{t.name || t.customer || "—"} · {t.pax||1} kişi</div>
+      <div style={{ display:"flex", alignItems:"center", flexWrap:"wrap", gap:6, marginTop:8 }}>
+        <MobileStatusChip label={t.guide ? `Rehber: ${t.guide}` : "Rehber Atanmadı"} tone={t.guide?"good":"bad"}/>
+        {prepPending && <MobileStatusChip label="Hazırlık Bekliyor" tone="gold"/>}
+      </div>
+      {t.pickup && (
+        <div style={{ fontSize:11.5, color:C.textFaint, fontFamily:"'Geist',sans-serif", marginTop:6, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+          Alış: {t.pickup}
+        </div>
+      )}
+    </MobileEntityCard>
   );
 }
 
@@ -25663,382 +25661,85 @@ function MobileMorePage({ navigate }) {
    ══════════════════════════════════════════════════════════════════════ */
 function MobileHomePage({ navigate }) {
   const auth = useAuthContext();
-  const [quickAction, setQuickAction] = useState(null); // null|'guest'|'reservation'|'payment'
-  const { alerts:importantAlerts, loading:alertsLoading, error:alertsError, markRead:markAlertRead } = useUnreadImportantAlerts();
-  const { visible:visibleAlerts, remaining:remainingAlerts } = _paginateImportantAlerts(importantAlerts, MAX_VISIBLE_IMPORTANT_ALERTS);
-  // Same shared hook NotificationBell/SonBildirimlerPanel use — one
-  // query, one cache entry, so this mobile summary can never drift from
-  // the bell's own content or read-state.
-  const { notifications:opNotifications, loading:opNotifLoading, select:selectOpNotification } = useOperationalNotifications();
-  const visibleOpNotifications = opNotifications.slice(0, SON_BILDIRIMLER_MAX);
-  // Same shared hook the desktop SonHareketlerPanel uses — no separate
-  // mobile-only query/filtering logic.
-  const { activities:recentActivities, loading:recentActivitiesLoading } = useRecentActivity();
-  const visibleRecentActivities = recentActivities.slice(0, SON_HAREKETLER_HOME_MAX);
-
+  // Önemli Uyarılar / Dikkat Gerekenler are deliberately NOT rendered on
+  // this screen: this is a concise, current/near-future tour-operations
+  // homepage, not a general alert surface. Both features are unchanged
+  // and still reachable — Önemli Uyarılar on the desktop Dashboard,
+  // Dikkat Gerekenler data still feeds computeUrgent() elsewhere.
   const { data:repoRes }    = useRepo("reservation", "getAll");
-  const { data:repoPays }   = useRepo("payment",     "getAll");
-  const { data:repoRems }   = useRepo("reminder",    "getAll");
-  const { data:repoAct }    = useRepo("activity",    "getAll", { limit:5 });
-  // Tour Preparation Intelligence Phase C2D-4 — same hook, same pure
-  // grouping/summary helpers Dashboard() uses; only this page's JSX
-  // differs (MobileEntityCard/MobileStatusChip vs RBadge), the same
-  // desktop/mobile split already established in prior C2D phases. No
-  // separate query, no separate business logic.
+  // Tour Preparation Intelligence — same hook, same pure grouping
+  // helpers Dashboard() and the desktop Tur Hazırlıkları panel use; only
+  // this page's JSX differs. No separate query, no separate business
+  // logic, no new data behavior.
   const { rows:turHazirliklariRows, loading:turHazLoading, error:turHazError } = useTurHazirliklariRows();
-  // Civitatis Settlement Engine — Phase 1. Same repo call, same pure
-  // aggregation as the desktop panel; only the JSX differs.
-  const { data:civitatisSettlement, loading:civSettleLoading, error:civSettleError } = useRepo("civitatisSettlement", "getSummary");
+  const { tickets, meals } = useMemo(() => _groupTourPreparationRows(turHazirliklariRows), [turHazirliklariRows]);
 
-  // Agency Mailbox Phase 10 — same repo calls, same pure selector
-  // (computeAgencyCrmPlusSummary) as the desktop AgencyCrmPlusSection;
-  // only this page's JSX differs, same split as Civitatis Settlement
-  // above and every other desktop/mobile pair in this file.
-  const { data:repoAgenciesForCrmPlus } = useRepo("agency", "getAll");
-  const { data:repoEmailsForCrmPlus }   = useRepo("agencyEmail", "getAll", { sinceDays: 14 });
-  const agencyCrmPlusSummary = useMemo(
-    () => computeAgencyCrmPlusSummary(repoAgenciesForCrmPlus, repoEmailsForCrmPlus, new Date().toISOString()),
-    [repoAgenciesForCrmPlus, repoEmailsForCrmPlus]
-  );
-
-  const urgentItems = useMemo(
-    () => computeUrgent(repoRes, repoPays, repoRems),
-    [repoRes, repoPays, repoRems]
-  );
+  // Reused for the Bilet Hazırlıkları accordion's completion action —
+  // the SAME mutation/feedback helpers (and the SAME 'pending' role gate)
+  // the existing Reservation Detail / desktop panel completion flow uses.
+  // No new RPC, no new write path.
+  const { mutate:mutPreparation } = useRepoMutation("reservationPreparation");
+  const [completingId, setCompletingId] = useState(null);
+  async function handleCompletePreparation(id) {
+    setCompletingId(id);
+    await _completePreparationWithFeedback(mutPreparation, id);
+    setCompletingId(null);
+  }
 
   const allRes = repoRes ?? [];
   const todaysTours = allRes
     .filter(r => r.date === _TODAY_STR || r.checkIn === _TODAY_ISO)
     .sort((a,b) => (a.time||"").localeCompare(b.time||""));
+  const tomorrowsTours = allRes
+    .filter(r => r.date === _TOMORROW_STR || r.checkIn === _TOMORROW_ISO)
+    .sort((a,b) => (a.time||"").localeCompare(b.time||""));
   const upcoming = allRes
-    .filter(r => !["Tamamlandı","İptal"].includes(r.opStatus) && r.date !== _TODAY_STR && r.checkIn !== _TODAY_ISO)
-    .slice(0, 4);
+    .filter(r => !["Tamamlandı","İptal"].includes(r.opStatus)
+      && r.date !== _TODAY_STR && r.checkIn !== _TODAY_ISO
+      && r.date !== _TOMORROW_STR && r.checkIn !== _TOMORROW_ISO)
+    .slice(0, 5);
 
-  const hour = new Date().getHours();
-  const greeting = hour < 12 ? "Günaydın" : hour < 18 ? "İyi günler" : "İyi akşamlar";
-  const todayLabel = new Date().toLocaleDateString("tr-TR", { weekday:"long", day:"numeric", month:"long" });
-  const firstName = (auth.displayName||"").split(" ")[0] || "";
-
-  const QUICK_ACTIONS = [
-    { key:"guest",       label:"Yeni Misafir",      icon:"M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2 M23 21v-2a4 4 0 00-3-3.87 M16 3.13a4 4 0 010 7.75" },
-    { key:"reservation", label:"Yeni Rezervasyon",  icon:"M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" },
-    { key:"payment",     label:"Ödeme Ekle",        icon:"M2 9a2 2 0 012-2h16a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V9zM2 13h20" },
-  ];
-
-  const PAY_TONE = { "Ödendi":"good", "Kapora Ödendi":"warn", "Bekliyor":"bad" };
-  const ACT_ICON = {
-    lead:{icon:"M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01", tone:"info"},
-    quote:{icon:"M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z M14 2v6h6", tone:"warn"},
-    payment:{icon:"M2 9a2 2 0 012-2h16a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V9zM2 13h20", tone:"good"},
-    reservation:{icon:"M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11", tone:"neutral"},
-    customer:{icon:"M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2", tone:"neutral"},
-  };
+  // Cross-referenced against the SAME turHazirliklariRows the two
+  // preparation accordions render below — a lookup set, not a new query
+  // — so Bugünkü/Yarınki Turlar cards can flag a pending prep.
+  const prepPendingReservationIds = useMemo(
+    () => new Set((turHazirliklariRows||[]).map(r => r.reservationId)),
+    [turHazirliklariRows]
+  );
 
   return (
-    <div style={{ display:"flex", flexDirection:"column", gap:22 }}>
+    <div style={{ display:"flex", flexDirection:"column", gap:18 }}>
 
-      {}
-      <div>
-        <div style={{ fontSize:20, fontWeight:700, color:C.text, fontFamily:"'Geist',sans-serif" }}>
-          {greeting}{firstName ? `, ${firstName}` : ""}
-        </div>
-        <div style={{ fontSize:13, color:C.textMuted, fontFamily:"'Geist',sans-serif", marginTop:2, textTransform:"capitalize" }}>
-          {todayLabel}
-        </div>
-      </div>
-
-      {}
-      {!alertsLoading && !alertsError && importantAlerts.length > 0 && (
-        <MobileSection title="Önemli Uyarılar">
-          {visibleAlerts.map(alert => (
-            <MobileEntityCard key={alert.id} style={{ borderLeft:`3px solid ${C.red}` }}>
-              <CancellationAlertBody alert={alert} compact/>
-              <div style={{ display:"flex", flexDirection:"column", gap:6, marginTop:12 }}>
-                <button onClick={() => _viewReservationFromAlert(alert, markAlertRead)} style={{
-                  padding:"9px 14px", borderRadius:T.radiusSm, border:"none", cursor:"pointer",
-                  background:C.navy, color:C.onDarkSolid, fontSize:12.5, fontWeight:600,
-                  fontFamily:"'Geist',sans-serif", width:"100%",
-                }}>Rezervasyonu Gör</button>
-                <button onClick={() => markAlertRead(alert.id)} style={{
-                  padding:"9px 14px", borderRadius:T.radiusSm, border:`1px solid ${C.border}`, cursor:"pointer",
-                  background:C.white, color:C.textMid, fontSize:12.5, fontWeight:500,
-                  fontFamily:"'Geist',sans-serif", width:"100%",
-                }}>Okundu Olarak İşaretle</button>
-              </div>
-            </MobileEntityCard>
-          ))}
-          {remainingAlerts > 0 && (
-            <div style={{ fontSize:12, color:C.textMuted, fontFamily:"'Geist',sans-serif", padding:"0 2px" }}>
-              + {remainingAlerts} diğer önemli uyarı
-            </div>
-          )}
-        </MobileSection>
-      )}
-
-      {}
-      {urgentItems.length > 0 && (
-        <MobileSection title="Dikkat Gerektiren">
-          {urgentItems.slice(0,3).map(item=>(
-            <MobileEntityCard key={item.id} style={{ borderLeft:`3px solid ${item.level==="high"?C.red:C.amber}` }}>
-              <div style={{ display:"flex", alignItems:"flex-start", gap:10 }}>
-                <div style={{
-                  width:30, height:30, borderRadius:8, flexShrink:0,
-                  background: item.level==="high" ? C.redBg : C.amberBg,
-                  display:"flex", alignItems:"center", justifyContent:"center",
-                  color: item.level==="high" ? C.red : C.amber,
-                }}>
-                  <GIc d={item.icon} size={14} sw={1.7}/>
-                </div>
-                <div style={{ minWidth:0, flex:1 }}>
-                  <div style={{ fontSize:13, fontWeight:500, color:C.text, fontFamily:"'Geist',sans-serif", lineHeight:1.35 }}>{item.title}</div>
-                  <div style={{ fontSize:11.5, color:C.textMuted, fontFamily:"'Geist',sans-serif", marginTop:3 }}>{item.sub}</div>
-                </div>
-              </div>
-            </MobileEntityCard>
-          ))}
-        </MobileSection>
-      )}
-
-      {/* Mobile equivalent of SonBildirimlerPanel — same shared hook/display
-          helper as the desktop homepage panel and the notification bells,
-          so content and read-state can never diverge across surfaces. */}
-      {!opNotifLoading && visibleOpNotifications.length > 0 && (
-        <MobileSection title="Son Bildirimler">
-          {visibleOpNotifications.map(n => {
-            const display = _operationalNotificationDisplay(n);
-            return (
-              <MobileEntityCard key={n.id} onClick={() => selectOpNotification(n)}>
-                <div style={{ display:"flex", alignItems:"flex-start", gap:10 }}>
-                  {!n.isRead && <span style={{ width:6, height:6, borderRadius:"50%", background:C.gold, marginTop:5, flexShrink:0 }}/>}
-                  <div style={{ minWidth:0, flex:1 }}>
-                    <div style={{ fontSize:13, fontWeight: n.isRead ? 500 : 600, color:C.text, fontFamily:"'Geist',sans-serif", lineHeight:1.35 }}>
-                      {display.title}
-                    </div>
-                    {display.subtitle && (
-                      <div style={{ fontSize:11.5, color:C.textMuted, fontFamily:"'Geist',sans-serif", marginTop:2 }}>{display.subtitle}</div>
-                    )}
-                  </div>
-                </div>
-              </MobileEntityCard>
-            );
-          })}
-        </MobileSection>
-      )}
-
-      {/* Agency Mailbox Phase 10 — same role gate (canAccess ..."agencies")
-          as the desktop AgencyCrmPlusSection, same pure selector; only
-          the markup differs. Placed before Civitatis Hakedişi, mirroring
-          the desktop placement (below the main summary, above Civitatis). */}
-      {canAccess(auth.role, "agencies") && (
-        <MobileSection title="Agency CRM+" action="Acenteleri Gör" onAction={() => navigate('/agencies')}>
-          <MobileEntityCard>
-            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14 }}>
-              <div>
-                <div style={{ fontSize:20, fontWeight:700, color:C.text, fontFamily:"'Geist',sans-serif" }}>{agencyCrmPlusSummary.newAgenciesTodayCount}</div>
-                <div style={{ fontSize:11, color:C.textMuted, fontFamily:"'Geist',sans-serif" }}>Bugün Yeni Acente</div>
-              </div>
-              <div>
-                <div style={{ fontSize:20, fontWeight:700, color:C.text, fontFamily:"'Geist',sans-serif" }}>{agencyCrmPlusSummary.sentTodayCount}</div>
-                <div style={{ fontSize:11, color:C.textMuted, fontFamily:"'Geist',sans-serif" }}>Bugün Mail Gönderildi</div>
-              </div>
-              <div>
-                <div style={{ fontSize:20, fontWeight:700, color: agencyCrmPlusSummary.repliesTodayCount>0 ? C.blue : C.text, fontFamily:"'Geist',sans-serif" }}>{agencyCrmPlusSummary.repliesTodayCount}</div>
-                <div style={{ fontSize:11, color:C.textMuted, fontFamily:"'Geist',sans-serif" }}>Bugün Yanıt Geldi</div>
-              </div>
-              <div>
-                <div style={{ fontSize:20, fontWeight:700, color: agencyCrmPlusSummary.followUpCount>0 ? C.amber : C.text, fontFamily:"'Geist',sans-serif" }}>{agencyCrmPlusSummary.followUpCount}</div>
-                <div style={{ fontSize:11, color:C.textMuted, fontFamily:"'Geist',sans-serif" }}>Takip Bekleyen</div>
-              </div>
-            </div>
-          </MobileEntityCard>
-          {agencyCrmPlusSummary.recentReplies.slice(0,3).map(reply => (
-            <MobileEntityCard key={reply.id} onClick={() => navigate('/agencies/'+reply.agencyId)}>
-              <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:10 }}>
-                <div style={{ minWidth:0, flex:1 }}>
-                  <div style={{ fontSize:13, fontWeight:600, color:C.text, fontFamily:"'Geist',sans-serif", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{reply.agencyName || 'Acente'}</div>
-                  <div style={{ fontSize:11.5, color:C.textMuted, fontFamily:"'Geist',sans-serif", marginTop:2, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{reply.subject || '(konu yok)'}</div>
-                </div>
-                <MobileStatusChip label="Yanıt Geldi" tone="info"/>
-              </div>
-            </MobileEntityCard>
-          ))}
-          {agencyCrmPlusSummary.followUpItems.slice(0,3).map(({ agency }) => (
-            <MobileEntityCard key={agency.id} onClick={() => navigate('/agencies/'+agency.id)}>
-              <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:10 }}>
-                <div style={{ fontSize:13, fontWeight:600, color:C.text, fontFamily:"'Geist',sans-serif", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{agency.name}</div>
-                <MobileStatusChip label="Takip" tone="warn"/>
-              </div>
-            </MobileEntityCard>
-          ))}
-        </MobileSection>
-      )}
-
-      {/* Mobile equivalent of the desktop SonHareketlerPanel — same
-          shared hook/row renderer, so content can never diverge across
-          surfaces. Order matches the homepage spec: Son Bildirimler,
-          Agency CRM+, Son Hareketler. */}
-      {!recentActivitiesLoading && visibleRecentActivities.length > 0 && (
-        <MobileSection title="Son Hareketler" action="Tümünü Gör" onAction={() => navigate('/activity')}>
-          {visibleRecentActivities.map(entry => {
-            const target = _activityTarget(entry);
-            return (
-              <MobileEntityCard key={entry.id} onClick={target ? () => _navigateToActivity(entry) : undefined}>
-                <div style={{ display:"flex", alignItems:"flex-start", gap:10 }}>
-                  <ActivityAvatar entry={entry} size={26}/>
-                  <div style={{ minWidth:0, flex:1 }}>
-                    <div style={{ fontSize:13, fontWeight:600, color:C.text, fontFamily:"'Geist',sans-serif" }}>
-                      {_activityActorName(entry)}
-                    </div>
-                    <div style={{ fontSize:12, color:C.textMuted, fontFamily:"'Geist',sans-serif", marginTop:2, lineHeight:1.35 }}>
-                      {entry.description}
-                    </div>
-                    <div style={{ fontSize:10.5, color:C.textFaint, fontFamily:"'Geist',sans-serif", marginTop:3 }}>
-                      {formatAgencyRelativeTime(entry.createdAt, new Date().toISOString())}
-                    </div>
-                  </div>
-                </div>
-              </MobileEntityCard>
-            );
-          })}
-        </MobileSection>
-      )}
-
-      {/* Civitatis Settlement Engine — Phase 1. Admin/operations only,
-          same eligibility and same pure aggregation as the desktop
-          CivitatisHakedisPanel; only the markup differs. */}
-      {["Yönetici","Operasyon"].includes(auth.role) && !civSettleLoading && !civSettleError && civitatisSettlement &&
-        (civitatisSettlement.claimable.itemCount > 0 || civitatisSettlement.currentMonthAccrual.itemCount > 0 || civitatisSettlement.requested.itemCount > 0) && (
-        <MobileSection title="Civitatis Hakedişi" action="Hakedişleri Gör" onAction={() => navigate('/payments')}>
-          <MobileEntityCard style={civitatisSettlement.claimable.itemCount > 0 ? { border:`1.5px solid ${C.gold}`, background:C.goldPale } : undefined}>
-            <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
-              <div>
-                <div style={{ fontSize:10.5, fontWeight:600, color:C.textMuted, fontFamily:"'Geist',sans-serif", textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:5 }}>Talep Edilebilir</div>
-                {civitatisSettlement.claimable.itemCount > 0 ? (
-                  <>
-                    <div style={{ fontSize:22, fontWeight:700, color:C.gold, fontFamily:"'Geist',sans-serif" }}>
-                      {fmtMoney(civitatisSettlement.claimable.tryTotal, 'TRY')}
-                    </div>
-                    <div style={{ fontSize:11.5, color:C.textMuted, fontFamily:"'Geist',sans-serif", marginTop:2 }}>
-                      {civitatisSettlement.claimable.periods.length === 1
-                        ? `${_formatCivitatisPeriodLabel(civitatisSettlement.claimable.periods[0])} hakedişi`
-                        : `${civitatisSettlement.claimable.periods.length} dönem bekliyor`}
-                    </div>
-                    {civitatisSettlement.claimable.hasMissingRate && (
-                      <div style={{ fontSize:10.5, color:C.amber, fontFamily:"'Geist',sans-serif", marginTop:2 }}>Kur bilgisi bekleniyor</div>
-                    )}
-                  </>
-                ) : (
-                  <div style={{ fontSize:12.5, color:C.textFaint, fontFamily:"'Geist',sans-serif", fontStyle:"italic" }}>Talep edilebilir hakediş yok</div>
-                )}
-              </div>
-              {civitatisSettlement.currentMonthAccrual.itemCount > 0 && (
-                <div style={{ paddingTop:12, borderTop:`1px solid ${C.borderLight}` }}>
-                  <div style={{ fontSize:10.5, fontWeight:600, color:C.textMuted, fontFamily:"'Geist',sans-serif", textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:5 }}>Bu Ay Biriken</div>
-                  <div style={{ fontSize:18, fontWeight:700, color:C.text, fontFamily:"'Geist',sans-serif" }}>
-                    {fmtMoney(civitatisSettlement.currentMonthAccrual.tryTotal, 'TRY')}
-                  </div>
-                  <div style={{ fontSize:11.5, color:C.textFaint, fontFamily:"'Geist',sans-serif", marginTop:2 }}>
-                    {_formatCivitatisNextPeriodLabel(civitatisSettlement.currentPeriod)} başında talep edilebilir
-                  </div>
-                </div>
-              )}
-              {civitatisSettlement.requested.itemCount > 0 && (
-                <div style={{ paddingTop:12, borderTop:`1px solid ${C.borderLight}` }}>
-                  <div style={{ fontSize:10.5, fontWeight:600, color:C.textMuted, fontFamily:"'Geist',sans-serif", textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:5 }}>Talep Edildi</div>
-                  <div style={{ fontSize:18, fontWeight:700, color:C.blue, fontFamily:"'Geist',sans-serif" }}>
-                    {fmtMoney(civitatisSettlement.requested.tryTotal, 'TRY')}
-                  </div>
-                  <div style={{ fontSize:11.5, color:C.textFaint, fontFamily:"'Geist',sans-serif", marginTop:2 }}>Civitatis ödemesi bekleniyor</div>
-                </div>
-              )}
-            </div>
-            {_civitatisHasEurExposure(civitatisSettlement) && (
-              <div style={{ fontSize:10, color:C.textFaint, fontFamily:"'Geist',sans-serif", marginTop:12 }}>
-                Sabit kur: €1 = ₺55
-              </div>
-            )}
-          </MobileEntityCard>
-        </MobileSection>
-      )}
-
-      {/* Tour Preparation Intelligence Phase C2D-4 — same two-panel split
-          as Dashboard() (Bilet Hazırlıkları / Yemek Hazırlıkları), same
-          hook, same pure grouping/summary helpers; only the wrapper
-          components differ (MobileSection/MobileEntityCard/MobileStatusChip
-          vs RBadge). Omitted entirely when neither panel has rows, exactly
-          like the desktop section. */}
-      {!turHazLoading && !turHazError && turHazirliklariRows.length > 0 && (() => {
-        const { tickets, meals } = _groupTourPreparationRows(turHazirliklariRows);
-        const hasTickets = tickets.length > 0;
-        const hasMeals = meals.length > 0;
-        if (!hasTickets && !hasMeals) return null;
-        // Phase C2G: ticket tab state/pagination/summary/completion now
-        // live inside _BiletHazirliklariMobilePanel (shares the SAME
-        // useBiletHazirliklariTabs hook as the desktop panel) — only the
-        // meal side still computes its own pagination/summary here,
-        // completely unchanged.
-        const { visible:visibleMeals, remaining:remainingMeals } = _paginateDashboardPreparationRows(meals, MAX_VISIBLE_MEAL_PREPARATIONS);
-        const mealSummary = _summarizeMealPreparations(meals);
-        return (
-          <>
-            {hasTickets && <_BiletHazirliklariMobilePanel pendingTickets={tickets} navigate={navigate}/>}
-            {hasMeals && (
-              <MobileSection title="Yemek Hazırlıkları">
-                <div style={{ fontSize:11.5, color:C.textMuted, fontFamily:"'Geist',sans-serif", padding:"0 2px" }}>
-                  {_formatMealSummary(mealSummary)}
-                </div>
-                {visibleMeals.map((row, i) => (
-                  <MobileEntityCard key={`meal-${row.reservationId}-${row.label}-${i}`} onClick={() => navigate('/reservations/' + row.reservationId)}>
-                    <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:10 }}>
-                      <div style={{ minWidth:0, flex:1 }}>
-                        <div style={{ fontSize:13, fontWeight:600, color:C.text, fontFamily:"'Geist',sans-serif", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{row.tourName}</div>
-                        <div style={{ fontSize:11, color:C.textFaint, fontFamily:"'DM Mono',monospace", marginTop:1 }}>{row.reservationNumber}</div>
-                        <div style={{ fontSize:11.5, color:C.textMuted, fontFamily:"'Geist',sans-serif", marginTop:3 }}>{row.label}</div>
-                      </div>
-                      <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:5, flexShrink:0 }}>
-                        <div style={{ fontSize:14, fontWeight:700, color:C.green, fontFamily:"'Geist',sans-serif", whiteSpace:"nowrap" }}>
-                          {_formatMealQuantityLabel(row.quantity)}
-                        </div>
-                        <MobileStatusChip label={row.statusLabel} tone="good"/>
-                      </div>
-                    </div>
-                  </MobileEntityCard>
-                ))}
-                {remainingMeals > 0 && (
-                  <div style={{ fontSize:11.5, color:C.textMuted, fontFamily:"'Geist',sans-serif", padding:"0 2px" }}>
-                    + {remainingMeals} diğer yemek hazırlığı
-                  </div>
-                )}
-              </MobileSection>
-            )}
-          </>
-        );
-      })()}
-
-      {}
-      <MobileSection title="Bugünkü Turlar" action={todaysTours.length>0?"Takvim":null} onAction={()=>navigate('/calendar')}>
+      {/* 1. Bugünkü Turlar — first content below the header, nothing
+          else above it. Instrument Serif title (via MobileSection's
+          `prominent`) gives it the highest visual priority on the page. */}
+      <MobileSection title="Bugünkü Turlar" prominent action={todaysTours.length>0?"Takvim":null} onAction={()=>navigate('/calendar')}>
         {todaysTours.length === 0 ? (
           <MobileEntityCard style={{ textAlign:"center", padding:"22px 16px" }}>
             <div style={{ fontSize:12.5, color:C.textFaint, fontFamily:"'Geist',sans-serif" }}>Bugün için planlanmış tur yok.</div>
           </MobileEntityCard>
         ) : todaysTours.map((t,i)=>(
-          <MobileEntityCard key={t.id||i} onClick={()=>navigate('/reservations/'+t.id)}>
-            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:8, marginBottom:6 }}>
-              <span style={{ fontSize:14, fontWeight:700, color:C.text, fontFamily:"'Geist',sans-serif" }}>{fmtResTime(t.time)}</span>
-              <MobileStatusChip label={t.payStatus||"—"} tone={PAY_TONE[t.payStatus]||"neutral"}/>
-            </div>
-            <div style={{ fontSize:14, fontWeight:600, color:C.text, fontFamily:"'Geist',sans-serif" }}>{t.name || t.customer || "—"}</div>
-            <div style={{ fontSize:12.5, color:C.textMuted, fontFamily:"'Geist',sans-serif", marginTop:2 }}>{t.tour || "—"} · {t.pax||1} kişi</div>
-            <div style={{ display:"flex", alignItems:"center", gap:6, marginTop:8 }}>
-              <MobileStatusChip label={t.guide ? `Rehber: ${t.guide}` : "Rehber Atanmadı"} tone={t.guide?"good":"bad"}/>
-            </div>
-          </MobileEntityCard>
+          <_MobileTourDayCard key={t.id||i} t={t} navigate={navigate} prepPending={prepPendingReservationIds.has(t.id)}/>
         ))}
       </MobileSection>
 
-      {}
+      {/* 2. Yarınki Turlar — identical card/visual language, lower visual
+          priority: plain section caption instead of the prominent one. */}
+      <MobileSection title="Yarınki Turlar">
+        {tomorrowsTours.length === 0 ? (
+          <MobileEntityCard style={{ textAlign:"center", padding:"18px 16px" }}>
+            <div style={{ fontSize:12.5, color:C.textFaint, fontFamily:"'Geist',sans-serif" }}>Yarın için planlanmış tur yok.</div>
+          </MobileEntityCard>
+        ) : tomorrowsTours.map((t,i)=>(
+          <_MobileTourDayCard key={t.id||i} t={t} navigate={navigate} prepPending={prepPendingReservationIds.has(t.id)}/>
+        ))}
+      </MobileSection>
+
+      {/* 3. Yaklaşan Rezervasyonlar — next 5 (today/tomorrow excluded,
+          they have their own sections above), existing /reservations
+          route covers "see the rest" — no pagination/filters built here. */}
       {upcoming.length > 0 && (
-        <MobileSection title="Yaklaşan Rezervasyonlar" action="Tümü" onAction={()=>navigate('/reservations')}>
+        <MobileSection title="Yaklaşan Rezervasyonlar" action="Tümünü Gör" onAction={()=>navigate('/reservations')}>
           <MobileEntityCard style={{ padding:0, overflow:"hidden" }}>
             {upcoming.map((r,i)=>(
               <div key={r.id||i}
@@ -26053,8 +25754,9 @@ function MobileHomePage({ navigate }) {
                 </div>
                 <div style={{ flex:1, minWidth:0 }}>
                   <div style={{ fontSize:13, fontWeight:500, color:C.text, fontFamily:"'Geist',sans-serif", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{r.name || r.customer || "—"}</div>
-                  <div style={{ fontSize:11.5, color:C.textFaint, fontFamily:"'Geist',sans-serif" }}>{r.tour||"—"}</div>
+                  <div style={{ fontSize:11.5, color:C.textFaint, fontFamily:"'Geist',sans-serif" }}>{r.tour||"—"} · {r.pax||1} kişi</div>
                 </div>
+                <MobileStatusChip label={r.guide ? "Rehber Atandı" : "Rehber Yok"} tone={r.guide?"good":"bad"}/>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.textFaint} strokeWidth="2" strokeLinecap="round"><path d="M9 18l6-6-6-6"/></svg>
               </div>
             ))}
@@ -26062,53 +25764,93 @@ function MobileHomePage({ navigate }) {
         </MobileSection>
       )}
 
-      {}
-      <MobileSection title="Hızlı İşlemler">
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
-          {QUICK_ACTIONS.map(a=>(
-            <button key={a.key} onClick={()=>setQuickAction(a.key)} style={{
-              display:"flex", flexDirection:"column", alignItems:"flex-start", gap:8,
-              padding:"14px", borderRadius:14, border:"none", cursor:"pointer",
-              background:C.white, textAlign:"left", minHeight:84,
-              boxShadow:"0 1px 2px rgba(15,29,53,0.05), 0 1px 8px rgba(15,29,53,0.05)",
-            }}>
-              <div style={{ width:32, height:32, borderRadius:8, background:C.goldPale, display:"flex", alignItems:"center", justifyContent:"center" }}>
-                <GIc d={a.icon} size={15} sw={1.8} color="#8A6D1F"/>
-              </div>
-              <span style={{ fontSize:12.5, fontWeight:600, color:C.text, fontFamily:"'Geist',sans-serif" }}>{a.label}</span>
-            </button>
+      {/* 4. Bilet Hazırlıkları — collapsed accordion, same
+          useTurHazirliklariRows/_groupTourPreparationRows data the
+          desktop panel uses. Completion action reuses the existing
+          _canCompletePreparation role gate and mutation. */}
+      {!turHazLoading && !turHazError && (
+        <_MobileAccordionSection title="Bilet Hazırlıkları" count={tickets.length} countLabel="Bekliyor" emptyLabel="Tamamlandı">
+          {tickets.slice(0, MAX_VISIBLE_TICKET_PREPARATIONS).map((row,i)=>(
+            <_MobileAccordionTicketRow
+              key={row.id || `${row.reservationId}-${i}`}
+              row={row} navigate={navigate}
+              canComplete={_canCompletePreparation(auth.role, row)}
+              completing={completingId === row.id}
+              onComplete={() => handleCompletePreparation(row.id)}
+            />
           ))}
-        </div>
-      </MobileSection>
-
-      {}
-      {repoAct && repoAct.length > 0 && (
-        <MobileSection title="Son Aktiviteler">
-          <MobileEntityCard style={{ padding:0, overflow:"hidden" }}>
-            {repoAct.slice(0,5).map((a,i)=>{
-              const meta = ACT_ICON[a.type||a.entityType] || ACT_ICON.lead;
-              return (
-                <div key={i} style={{
-                  display:"flex", alignItems:"flex-start", gap:10, padding:"11px 14px",
-                  borderBottom: i<Math.min(repoAct.length,5)-1 ? `1px solid ${C.borderLight}` : "none",
-                }}>
-                  <div style={{ width:26, height:26, borderRadius:7, flexShrink:0, marginTop:1, background:C.ivory, display:"flex", alignItems:"center", justifyContent:"center" }}>
-                    <GIc d={meta.icon} size={12} sw={1.6}/>
-                  </div>
-                  <div style={{ minWidth:0, flex:1 }}>
-                    <div style={{ fontSize:12.5, color:C.text, fontFamily:"'Geist',sans-serif" }}>{a.description || a.detail || "—"}</div>
-                    <div style={{ fontSize:11, color:C.textFaint, fontFamily:"'Geist',sans-serif", marginTop:2 }}>{a.date||""} {a.time||""}</div>
-                  </div>
-                </div>
-              );
-            })}
-          </MobileEntityCard>
-        </MobileSection>
+          {tickets.length > MAX_VISIBLE_TICKET_PREPARATIONS && (
+            <div style={{ fontSize:11.5, color:C.textMuted, fontFamily:"'Geist',sans-serif", padding:"2px 2px 0" }}>
+              + {tickets.length - MAX_VISIBLE_TICKET_PREPARATIONS} diğer bilet hazırlığı
+            </div>
+          )}
+        </_MobileAccordionSection>
       )}
 
-      {quickAction === "guest" && <NewGuestModal onClose={()=>setQuickAction(null)}/>}
-      {quickAction === "reservation" && <NewReservationModal onClose={()=>setQuickAction(null)} onSuccess={()=>setQuickAction(null)}/>}
-      {quickAction === "payment" && <NewPaymentModal onClose={()=>setQuickAction(null)}/>}
+      {/* 5. Yemek Hazırlıkları — same accordion pattern, read-only rows
+          (the meal panel has never had a completion action, desktop or
+          mobile — unchanged here too). */}
+      {!turHazLoading && !turHazError && (
+        <_MobileAccordionSection title="Yemek Hazırlıkları" count={meals.length} countLabel="Bekliyor" emptyLabel="Tamamlandı">
+          {meals.slice(0, MAX_VISIBLE_MEAL_PREPARATIONS).map((row,i)=>{
+            const dateLabel = row.checkIn ? new Date(row.checkIn).toLocaleDateString('tr-TR', { day:'numeric', month:'long' }) : '—';
+            return (
+              <div key={`${row.reservationId}-${row.label}-${i}`}
+                onClick={() => navigate('/reservations/' + row.reservationId)}
+                style={{
+                  display:"flex", alignItems:"center", gap:10, cursor:"pointer",
+                  padding:"10px 12px", borderRadius:T.radiusSm, background:C.ivory, border:`1px solid ${C.borderLight}`,
+                }}>
+                <div style={{ minWidth:46, fontSize:11, fontWeight:700, color:C.text, fontFamily:"'Geist',sans-serif", lineHeight:1.3 }}>{dateLabel}</div>
+                <div style={{ flex:1, minWidth:0 }}>
+                  <div style={{ fontSize:12.5, fontWeight:600, color:C.text, fontFamily:"'Geist',sans-serif", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{row.tourName}</div>
+                  <div style={{ fontSize:11, color:C.textMuted, fontFamily:"'Geist',sans-serif", marginTop:2 }}>{row.label}</div>
+                </div>
+                <div style={{ fontSize:12.5, fontWeight:700, color:C.green, fontFamily:"'Geist',sans-serif", whiteSpace:"nowrap", flexShrink:0 }}>
+                  {_formatMealQuantityLabel(row.quantity)}
+                </div>
+              </div>
+            );
+          })}
+          {meals.length > MAX_VISIBLE_MEAL_PREPARATIONS && (
+            <div style={{ fontSize:11.5, color:C.textMuted, fontFamily:"'Geist',sans-serif", padding:"2px 2px 0" }}>
+              + {meals.length - MAX_VISIBLE_MEAL_PREPARATIONS} diğer yemek hazırlığı
+            </div>
+          )}
+        </_MobileAccordionSection>
+      )}
+    </div>
+  );
+}
+
+/* Bilet Hazırlıkları's single accordion row — compact, tappable, with
+   the existing completion action (role-gated by the SAME
+   _canCompletePreparation used everywhere else this action appears). */
+function _MobileAccordionTicketRow({ row, navigate, canComplete, completing, onComplete }) {
+  const GOLD_ACCENT = "#8A6D1F";
+  const dateLabel = row.checkIn ? new Date(row.checkIn).toLocaleDateString('tr-TR', { day:'numeric', month:'long' }) : '—';
+  return (
+    <div onClick={() => navigate('/reservations/' + row.reservationId)} style={{
+      display:"flex", alignItems:"center", gap:10, cursor:"pointer",
+      padding:"10px 12px", borderRadius:T.radiusSm, background:C.ivory, border:`1px solid ${C.borderLight}`,
+    }}>
+      <div style={{ minWidth:46, fontSize:11, fontWeight:700, color:C.text, fontFamily:"'Geist',sans-serif", lineHeight:1.3 }}>{dateLabel}</div>
+      <div style={{ flex:1, minWidth:0 }}>
+        <div style={{ fontSize:12.5, fontWeight:600, color:C.text, fontFamily:"'Geist',sans-serif", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{row.tourName}</div>
+        <div style={{ fontSize:11, color:C.textMuted, fontFamily:"'Geist',sans-serif", marginTop:2 }}>{row.label}</div>
+      </div>
+      <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:5, flexShrink:0 }}>
+        <div style={{ fontSize:12.5, fontWeight:700, color:GOLD_ACCENT, fontFamily:"'Geist',sans-serif", whiteSpace:"nowrap" }}>
+          {_formatTicketQuantityLabel(row.quantity)}
+        </div>
+        {canComplete && (
+          <button onClick={(e)=>{ e.stopPropagation(); onComplete(); }} disabled={completing} style={{
+            padding:"4px 10px", borderRadius:T.radiusSm, border:`1px solid ${C.green}66`, background:C.greenBg, color:C.green,
+            cursor: completing ? "default" : "pointer", opacity: completing ? 0.6 : 1,
+            fontSize:11, fontWeight:600, fontFamily:"'Geist',sans-serif", whiteSpace:"nowrap", minHeight:26,
+          }}>{completing ? "…" : "Hazırlandı ✓"}</button>
+        )}
+      </div>
     </div>
   );
 }

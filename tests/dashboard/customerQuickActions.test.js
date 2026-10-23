@@ -35,11 +35,15 @@ test('the "Yeni Rezervasyon" quick action opens the existing NewReservationModal
   assert.match(GUEST_DETAIL_BODY, /<NewReservationModal\s*\n\s*customerId=\{g\.id\} customerName=\{g\.name\}/);
 });
 
-test('NewReservationModal is the same single reservation-creation component used elsewhere (Welcome, ReservationsPage, mobile quick actions)', () => {
+test('NewReservationModal is the same single reservation-creation component used elsewhere (Welcome, ReservationsPage, and now GuestDetailPage)', () => {
   const usages = SOURCE.match(/<NewReservationModal\b/g) || [];
-  // Welcome(), ReservationsPage, mobile QUICK_ACTIONS dispatcher, and now
-  // GuestDetailPage — no second/duplicate reservation form was created.
-  assert.ok(usages.length >= 4, `expected NewReservationModal to be reused across multiple entry points, found ${usages.length}`);
+  // Welcome(), ReservationsPage, and now GuestDetailPage — no second/
+  // duplicate reservation form was created. The mobile-homepage redesign
+  // ("simpler operational philosophy" phase) removed MobileHomePage's own
+  // Hızlı İşlemler quick-action dispatcher (which used to be a 4th usage
+  // here) since ReservationsPage already has its own "Yeni Rezervasyon"
+  // entry point, reachable on mobile too — no capability was lost.
+  assert.ok(usages.length >= 3, `expected NewReservationModal to be reused across multiple entry points, found ${usages.length}`);
 });
 
 // --- 2. The current customer is preselected — no re-searching -------------

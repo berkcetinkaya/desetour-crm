@@ -287,12 +287,18 @@ test('MobileNotificationBell exists, uses the same shared hook, and is also hidd
   assert.match(body, /<NotificationPanelBody/);
 });
 
-test('MobileNotificationBell is actually mounted in the mobile fixed header, alongside the logo', () => {
+// The mobile-homepage/header redesign ("simpler operational philosophy"
+// phase) removed the Dese logo from the mobile header entirely (wasted
+// vertical space, per that phase's explicit brief) and replaced its slot
+// with a menu control routed to the existing "Diğer" page — the bell
+// itself is untouched, just repositioned.
+test('MobileNotificationBell is actually mounted in the mobile fixed header, which has a menu control but no logo', () => {
   const headerIdx = SOURCE.indexOf('{isMobile && (\n        <div style={{\n          position:"fixed", top:0, left:0, right:0, zIndex:200,');
   assert.ok(headerIdx > -1, 'expected the mobile fixed header block in App()');
   const headerBlock = SOURCE.slice(headerIdx, SOURCE.indexOf('{isMobile && <BottomNav', headerIdx));
   assert.match(headerBlock, /<MobileNotificationBell\/>/);
-  assert.match(headerBlock, /seffafdeselogo\.png/);
+  assert.match(headerBlock, /onClick=\{\(\)=>navigate\('\/more'\)\}/, 'expected a menu control routing to the existing /more page');
+  assert.doesNotMatch(headerBlock, /seffafdeselogo\.png/, 'the Dese logo must be removed from the mobile header');
 });
 
 test('the desktop bell is NOT also rendered on mobile, and vice versa — DesktopTopBar (which holds NotificationBell) is gated by !isMobile', () => {
@@ -338,20 +344,25 @@ test('SonBildirimlerRow never shows a full email body — only title/subtitle fr
   assert.doesNotMatch(body, /\bn\.body\b/);
 });
 
-test('mobile: the "Son Bildirimler" MobileSection is mounted in MobileHomePage, before the Agency CRM+ mobile section', () => {
-  const mobileIdx = SOURCE.indexOf('function MobileHomePage({ navigate }) {');
-  const mobileBody = SOURCE.slice(mobileIdx, SOURCE.indexOf('\nfunction MobileEntityCard', mobileIdx));
-  const sonIdx = mobileBody.indexOf('MobileSection title="Son Bildirimler"');
-  const agencyIdx = mobileBody.indexOf('MobileSection title="Agency CRM+"');
-  assert.ok(sonIdx > -1, 'expected a mobile "Son Bildirimler" MobileSection');
-  assert.ok(agencyIdx > -1);
-  assert.ok(sonIdx < agencyIdx);
+// The mobile-homepage redesign ("simpler operational philosophy" phase)
+// removed the "Son Bildirimler" MobileSection from MobileHomePage
+// entirely — it duplicated what the header's own MobileNotificationBell
+// already surfaces (same data, same hook), and the new homepage
+// hierarchy (Bugünkü/Yarınki Turlar, Yaklaşan Rezervasyonlar, Bilet/
+// Yemek Hazırlıkları) isn't meant to compete with it. The bell — and the
+// useOperationalNotifications hook it calls — is untouched; this is a
+// homepage-presentation removal, not a feature or query removal.
+test('MobileHomePage no longer renders a "Son Bildirimler" section — covered by the header\'s MobileNotificationBell (same hook) instead', () => {
+  const mobileBody = require('./extractTestableFn').extractFunctionSource('MobileHomePage');
+  assert.doesNotMatch(mobileBody, /Son Bildirimler/);
+  assert.doesNotMatch(mobileBody, /useOperationalNotifications/);
 });
 
-test('mobile "Son Bildirimler" uses the SAME useOperationalNotifications hook as the desktop panel (no separate mobile-only query)', () => {
-  const mobileIdx = SOURCE.indexOf('function MobileHomePage({ navigate }) {');
-  const mobileBody = SOURCE.slice(mobileIdx, SOURCE.indexOf('\nfunction MobileEntityCard', mobileIdx));
-  assert.match(mobileBody, /useOperationalNotifications\(\)/);
+test('the mobile header\'s MobileNotificationBell still uses the SAME useOperationalNotifications hook as the desktop panel (no separate mobile-only query)', () => {
+  const idx = SOURCE.indexOf('function MobileNotificationBell(');
+  assert.ok(idx > -1, 'expected MobileNotificationBell to exist');
+  const body = SOURCE.slice(idx, SOURCE.indexOf('\nfunction ', idx + 10));
+  assert.match(body, /useOperationalNotifications\(\)/);
 });
 
 // ── Agency CRM+ homepage mount (item 1/2 of the spec) ──────────────────────
@@ -373,11 +384,15 @@ test('AgencyCrmPlusSection\'s own visibility gate is canAccess(role, "agencies")
   assert.equal(canAccess(ROLES.guide, 'agencies'), false);
 });
 
-test('mobile: the Agency CRM+ MobileSection is present in MobileHomePage and gated by the same canAccess(auth.role, "agencies") check', () => {
-  const mobileIdx = SOURCE.indexOf('function MobileHomePage({ navigate }) {');
-  const mobileBody = SOURCE.slice(mobileIdx, SOURCE.indexOf('\nfunction MobileEntityCard', mobileIdx));
-  assert.match(mobileBody, /MobileSection title="Agency CRM\+"/);
-  assert.match(mobileBody, /canAccess\(auth\.role,\s*"agencies"\)/);
+// The mobile-homepage redesign ("simpler operational philosophy" phase)
+// removed the Agency CRM+ MobileSection from MobileHomePage — it's a
+// large Agency-CRM summary/table the new hierarchy (Bugünkü/Yarınki
+// Turlar, Yaklaşan Rezervasyonlar, Bilet/Yemek Hazırlıkları) isn't meant
+// to compete with. The feature itself is untouched and still reachable
+// on mobile via Acenteler (see tests/dashboard/agencyConversationAndMobile.test.js).
+test('MobileHomePage no longer renders an "Agency CRM+" section — removed from the mobile homepage, still reachable via Acenteler', () => {
+  const mobileBody = require('./extractTestableFn').extractFunctionSource('MobileHomePage');
+  assert.doesNotMatch(mobileBody, /MobileSection title="Agency CRM\+"/);
 });
 
 test('a real inbound reply (as persistInboundMessage writes it: direction "inbound", with agencyName/subject) is counted in Bugün Yanıt Geldi and listed in Gelen Yanıtlar', () => {

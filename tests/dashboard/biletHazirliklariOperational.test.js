@@ -289,18 +289,26 @@ test('even an authorized role cannot complete an already-completed row (no re-co
   assert.equal(_canCompletePreparation('Yönetici', { status:'completed' }), false);
 });
 
-test('the desktop and mobile panels gate the button through _canCompletePreparation(auth.role, row), never a separate role check', () => {
+// The mobile-homepage redesign ("simpler operational philosophy" phase)
+// retired _BiletHazirliklariMobilePanel/_MobileTicketPrepRow (and with
+// them, mobile's Bekleyenler/Tamamlananlar tabs and the shared
+// useBiletHazirliklariTabs hook's getRecentCompleted fetch, which the new
+// homepage's "show only pending" accordion doesn't need) in favor of a
+// collapsed-by-default _MobileAccordionSection whose completion gate is
+// now wired directly in MobileHomePage. The desktop panel/hook/tabs are
+// completely untouched.
+test('desktop gates the button through _canCompletePreparation(auth.role, row); mobile now gates it the same way directly in MobileHomePage', () => {
   const desktopBody = fnBody('function _BiletHazirliklariDesktopPanel(', '\n}');
   assert.match(desktopBody, /_canCompletePreparation\(auth\.role, row\)/);
-  const mobileBody = fnBody('function _BiletHazirliklariMobilePanel(', '\n}');
-  assert.match(mobileBody, /_canCompletePreparation\(auth\.role, row\)/);
+  const mobileBody = fnBody('function MobileHomePage(', '\nfunction _MobileAccordionTicketRow(');
+  assert.match(mobileBody, /_canCompletePreparation\(auth\.role,\s*row\)/);
 });
 
-test('the completion control is never shown on the Tamamlananlar tab, only Bekleyenler', () => {
+test('the completion control is never shown on the desktop Tamamlananlar tab, only Bekleyenler — mobile has no Tamamlananlar tab at all anymore (pending-only accordion)', () => {
   const desktopBody = fnBody('function _BiletHazirliklariDesktopPanel(', '\n}');
   assert.match(desktopBody, /canComplete=\{isPending && _canCompletePreparation/);
-  const mobileBody = fnBody('function _BiletHazirliklariMobilePanel(', '\n}');
-  assert.match(mobileBody, /canComplete=\{isPending && _canCompletePreparation/);
+  const mobileBody = fnBody('function MobileHomePage(', '\nfunction _MobileAccordionTicketRow(');
+  assert.doesNotMatch(mobileBody, /Tamamlananlar|getRecentCompleted|useBiletHazirliklariTabs/);
 });
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -314,13 +322,13 @@ test('the shared hook calls mutate(\'complete\', id) via useRepoMutation("reserv
   assert.match(body, /_completePreparationWithFeedback\(mutDashPreparation, id\)/);
 });
 
-test('none of the new Phase C2G components or the shared hook ever call .update(/.insert(/.upsert(/.rpc( directly — every write goes through the existing repo method', () => {
+test('none of the ticket-completion components (desktop or mobile) ever call .update(/.insert(/.upsert(/.rpc( directly — every write goes through the existing repo method', () => {
   const pieces = [
     fnBody('function useBiletHazirliklariTabs(', '\n}'),
     fnBody('function _TicketPrepRow(', '\n}'),
-    fnBody('function _MobileTicketPrepRow(', '\n}'),
+    fnBody('function _MobileAccordionTicketRow(', '\n}'),
     fnBody('function _BiletHazirliklariDesktopPanel(', '\n}'),
-    fnBody('function _BiletHazirliklariMobilePanel(', '\n}'),
+    fnBody('function MobileHomePage(', '\nfunction _MobileAccordionTicketRow('),
   ];
   for (const body of pieces) {
     assert.doesNotMatch(body, /\.update\(|\.insert\(|\.upsert\(|\.rpc\(/);
@@ -347,16 +355,16 @@ test('the completion button is disabled while that exact row is mid-completion (
   const desktopPanel = fnBody('function _BiletHazirliklariDesktopPanel(', '\n}');
   assert.match(desktopPanel, /completing=\{completingId === row\.id\}/);
 
-  const mobileRow = fnBody('function _MobileTicketPrepRow(', '\n}');
+  const mobileRow = fnBody('function _MobileAccordionTicketRow(', '\n}');
   assert.match(mobileRow, /disabled=\{completing\}/);
-  const mobilePanel = fnBody('function _BiletHazirliklariMobilePanel(', '\n}');
-  assert.match(mobilePanel, /completing=\{completingId === row\.id\}/);
+  const mobileCaller = fnBody('function MobileHomePage(', '\nfunction _MobileAccordionTicketRow(');
+  assert.match(mobileCaller, /completing=\{completingId === row\.id\}/);
 });
 
 test('clicking the completion button stops propagation so it never also triggers row navigation', () => {
   const desktopRow = fnBody('function _TicketPrepRow(', '\n}');
   assert.match(desktopRow, /e\.stopPropagation\(\)/);
-  const mobileRow = fnBody('function _MobileTicketPrepRow(', '\n}');
+  const mobileRow = fnBody('function _MobileAccordionTicketRow(', '\n}');
   assert.match(mobileRow, /e\.stopPropagation\(\)/);
 });
 
@@ -425,7 +433,7 @@ test('no reservation_preparations row is ever created for a meal — meal_status
   const pieces = [
     fnBody('function useBiletHazirliklariTabs(', '\n}'),
     fnBody('function _BiletHazirliklariDesktopPanel(', '\n}'),
-    fnBody('function _BiletHazirliklariMobilePanel(', '\n}'),
+    fnBody('function MobileHomePage(', '\nfunction _MobileAccordionTicketRow('),
   ];
   for (const body of pieces) {
     assert.doesNotMatch(body, /meal_status/);
@@ -436,30 +444,38 @@ test('no reservation_preparations row is ever created for a meal — meal_status
 // desktop/mobile behavior parity + no database migration
 // ═══════════════════════════════════════════════════════════════════════
 
-test('both the desktop and mobile panels use the identical shared useBiletHazirliklariTabs hook — no duplicated business logic', () => {
+// The mobile-homepage redesign deliberately gave mobile a SIMPLER,
+// pending-only accordion instead of mirroring desktop's full
+// Bekleyenler/Tamamlananlar tab hook — see the retirement note above.
+// Desktop is completely untouched; mobile now reuses only the lower-
+// level completion primitives (_canCompletePreparation,
+// _completePreparationWithFeedback, useRepoMutation), not the tab hook.
+test('desktop still uses useBiletHazirliklariTabs; mobile now reuses only the lower-level completion primitives directly (no duplicated business logic either way)', () => {
   const desktopBody = fnBody('function _BiletHazirliklariDesktopPanel(', '\n}');
-  const mobileBody = fnBody('function _BiletHazirliklariMobilePanel(', '\n}');
   assert.match(desktopBody, /useBiletHazirliklariTabs\(pendingTickets\)/);
-  assert.match(mobileBody, /useBiletHazirliklariTabs\(pendingTickets\)/);
+  const mobileBody = fnBody('function MobileHomePage(', '\nfunction _MobileAccordionTicketRow(');
+  assert.doesNotMatch(mobileBody, /useBiletHazirliklariTabs/);
+  assert.match(mobileBody, /useRepoMutation\("reservationPreparation"\)/);
+  assert.match(mobileBody, /_completePreparationWithFeedback\(/);
 });
 
-test('TurHazirliklari() renders the desktop panel, MobileHomePage() renders the mobile panel — each platform gets its own wrapper', () => {
+test('TurHazirliklari() renders the desktop panel, MobileHomePage() renders the Bilet Hazırlıkları accordion — each platform gets its own wrapper', () => {
   const dashboardStart = SOURCE.indexOf('function TurHazirliklari()');
   const dashboardEnd = SOURCE.indexOf('\nfunction Dashboard()', dashboardStart);
   assert.match(SOURCE.slice(dashboardStart, dashboardEnd), /<_BiletHazirliklariDesktopPanel\b/);
 
   const mobileStart = SOURCE.indexOf('function MobileHomePage(');
   const mobileEnd = SOURCE.indexOf('\nfunction ', mobileStart + 10);
-  assert.match(SOURCE.slice(mobileStart, mobileEnd), /<_BiletHazirliklariMobilePanel\b/);
+  assert.match(SOURCE.slice(mobileStart, mobileEnd), /<_MobileAccordionSection title="Bilet Hazırlıkları"/);
 });
 
-test('this phase introduced no new database migration file reference anywhere in the new helpers/components', () => {
+test('this phase introduced no new database migration file reference anywhere in the ticket-completion helpers/components', () => {
   const pieces = [
     fnBody('function useBiletHazirliklariTabs(', '\n}'),
     fnBody('function _TicketPrepRow(', '\n}'),
-    fnBody('function _MobileTicketPrepRow(', '\n}'),
+    fnBody('function _MobileAccordionTicketRow(', '\n}'),
     fnBody('function _BiletHazirliklariDesktopPanel(', '\n}'),
-    fnBody('function _BiletHazirliklariMobilePanel(', '\n}'),
+    fnBody('function MobileHomePage(', '\nfunction _MobileAccordionTicketRow('),
     fnBody('async getRecentCompleted(){', '\n  },'),
   ];
   for (const body of pieces) {
@@ -472,7 +488,7 @@ test('this phase introduced no new database migration file reference anywhere in
 test('this phase never mentions auth tables directly (role comes only through useAuthContext().role)', () => {
   const pieces = [
     fnBody('function _BiletHazirliklariDesktopPanel(', '\n}'),
-    fnBody('function _BiletHazirliklariMobilePanel(', '\n}'),
+    fnBody('function MobileHomePage(', '\nfunction _MobileAccordionTicketRow('),
   ];
   for (const body of pieces) {
     assert.match(body, /useAuthContext\(\)/);
