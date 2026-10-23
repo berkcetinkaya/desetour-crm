@@ -430,8 +430,15 @@ test('[39] both new endpoints enforce the role check server-side (not only a hid
 });
 
 test('[40] Phase 1 sections remain present and unmodified alongside the new Phase 2 sections; drafts never set sentAt or touch agencies.lastContactAt', () => {
-  for (const marker of ['Acente Bilgileri', 'Uygunluk', 'Durum', 'İç Notlar', 'Son Temas']) {
-    assert.match(ACENTE_DETAIL_BODY, new RegExp(marker.replace(/[İ]/g, 'İ')), `Phase 1 section "${marker}" must still be present`);
+  // Section names updated by the later Son Hareketler/Agencies redesign
+  // phase, which reorganized the detail page into a header summary +
+  // Genel Bakış/İletişim/Araştırma Bulguları/Notlar/Son Hareketler
+  // modular layout — every Phase 1 field/capability this test cares
+  // about (status control, contact info, notes, fit/research display,
+  // last-contact display) is still present, just relabeled/relocated;
+  // nothing was removed.
+  for (const marker of ['İletişim', 'Araştırma Bulguları', 'Genel Bakış', 'Notlar', 'Sonraki Adım']) {
+    assert.match(ACENTE_DETAIL_BODY, new RegExp(marker.replace(/[İ]/g, 'İ')), `redesigned section "${marker}" must be present`);
   }
   for (const marker of ['İlk Temas Taslağı', 'E-posta Geçmişi']) {
     assert.match(ACENTE_DETAIL_BODY, new RegExp(marker), `Phase 2 section "${marker}" must be present`);
@@ -532,14 +539,23 @@ test('[51] research_source_url (candidate.source_url) is persisted on CRM import
 });
 
 test('[52] the persisted source URL is displayed on AcenteDetailPage as a clickable link, restrained and read-only', () => {
-  assert.match(ACENTE_DETAIL_BODY, /Araştırma Bulgusu/);
-  assert.match(ACENTE_DETAIL_BODY, /Kaynak/);
+  // Relabeled by the later Agencies redesign phase (Araştırma Bulguları
+  // card: "Kaynak Kanıt" for the evidence text, "Kaynak" for the source
+  // URL link) — each now its own independent conditional block rather
+  // than one combined researchEvidence||researchSourceUrl wrapper;
+  // functionally unchanged (still read-only, still a plain <a> link).
+  assert.match(ACENTE_DETAIL_BODY, /Kaynak Kanıt/);
+  assert.match(ACENTE_DETAIL_BODY, /Kaynak<\/div>/);
   assert.match(ACENTE_DETAIL_BODY, /<a href=\{agency\.researchSourceUrl\}[\s\S]{0,80}target="_blank"/);
   // Read-only: no input/textarea/onChange anywhere near this section — it's
-  // a plain info rendering, never an editable field.
-  const researchSectionMatch = ACENTE_DETAIL_BODY.match(/agency\.researchEvidence \|\| agency\.researchSourceUrl[\s\S]*?<\/div>\s*\)\}/);
-  assert.ok(researchSectionMatch, 'the conditional research section should exist');
+  // a plain info rendering, never an editable field. Checked for BOTH
+  // now-independent conditional blocks (evidence text + source link).
+  const researchSectionMatch = ACENTE_DETAIL_BODY.match(/agency\.researchSourceUrl && \([\s\S]*?<\/div>\s*\)\}/);
+  assert.ok(researchSectionMatch, 'the conditional research source-url section should exist');
   assert.doesNotMatch(researchSectionMatch[0], /onChange=/);
+  const evidenceSectionMatch = ACENTE_DETAIL_BODY.match(/agency\.researchEvidence && \([\s\S]*?<\/div>\s*\)\}/);
+  assert.ok(evidenceSectionMatch, 'the conditional research evidence section should exist');
+  assert.doesNotMatch(evidenceSectionMatch[0], /onChange=/);
 });
 
 test('[53] "Yüksek Uyum" cannot survive sanitizeCandidate without a non-empty evidence_summary — downgraded, not dropped', () => {

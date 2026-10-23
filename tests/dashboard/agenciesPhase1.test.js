@@ -173,8 +173,13 @@ test('getActiveRepo("agency") is wired to the real/mock pair, same pattern as ev
 });
 
 test('repo methods are limited to Phase 1\'s needs — no speculative send/discover/research methods', () => {
+  // Matches an actual METHOD definition/call shape (name immediately
+  // followed by a call), not a plain field reference — a later phase
+  // legitimately reads/writes the pre-existing researchEvidence/
+  // researchSourceUrl AGENCY FIELDS (Pazar Araştırması import) inside
+  // create(), which must not be confused with a new research() METHOD.
   for (const body_ of [AGENCY_REPO_BODY, SUPABASE_AGENCY_BODY]) {
-    assert.doesNotMatch(body_, /sendEmail|draftEmail|discover|research|score/i);
+    assert.doesNotMatch(body_, /\b(sendEmail|draftEmail|discover|research|score)\s*\(/i);
   }
 });
 

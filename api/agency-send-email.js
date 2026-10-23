@@ -97,7 +97,7 @@ function isValidEmailAddress(email) {
  */
 async function loadAndValidate({ adminClient, agencyId, agencyEmailId }) {
   const { data: agency, error: agencyError } = await adminClient
-    .from('agencies').select('id, email, status').eq('id', agencyId).maybeSingle();
+    .from('agencies').select('id, email, status, name').eq('id', agencyId).maybeSingle();
   if (agencyError) return { ok: false, status: 502, error: 'Acente bilgisi okunamadı.' };
   if (!agency) return { ok: false, status: 404, error: 'Acente bulunamadı.' };
 
@@ -280,15 +280,29 @@ async function advanceAgencyContactState({ adminClient, agencyId }) {
 
 /** One safe, high-level activity event — never the email body, never a
  * credential, never a token. Failure here is logged and treated as a
- * soft warning only. */
-async function logOutreachSent({ adminClient, agencyId, agencyEmailId, performedBy }) {
+ * soft warning only.
+ *
+ * Son Hareketler quality fix: this previously always wrote "ilk temas
+ * e-postası gönderildi" (first-contact) even when send_mode was 'reply'
+ * — a real, user-visible mislabeling bug (every reply send was
+ * misdescribed as a first contact). sendMode now picks the correct
+ * description; agencyName is denormalized into metadata (the same
+ * snapshot-at-send-time pattern api/_agencies/gmailInboundSync.js's
+ * logInboundReply already uses) so Son Hareketler never needs a live
+ * join just to show which agency this was. action stays 'outreach_sent'
+ * for both cases — this is still, structurally, "an outbound agency
+ * email was sent"; only the description/metadata differ. */
+async function logOutreachSent({ adminClient, agencyId, agencyEmailId, performedBy, sendMode, agencyName }) {
   try {
+    const isReply = sendMode === 'reply';
     await adminClient.from('activity_logs').insert({
       entity_type: 'agency_email',
       entity_id: agencyEmailId,
       action: 'outreach_sent',
-      description: 'Acenteye ilk temas e-postası gönderildi.',
-      metadata: { agency_id: agencyId, agency_email_id: agencyEmailId, provider: 'gmail' },
+      description: isReply
+        ? (agencyName ? `${agencyName} acentesine yanıt gönderildi.` : 'Acenteye yanıt gönderildi.')
+        : (agencyName ? `${agencyName} için ilk temas e-postası gönderildi.` : 'Acenteye ilk temas e-postası gönderildi.'),
+      metadata: { agency_id: agencyId, agency_email_id: agencyEmailId, agency_name: agencyName || null, provider: 'gmail', send_mode: sendMode || 'new_outreach' },
       performed_by: performedBy,
     });
   } catch (_err) {
@@ -470,7 +484,7 @@ async function handler(req, res, deps = {}) {
   }
 
   const contactStateResult = await advanceAgencyContactState({ adminClient, agencyId });
-  await logOutreachSent({ adminClient, agencyId, agencyEmailId, performedBy: auth.userId });
+  await logOutreachSent({ adminClient, agencyId, agencyEmailId, performedBy: auth.userId, sendMode, agencyName: agency.name || null });
 
   return res.status(200).json({
     ok: true,

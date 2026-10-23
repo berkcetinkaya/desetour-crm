@@ -877,13 +877,18 @@ function computeUrgent(reservations, payments, reminders) {
 //     interpretation; 3 days is a reasonable, easily-adjustable default
 //     for an outreach cadence, named here as one constant rather than a
 //     buried magic number.
+// TESTABLE:AGENCY_FOLLOWUP_STALE_DAYS:start
 const AGENCY_FOLLOWUP_STALE_DAYS = 3;
+// TESTABLE:AGENCY_FOLLOWUP_STALE_DAYS:end
 
+// TESTABLE:_agencyCrmPlusIsToday:start
 function _agencyCrmPlusIsToday(isoString, nowISO) {
   if (!isoString || !nowISO) return false;
   return isoString.slice(0, 10) === nowISO.slice(0, 10);
 }
+// TESTABLE:_agencyCrmPlusIsToday:end
 
+// TESTABLE:_agencyCrmPlusDaysSince:start
 function _agencyCrmPlusDaysSince(isoString, nowISO) {
   if (!isoString || !nowISO) return null;
   const then = Date.parse(isoString);
@@ -891,6 +896,7 @@ function _agencyCrmPlusDaysSince(isoString, nowISO) {
   if (Number.isNaN(then) || Number.isNaN(now)) return null;
   return Math.floor((now - then) / 86400000);
 }
+// TESTABLE:_agencyCrmPlusDaysSince:end
 
 function computeAgencyCrmPlusSummary(agencies, agencyEmails, nowISO) {
   const safeAgencies = agencies || [];
@@ -953,6 +959,71 @@ function formatAgencyRelativeTime(isoString, nowISO) {
   return `${days} gün önce`;
 }
 // TESTABLE:formatAgencyRelativeTime:end
+
+// Shared per-agency follow-up/reply state — the ONE definition of
+// "needs follow-up" / "has a new reply" / "recently contacted", reused
+// by both the Agencies list redesign (_computeAgencyListEnrichment,
+// below) and AcenteDetailPage's own header/Genel Bakış card. Built on
+// the exact same pure primitives computeAgencyCrmPlusSummary already
+// established (_agencyCrmPlusIsToday, _agencyCrmPlusDaysSince,
+// AGENCY_FOLLOWUP_STALE_DAYS) — never a second, divergent definition.
+// TESTABLE:_agencyActivityState:start
+function _agencyActivityState(agency, latestReplyAt, nowISO) {
+  const hasNewReply = _agencyCrmPlusIsToday(latestReplyAt, nowISO);
+  const daysSinceContact = _agencyCrmPlusDaysSince(agency.lastContactAt, nowISO);
+  const isActiveConversation = agency.status === 'İletişime Geçildi' || agency.status === 'Görüşülüyor';
+  const needsFollowUp = isActiveConversation && (daysSinceContact === null || daysSinceContact >= AGENCY_FOLLOWUP_STALE_DAYS);
+  const recentlyContacted = daysSinceContact !== null && daysSinceContact <= 7;
+  return { hasNewReply, needsFollowUp, recentlyContacted, isActiveConversation, daysSinceContact };
+}
+// TESTABLE:_agencyActivityState:end
+
+// Finds the most recent INBOUND email's timestamp among a list of
+// agency_emails rows — the same direction==='inbound' definition of "a
+// reply" used throughout this module (computeAgencyCrmPlusSummary,
+// NotificationBell's agency_email notifications).
+// TESTABLE:_latestInboundReplyAt:start
+function _latestInboundReplyAt(agencyEmails) {
+  let latest = null;
+  for (const e of (agencyEmails || [])) {
+    if (e.direction !== 'inbound') continue;
+    const when = e.receivedAt || e.createdAt || null;
+    if (!latest || (when || '') > latest) latest = when;
+  }
+  return latest;
+}
+// TESTABLE:_latestInboundReplyAt:end
+
+// Agencies list redesign — per-agency enrichment plus the overview-strip
+// summary counts, built entirely on the two shared helpers above.
+// TESTABLE:_computeAgencyListEnrichment:start
+function _computeAgencyListEnrichment(agencies, agencyEmails, nowISO) {
+  const safeAgencies = agencies || [];
+  const safeEmails = agencyEmails || [];
+
+  const emailsByAgency = new Map();
+  for (const e of safeEmails) {
+    if (!emailsByAgency.has(e.agencyId)) emailsByAgency.set(e.agencyId, []);
+    emailsByAgency.get(e.agencyId).push(e);
+  }
+
+  const enriched = safeAgencies.map(a => {
+    const latestReplyAt = _latestInboundReplyAt(emailsByAgency.get(a.id));
+    const state = _agencyActivityState(a, latestReplyAt, nowISO);
+    return { ...a, ...state };
+  });
+
+  return {
+    agencies: enriched,
+    totalCount: enriched.length,
+    activeConversationCount: enriched.filter(a => a.isActiveConversation).length,
+    newTodayCount: enriched.filter(a => _agencyCrmPlusIsToday(a.createdAt, nowISO)).length,
+    needsFollowUpCount: enriched.filter(a => a.needsFollowUp).length,
+    hasNewReplyCount: enriched.filter(a => a.hasNewReply).length,
+    partnerCount: enriched.filter(a => a.status === 'Partner').length,
+  };
+}
+// TESTABLE:_computeAgencyListEnrichment:end
 
 // Shared in-flight/resolved fetch cache for useRepo, keyed by
 // "entity:method:arg". Without this, every component that calls
@@ -2092,6 +2163,7 @@ const NAV_BOT = [
   { id:"messages",   label:"Mesajlar",      badge:null, icon:"M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" },
   { id:"reminders",  label:"Hatırlatmalar", badge:null, icon:"M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0" },
   { id:"agencies",   label:"Acenteler",     badge:null, icon:"M3 21h18 M5 21V7l8-4v18 M19 21V11l-6-4" },
+  { id:"activity",   label:"Son Hareketler",badge:null, icon:"M12 8v4l3 3 M12 22a10 10 0 100-20 10 10 0 000 20z" },
   { id:"reports",    label:"Raporlar",      badge:null, icon:"M18 20V10M12 20V4M6 20v-6" },
 ];
 const NAV_SETTINGS = [
@@ -3546,6 +3618,206 @@ const ACTION_LABELS = {
   reservation: "Rezervasyon",
 };
 
+// ─────────────────────────────────────────────────────────────────────────
+// Son Hareketler — shared presentational pieces. Same category icon set
+// reused across the homepage panel, the dedicated full view, the Admin
+// Activity Summary, and the per-Agency timeline — so an icon/color can
+// never drift between surfaces. Glyphs reused verbatim from the exact
+// same icons already used elsewhere in this file for each module
+// (Sidebar's "Acenteler"/"Turlar"/"Rehberlerimiz", ActivityFeed's own
+// TYPE_MAP) rather than inventing new ones.
+// ─────────────────────────────────────────────────────────────────────────
+const _ACTIVITY_CATEGORY_ICON = {
+  reservation: { d:"M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11", color:C.navy,     bg:C.ivoryDark },
+  agency:      { d:"M3 21h18 M5 21V7l8-4v18 M19 21V11l-6-4",                                color:C.gold,     bg:C.goldPale },
+  payment:     { d:"M2 9a2 2 0 012-2h16a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V9zM2 13h20", color:C.green,  bg:C.greenBg },
+  guide:       { d:"M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2 M23 21v-2a4 4 0 00-3-3.87 M16 3.13a4 4 0 010 7.75 M12 11a4 4 0 100-8 4 4 0 000 8z", color:C.blue, bg:C.blueBg },
+  tour:        { d:"M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z M9 22V12h6v10",             color:C.textMid,  bg:C.ivoryDark },
+  sales:       { d:"M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z M14 2v6h6",        color:C.amber,    bg:C.amberBg },
+  customer:    { d:"M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2 M23 21v-2a4 4 0 00-3-3.87 M16 3.13a4 4 0 010 7.75", color:C.textMid, bg:C.ivoryDark },
+  task:        { d:"M9 11l3 3L22 4",                                                        color:C.amber,    bg:C.amberBg },
+  review:      { d:"M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z", color:C.gold, bg:C.goldPale },
+  other:       { d:"M12 8v4l3 3 M12 22a10 10 0 100-20 10 10 0 000 20z",                      color:C.textMuted, bg:C.ivoryDark },
+};
+
+// Small round avatar — staff initials on a soft tint, or a plain
+// "Sistem" glyph (the bell/gear look would overclaim human agency; a
+// flat neutral circle with "S" is deliberately unglamorous).
+function ActivityAvatar({ entry, size }) {
+  const isSystem = _activityIsSystem(entry);
+  const name = _activityActorName(entry);
+  const px = size || 30;
+  return (
+    <div style={{
+      width:px, height:px, borderRadius:"50%", flexShrink:0,
+      display:"flex", alignItems:"center", justifyContent:"center",
+      background: isSystem ? C.ivoryDark : C.navy,
+      color: isSystem ? C.textMuted : C.white,
+      fontSize: px * 0.38, fontWeight:700, fontFamily:"'DM Sans',sans-serif",
+    }} title={name}>
+      {_activityInitials(name)}
+    </div>
+  );
+}
+
+// One Son Hareketler row — avatar, actor name, natural-language
+// description (already Turkish, written at insert time — see
+// activity_logs.description's own schema comment), related-entity
+// linking via the shared click target, relative time, and a small
+// category icon. Used identically by the homepage panel, the full view,
+// and the per-Agency timeline.
+function ActivityRow({ entry, compact }) {
+  const cat = _ACTIVITY_CATEGORY_ICON[_activityCategory(entry)] || _ACTIVITY_CATEGORY_ICON.other;
+  const target = _activityTarget(entry);
+  const clickable = !!target;
+  const relTime = formatAgencyRelativeTime(entry.createdAt, new Date().toISOString());
+  return (
+    <div onClick={clickable ? () => _navigateToActivity(entry) : undefined} style={{
+      display:"flex", alignItems:"flex-start", gap:12,
+      padding: compact ? "9px 0" : "11px 0",
+      borderBottom:`1px solid ${C.borderLight}`,
+      cursor: clickable ? "pointer" : "default",
+    }}>
+      <ActivityAvatar entry={entry} size={compact ? 26 : 30}/>
+      <div style={{flex:1, minWidth:0}}>
+        <div style={{fontSize: compact ? 12.5 : 13, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif"}}>
+          {_activityActorName(entry)}
+        </div>
+        <div style={{fontSize: compact ? 12 : 12.5, color:C.textMid, fontFamily:"'DM Sans',sans-serif", marginTop:2, lineHeight:1.4}}>
+          {entry.description}
+        </div>
+        <div style={{fontSize:11, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:3}}>{relTime}</div>
+      </div>
+      <div style={{
+        width:26, height:26, borderRadius:7, flexShrink:0, marginTop:1,
+        display:"flex", alignItems:"center", justifyContent:"center",
+        background:cat.bg,
+      }}>
+        <URIc d={cat.d} size={13} sw={1.7} color={cat.color}/>
+      </div>
+    </div>
+  );
+}
+
+const SON_HAREKETLER_HOME_MAX = 8;
+
+// Homepage "Son Hareketler" panel — desktop. Renders nothing while
+// loading or once genuinely empty, same convention as every other
+// optional homepage section in this file.
+function SonHareketlerPanel() {
+  const { activities, loading } = useRecentActivity();
+  if (loading || activities.length === 0) return null;
+  const visible = activities.slice(0, SON_HAREKETLER_HOME_MAX);
+  return (
+    <Card>
+      <SectionHeader title="Son Hareketler" action="Tümünü Gör" onAction={() => { if (typeof NAV_REF.fn === 'function') NAV_REF.fn('/activity'); }}/>
+      <div style={{display:"flex", flexDirection:"column"}}>
+        {visible.map(entry => <ActivityRow key={entry.id} entry={entry}/>)}
+      </div>
+    </Card>
+  );
+}
+
+// Admin-only compact team activity overview — counts and categories,
+// deliberately never a single productivity score. Reads from the SAME
+// activities list the page around it already fetched (no second query).
+function AdminActivitySummaryPanel({ activities }) {
+  const [period, setPeriod] = useState('today');
+  const summary = useMemo(
+    () => _computeAdminActivitySummary(activities, period, new Date().toISOString()),
+    [activities, period]
+  );
+  const PERIOD_OPTIONS = [['today','Bugün'],['7d','Son 7 Gün'],['30d','Son 30 Gün']];
+  const BUCKET_CFG = [
+    { key:'agency',      label:'Acente İşlemleri',       color:C.gold, bg:C.goldPale },
+    { key:'reservation', label:'Rezervasyon İşlemleri',  color:C.navy, bg:C.ivoryDark },
+    { key:'operational', label:'Operasyonel İşlemler',   color:C.blue, bg:C.blueBg },
+    { key:'email',       label:'E-posta İşlemleri',      color:C.green, bg:C.greenBg },
+  ];
+  return (
+    <Card>
+      <SectionHeader title="Ekip Aktivite Özeti"/>
+      <div style={{padding:"0 20px 20px"}}>
+        <div style={{display:"flex", gap:8, marginBottom:18, flexWrap:"wrap"}}>
+          {PERIOD_OPTIONS.map(([key,label]) => (
+            <button key={key} onClick={()=>setPeriod(key)} style={{
+              padding:"6px 14px", borderRadius:99, border:`1px solid ${period===key?C.navy:C.border}`,
+              background: period===key?C.navy:C.white, color: period===key?C.white:C.textMid,
+              fontFamily:"'DM Sans',sans-serif", fontSize:12.5, fontWeight:500, cursor:"pointer",
+            }}>{label}</button>
+          ))}
+        </div>
+        <div style={{fontSize:30, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif", lineHeight:1}}>{summary.total}</div>
+        <div style={{fontSize:12.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", marginTop:4, marginBottom:18}}>Bugün toplam önemli işlem</div>
+        <div className="rsp-stat-grid" style={{display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:12, marginBottom:22}}>
+          {BUCKET_CFG.map(b => (
+            <div key={b.key} style={{background:b.bg, borderRadius:10, padding:"12px 14px"}}>
+              <div style={{fontSize:20, fontWeight:700, color:b.color, fontFamily:"'Playfair Display',serif"}}>{summary.byBucket[b.key]||0}</div>
+              <div style={{fontSize:11, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", marginTop:2}}>{b.label}</div>
+            </div>
+          ))}
+        </div>
+        <div style={{fontSize:11, fontWeight:600, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:10}}>
+          Personel Bazında İşlemler
+        </div>
+        {summary.staffBreakdown.length === 0 ? (
+          <div style={{fontSize:12.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>Bu dönemde kayıt yok.</div>
+        ) : (
+          <div style={{display:"flex", flexDirection:"column", gap:9}}>
+            {summary.staffBreakdown.map(s => (
+              <div key={s.name} style={{display:"flex", alignItems:"center", gap:10}}>
+                <ActivityAvatar entry={{ actorName: s.name === 'Sistem' ? null : s.name }} size={24}/>
+                <div style={{flex:1, fontSize:12.5, color:C.text, fontFamily:"'DM Sans',sans-serif"}}>{s.name}</div>
+                <div style={{fontSize:12.5, fontWeight:600, color:C.textMid, fontFamily:"'DM Sans',sans-serif"}}>{s.count}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </Card>
+  );
+}
+
+// Dedicated full Son Hareketler view — reachable from the homepage
+// panel's "Tümünü Gör" and, on desktop, as its own top-level nav page
+// (canAccess(role,"activity"), same as every other sidebar page). Admin
+// gets the team summary above the list; every other role sees exactly
+// the list, scoped by activity_logs' own RLS exactly like the homepage
+// panel — no separate access-control logic invented here.
+function SonHareketlerPage() {
+  const auth = useAuthContext();
+  const isAdmin = auth.role === 'Yönetici';
+  const { activities, loading, error } = useRecentActivity({ fetchLimit: 150 });
+
+  return (
+    <div style={{display:"flex", flexDirection:"column", gap:20}}>
+      <div>
+        <h1 style={{margin:0, fontSize:24, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif", marginBottom:5}}>Son Hareketler</h1>
+        <p style={{margin:0, fontSize:13.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif"}}>
+          CRM ekibinin ve sistemin son önemli işlemleri.
+        </p>
+      </div>
+
+      {isAdmin && <AdminActivitySummaryPanel activities={activities}/>}
+
+      <Card>
+        <SectionHeader title="Tüm Hareketler"/>
+        {loading ? (
+          <div style={{padding:"30px 20px"}}><LoadingState label="Yükleniyor…"/></div>
+        ) : error ? (
+          <div style={{padding:"30px 20px", color:C.red, fontSize:13, fontFamily:"'DM Sans',sans-serif"}}>Hareketler yüklenemedi: {error}</div>
+        ) : activities.length === 0 ? (
+          <div style={{padding:"40px 20px", textAlign:"center", color:C.textFaint, fontFamily:"'DM Sans',sans-serif", fontSize:13}}>Henüz bir hareket kaydı yok.</div>
+        ) : (
+          <div style={{padding:"0 20px"}}>
+            {activities.map(entry => <ActivityRow key={entry.id} entry={entry}/>)}
+          </div>
+        )}
+      </Card>
+    </div>
+  );
+}
+
 function ActivityFeed() {
   const { data:repoActivities, loading:actLoading } = useRepo("activity", "getAll", { limit:6 });
   const TYPE_MAP = {
@@ -3652,6 +3924,165 @@ function ActivityFeed() {
 // activity (e.g. the "Yeni Rezervasyon Geldi" new-booking notification)
 // is deliberately excluded by the action==='cancelled' filter below, so
 // it keeps showing up only in NotificationBell, never here.
+// ─────────────────────────────────────────────────────────────────────────
+// Son Hareketler — meaningful operational activity feed. Pure, framework-
+// free helpers (TESTABLE) shared by the homepage panel, the dedicated
+// full view, the Admin Activity Summary, and the per-Agency activity
+// timeline on AcenteDetailPage — one set of rules, reused everywhere,
+// never duplicated. Operates on the row shape mapRecentActivityFromDB
+// produces (id, entityType, entityId, action, description, metadata,
+// actorName, actorRole, source, performedBy, createdAt).
+// ─────────────────────────────────────────────────────────────────────────
+
+// Every action value activity_logs' own CHECK constraint allows today is
+// already a real, curated business event (there is no "page_view" or
+// "mouse_move" action in this schema at all) — the only two values that
+// resemble non-operational housekeeping, and that nothing in this app
+// currently ever writes, are excluded defensively.
+// TESTABLE:_isMeaningfulActivity:start
+const _ACTIVITY_NOISE_ACTIONS = ['login', 'export'];
+function _isMeaningfulActivity(entry) {
+  return !_ACTIVITY_NOISE_ACTIONS.includes(entry.action);
+}
+// TESTABLE:_isMeaningfulActivity:end
+
+// A row with no actorName (actor_name snapshot AND no live-joined
+// performer) is, by construction, a system/service-role write — never a
+// staff member whose name failed to resolve (every human write path in
+// this file goes through _sbLog, which always snapshots actorName when a
+// staff session is active). "Sistem" is the one and only fallback label.
+// TESTABLE:_activityActorName:start
+function _activityActorName(entry) {
+  return entry.actorName || 'Sistem';
+}
+// TESTABLE:_activityActorName:end
+
+// TESTABLE:_activityIsSystem:start
+function _activityIsSystem(entry) {
+  return !entry.actorName;
+}
+// TESTABLE:_activityIsSystem:end
+
+// Same two-letter-initials convention already used for customers
+// elsewhere in this file, extracted into one reusable, testable place.
+// TESTABLE:_activityInitials:start
+function _activityInitials(name) {
+  if (!name || name === 'Sistem') return 'S';
+  return name.split(' ').map(w => w[0] || '').join('').slice(0, 2).toUpperCase();
+}
+// TESTABLE:_activityInitials:end
+
+// Category drives the small action-category icon (and the Admin Activity
+// Summary's breakdown) — one stable mapping, not re-derived per renderer.
+// TESTABLE:_activityCategory:start
+const _ACTIVITY_CATEGORY_BY_ENTITY = {
+  reservation: 'reservation', agency: 'agency', agency_email: 'agency',
+  payment: 'payment', civitatis_settlement: 'payment', guide_payment: 'payment',
+  guide: 'guide', tour: 'tour', quote: 'sales', lead: 'sales',
+  customer: 'customer', task: 'task', reservation_review: 'review',
+};
+function _activityCategory(entry) {
+  return _ACTIVITY_CATEGORY_BY_ENTITY[entry.entityType] || 'other';
+}
+// TESTABLE:_activityCategory:end
+
+// Click routing — entity_type 'agency_email' rows (drafts, outreach
+// sends, inbound/outbound replies) link back to the AGENCY via
+// metadata.agency_id, never their own entity_id (which is the email
+// row's own id, not the agency's) — the exact same resolution
+// SonBildirimlerPanel/NotificationBell already use for agency_email
+// notifications. Entity types with no detail route in this app
+// (payment, guide_payment, reservation_review, civitatis_settlement,
+// task) resolve to null — "click target... where possible", never a
+// broken/invented link.
+// TESTABLE:_activityTarget:start
+// TESTABLE:_activityTargetPath:start
+const _ACTIVITY_TARGET_PATH_PREFIX = {
+  agency: '/agencies/', reservation: '/reservations/', guide: '/guides/',
+  lead: '/leads/', quote: '/quotes/', customer: '/customers/', tour: '/tours/',
+};
+function _activityTarget(entry) {
+  if (entry.entityType === 'agency_email') {
+    return entry.metadata?.agency_id ? { type: 'agency', id: entry.metadata.agency_id } : null;
+  }
+  if (_ACTIVITY_TARGET_PATH_PREFIX[entry.entityType] && entry.entityId) {
+    return { type: entry.entityType, id: entry.entityId };
+  }
+  return null;
+}
+// TESTABLE:_activityTarget:end
+function _activityTargetPath(target) {
+  if (!target || !_ACTIVITY_TARGET_PATH_PREFIX[target.type]) return null;
+  return _ACTIVITY_TARGET_PATH_PREFIX[target.type] + target.id;
+}
+// TESTABLE:_activityTargetPath:end
+
+function _navigateToActivity(entry) {
+  const path = _activityTargetPath(_activityTarget(entry));
+  if (!path) return;
+  if (typeof NAV_REF.fn === 'function') NAV_REF.fn(path);
+  else { try { window.location.hash = '#' + path; } catch (_) {} }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Admin Activity Summary — pure computation. Deliberately NOT a single
+// "productivity score": counts and categories only, per the explicit
+// requirement. The 4 named buckets (Agency / Reservation / Operational /
+// Email) partition every meaningful entry with no overlap — "Email
+// actions" is specifically agency_email communication events (drafts/
+// sends/replies), kept distinct from "Agency actions" (status/notes/
+// creation on the agency record itself), matching how heavily this
+// module's day-to-day work is email-driven.
+// ─────────────────────────────────────────────────────────────────────────
+// TESTABLE:_adminActivityBucket:start
+function _adminActivityBucket(entry) {
+  if (entry.entityType === 'agency_email') return 'email';
+  if (entry.entityType === 'agency') return 'agency';
+  if (entry.entityType === 'reservation') return 'reservation';
+  return 'operational';
+}
+// TESTABLE:_adminActivityBucket:end
+
+// Reuses _agencyCrmPlusIsToday (date-string comparison, not a UTC-day
+// boundary check, so "today" means the same thing here as it does for
+// Agency CRM+'s own "Bugün Yeni Acente" etc.) for the 'today' case; 7d/
+// 30d are a straightforward rolling window from nowISO.
+// TESTABLE:_filterActivityByPeriod:start
+function _filterActivityByPeriod(activities, period, nowISO) {
+  const list = activities || [];
+  if (period === '7d' || period === '30d') {
+    const days = period === '7d' ? 7 : 30;
+    const now = Date.parse(nowISO);
+    if (Number.isNaN(now)) return [];
+    return list.filter(a => {
+      const t = Date.parse(a.createdAt);
+      if (Number.isNaN(t)) return false;
+      const diffDays = (now - t) / 86400000;
+      return diffDays >= 0 && diffDays <= days;
+    });
+  }
+  return list.filter(a => _agencyCrmPlusIsToday(a.createdAt, nowISO));
+}
+// TESTABLE:_filterActivityByPeriod:end
+
+// TESTABLE:_computeAdminActivitySummary:start
+function _computeAdminActivitySummary(activities, period, nowISO) {
+  const scoped = _filterActivityByPeriod(activities || [], period, nowISO);
+  const byBucket = { agency: 0, reservation: 0, operational: 0, email: 0 };
+  const byStaff = new Map();
+  for (const entry of scoped) {
+    const bucket = _adminActivityBucket(entry);
+    byBucket[bucket] = (byBucket[bucket] || 0) + 1;
+    const name = _activityActorName(entry);
+    byStaff.set(name, (byStaff.get(name) || 0) + 1);
+  }
+  const staffBreakdown = [...byStaff.entries()]
+    .map(([name, count]) => ({ name, count }))
+    .sort((a, b) => b.count - a.count);
+  return { total: scoped.length, byBucket, staffBreakdown };
+}
+// TESTABLE:_computeAdminActivitySummary:end
+
 const MAX_VISIBLE_IMPORTANT_ALERTS = 3;
 
 // Pure, framework-free filtering logic — wrapped in TESTABLE markers so the
@@ -3880,6 +4311,34 @@ function useOperationalNotifications() {
   }
 
   return { notifications, unread, loading, error: error || null, markRead, select };
+}
+
+// Son Hareketler — shared by the homepage panel, the dedicated full
+// view, and the Admin Activity Summary. ONE query (useRepo("activity",
+// "getAll") — the exact same cache entry "Son Aktiviteler"/ActivityFeed
+// already uses, so a refetch there also refreshes this), client-side
+// filtered to _isMeaningfulActivity. Which OTHER staff members' rows
+// come back at all is decided entirely by activity_logs' own RLS
+// policies (see supabase_rls_policies.sql) — this hook adds no
+// additional role-based filtering of its own, by design: RLS already
+// gives operations broad cross-staff visibility into reservation/
+// payment/tour rows, and sales/guide their own actions plus the
+// already-permitted system-generated rows, which is exactly the "only
+// the activity relevant to their permitted modules" boundary this
+// feature is required to respect.
+function useRecentActivity(opts = {}) {
+  const fetchLimit = opts.fetchLimit || 60;
+  const { data, loading, error } = useRepo("activity", "getAll", { limit: fetchLimit });
+  const activities = useMemo(() => (data || []).filter(_isMeaningfulActivity), [data]);
+  return { activities, loading, error: error || null };
+}
+
+// Agency Detail's own "Son Hareketler" — same filtering rule, different
+// (narrower, agency-scoped) query.
+function useAgencyActivity(agencyId) {
+  const { data, loading, error } = useRepo("activity", "getAgencyActivity", agencyId);
+  const activities = useMemo(() => (data || []).filter(_isMeaningfulActivity), [data]);
+  return { activities, loading, error: error || null };
 }
 
 const SON_BILDIRIMLER_MAX = 5;
@@ -5188,6 +5647,9 @@ function Dashboard() {
 
       {}
       <AgencyCrmPlusSection/>
+
+      {}
+      <SonHareketlerPanel/>
 
       {}
       <CivitatisHakedisPanel/>
@@ -13110,16 +13572,45 @@ function agencyConversationBadgeLabel(email) {
 }
 // TESTABLE:agencyConversationBadgeLabel:end
 
+// Toggle filter chip — shared look for the 4 boolean row-level filters
+// (Takip Gerekiyor / Yeni Yanıt / Partner / Son 7 Günde İletişim). Never
+// combined into the Status select — these are independent, AND-combined
+// facets over the existing data model, not new status values.
+function AgencyFilterChip({ active, onClick, children }) {
+  return (
+    <button onClick={onClick} style={{
+      display:"flex", alignItems:"center", gap:6, padding:"7px 13px", borderRadius:99,
+      border:`1px solid ${active ? C.navy : C.border}`,
+      background: active ? C.navy : C.white,
+      color: active ? C.white : C.textMid,
+      fontFamily:"'DM Sans',sans-serif", fontSize:12.5, fontWeight:500, cursor:"pointer",
+      whiteSpace:"nowrap",
+    }}>{children}</button>
+  );
+}
+
 function AcentelerPage({ onSelect }) {
   const { isMobile } = useBreakpoint();
   const { data:repoAgencies, loading, error, reload } = useRepo("agency", "getAll");
+  // Same bounded sinceDays:14 window AgencyCrmPlusSection already uses —
+  // one convention for "what counts as a recent reply" across this
+  // whole module, never a second definition.
+  const { data:repoAgencyEmails } = useRepo("agencyEmail", "getAll", { sinceDays: 14 });
   const [showAdd, setShowAdd]           = useState(false);
   const [showResearch, setShowResearch] = useState(false);
   const [search, setSearch]             = useState("");
   const [statusFilter, setStatusFilter] = useState("Tümü");
   const [countryFilter, setCountryFilter] = useState("Tümü");
+  const [needsFollowUpOnly, setNeedsFollowUpOnly] = useState(false);
+  const [hasNewReplyOnly, setHasNewReplyOnly]     = useState(false);
+  const [partnerOnly, setPartnerOnly]             = useState(false);
+  const [recentlyContactedOnly, setRecentlyContactedOnly] = useState(false);
 
-  const agencies = repoAgencies || [];
+  const enrichment = useMemo(
+    () => _computeAgencyListEnrichment(repoAgencies, repoAgencyEmails, new Date().toISOString()),
+    [repoAgencies, repoAgencyEmails]
+  );
+  const agencies = enrichment.agencies;
 
   const availableCountries = useMemo(() => {
     const set = new Set(agencies.map(a=>a.country).filter(Boolean));
@@ -13134,11 +13625,22 @@ function AcentelerPage({ onSelect }) {
       (a.contactPerson||'').toLowerCase().includes(search.toLowerCase()) ||
       (a.email||'').toLowerCase().includes(search.toLowerCase()) ||
       (a.city||'').toLowerCase().includes(search.toLowerCase());
-    return stOk && ctOk && srchOk;
+    if (!stOk || !ctOk || !srchOk) return false;
+    if (needsFollowUpOnly && !a.needsFollowUp) return false;
+    if (hasNewReplyOnly && !a.hasNewReply) return false;
+    if (partnerOnly && a.status !== "Partner") return false;
+    if (recentlyContactedOnly && !a.recentlyContacted) return false;
+    return true;
   });
 
-  const totalAgencies = agencies.length;
-  const partnerCount  = agencies.filter(a=>a.status==="Partner").length;
+  const OVERVIEW_METRICS = [
+    { label:"Toplam Acente",      val:enrichment.totalCount,             icon:"M3 21h18 M5 21V7l8-4v18 M19 21V11l-6-4", color:C.text,  bg:C.ivoryDark },
+    { label:"Aktif Görüşmeler",   val:enrichment.activeConversationCount,icon:"M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z", color:C.gold, bg:C.goldPale },
+    { label:"Bugün Yeni",         val:enrichment.newTodayCount,          icon:"M12 5v14M5 12h14", color:C.blue, bg:C.blueBg },
+    { label:"Takip Bekleyen",     val:enrichment.needsFollowUpCount,     icon:"M12 8v12M8 12h8", color:C.amber, bg:C.amberBg },
+    { label:"Yanıt Gelen",        val:enrichment.hasNewReplyCount,       icon:"M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z", color:C.green, bg:C.greenBg },
+    { label:"Partner",            val:enrichment.partnerCount,           icon:"M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11", color:C.green, bg:C.greenBg },
+  ];
 
   return (
     <div style={{ display:"flex", flexDirection:"column", gap:20 }}>
@@ -13149,7 +13651,7 @@ function AcentelerPage({ onSelect }) {
         <div>
           <h1 style={{margin:0, fontSize:24, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif", marginBottom:5}}>Acenteler</h1>
           <p style={{margin:0, fontSize:13.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif"}}>
-            DeseTour için uygun olabilecek turizm acenteleri — iletişim durumu ve notlar.
+            Partner acente ağınız — görüşme durumu, yanıtlar ve takip gereken ilişkiler tek bakışta.
           </p>
         </div>
         <div className="page-header-actions" style={{display:"flex", alignItems:"center", gap:10, flexShrink:0}}>
@@ -13196,21 +13698,18 @@ function AcentelerPage({ onSelect }) {
         </div>
       </div>
 
-      <div className="rsp-stat-grid" style={{display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:14}}>
-        {[
-          { label:"Toplam Acente", val:totalAgencies, icon:"M3 21h18 M5 21V7l8-4v18 M19 21V11l-6-4", color:C.text,  bg:C.ivoryDark },
-          { label:"Partner",       val:partnerCount,  icon:"M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11", color:C.green, bg:C.greenBg },
-        ].map((k,i)=>(
+      <div className="rsp-stat-grid" style={{display:"grid", gridTemplateColumns:"repeat(6,1fr)", gap:12}}>
+        {OVERVIEW_METRICS.map((k,i)=>(
           <div key={i} style={{
             background:C.white, border:`1px solid ${C.border}`, borderRadius:12,
-            padding:"18px 20px", display:"flex", alignItems:"center", gap:14,
+            padding:"14px 14px", display:"flex", flexDirection:"column", gap:10,
           }}>
-            <div style={{width:40, height:40, borderRadius:10, flexShrink:0, background:k.bg, display:"flex", alignItems:"center", justifyContent:"center"}}>
-              <URIc d={k.icon} size={18} sw={1.6} color={k.color}/>
+            <div style={{width:32, height:32, borderRadius:8, flexShrink:0, background:k.bg, display:"flex", alignItems:"center", justifyContent:"center"}}>
+              <URIc d={k.icon} size={15} sw={1.7} color={k.color}/>
             </div>
             <div>
-              <div style={{fontSize:24, fontWeight:700, color:k.color, fontFamily:"'Playfair Display',serif", lineHeight:1, marginBottom:3}}>{k.val}</div>
-              <div style={{fontSize:12, color:C.textMuted, fontFamily:"'DM Sans',sans-serif"}}>{k.label}</div>
+              <div style={{fontSize:21, fontWeight:700, color:k.color, fontFamily:"'Playfair Display',serif", lineHeight:1, marginBottom:3}}>{k.val}</div>
+              <div style={{fontSize:11, color:C.textMuted, fontFamily:"'DM Sans',sans-serif"}}>{k.label}</div>
             </div>
           </div>
         ))}
@@ -13220,6 +13719,10 @@ function AcentelerPage({ onSelect }) {
         <div style={{display:"flex", alignItems:"center", gap:10, borderBottom:`1px solid ${C.borderLight}`, padding:"12px 20px", flexWrap:"wrap"}}>
           <SSelect value={statusFilter} onChange={setStatusFilter} options={["Tümü", ...AGENCY_STATUS_OPTIONS]}/>
           <SSelect value={countryFilter} onChange={setCountryFilter} options={["Tümü", ...availableCountries]}/>
+          <AgencyFilterChip active={needsFollowUpOnly} onClick={()=>setNeedsFollowUpOnly(v=>!v)}>Takip Gerekiyor</AgencyFilterChip>
+          <AgencyFilterChip active={hasNewReplyOnly} onClick={()=>setHasNewReplyOnly(v=>!v)}>Yeni Yanıt</AgencyFilterChip>
+          <AgencyFilterChip active={partnerOnly} onClick={()=>setPartnerOnly(v=>!v)}>Partner</AgencyFilterChip>
+          <AgencyFilterChip active={recentlyContactedOnly} onClick={()=>setRecentlyContactedOnly(v=>!v)}>Son 7 Günde İletişim</AgencyFilterChip>
           <div style={{marginLeft:"auto", fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>{filtered.length} acente</div>
         </div>
 
@@ -13237,7 +13740,7 @@ function AcentelerPage({ onSelect }) {
           <table className="rsp-table" style={{width:"100%", borderCollapse:"collapse"}}>
             <thead>
               <tr style={{borderBottom:`1px solid ${C.border}`, background:C.ivory}}>
-                {["Acente","Ülke / Şehir","İletişim","Durum","Son Temas"].map((h,i)=>(
+                {["Acente","Ülke / Şehir","İletişim","Durum","Son Temas","Durum Notu"].map((h,i)=>(
                   <th key={i} style={{
                     padding: i===0?"11px 16px 11px 22px":"11px 12px",
                     textAlign:"left", fontSize:10.5, fontWeight:600, color:C.textFaint,
@@ -13249,12 +13752,24 @@ function AcentelerPage({ onSelect }) {
             <tbody>
               {filtered.map((a,i)=>{
                 const isLast = i===filtered.length-1;
+                // Visual emphasis — never identical weight for every row.
+                // A new reply is the most urgent signal (gold accent),
+                // then "needs follow-up" (amber), then a Partner tint;
+                // an ordinary row gets none of these.
+                const accentColor = a.hasNewReply ? C.gold : a.needsFollowUp ? C.amber : a.status === "Partner" ? C.green : "transparent";
+                const rowBg = a.hasNewReply ? "rgba(184,151,58,0.05)" : a.status === "Partner" ? "rgba(46,125,82,0.04)" : C.white;
                 return (
                   <tr key={a.id} className="dt-row" onClick={()=>onSelect?onSelect(a.id):(NAV_REF.fn&&NAV_REF.fn('/agencies/'+a.id))}
-                    style={{background:C.white, cursor:"pointer"}}>
-                    <td style={{padding:"14px 16px 14px 22px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle"}}>
-                      <div style={{fontSize:13.5, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif"}}>{a.name}</div>
+                    style={{background:rowBg, cursor:"pointer", borderLeft:`3px solid ${accentColor}`}}>
+                    <td style={{padding:"14px 16px 14px 19px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle"}}>
+                      <div style={{display:"flex", alignItems:"center", gap:7}}>
+                        <div style={{fontSize:13.5, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif"}}>{a.name}</div>
+                        {a.hasNewReply && <span title="Yeni yanıt" style={{width:7, height:7, borderRadius:"50%", background:C.gold, flexShrink:0}}/>}
+                      </div>
                       {a.website && <div style={{fontSize:11.5, color:C.textFaint, fontFamily:"'DM Mono',monospace", marginTop:2}}>{a.website}</div>}
+                      {(a.languages||[]).length > 0 && (
+                        <div style={{fontSize:11, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:2}}>{a.languages.join(', ')}</div>
+                      )}
                     </td>
                     <td style={{padding:"14px 12px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle"}}>
                       <span style={{fontSize:13, color:C.textMid, fontFamily:"'DM Sans',sans-serif"}}>
@@ -13273,6 +13788,17 @@ function AcentelerPage({ onSelect }) {
                         {a.lastContactAt ? new Date(a.lastContactAt).toLocaleDateString('tr-TR',{day:'2-digit',month:'short',year:'numeric'}) : "—"}
                       </span>
                     </td>
+                    <td style={{padding:"14px 16px 14px 12px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle"}}>
+                      {a.hasNewReply ? (
+                        <span style={{fontSize:11.5, fontWeight:600, color:"#8A6D1F", fontFamily:"'DM Sans',sans-serif"}}>Yanıt geldi</span>
+                      ) : a.needsFollowUp ? (
+                        <span style={{fontSize:11.5, fontWeight:600, color:C.amber, fontFamily:"'DM Sans',sans-serif"}}>Takip gerekiyor</span>
+                      ) : a.isActiveConversation ? (
+                        <span style={{fontSize:11.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif"}}>Görüşme sürüyor</span>
+                      ) : (
+                        <span style={{fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>—</span>
+                      )}
+                    </td>
                   </tr>
                 );
               })}
@@ -13280,16 +13806,28 @@ function AcentelerPage({ onSelect }) {
           </table>
           <div className="rsp-cards"><MobileCardList items={filtered} renderCard={(a) => {
             const scm = AGENCY_STATUS_CFG[a.status]||{color:C.textMuted,bg:C.ivoryDark};
+            const accentColor = a.hasNewReply ? C.gold : a.needsFollowUp ? C.amber : a.status === "Partner" ? C.green : C.border;
             return (
-              <MobileCard key={a.id} onClick={()=>onSelect?onSelect(a.id):(NAV_REF.fn&&NAV_REF.fn('/agencies/'+a.id))}>
-                <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
-                  <div style={{fontSize:14,fontWeight:600,color:C.text,fontFamily:"'DM Sans',sans-serif"}}>{a.name}</div>
+              <MobileCard key={a.id} onClick={()=>onSelect?onSelect(a.id):(NAV_REF.fn&&NAV_REF.fn('/agencies/'+a.id))} style={{borderLeft:`3px solid ${accentColor}`}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:6,gap:8}}>
+                  <div style={{minWidth:0, flex:1}}>
+                    <div style={{display:"flex", alignItems:"center", gap:6}}>
+                      <div style={{fontSize:14,fontWeight:700,color:C.text,fontFamily:"'Playfair Display',serif"}}>{a.name}</div>
+                      {a.hasNewReply && <span style={{width:6, height:6, borderRadius:"50%", background:C.gold, flexShrink:0}}/>}
+                    </div>
+                    {a.website && <div style={{fontSize:11, color:C.textFaint, fontFamily:"'DM Mono',monospace", marginTop:1}}>{a.website}</div>}
+                  </div>
                   <span style={{fontSize:11,padding:"2px 7px",borderRadius:99,color:scm.color,background:scm.bg,fontFamily:"'DM Sans',sans-serif",fontWeight:500,flexShrink:0}}>{a.status}</span>
                 </div>
-                <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+                <div style={{display:"flex",gap:10,flexWrap:"wrap",marginBottom: (a.hasNewReply||a.needsFollowUp) ? 6 : 0}}>
                   <span style={{fontSize:12,color:C.textMuted,fontFamily:"'DM Sans',sans-serif"}}>{[a.country,a.city].filter(Boolean).join(' / ')||'—'}</span>
                   <span style={{fontSize:12,color:C.textMuted,fontFamily:"'DM Sans',sans-serif"}}>{a.contactPerson||'—'}</span>
                 </div>
+                {a.hasNewReply ? (
+                  <div style={{fontSize:11.5, fontWeight:600, color:"#8A6D1F", fontFamily:"'DM Sans',sans-serif"}}>Yanıt geldi</div>
+                ) : a.needsFollowUp ? (
+                  <div style={{fontSize:11.5, fontWeight:600, color:C.amber, fontFamily:"'DM Sans',sans-serif"}}>Takip gerekiyor</div>
+                ) : null}
               </MobileCard>
             );
           }}/></div>
@@ -13569,10 +14107,14 @@ function AgencyResearchModal({ existingAgencies, onClose }) {
 // read-only here — no separate "Edit Agency" form in this phase, no email
 // history UI, no Prepare/Send Email actions. Those belong to later phases.
 function AcenteDetailPage({ agencyId, onBack }) {
+  const { isMobile } = useBreakpoint();
   const { data:agency, loading, error } = useRepo("agency", "getById", agencyId);
   const { mutate:mutAgency, mutating } = useRepoMutation("agency");
   const [notesDraft, setNotesDraft] = useState("");
   const [notesDirty, setNotesDirty] = useState(false);
+  // Agency Detail's own "Son Hareketler" — reuses activity_logs via
+  // getAgencyActivity(agencyId), no new table, no parallel architecture.
+  const { activities:agencyActivities, loading:agencyActivitiesLoading } = useAgencyActivity(agencyId);
 
   // Outreach drafting (Phase 2) — a single editable draft at a time, either
   // freshly generated via /api/agency-draft-outreach or loaded from an
@@ -13639,6 +14181,13 @@ function AcenteDetailPage({ agencyId, onBack }) {
   if (loading) return <LoadingState label="Acente yükleniyor…"/>;
   if (error)   return <ErrorState message={error} onRetry={()=>{}}/>;
   if (!agency) return <NotFoundCard entityType="Acente" entityId={agencyId} onBack={onBack}/>;
+
+  // Same shared follow-up/reply definition the Agencies list uses
+  // (_agencyActivityState) — scoped to THIS agency's own full email
+  // history (emailHistory), never the list page's bounded cross-agency
+  // window, so the detail page's own reply/follow-up state is always
+  // exactly accurate for this one agency.
+  const activityState = _agencyActivityState(agency, _latestInboundReplyAt(emailHistory), new Date().toISOString());
 
   async function handleStatusChange(newStatus) {
     const { error:e } = await mutAgency("update", agency.id, { status:newStatus });
@@ -13840,83 +14389,71 @@ function AcenteDetailPage({ agencyId, onBack }) {
     }
   }
 
+  // Genel Bakış / header "next action" label — one small pure mapping
+  // over the shared activityState, reused by both the header summary
+  // and the Genel Bakış card so they can never disagree.
+  const nextActionLabel = activityState.hasNewReply ? "Yanıt geldi — yanıtla"
+    : activityState.needsFollowUp ? "Takip gerekiyor"
+    : activityState.isActiveConversation ? "Görüşme sürüyor"
+    : agency.status === "Partner" ? "Aktif partner"
+    : "—";
+
   return (
     <div style={{ display:"flex", flexDirection:"column", gap:20 }}>
-      <div style={{display:"flex", alignItems:"center", gap:14, flexWrap:"wrap"}}>
-        <button onClick={onBack} style={{
-          display:"flex", alignItems:"center", gap:6,
-          background:C.ivory, border:`1px solid ${C.border}`,
-          borderRadius:7, padding:"6px 12px", cursor:"pointer",
-          color:C.textMid, fontFamily:"'DM Sans',sans-serif", fontSize:12.5,
-        }}>
-          <URIc d="M19 12H5M12 19l-7-7 7-7" size={14} sw={1.8}/>
-          Acenteler
-        </button>
-        <h1 style={{margin:0, fontSize:20, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif"}}>{agency.name}</h1>
-        <RBadge label={agency.status} map={AGENCY_STATUS_CFG}/>
+      <button onClick={onBack} style={{
+        display:"flex", alignItems:"center", gap:6, alignSelf:"flex-start",
+        background:C.ivory, border:`1px solid ${C.border}`,
+        borderRadius:7, padding:"6px 12px", cursor:"pointer",
+        color:C.textMid, fontFamily:"'DM Sans',sans-serif", fontSize:12.5,
+      }}>
+        <URIc d="M19 12H5M12 19l-7-7 7-7" size={14} sw={1.8}/>
+        Acenteler
+      </button>
+
+      {/* Compact top summary header — name, website, country/city,
+          status, primary contact, latest contact, next action, reply
+          state, all at a glance before any section below. */}
+      <div style={{
+        background:`linear-gradient(135deg, ${C.navyDeep} 0%, ${C.navy} 100%)`,
+        borderRadius:14, padding: isMobile ? "20px 18px" : "24px 28px",
+        color:C.white, display:"flex", flexDirection:"column", gap:16,
+      }}>
+        <div style={{display:"flex", alignItems:"center", gap:12, flexWrap:"wrap"}}>
+          <h1 style={{margin:0, fontSize: isMobile ? 20 : 24, fontWeight:700, color:C.white, fontFamily:"'Playfair Display',serif"}}>{agency.name}</h1>
+          <RBadge label={agency.status} map={AGENCY_STATUS_CFG}/>
+          {activityState.hasNewReply && (
+            <span style={{fontSize:11, fontWeight:600, color:"#1B2D4F", background:C.goldLight, padding:"3px 9px", borderRadius:99, fontFamily:"'DM Sans',sans-serif"}}>Yeni Yanıt</span>
+          )}
+        </div>
+        {agency.website && (
+          <div style={{fontSize:12.5, color:"rgba(248,245,238,0.75)", fontFamily:"'DM Mono',monospace"}}>{agency.website}</div>
+        )}
+        <div style={{display:"grid", gridTemplateColumns: isMobile ? "repeat(2,1fr)" : "repeat(4,1fr)", gap:16}}>
+          {[
+            ["Ülke / Şehir", [agency.country, agency.city].filter(Boolean).join(" / ") || "—"],
+            ["Birincil İletişim", agency.contactPerson || "—"],
+            ["Son Temas", agency.lastContactAt ? formatAgencyRelativeTime(agency.lastContactAt, new Date().toISOString()) : "—"],
+            ["Sonraki Adım", nextActionLabel],
+          ].map(([label,val]) => (
+            <div key={label}>
+              <div style={{fontSize:10.5, color:"rgba(248,245,238,0.55)", fontFamily:"'DM Sans',sans-serif", textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:3}}>{label}</div>
+              <div style={{fontSize:13, color:C.white, fontFamily:"'DM Sans',sans-serif", fontWeight:500}}>{val}</div>
+            </div>
+          ))}
+        </div>
       </div>
 
-      <RCard>
-        <RCardHead title="Acente Bilgileri" accent/>
-        <RInfoRow label="Acente Adı" value={agency.name} bold/>
-        <RInfoRow label="Ülke" value={agency.country || "—"}/>
-        <RInfoRow label="Şehir" value={agency.city || "—"}/>
-        <RInfoRow label="Website" value={agency.website || "—"}/>
-        <RInfoRow label="İletişim Kişisi" value={agency.contactPerson || "—"}/>
-        <RInfoRow label="E-posta" value={agency.email || "—"} mono/>
-        <RInfoRow label="Telefon" value={agency.phone || "—"} mono/>
-        <RInfoRow label="Diller" value={(agency.languages||[]).join(", ") || "—"}/>
-      </RCard>
-
-      <RCard>
-        <RCardHead title="Uygunluk" accent/>
-        <div style={{padding:"16px 20px", fontSize:13.5, color:C.textMid, fontFamily:"'DM Sans',sans-serif", lineHeight:1.6}}>
-          {agency.fitNote || <span style={{color:C.textFaint}}>Henüz bir uygunluk notu girilmedi.</span>}
-        </div>
-        {(agency.researchEvidence || agency.researchSourceUrl) && (
-          <div style={{padding:"0 20px 16px", display:"flex", flexDirection:"column", gap:6, borderTop:`1px solid ${C.borderLight}`, marginTop:2, paddingTop:12}}>
-            {agency.researchEvidence && (
-              <div style={{fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", lineHeight:1.5}}>
-                <strong style={{color:C.textMuted, fontWeight:600}}>Araştırma Bulgusu:</strong> {agency.researchEvidence}
-              </div>
-            )}
-            {agency.researchSourceUrl && (
-              <div style={{fontSize:11.5, fontFamily:"'DM Sans',sans-serif"}}>
-                <strong style={{color:C.textMuted, fontWeight:600}}>Kaynak:</strong>{' '}
-                <a href={agency.researchSourceUrl} target="_blank" rel="noopener noreferrer" style={{color:C.navy, textDecoration:"underline"}}>{agency.researchSourceUrl}</a>
-              </div>
-            )}
-          </div>
-        )}
-      </RCard>
-
-      <RCard>
-        <RCardHead title="Durum" accent/>
-        <div style={{padding:"16px 20px"}}>
-          <SSelect value={agency.status} onChange={handleStatusChange} options={AGENCY_STATUS_OPTIONS}/>
-        </div>
-      </RCard>
-
-      <RCard>
-        <RCardHead title="İç Notlar" accent/>
-        <div style={{padding:"16px 20px", display:"flex", flexDirection:"column", gap:10}}>
-          <FTextArea value={notesDraft} onChange={v=>{ setNotesDraft(v); setNotesDirty(true); }} placeholder="Bu acente hakkında iç notlar…"/>
-          <div>
-            <button onClick={handleSaveNotes} disabled={!notesDirty || mutating} style={{
-              padding:"8px 16px", borderRadius:7, border:"none",
-              background: (!notesDirty||mutating) ? C.ivoryDark : C.navy,
-              color: (!notesDirty||mutating) ? C.textFaint : C.white,
-              cursor: (!notesDirty||mutating) ? "not-allowed" : "pointer",
-              fontFamily:"'DM Sans',sans-serif", fontSize:13, fontWeight:500,
-            }}>{mutating ? "Kaydediliyor…" : "Notu Kaydet"}</button>
-          </div>
-        </div>
-      </RCard>
-
-      <RCard>
-        <RCardHead title="Son Temas" accent/>
-        <RInfoRow label="Son Temas Tarihi" value={agency.lastContactAt ? new Date(agency.lastContactAt).toLocaleDateString('tr-TR',{day:'2-digit',month:'short',year:'numeric'}) : "—"}/>
-      </RCard>
+      <div style={{display:"grid", gridTemplateColumns: isMobile ? "1fr" : "2fr 1fr", gap:20, alignItems:"start"}}>
+      {/* ── Main column: Konuşmalar + Araştırma Bulguları ──────────────
+          minWidth:0 on both direct grid children — without it, a CSS
+          Grid item's default min-width is its content's min-content
+          size (an unbroken string like an email address or "Yanıt
+          geldi — yanıtla" refuses to shrink), which silently forces the
+          1fr mobile track wider than the viewport and clips RInfoRow
+          values at the right edge. The original single-column flex
+          layout never hit this (flex's own min-width heuristic differs
+          from grid's), so this is specific to the new grid wrapper. */}
+      <div style={{display:"flex", flexDirection:"column", gap:20, minWidth:0}}>
 
       <RCard>
         <RCardHead title={replyTargetEmail ? "Yanıt Yaz" : "İlk Temas Taslağı"} accent/>
@@ -14152,6 +14689,102 @@ function AcenteDetailPage({ agencyId, onBack }) {
           </div>
         )}
       </RCard>
+
+      {/* Araştırma Bulguları — organized into the fields the data model
+          actually carries (fit reason / evidence / source / languages),
+          never invented structure beyond that. */}
+      <RCard>
+        <RCardHead title="Araştırma Bulguları" accent/>
+        <div style={{padding:"16px 20px", display:"flex", flexDirection:"column", gap:14}}>
+          <div>
+            <div style={{fontSize:10.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:5}}>Neden Uygun</div>
+            <div style={{fontSize:13.5, color:C.textMid, fontFamily:"'DM Sans',sans-serif", lineHeight:1.6}}>
+              {agency.fitNote || <span style={{color:C.textFaint}}>Henüz bir uygunluk notu girilmedi.</span>}
+            </div>
+          </div>
+          {(agency.languages||[]).length > 0 && (
+            <div>
+              <div style={{fontSize:10.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:5}}>Diller</div>
+              <div style={{fontSize:13, color:C.textMid, fontFamily:"'DM Sans',sans-serif"}}>{agency.languages.join(", ")}</div>
+            </div>
+          )}
+          {agency.researchEvidence && (
+            <div>
+              <div style={{fontSize:10.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:5}}>Kaynak Kanıt</div>
+              <div style={{fontSize:12.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", lineHeight:1.55}}>{agency.researchEvidence}</div>
+            </div>
+          )}
+          {agency.researchSourceUrl && (
+            <div>
+              <div style={{fontSize:10.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:5}}>Kaynak</div>
+              <a href={agency.researchSourceUrl} target="_blank" rel="noopener noreferrer" style={{fontSize:12, color:C.navy, textDecoration:"underline", wordBreak:"break-all"}}>{agency.researchSourceUrl}</a>
+            </div>
+          )}
+        </div>
+      </RCard>
+
+      </div>
+      {/* ── Side column: Genel Bakış, İletişim, Notlar, Son Hareketler ──
+          Same minWidth:0 fix as the main column above. */}
+      <div style={{display:"flex", flexDirection:"column", gap:20, minWidth:0}}>
+
+      <RCard>
+        <RCardHead title="Genel Bakış" accent/>
+        <div style={{padding:"16px 20px", display:"flex", flexDirection:"column", gap:14}}>
+          <div>
+            <div style={{fontSize:10.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:6}}>Durum</div>
+            <SSelect value={agency.status} onChange={handleStatusChange} options={AGENCY_STATUS_OPTIONS}/>
+          </div>
+          <RInfoRow label="Sonraki Adım" value={nextActionLabel}/>
+          <RInfoRow label="Son Temas" value={agency.lastContactAt ? new Date(agency.lastContactAt).toLocaleDateString('tr-TR',{day:'2-digit',month:'short',year:'numeric'}) : "—"}/>
+        </div>
+      </RCard>
+
+      <RCard>
+        <RCardHead title="İletişim" accent/>
+        <RInfoRow label="Ülke" value={agency.country || "—"}/>
+        <RInfoRow label="Şehir" value={agency.city || "—"}/>
+        <RInfoRow label="Website" value={agency.website || "—"}/>
+        <RInfoRow label="İletişim Kişisi" value={agency.contactPerson || "—"}/>
+        <RInfoRow label="E-posta" value={agency.email || "—"} mono/>
+        <RInfoRow label="Telefon" value={agency.phone || "—"} mono/>
+      </RCard>
+
+      <RCard>
+        <RCardHead title="Notlar" accent/>
+        <div style={{padding:"16px 20px", display:"flex", flexDirection:"column", gap:10}}>
+          <FTextArea value={notesDraft} onChange={v=>{ setNotesDraft(v); setNotesDirty(true); }} placeholder="Bu acente hakkında iç notlar…"/>
+          <div>
+            <button onClick={handleSaveNotes} disabled={!notesDirty || mutating} style={{
+              padding:"8px 16px", borderRadius:7, border:"none",
+              background: (!notesDirty||mutating) ? C.ivoryDark : C.navy,
+              color: (!notesDirty||mutating) ? C.textFaint : C.white,
+              cursor: (!notesDirty||mutating) ? "not-allowed" : "pointer",
+              fontFamily:"'DM Sans',sans-serif", fontSize:13, fontWeight:500,
+            }}>{mutating ? "Kaydediliyor…" : "Notu Kaydet"}</button>
+          </div>
+        </div>
+      </RCard>
+
+      {/* Agency Detail "Son Hareketler" — compact, bounded, reuses
+          activity_logs via useAgencyActivity (getAgencyActivity), the
+          same ActivityRow renderer the homepage/full view use. Never a
+          separate activity architecture for this one page. */}
+      <RCard>
+        <RCardHead title="Son Hareketler" accent/>
+        {agencyActivitiesLoading ? (
+          <div style={{padding:"20px"}}><LoadingState label="Yükleniyor…"/></div>
+        ) : agencyActivities.length === 0 ? (
+          <div style={{padding:"20px", color:C.textFaint, fontSize:13, fontFamily:"'DM Sans',sans-serif"}}>Henüz bir hareket kaydı yok.</div>
+        ) : (
+          <div style={{padding:"0 20px"}}>
+            {agencyActivities.slice(0, 10).map(entry => <ActivityRow key={entry.id} entry={entry} compact/>)}
+          </div>
+        )}
+      </RCard>
+
+      </div>
+      </div>
     </div>
   );
 }
@@ -18538,6 +19171,12 @@ function mapActivityFromDB(r) {
     // as before this phase — never a behavior change for them.
     who:r.actor_name||r.performer?.full_name||r.performed_by||'—', performedBy:r.performed_by,
     actorName:r.actor_name||null, actorRole:r.actor_role||null, source:r.source||null,
+    // Additive — Son Hareketler's click-routing needs metadata.agency_id
+    // for agency_email rows (their own entity_id is the email row's id,
+    // never the agency's). getAll() already SELECTs '*', so this adds no
+    // new query; every existing caller that never reads .metadata is
+    // completely unaffected.
+    metadata:r.metadata||null,
     createdAt:r.created_at, _fromDB:true };
 }
 
@@ -18651,7 +19290,7 @@ const SupabaseCustomerRepo = {
   async getById(id){const sb=getSB();if(!sb)return CustomerRepository.getById(id);const{data,error}=await sb.from('customers').select('*').eq('id',id).maybeSingle();if(error)throw new Error(error.message);return mapCustomerFromDB(data);},
   async findByContact({email,phone}){const sb=getSB();if(!sb)return CustomerRepository.findByContact({email,phone});if(!email&&!phone)return null;let q=sb.from('customers').select('*');if(email&&phone)q=q.or(`email.eq.${email},phone.eq.${phone}`);else if(email)q=q.eq('email',email);else q=q.eq('phone',phone);const{data}=await q.limit(1).maybeSingle();return mapCustomerFromDB(data);},
   async create(d){const sb=getSB();if(!sb)return CustomerRepository.create(d);const row=mapCustomerToDB(d);if(!row.full_name)row.full_name=d.name||'Bilinmiyor';row.is_active=true;row.import_type=d.importType||'manual';const{data:c,error}=await sb.from('customers').insert(row).select().single();if(error)throw new Error(error.message);try{await _sbLog('customer',c.id,'created',`Yeni misafir: ${c.full_name}`);}catch(_){}return mapCustomerFromDB(c);},
-  async update(id,p){const sb=getSB();if(!sb)return CustomerRepository.update(id,p);const row=mapCustomerToDB(p);const{data:u,error}=await sb.from('customers').update(row).eq('id',id).select().single();if(error)throw new Error(error.message);try{await _sbLog('customer',id,'updated',`Güncellendi: ${Object.keys(p).join(', ')}`);}catch(_){}return mapCustomerFromDB(u);},
+  async update(id,p){const sb=getSB();if(!sb)return CustomerRepository.update(id,p);const row=mapCustomerToDB(p);const{data:u,error}=await sb.from('customers').update(row).eq('id',id).select().single();if(error)throw new Error(error.message);const pKeys=Object.keys(p);const isNoteOnly=pKeys.length===1&&pKeys[0]==='notes';try{await _sbLog('customer',id,isNoteOnly?'note_added':'updated',isNoteOnly?`Not eklendi: ${u.full_name||''}`:`Güncellendi: ${pKeys.join(', ')}`);}catch(_){}return mapCustomerFromDB(u);},
   async delete(id){const sb=getSB();if(!sb)return CustomerRepository.delete(id);const{error}=await sb.from('customers').update({is_active:false}).eq('id',id);if(error)throw new Error(error.message);return true;},
 };
 
@@ -18663,6 +19302,36 @@ const SupabaseLeadRepo = {
   async update(id,p){const sb=getSB();if(!sb)return LeadRepository.update(id,p);const fm={status:'status',notes:'notes',assigneeId:'assigned_to',paxAdult:'pax_adult',currency:'currency',travelStart:'travel_start_date'};const row={};for(const[k,v]of Object.entries(p)){const col=fm[k]||k;row[col]=col==='status'?(_A2S[v]||v):v;}const{data:u,error}=await sb.from('leads').update(row).eq('id',id).select().single();if(error)throw new Error(error.message);if(p.status)await _sbLog('lead',id,'status_changed',`Durum → ${p.status}`);return mapLeadFromDB(u);},
   async delete(id){const sb=getSB();if(!sb)return LeadRepository.delete(id);const{error}=await sb.from('leads').update({status:'lost',closed_at:new Date().toISOString()}).eq('id',id);if(error)throw new Error(error.message);return true;},
 };
+
+// Son Hareketler quality — SupabaseReservationRepo.update() is the ONE
+// persistence path for every reservation patch (status, guide
+// assignment, notes, pickup/vehicle/driver, multi-field edits alike),
+// previously always logging the same generic action:'updated'. This
+// pure helper classifies a patch into the most specific EXISTING
+// activity_logs.action value already allowed ('status_changed',
+// 'assigned', 'note_added') when the patch shape matches one of the
+// real, audited single-purpose call sites (handleTamamlandi's
+// {opStatus}, assignReservationGuide's {guideId,guide}, a notes-only
+// save), falling back to the original generic 'updated' description for
+// every other (typically multi-field) patch — never a behavior change,
+// never a new action value, never more than one log row per call.
+// TESTABLE:_reservationUpdateLogPlan:start
+function _reservationUpdateLogPlan(patch, row) {
+  const rn = (row && row.reservation_number) || '';
+  if ('opStatus' in patch) {
+    return { action: 'status_changed', description: `Rezervasyon durumu değişti: ${rn} → ${patch.opStatus}` };
+  }
+  if ('guideId' in patch) {
+    return patch.guideId
+      ? { action: 'assigned', description: `Rehber atandı: ${patch.guide || '—'} (${rn})` }
+      : { action: 'assigned', description: `Rehber kaldırıldı: ${rn}` };
+  }
+  if ('opNotes' in patch && Object.keys(patch).length === 1) {
+    return { action: 'note_added', description: `Not eklendi: ${rn}` };
+  }
+  return { action: 'updated', description: `Güncellendi: ${Object.keys(patch).join(', ')}` };
+}
+// TESTABLE:_reservationUpdateLogPlan:end
 
 const SupabaseReservationRepo = {
   async getAll(f={}){const sb=getSB();if(!sb)return ReservationRepository.getAll(f);let q=sb.from('reservations').select('*,customer:customers(id,full_name,email,phone,nationality),tour:tours(id,name,category),guide:guides(id,full_name,status,phone)').order('check_in',{ascending:true});if(f.status)q=q.eq('status',_r2DB(f.status));if(f.payStatus)q=q.eq('payment_status',_p2DB(f.payStatus));if(f.customerId)q=q.eq('customer_id',f.customerId);if(f.search)q=q.or(`reservation_number.ilike.%${f.search}%,destination.ilike.%${f.search}%`);const{data,error}=await q;if(error)throw new Error(error.message);return(data||[]).map(mapResFromDB);},
@@ -18714,7 +19383,7 @@ const SupabaseReservationRepo = {
     return (data||[]).map(mapResFromDB);
   },
   async create(d){const sb=getSB();if(!sb)return ReservationRepository.create(d);let rn=`R-${new Date().getFullYear()}-${String(Date.now()).slice(-4)}`;try{const{data:ref}=await sb.rpc('next_ref_number',{prefix:'R',table_name:'reservations',number_col:'reservation_number'});if(ref)rn=ref;}catch(_){}const row={reservation_number:rn,lead_id:d.leadId||null,quote_id:d.quoteId||null,customer_id:d.customerId,tour_id:d.tourId||null,status:'pending_confirmation',payment_status:'pending',destination:d.tour||d.destination||'',check_in:d.checkIn||d.date||null,check_out:d.checkOut||d.date||null,check_in_time:d.time||null,pax_adult:parseInt(d.pax||d.paxAdult)||1,pax_child:parseInt(d.paxChild)||0,guide_name:d.guide||null,guide_id:d.guideId||null,vehicle_info:d.vehicle||null,driver_name:d.driver||null,pickup_location:d.pickup||null,pickup_time:d.pickupTime||null,tour_language:d.tourLanguage||null,total_amount:parseFloat(d.total)||0,currency:d.currency||'EUR',deposit_amount:parseFloat(d.deposit)||0,notes:d.opNotes||d.notes||null,assigned_to:d.assigneeId||null};const{data:c,error}=await sb.from('reservations').insert(row).select().single();if(error)throw new Error(error.message);await _sbLog('reservation',c.id,'created',`Rezervasyon: ${c.reservation_number}`);return mapResFromDB(c);},
-  async update(id,p){const sb=getSB();if(!sb)return ReservationRepository.update(id,p);const fm={opStatus:'status',payStatus:'payment_status',guide:'guide_name',guideId:'guide_id',vehicle:'vehicle_info',driver:'driver_name',pickup:'pickup_location',pickupTime:'pickup_time',opNotes:'notes',total:'total_amount',tourLanguage:'tour_language'};const row={};for(const[k,v]of Object.entries(p)){const col=fm[k]||k;if(col==='status')row[col]=_r2DB(v);else if(col==='payment_status')row[col]=_p2DB(v);else row[col]=v;}if(p.opStatus==='Tamamlandı')row.completed_at=new Date().toISOString();if(p.opStatus==='İptal')row.cancelled_at=new Date().toISOString();const{data:u,error}=await sb.from('reservations').update(row).eq('id',id).select().single();if(error)throw new Error(error.message);await _sbLog('reservation',id,'updated',`Güncellendi: ${Object.keys(p).join(', ')}`);return mapResFromDB(u);},
+  async update(id,p){const sb=getSB();if(!sb)return ReservationRepository.update(id,p);const fm={opStatus:'status',payStatus:'payment_status',guide:'guide_name',guideId:'guide_id',vehicle:'vehicle_info',driver:'driver_name',pickup:'pickup_location',pickupTime:'pickup_time',opNotes:'notes',total:'total_amount',tourLanguage:'tour_language'};const row={};for(const[k,v]of Object.entries(p)){const col=fm[k]||k;if(col==='status')row[col]=_r2DB(v);else if(col==='payment_status')row[col]=_p2DB(v);else row[col]=v;}if(p.opStatus==='Tamamlandı')row.completed_at=new Date().toISOString();if(p.opStatus==='İptal')row.cancelled_at=new Date().toISOString();const{data:u,error}=await sb.from('reservations').update(row).eq('id',id).select().single();if(error)throw new Error(error.message);const logPlan=_reservationUpdateLogPlan(p,u);await _sbLog('reservation',id,logPlan.action,logPlan.description);return mapResFromDB(u);},
   async delete(id){const sb=getSB();if(!sb)return ReservationRepository.delete(id);const{error}=await sb.from('reservations').update({status:'cancelled',cancelled_at:new Date().toISOString()}).eq('id',id);if(error)throw new Error(error.message);return true;},
 };
 
@@ -18724,8 +19393,20 @@ const SupabasePaymentRepo = {
   async getByResId(rid){const sb=getSB();if(!sb)return PaymentRepository.getByResId(rid);const{data,error}=await sb.from('payments').select('*').eq('reservation_id',rid).order('created_at',{ascending:true});if(error)throw new Error(error.message);return(data||[]).map(mapPayFromDB);},
   async getByCustomerId(cid){const sb=getSB();if(!sb)return PaymentRepository.getAll({customerId:cid});const{data,error}=await sb.from('payments').select('*').eq('customer_id',cid).order('created_at',{ascending:false});if(error)throw new Error(error.message);return(data||[]).map(mapPayFromDB);},
   async create(d){const sb=getSB();if(!sb)return PaymentRepository.create(d);let pn=`PAY-${String(Date.now()).slice(-6)}`;try{const{data:ref}=await sb.rpc('next_ref_number',{prefix:'PAY',table_name:'payments',number_col:'payment_number'});if(ref)pn=ref;}catch(_){}const amt=parseFloat(d.amount)||0;const sm={'Tam Ödeme':'paid','İade':'refunded','Kapora':'paid','Kalan Ödeme':'paid'};const tm={'Tam Ödeme':'full','İade':'refund','Kapora':'deposit','Kalan Ödeme':'balance'};const row={payment_number:pn,reservation_id:d.resId||d.reservationId||null,customer_id:d.customerId||null,payment_type:tm[d.paymentType]||d.paymentType?.toLowerCase()||'deposit',status:sm[d.paymentType]||'paid',amount:amt,currency:d.currency||'EUR',method:_mToDB(d.method),paid_at:new Date().toISOString(),notes:d.notes||null};const{data:c,error}=await sb.from('payments').insert(row).select().single();if(error)throw new Error(error.message);if(row.reservation_id)await _updateResPayStatus(sb,row.reservation_id);await _sbLog('payment',c.id,'payment_received',`Ödeme: ${d.currency==='TRY'?'₺':'€'}${amt.toLocaleString('tr-TR')}`);return mapPayFromDB(c);},
-  async update(id,p){const sb=getSB();if(!sb)return PaymentRepository.update(id,p);const{data:u,error}=await sb.from('payments').update(p).eq('id',id).select().single();if(error)throw new Error(error.message);return mapPayFromDB(u);},
-  async delete(id){const sb=getSB();if(!sb)return PaymentRepository.delete(id);const{error}=await sb.from('payments').update({status:'cancelled'}).eq('id',id);if(error)throw new Error(error.message);return true;},
+  // Son Hareketler quality — a genuinely MISSING log until this phase:
+  // _MobileDogrudanOdemelerView's markPaid() (and any other caller) hits
+  // this exact method with a {status} patch, and until now nothing here
+  // ever wrote to activity_logs at all. Uses the already-allowed
+  // 'status_changed' action — no new CHECK value needed.
+  async update(id,p){const sb=getSB();if(!sb)return PaymentRepository.update(id,p);const{data:u,error}=await sb.from('payments').update(p).eq('id',id).select().single();if(error)throw new Error(error.message);if(p.status)await _sbLog('payment',id,'status_changed',`Ödeme durumu değişti: ${u.payment_number||''} → ${p.status}`);return mapPayFromDB(u);},
+  // Same gap as update() above — a soft-cancel (status:'cancelled') that
+  // never logged anything. Uses the already-allowed 'cancelled' action.
+  // .maybeSingle() (never .single()) — the original method never checked
+  // how many rows matched and always returned true unconditionally; a
+  // nonexistent/already-processed id must keep doing exactly that, never
+  // newly throw, just like reservation_preparations' own complete()/
+  // reopen() guard this same way for the same reason.
+  async delete(id){const sb=getSB();if(!sb)return PaymentRepository.delete(id);const{data:u,error}=await sb.from('payments').update({status:'cancelled'}).eq('id',id).select().maybeSingle();if(error)throw new Error(error.message);await _sbLog('payment',id,'cancelled',`Ödeme iptal edildi: ${u?.payment_number||''}`);return true;},
 };
 
 // Replace-all sync of a guide's guide_languages rows. Delete-then-insert
@@ -18843,7 +19524,13 @@ const SupabaseAgencyRepo = {
     const row=mapAgencyToDB(d); if(!row.name) row.name=d.name||'Bilinmiyor'; if(!row.status) row.status='Aday';
     const{data:a,error}=await sb.from('agencies').insert(row).select().single();
     if(error) throw new Error(error.message);
-    await _sbLog('agency', a.id, 'created', `Yeni acente: ${a.name}`);
+    // Son Hareketler quality — a candidate imported from Pazar Araştırması
+    // (AgencyResearchModal's handleImport) always carries researchEvidence
+    // or researchSourceUrl at creation time; a manually-added agency never
+    // does. Same single 'created' event either way — just a more honest
+    // description, never a second/duplicate log row.
+    const viaResearch = !!(d.researchEvidence || d.researchSourceUrl);
+    await _sbLog('agency', a.id, 'created', viaResearch ? `Pazar araştırmasıyla eklendi: ${a.name}` : `Yeni acente: ${a.name}`);
     return mapAgencyFromDB(a);
   },
   async update(id,p){
@@ -18851,7 +19538,19 @@ const SupabaseAgencyRepo = {
     const row=mapAgencyToDB(p);
     const{data:a,error}=await sb.from('agencies').update(row).eq('id',id).select().single();
     if(error) throw new Error(error.message);
-    await _sbLog('agency', id, 'updated', `Acente güncellendi: ${Object.keys(p).join(', ')}`);
+    // Son Hareketler quality — handleStatusChange and handleSaveNotes
+    // (AcenteDetailPage) each call this SAME update() with one clean,
+    // single-purpose patch ({status} / {internalNotes}); a general edit
+    // (multiple fields at once) falls through to the original generic
+    // description — never a behavior change, never more than one log row.
+    const keys = Object.keys(p);
+    let action = 'updated', description = `Acente güncellendi: ${keys.join(', ')}`;
+    if (keys.length === 1 && keys[0] === 'status') {
+      action = 'status_changed'; description = `Acente durumu değişti: ${a.name} → ${p.status}`;
+    } else if (keys.length === 1 && keys[0] === 'internalNotes') {
+      action = 'note_added'; description = `Not eklendi: ${a.name}`;
+    }
+    await _sbLog('agency', id, action, description);
     return mapAgencyFromDB(a);
   },
 };
@@ -19033,6 +19732,29 @@ const SupabaseActivityRepo = {
   async getAll(f={}){const sb=getSB();if(!sb)return ActivityRepository.getAll(f);let q=sb.from('activity_logs').select('*,performer:staff_users!performed_by(id,full_name)').order('created_at',{ascending:false});if(f.entityType&&f.entityId)q=q.eq('entity_type',f.entityType).eq('entity_id',f.entityId);if(f.limit)q=q.limit(f.limit);const{data,error}=await q;if(error)throw new Error(error.message);return(data||[]).map(mapActivityFromDB);},
   async getByCustomerId(cid){const sb=getSB();if(!sb)return ActivityRepository.getAll({customerId:cid});const[{data:leads},{data:res},{data:pays}]=await Promise.all([sb.from('leads').select('id').eq('customer_id',cid),sb.from('reservations').select('id').eq('customer_id',cid),sb.from('payments').select('id').eq('customer_id',cid)]);const ids=[...((leads||[]).map(r=>r.id)),...((res||[]).map(r=>r.id)),...((pays||[]).map(r=>r.id)),cid];const{data,error}=await sb.from('activity_logs').select('*,performer:staff_users!performed_by(id,full_name)').in('entity_id',ids).order('created_at',{ascending:false}).limit(50);if(error)throw new Error(error.message);return(data||[]).map(mapActivityFromDB);},
   async create(d){const sb=getSB();if(!sb)return ActivityRepository.create(d);const row={entity_type:d.entityType,entity_id:d.entityId,action:d.action,description:d.description,old_value:d.oldValue||null,new_value:d.newValue||null,metadata:d.metadata||null,performed_by:d.performedBy||null,actor_name:d.actorName||null,actor_role:d.actorRole||null,source:d.source||null};const{data:c,error}=await sb.from('activity_logs').insert(row).select().single();if(error)throw new Error(error.message);return mapActivityFromDB(c);},
+  // Agency Detail "Son Hareketler" — reuses activity_logs, no new table,
+  // no parallel architecture. Two bounded legs, merged client-side: this
+  // agency's OWN rows (entity_type='agency', entity_id=agencyId —
+  // created/status_changed/note_added) and every agency_email row ABOUT
+  // this agency (entity_type='agency_email'; the link back is
+  // metadata->>'agency_id', never entity_id, which is the EMAIL row's
+  // own id). Same mapActivityFromDB mapper getAll() already uses — one
+  // consistent shape everywhere this data is read.
+  async getAgencyActivity(agencyId){
+    const sb=getSB(); if(!sb) return ActivityRepository.getAgencyActivity?ActivityRepository.getAgencyActivity(agencyId):[];
+    if(!agencyId) return [];
+    const cols='*,performer:staff_users!performed_by(id,full_name)';
+    const[ownRes,emailRes]=await Promise.all([
+      sb.from('activity_logs').select(cols).eq('entity_type','agency').eq('entity_id',agencyId).order('created_at',{ascending:false}).limit(30),
+      sb.from('activity_logs').select(cols).eq('entity_type','agency_email').eq('metadata->>agency_id',agencyId).order('created_at',{ascending:false}).limit(30),
+    ]);
+    if(ownRes.error) throw new Error(ownRes.error.message);
+    if(emailRes.error) throw new Error(emailRes.error.message);
+    return [...(ownRes.data||[]),...(emailRes.data||[])]
+      .sort((a,b)=>new Date(b.created_at)-new Date(a.created_at))
+      .slice(0,30)
+      .map(mapActivityFromDB);
+  },
   // System-generated "new reservation" notifications — auto_ingested
   // Civitatis rows (both new_booking and cancellation), additively covers
   // any future auto-ingestion source the same way. Embedding
@@ -19452,9 +20174,9 @@ function DataSourceBadge() {
 // Customer, or Messages page.
 const ROLE_PERMISSIONS = {
   "Yönetici": null, // null = all pages
-  "Satış":    ["dashboard","customers","reservations","guides","leads","quotes","reminders","agencies","messages","reports","more","changelog"],
-  "Operasyon":["dashboard","reservations","calendar","tours","guides","leads","quotes","reminders","payments","reports","more","changelog"],
-  "Rehber":   ["dashboard","calendar","reservations","more","changelog"],
+  "Satış":    ["dashboard","customers","reservations","guides","leads","quotes","reminders","agencies","messages","reports","more","changelog","activity"],
+  "Operasyon":["dashboard","reservations","calendar","tours","guides","leads","quotes","reminders","payments","reports","more","changelog","activity"],
+  "Rehber":   ["dashboard","calendar","reservations","more","changelog","activity"],
 };
 
 function canAccess(role, page) {
@@ -24220,9 +24942,12 @@ function PageRouter({ base, param, isMobile, navigate }) {
 
     if (base === "payments") return <MobilePaymentsPage/>;
     if (base === "reminders") return <MobileTasksQueuePage/>;
+    if (base === "activity") return <SonHareketlerPage onBack={()=>navigate('/dashboard')}/>;
   }
 
   if (base === "dashboard") return <Dashboard/>;
+
+  if (base === "activity") return <SonHareketlerPage/>;
 
   // Retired from active navigation — no more list/create/edit entry
   // points — but detail views stay reachable by direct link for
@@ -24637,7 +25362,7 @@ const MOBILE_PAGE_TITLES = {
   dashboard:"Bugün", leads:"Talep", customers:"Misafirler", quotes:"Teklif",
   reservations:"Rezervasyonlar", calendar:"Takvim", tours:"Turlar", guides:"Rehberlerimiz",
   payments:"Ödemeler", reminders:"Hatırlatmalar", agencies:"Acenteler", reports:"Raporlar", settings:"Ayarlar",
-  messages:"Mesajlar", more:"Diğer", changelog:"CRM Güncellemeleri",
+  messages:"Mesajlar", more:"Diğer", changelog:"CRM Güncellemeleri", activity:"Son Hareketler",
 };
 const BOTTOM_NAV_ITEMS = [
   { id:"dashboard",    label:"Bugün",     icon:"M3 9.5L12 3l9 6.5V20a1 1 0 01-1 1H4a1 1 0 01-1-1V9.5z M9 21V12h6v9" },
@@ -24688,6 +25413,7 @@ function MobileMorePage({ navigate }) {
     { id:"payments",   label:"Ödemeler",       icon:"M2 9a2 2 0 012-2h16a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V9zM2 13h20" },
     { id:"reminders",  label:"Hatırlatmalar",  icon:"M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0" },
     { id:"agencies",   label:"Acenteler",      icon:"M3 21h18 M5 21V7l8-4v18 M19 21V11l-6-4" },
+    { id:"activity",   label:"Son Hareketler", icon:"M12 8v4l3 3 M12 22a10 10 0 100-20 10 10 0 000 20z" },
     { id:"messages",   label:"Mesajlar",       icon:"M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" },
     { id:"reports",    label:"Raporlar",       icon:"M18 20V10M12 20V4M6 20v-6" },
     { id:"settings",   label:"Ayarlar",        icon:"M12 15a3 3 0 100-6 3 3 0 000 6z M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" },
@@ -24780,6 +25506,10 @@ function MobileHomePage({ navigate }) {
   // the bell's own content or read-state.
   const { notifications:opNotifications, loading:opNotifLoading, select:selectOpNotification } = useOperationalNotifications();
   const visibleOpNotifications = opNotifications.slice(0, SON_BILDIRIMLER_MAX);
+  // Same shared hook the desktop SonHareketlerPanel uses — no separate
+  // mobile-only query/filtering logic.
+  const { activities:recentActivities, loading:recentActivitiesLoading } = useRecentActivity();
+  const visibleRecentActivities = recentActivities.slice(0, SON_HAREKETLER_HOME_MAX);
 
   const { data:repoRes }    = useRepo("reservation", "getAll");
   const { data:repoPays }   = useRepo("payment",     "getAll");
@@ -24975,6 +25705,36 @@ function MobileHomePage({ navigate }) {
               </div>
             </MobileEntityCard>
           ))}
+        </MobileSection>
+      )}
+
+      {/* Mobile equivalent of the desktop SonHareketlerPanel — same
+          shared hook/row renderer, so content can never diverge across
+          surfaces. Order matches the homepage spec: Son Bildirimler,
+          Agency CRM+, Son Hareketler. */}
+      {!recentActivitiesLoading && visibleRecentActivities.length > 0 && (
+        <MobileSection title="Son Hareketler" action="Tümünü Gör" onAction={() => navigate('/activity')}>
+          {visibleRecentActivities.map(entry => {
+            const target = _activityTarget(entry);
+            return (
+              <MobileEntityCard key={entry.id} onClick={target ? () => _navigateToActivity(entry) : undefined}>
+                <div style={{ display:"flex", alignItems:"flex-start", gap:10 }}>
+                  <ActivityAvatar entry={entry} size={26}/>
+                  <div style={{ minWidth:0, flex:1 }}>
+                    <div style={{ fontSize:13, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif" }}>
+                      {_activityActorName(entry)}
+                    </div>
+                    <div style={{ fontSize:12, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", marginTop:2, lineHeight:1.35 }}>
+                      {entry.description}
+                    </div>
+                    <div style={{ fontSize:10.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:3 }}>
+                      {formatAgencyRelativeTime(entry.createdAt, new Date().toISOString())}
+                    </div>
+                  </div>
+                </div>
+              </MobileEntityCard>
+            );
+          })}
         </MobileSection>
       )}
 

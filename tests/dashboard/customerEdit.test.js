@@ -97,7 +97,11 @@ test('SupabaseCustomerRepo.update records the edit in the activity log system', 
   const idx = SOURCE.indexOf("async update(id,p){const sb=getSB();if(!sb)return CustomerRepository.update(id,p);");
   assert.ok(idx !== -1, 'could not find SupabaseCustomerRepo.update');
   const line = SOURCE.slice(idx, idx + 400);
-  assert.match(line, /_sbLog\('customer',id,'updated',/);
+  // Son Hareketler quality: a notes-only patch now logs the more
+  // specific, already-allowed 'note_added' action instead of the
+  // generic 'updated' — every other patch shape still logs 'updated'
+  // exactly as before.
+  assert.match(line, /_sbLog\('customer',id,isNoteOnly\?'note_added':'updated',/);
 });
 
 test('SupabaseCustomerRepo.update never touches reservation_guests — customers and reservation_guests are separate concepts', () => {
