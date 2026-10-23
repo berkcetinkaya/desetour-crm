@@ -3789,6 +3789,156 @@ function _viewReservationFromAlert(alert, markRead) {
 }
 // TESTABLE:_viewReservationFromAlert:end
 
+// ─────────────────────────────────────────────────────────────────────────
+// Operational notifications — shared by NotificationBell (desktop + mobile)
+// and the "Son Bildirimler" homepage panels. Reads the SAME
+// getReservationNotifications query/cache as useUnreadImportantAlerts
+// above (entity_type IN ('reservation','agency_email'), metadata
+// auto_ingested='true') — one query, one cache entry, so marking a
+// notification read anywhere refetches everywhere via Store.notify().
+// A role's RLS grant on activity_logs is the real security boundary;
+// canAccessFn is an additional client-side belt so a role whose UI
+// doesn't expose a module (e.g. Operasyon + "agencies") never renders a
+// notification for it even if a future RLS change widened the rows
+// returned.
+// ─────────────────────────────────────────────────────────────────────────
+
+// TESTABLE:_allowedOperationalEntityTypes:start
+function _allowedOperationalEntityTypes(role, canAccessFn) {
+  const types = [];
+  if (canAccessFn(role, 'reservations')) types.push('reservation');
+  if (canAccessFn(role, 'agencies')) types.push('agency_email');
+  return types;
+}
+// TESTABLE:_allowedOperationalEntityTypes:end
+
+// TESTABLE:_filterOperationalNotificationsForRole:start
+function _filterOperationalNotificationsForRole(list, allowedEntityTypes) {
+  const allowed = allowedEntityTypes || [];
+  return (list || []).filter(n => allowed.indexOf(n.entityType) !== -1);
+}
+// TESTABLE:_filterOperationalNotificationsForRole:end
+
+// Safe, short display content only — an agency_email row's bodyPreview is
+// already truncated server-side (MAX_NOTIFICATION_PREVIEW_LENGTH, see
+// api/_agencies/gmailInboundSync.js truncateForNotificationPreview); this
+// never re-reads or shows the full stored body.
+// TESTABLE:_operationalNotificationDisplay:start
+function _operationalNotificationDisplay(n) {
+  if (n.entityType === 'agency_email') {
+    return {
+      kind: 'agency_email',
+      title: (n.agencyName || 'Acente') + ' yanıt verdi',
+      subtitle: n.subject || null,
+      preview: n.bodyPreview || null,
+    };
+  }
+  const parts = [];
+  if (n.customerName) parts.push(n.customerName);
+  if (n.tourName) parts.push(n.tourName);
+  return {
+    kind: 'reservation',
+    title: n.description || 'Yeni Rezervasyon',
+    subtitle: parts.length ? parts.join(' · ') : null,
+    preview: null,
+  };
+}
+// TESTABLE:_operationalNotificationDisplay:end
+
+// TESTABLE:_operationalNotificationTarget:start
+function _operationalNotificationTarget(n) {
+  if (n.entityType === 'agency_email' && n.agencyId) return { type: 'agency', id: n.agencyId };
+  if (n.entityType === 'reservation' && n.reservationId) return { type: 'reservation', id: n.reservationId };
+  return null;
+}
+// TESTABLE:_operationalNotificationTarget:end
+
+function useOperationalNotifications() {
+  const auth = useAuthContext();
+  const { data, loading, error } = useRepo("activity", "getReservationNotifications");
+  const { mutate } = useRepoMutation("activity");
+
+  const allowed = useMemo(() => _allowedOperationalEntityTypes(auth.role, canAccess), [auth.role]);
+  const notifications = useMemo(() => _filterOperationalNotificationsForRole(data, allowed), [data, allowed]);
+  const unread = useMemo(() => notifications.filter(n => !n.isRead), [notifications]);
+
+  async function markRead(id) {
+    await mutate("markReservationNotificationRead", id);
+  }
+
+  function navigateTo(n) {
+    const target = _operationalNotificationTarget(n);
+    if (!target) return;
+    const path = target.type === 'agency' ? '/agencies/' + target.id : '/reservations/' + target.id;
+    if (typeof NAV_REF.fn === 'function') NAV_REF.fn(path);
+    else { try { window.location.hash = '#' + path; } catch (_) {} }
+  }
+
+  async function select(n) {
+    if (!n.isRead) await markRead(n.id);
+    navigateTo(n);
+  }
+
+  return { notifications, unread, loading, error: error || null, markRead, select };
+}
+
+const SON_BILDIRIMLER_MAX = 5;
+
+// Compact single row — same safe, short display content as
+// NotificationListItem (never a full email body), trimmed down for a
+// homepage card rather than a dropdown.
+function SonBildirimlerRow({ n, onSelect }) {
+  const display = _operationalNotificationDisplay(n);
+  return (
+    <div onClick={()=>onSelect(n)} style={{
+      display:"flex", gap:10, alignItems:"flex-start", cursor:"pointer",
+      padding:"10px 0", borderBottom:`1px solid ${C.borderLight}`,
+    }}>
+      {!n.isRead && <span style={{width:6, height:6, borderRadius:"50%", background:C.gold, marginTop:5, flexShrink:0}}/>}
+      <div style={{flex:1, minWidth:0}}>
+        <div style={{fontSize:12.5, fontWeight: n.isRead ? 500 : 600, color:C.text, fontFamily:"'DM Sans',sans-serif", lineHeight:1.4}}>
+          {display.title}
+        </div>
+        {display.subtitle && (
+          <div style={{fontSize:11.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", marginTop:2}}>{display.subtitle}</div>
+        )}
+        <div style={{fontSize:10.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:2}}>
+          {new Date(n.createdAt).toLocaleString('tr-TR', {day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit'})}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Homepage "Son Bildirimler" summary — the same notifications
+// NotificationBell shows, newest first, capped at SON_BILDIRIMLER_MAX, so
+// the newest operational events (new reservations, new Agency replies)
+// are visible without opening the bell. Shared hook + shared display
+// helper means this can never drift from the bell's own content or
+// read-state. Renders nothing while loading or once the list is
+// genuinely empty — same "no placeholder" convention as OnemliUyarilar
+// below — and nothing at all for a role ineligible for notifications
+// (Rehber), matching NotificationBell's own gate.
+function SonBildirimlerPanel() {
+  const auth = useAuthContext();
+  const { notifications, loading, select } = useOperationalNotifications();
+  const eligible = !!auth.role && auth.role !== "Rehber";
+  if (!eligible || loading || notifications.length === 0) return null;
+
+  const visible = notifications.slice(0, SON_BILDIRIMLER_MAX);
+
+  async function handleSelect(n) { await select(n); }
+
+  return (
+    <Card>
+      <SectionHeader title="Son Bildirimler"/>
+      <div style={{display:"flex", flexDirection:"column"}}>
+        {visible.map(n => <SonBildirimlerRow key={n.id} n={n} onSelect={handleSelect}/>)}
+      </div>
+    </Card>
+  );
+}
+
 // Renders NOTHING (no placeholder, no empty card) when there are zero
 // unread important alerts — never reserves layout space on Ana Sayfa — and
 // fails silently on a query error rather than breaking the rest of the
@@ -5032,6 +5182,9 @@ function Dashboard() {
 
       {}
       <KpiRow/>
+
+      {}
+      <SonBildirimlerPanel/>
 
       {}
       <AgencyCrmPlusSection/>
@@ -18897,7 +19050,15 @@ const SupabaseActivityRepo = {
   // `action` and the extra metadata fields (reservation_number/
   // customer_name/tour_name/tour_date) are additive: NotificationBell
   // ignores them, the cancellation alert card below reads them.
-  async getReservationNotifications(){const sb=getSB();if(!sb)return ActivityRepository.getReservationNotifications?ActivityRepository.getReservationNotifications():[];const{data,error}=await sb.from('activity_logs').select('id,entity_id,action,description,metadata,created_at,activity_log_reads(id)').eq('entity_type','reservation').eq('metadata->>auto_ingested','true').order('created_at',{ascending:false}).limit(30);if(error)throw new Error(error.message);return(data||[]).map(l=>({id:l.id,reservationId:l.entity_id,action:l.action,description:l.description,source:l.metadata?.source||null,externalBookingId:l.metadata?.external_booking_id||null,reservationNumber:l.metadata?.reservation_number||null,customerName:l.metadata?.customer_name||null,tourName:l.metadata?.tour_name||null,tourDate:l.metadata?.tour_date||null,createdAt:l.created_at,isRead:(l.activity_log_reads||[]).length>0}));},
+  // Widened (additively) to also surface entity_type='agency_email' rows —
+  // the same auto_ingested convention, written by logInboundReply() in
+  // api/_agencies/gmailInboundSync.js on every genuinely new inbound
+  // agency reply. entityType/agencyId/agencyName/subject/bodyPreview are
+  // additive fields: existing callers that only read reservation fields
+  // (reservationId, action==='cancelled', etc.) are unaffected. RLS still
+  // decides which rows a given staff member actually gets back — see the
+  // method's own doc-comment above for how that scoping works per role.
+  async getReservationNotifications(){const sb=getSB();if(!sb)return ActivityRepository.getReservationNotifications?ActivityRepository.getReservationNotifications():[];const{data,error}=await sb.from('activity_logs').select('id,entity_id,entity_type,action,description,metadata,created_at,activity_log_reads(id)').in('entity_type',['reservation','agency_email']).eq('metadata->>auto_ingested','true').order('created_at',{ascending:false}).limit(30);if(error)throw new Error(error.message);return(data||[]).map(l=>({id:l.id,entityType:l.entity_type,reservationId:l.entity_type==='reservation'?l.entity_id:null,agencyEmailId:l.entity_type==='agency_email'?l.entity_id:null,agencyId:l.metadata?.agency_id||null,agencyName:l.metadata?.agency_name||null,subject:l.metadata?.subject||null,bodyPreview:l.metadata?.body_preview||null,action:l.action,description:l.description,source:l.metadata?.source||null,externalBookingId:l.metadata?.external_booking_id||null,reservationNumber:l.metadata?.reservation_number||null,customerName:l.metadata?.customer_name||null,tourName:l.metadata?.tour_name||null,tourDate:l.metadata?.tour_date||null,createdAt:l.created_at,isRead:(l.activity_log_reads||[]).length>0}));},
   // Per-staff read receipt — INSERT only, staff_id must equal auth.uid()
   // (enforced by "activity_log_reads: staff insert own"), and the table's
   // own UNIQUE(activity_log_id, staff_id) constraint makes a repeat click
@@ -23793,19 +23954,83 @@ function GlobalSearch() {
 // always render the exact same glyph.
 const _BELL_ICON_D = "M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0";
 
-// System reservation notifications (auto-ingested "Yeni Rezervasyon Geldi"
-// events today) — read via activity_logs/activity_log_reads, exactly the
-// tables the database already writes to; no new backend behavior. Guides
-// never see this at all (RLS on activity_logs already returns zero rows
-// for them — see SupabaseActivityRepo.getReservationNotifications — and
-// this component additionally never renders the bell for that role, so
-// there's nothing to click into an always-empty panel).
+// Single row renderer shared by the desktop dropdown and the mobile
+// overlay panel — both an auto-ingested reservation row and an
+// auto-ingested agency_email row render through the same
+// _operationalNotificationDisplay() helper, so the two surfaces can
+// never show different text for the same underlying event. Only the
+// short, pre-truncated preview is ever shown — never a full email body.
+function NotificationListItem({ n, onSelect }) {
+  const display = _operationalNotificationDisplay(n);
+  return (
+    <div onClick={()=>onSelect(n)} style={{
+      padding:"11px 14px", borderBottom:`1px solid ${C.borderLight}`, cursor:"pointer",
+      background: n.isRead ? C.white : C.goldPale,
+      display:"flex", gap:10, alignItems:"flex-start",
+    }}>
+      {!n.isRead && <span style={{width:6, height:6, borderRadius:"50%", background:C.gold, marginTop:5, flexShrink:0}}/>}
+      <div style={{flex:1, minWidth:0}}>
+        <div style={{
+          fontSize:12.5, fontWeight: n.isRead ? 500 : 600, color:C.text,
+          fontFamily:"'DM Sans',sans-serif", lineHeight:1.4,
+        }}>{display.title}</div>
+        {display.subtitle && (
+          <div style={{fontSize:11.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", marginTop:2}}>{display.subtitle}</div>
+        )}
+        {display.preview && (
+          <div style={{fontSize:11, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:2, fontStyle:"italic"}}>
+            “{display.preview}”
+          </div>
+        )}
+        <div style={{fontSize:11, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:3, display:"flex", gap:6, flexWrap:"wrap"}}>
+          {n.source && <span style={{textTransform:"capitalize"}}>{n.source}</span>}
+          <span>{new Date(n.createdAt).toLocaleString('tr-TR', {day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit'})}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Header + list/loading/empty states — shared body for both the desktop
+// dropdown and the mobile overlay panel.
+function NotificationPanelBody({ notifications, loading, unreadCount, onSelect }) {
+  return (
+    <>
+      <div style={{
+        padding:"12px 14px", borderBottom:`1px solid ${C.borderLight}`,
+        display:"flex", justifyContent:"space-between", alignItems:"center",
+      }}>
+        <span style={{fontSize:12.5, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif"}}>Bildirimler</span>
+        {unreadCount > 0 && (
+          <span style={{fontSize:11, color:C.gold, fontFamily:"'DM Sans',sans-serif", fontWeight:600}}>{unreadCount} okunmadı</span>
+        )}
+      </div>
+      {loading ? (
+        <div style={{padding:"20px 14px"}}><LoadingState label="Yükleniyor…"/></div>
+      ) : notifications.length === 0 ? (
+        <div style={{padding:"24px 14px", textAlign:"center", fontSize:12.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>
+          Henüz bildirim yok.
+        </div>
+      ) : (
+        notifications.map(n => <NotificationListItem key={n.id} n={n} onSelect={onSelect}/>)
+      )}
+    </>
+  );
+}
+
+// Operational notifications (new reservations + new Agency inbound
+// replies, both auto-ingested) — read via activity_logs/activity_log_reads,
+// exactly the tables the database already writes to; no new backend
+// behavior. Guides never see this at all (RLS on activity_logs already
+// returns zero rows for them — see SupabaseActivityRepo.
+// getReservationNotifications — and this component additionally never
+// renders the bell for that role, so there's nothing to click into an
+// always-empty panel).
 function NotificationBell() {
   const auth = useAuthContext();
   const [open, setOpen] = useState(false);
   const containerRef = useRef(null);
-  const { data:notifs, loading } = useRepo("activity", "getReservationNotifications");
-  const { mutate:mutMarkRead } = useRepoMutation("activity");
+  const { notifications, unread, loading, select } = useOperationalNotifications();
 
   useEffect(() => {
     function onMouseDown(e) {
@@ -23827,16 +24052,9 @@ function NotificationBell() {
     );
   }
 
-  const list = notifs || [];
-  const unread = list.filter(n => !n.isRead);
-
   async function handleSelect(n) {
     setOpen(false);
-    if (!n.isRead) await mutMarkRead("markReservationNotificationRead", n.id);
-    if (n.reservationId) {
-      if (typeof NAV_REF.fn === 'function') NAV_REF.fn('/reservations/' + n.reservationId);
-      else { try { window.location.hash = '#/reservations/' + n.reservationId; } catch(_) {} }
-    }
+    await select(n);
   }
 
   return (
@@ -23863,45 +24081,64 @@ function NotificationBell() {
           boxShadow:"0 12px 32px rgba(13,27,62,0.16)", maxHeight:420, overflowY:"auto",
           zIndex:100,
         }}>
-          <div style={{
-            padding:"12px 14px", borderBottom:`1px solid ${C.borderLight}`,
-            display:"flex", justifyContent:"space-between", alignItems:"center",
-          }}>
-            <span style={{fontSize:12.5, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif"}}>Rezervasyon Bildirimleri</span>
-            {unread.length > 0 && (
-              <span style={{fontSize:11, color:C.gold, fontFamily:"'DM Sans',sans-serif", fontWeight:600}}>{unread.length} okunmadı</span>
-            )}
-          </div>
-          {loading ? (
-            <div style={{padding:"20px 14px"}}><LoadingState label="Yükleniyor…"/></div>
-          ) : list.length === 0 ? (
-            <div style={{padding:"24px 14px", textAlign:"center", fontSize:12.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>
-              Henüz bildirim yok.
-            </div>
-          ) : (
-            list.map(n => (
-              <div key={n.id} onClick={()=>handleSelect(n)} style={{
-                padding:"11px 14px", borderBottom:`1px solid ${C.borderLight}`, cursor:"pointer",
-                background: n.isRead ? C.white : C.goldPale,
-                display:"flex", gap:10, alignItems:"flex-start",
-              }}>
-                {!n.isRead && <span style={{width:6, height:6, borderRadius:"50%", background:C.gold, marginTop:5, flexShrink:0}}/>}
-                <div style={{flex:1, minWidth:0}}>
-                  <div style={{
-                    fontSize:12.5, fontWeight: n.isRead ? 500 : 600, color:C.text,
-                    fontFamily:"'DM Sans',sans-serif", lineHeight:1.4,
-                  }}>{n.description}</div>
-                  <div style={{fontSize:11, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:3, display:"flex", gap:6, flexWrap:"wrap"}}>
-                    {n.source && <span style={{textTransform:"capitalize"}}>{n.source}</span>}
-                    <span>{new Date(n.createdAt).toLocaleString('tr-TR', {day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit'})}</span>
-                  </div>
-                </div>
-              </div>
-            ))
-          )}
+          <NotificationPanelBody notifications={notifications} loading={loading} unreadCount={unread.length} onSelect={handleSelect}/>
         </div>
       )}
     </div>
+  );
+}
+
+// Mobile equivalent of NotificationBell — same hook, same panel body,
+// different chrome: a fixed-header icon button that opens a full-width
+// slide-down overlay instead of a desktop dropdown (there's no room for
+// an anchored 340px panel on a phone screen). Hidden entirely for Rehber,
+// same as desktop.
+function MobileNotificationBell() {
+  const auth = useAuthContext();
+  const [open, setOpen] = useState(false);
+  const { notifications, unread, loading, select } = useOperationalNotifications();
+
+  const eligible = !!auth.role && auth.role !== "Rehber";
+  if (!eligible) return null;
+
+  async function handleSelect(n) {
+    setOpen(false);
+    await select(n);
+  }
+
+  return (
+    <>
+      <button onClick={()=>setOpen(o=>!o)} aria-label="Bildirimler" style={{
+        border:"none", background:"transparent",
+        color: unread.length > 0 ? C.gold : C.ivory,
+        cursor:"pointer", padding:6, display:"flex", position:"relative",
+      }}>
+        <Ic d={_BELL_ICON_D} size={19} sw={1.6}/>
+        {unread.length > 0 && (
+          <span style={{
+            position:"absolute", top:0, right:0, minWidth:14, height:14, borderRadius:99,
+            background:C.red, color:C.white, fontSize:9, fontWeight:700, lineHeight:1,
+            display:"flex", alignItems:"center", justifyContent:"center", padding:"0 3px",
+            fontFamily:"'DM Sans',sans-serif", border:`1.5px solid ${C.navyDeep}`,
+          }}>{unread.length}</span>
+        )}
+      </button>
+      {open && (
+        <div onClick={()=>setOpen(false)} style={{
+          position:"fixed", inset:0, zIndex:300, background:"rgba(13,27,62,0.4)",
+          display:"flex", flexDirection:"column", alignItems:"stretch",
+        }}>
+          <div onClick={e=>e.stopPropagation()} style={{
+            marginTop:"calc(48px + env(safe-area-inset-top, 0px))",
+            background:C.white, maxHeight:"70vh", overflowY:"auto",
+            borderBottomLeftRadius:T.radiusSm, borderBottomRightRadius:T.radiusSm,
+            boxShadow:"0 12px 32px rgba(13,27,62,0.25)",
+          }}>
+            <NotificationPanelBody notifications={notifications} loading={loading} unreadCount={unread.length} onSelect={handleSelect}/>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 
@@ -24162,7 +24399,10 @@ function App() {
           <div style={{fontSize:15,fontWeight:600,color:C.ivory,fontFamily:"'Playfair Display',serif"}}>
             {MOBILE_PAGE_TITLES[base] || "Dese Tour"}
           </div>
-          <img src="/seffafdeselogo.png" alt="Dese Tour" style={{height:20, width:"auto", opacity:0.9}}/>
+          <div style={{display:"flex", alignItems:"center", gap:4}}>
+            <MobileNotificationBell/>
+            <img src="/seffafdeselogo.png" alt="Dese Tour" style={{height:20, width:"auto", opacity:0.9}}/>
+          </div>
         </div>
       )}
 
@@ -24535,6 +24775,11 @@ function MobileHomePage({ navigate }) {
   const [quickAction, setQuickAction] = useState(null); // null|'guest'|'reservation'|'payment'
   const { alerts:importantAlerts, loading:alertsLoading, error:alertsError, markRead:markAlertRead } = useUnreadImportantAlerts();
   const { visible:visibleAlerts, remaining:remainingAlerts } = _paginateImportantAlerts(importantAlerts, MAX_VISIBLE_IMPORTANT_ALERTS);
+  // Same shared hook NotificationBell/SonBildirimlerPanel use — one
+  // query, one cache entry, so this mobile summary can never drift from
+  // the bell's own content or read-state.
+  const { notifications:opNotifications, loading:opNotifLoading, select:selectOpNotification } = useOperationalNotifications();
+  const visibleOpNotifications = opNotifications.slice(0, SON_BILDIRIMLER_MAX);
 
   const { data:repoRes }    = useRepo("reservation", "getAll");
   const { data:repoPays }   = useRepo("payment",     "getAll");
@@ -24656,6 +24901,32 @@ function MobileHomePage({ navigate }) {
               </div>
             </MobileEntityCard>
           ))}
+        </MobileSection>
+      )}
+
+      {/* Mobile equivalent of SonBildirimlerPanel — same shared hook/display
+          helper as the desktop homepage panel and the notification bells,
+          so content and read-state can never diverge across surfaces. */}
+      {!opNotifLoading && visibleOpNotifications.length > 0 && (
+        <MobileSection title="Son Bildirimler">
+          {visibleOpNotifications.map(n => {
+            const display = _operationalNotificationDisplay(n);
+            return (
+              <MobileEntityCard key={n.id} onClick={() => selectOpNotification(n)}>
+                <div style={{ display:"flex", alignItems:"flex-start", gap:10 }}>
+                  {!n.isRead && <span style={{ width:6, height:6, borderRadius:"50%", background:C.gold, marginTop:5, flexShrink:0 }}/>}
+                  <div style={{ minWidth:0, flex:1 }}>
+                    <div style={{ fontSize:13, fontWeight: n.isRead ? 500 : 600, color:C.text, fontFamily:"'DM Sans',sans-serif", lineHeight:1.35 }}>
+                      {display.title}
+                    </div>
+                    {display.subtitle && (
+                      <div style={{ fontSize:11.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", marginTop:2 }}>{display.subtitle}</div>
+                    )}
+                  </div>
+                </div>
+              </MobileEntityCard>
+            );
+          })}
         </MobileSection>
       )}
 

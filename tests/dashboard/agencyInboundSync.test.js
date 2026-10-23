@@ -71,7 +71,12 @@ function makeFakeAdminClient(resultsByTable = {}, { statefulTables = [] } = {}) 
       return resolveNext(table);
     };
     b.update = (payload) => { calls.push({ table, method: 'update', payload }); return b; };
-    b.insert = (payload) => { calls.push({ table, method: 'insert', payload }); return resolveNext(table); };
+    // Chainable (not immediately resolved) so `.insert(x).select('id').single()`
+    // works — persistInboundMessage needs the inserted row's own id back.
+    // A bare `await adminClient.from(t).insert(x)` with no further chain
+    // still resolves correctly via `.then` below, same as before.
+    b.insert = (payload) => { calls.push({ table, method: 'insert', payload }); return b; };
+    b.single = () => resolveNext(table);
     b.then = (resolve, reject) => resolveNext(table).then(resolve, reject);
     return b;
   }
@@ -273,7 +278,7 @@ test('extractMessageFields pulls id/threadId/headers/body into one flat object',
 // ═══════════════ B. Matching hierarchy ═════════════════════════════════
 
 const AGENCIES = [
-  { id: 'AGN-1', email: 'contact@acme.com' },
+  { id: 'AGN-1', email: 'contact@acme.com', name: 'Acme Turizm' },
   { id: 'AGN-2', email: 'info@globetour.com' },
   { id: 'AGN-shared-a', email: 'shared@dup.com' },
   { id: 'AGN-shared-b', email: 'shared@dup.com' },
@@ -411,15 +416,15 @@ test('findSampleOutboundGmailMessageId returns the most recent provider_message_
 // The partial unique index itself remains the sole idempotency authority
 // — never a SELECT-then-INSERT existence check, which would race.
 
-test('persistInboundMessage performs a plain INSERT (never upsert/onConflict) against agency_emails', async () => {
-  const adminClient = makeFakeAdminClient({ agency_emails: [{ data: null, error: null }] });
+test('persistInboundMessage performs a plain INSERT (never upsert/onConflict) against agency_emails, and returns the inserted row\'s own id', async () => {
+  const adminClient = makeFakeAdminClient({ agency_emails: [{ data: { id: 'AEM-new-uuid' }, error: null }] });
   const fields = sync.extractMessageFields(gmailMessage({
     id: 'gm-new', threadId: 'th-1',
     headers: [{ name: 'From', value: 'contact@acme.com' }, { name: 'To', value: 'hello@desetour.com' }, { name: 'Subject', value: 'Re: x' }],
     bodyText: 'merhaba',
   }));
   const result = await sync.persistInboundMessage({ adminClient, agencyId: 'AGN-1', fields });
-  assert.deepEqual(result, { persisted: true, duplicate: false });
+  assert.deepEqual(result, { persisted: true, duplicate: false, insertedId: 'AEM-new-uuid' });
   const insertCall = adminClient._calls.find(c => c.table === 'agency_emails' && c.method === 'insert');
   assert.ok(insertCall, 'expected a plain insert() call');
   assert.equal(insertCall.payload.direction, 'inbound');
@@ -432,7 +437,7 @@ test('persistInboundMessage treats a Postgres 23505 unique violation on provider
   const adminClient = makeFakeAdminClient({ agency_emails: [uniqueViolationError('gm-dup')] });
   const fields = sync.extractMessageFields(gmailMessage({ id: 'gm-dup', bodyText: 'merhaba tekrar' }));
   const result = await sync.persistInboundMessage({ adminClient, agencyId: 'AGN-1', fields });
-  assert.deepEqual(result, { persisted: false, duplicate: true });
+  assert.deepEqual(result, { persisted: false, duplicate: true, insertedId: null });
 });
 
 test('persistInboundMessage propagates any OTHER database error unchanged — a replay guard must never swallow a real failure', async () => {
@@ -451,7 +456,7 @@ test('persistInboundMessage propagates a 23505 on an UNRELATED constraint rather
 });
 
 test('persistInboundMessage never stores the raw Gmail payload — only the already-normalized fields', async () => {
-  const adminClient = makeFakeAdminClient({ agency_emails: [{ data: null, error: null }] });
+  const adminClient = makeFakeAdminClient({ agency_emails: [{ data: { id: 'AEM-1' }, error: null }] });
   const fields = sync.extractMessageFields(gmailMessage({ id: 'gm-1', bodyText: 'hello' }));
   await sync.persistInboundMessage({ adminClient, agencyId: 'AGN-1', fields });
   const insertCall = adminClient._calls.find(c => c.table === 'agency_emails' && c.method === 'insert');
@@ -513,7 +518,7 @@ test('advanceAgencyOnReply fails soft (never throws) on an update error', async 
 
 test('processCandidateMessage: a genuinely new match persists the email, advances the agency, and logs exactly once', () => withGmailEnv(async () => {
   const adminClient = makeFakeAdminClient({
-    agency_emails: [{ data: null, error: null }],
+    agency_emails: [{ data: { id: 'AEM-new' }, error: null }],
     agencies: [{ error: null }],
     activity_logs: [{ error: null }],
   });
@@ -856,7 +861,7 @@ test('repeating the bounded recovery catch-up does not duplicate inbound rows �
   const knownRow = [{ agency_id: 'AGN-1', provider_thread_id: 'th-acme', internet_message_id: null, provider_message_id: null }];
 
   const adminClient1 = makeFakeAdminClient({
-    agency_emails: [{ data: knownRow, error: null }, { data: null, error: null }],
+    agency_emails: [{ data: knownRow, error: null }, { data: { id: 'AEM-recovered' }, error: null }],
     agencies: [{ data: [], error: null }, { error: null }],
     activity_logs: [{ error: null }],
   });
@@ -882,7 +887,7 @@ test('repeating the bounded recovery catch-up does not duplicate inbound rows �
 
 test('processCandidateMessage: the agency follow-up update failing on a genuinely NEW insert throws — the row is persisted but the candidate is not "done"', () => withGmailEnv(async () => {
   const adminClient = makeFakeAdminClient({
-    agency_emails: [{ data: null, error: null }],
+    agency_emails: [{ data: { id: 'AEM-new' }, error: null }],
     agencies: [{ error: { message: 'agencies table unavailable' } }],
     activity_logs: [{ error: null }],
   });
@@ -903,7 +908,7 @@ test('processCandidateMessage: the agency follow-up update failing on a genuinel
 
 test('syncAgencyMailbox: a follow-up-update failure aborts the run and does NOT advance the stable cursor — a temporary agencies-table failure holds the cursor open rather than silently diverging CRM state', () => withGmailEnv(async () => {
   const adminClient = makeFakeAdminClient({
-    agency_emails: [{ data: null, error: null }, { data: [], error: null }, { data: null, error: null }],
+    agency_emails: [{ data: null, error: null }, { data: [], error: null }, { data: { id: 'AEM-new' }, error: null }],
     agencies: [{ data: AGENCIES, error: null }, { error: { message: 'agencies table unavailable' } }],
     activity_logs: [{ error: null }],
     settings: [{ data: { value: JSON.stringify({ historyId: '100' }) }, error: null }],
@@ -923,7 +928,7 @@ test('a replayed duplicate (the insert already succeeded on a prior, now-aborted
 
   // Attempt 1: insert succeeds, follow-up update fails -> throws.
   const adminClient1 = makeFakeAdminClient({
-    agency_emails: [{ data: null, error: null }],
+    agency_emails: [{ data: { id: 'AEM-retry' }, error: null }],
     agencies: [{ error: { message: 'agencies table unavailable' } }],
     activity_logs: [{ error: null }],
   });
@@ -1017,4 +1022,83 @@ test('checkMailboxCapability performs exactly one Supabase call (the sample-id r
   const tablesTouched = new Set(adminClient._calls.map(c => c.table));
   assert.deepEqual([...tablesTouched], ['agency_emails']);
   assert.ok(!adminClient._calls.some(c => ['insert', 'update', 'upsert'].includes(c.method)), 'never a write of any kind');
+}));
+
+// ═══════════════ H6. logInboundReply — operational notification event ═
+// A real, previously undetected bug: entity_id is a UUID column, but
+// this function used to pass the Gmail message id (a plain string) —
+// every single call failed its own CHECK/type constraint, silently
+// swallowed by this function's own soft-fail. Also, 'reply_received'
+// was never an allowed activity_logs.action value at all. Both are
+// fixed here using only values the schema already allows — no migration.
+
+test('truncateForNotificationPreview collapses whitespace and truncates to MAX_NOTIFICATION_PREVIEW_LENGTH with an ellipsis only when actually cut', () => {
+  assert.equal(sync.truncateForNotificationPreview('  hello   world  '), 'hello world');
+  assert.equal(sync.truncateForNotificationPreview(''), '');
+  assert.equal(sync.truncateForNotificationPreview(null), '');
+  const long = 'x'.repeat(sync.MAX_NOTIFICATION_PREVIEW_LENGTH + 50);
+  const result = sync.truncateForNotificationPreview(long);
+  assert.equal(result.length, sync.MAX_NOTIFICATION_PREVIEW_LENGTH + 1); // +1 for the ellipsis char
+  assert.ok(result.endsWith('…'));
+  const short = 'x'.repeat(sync.MAX_NOTIFICATION_PREVIEW_LENGTH);
+  assert.equal(sync.truncateForNotificationPreview(short), short);
+});
+
+test('logInboundReply inserts action:"reply" (an already-allowed activity_logs.action value) — never the unsupported "reply_received"', async () => {
+  const adminClient = makeFakeAdminClient({ activity_logs: [{ error: null }] });
+  await sync.logInboundReply({ adminClient, agencyId: 'AGN-1', agencyEmailId: 'AEM-real-uuid', agencyName: 'Deniz Tur', subject: 'Re: Teklif', bodyPreview: 'Teşekkürler, uygun.' });
+  const insertCall = adminClient._calls.find(c => c.table === 'activity_logs' && c.method === 'insert');
+  assert.ok(insertCall);
+  assert.equal(insertCall.payload.action, 'reply');
+  assert.notEqual(insertCall.payload.action, 'reply_received');
+});
+
+test('logInboundReply writes entity_id as the REAL agency_emails row id it was given — never a Gmail message id', async () => {
+  const adminClient = makeFakeAdminClient({ activity_logs: [{ error: null }] });
+  await sync.logInboundReply({ adminClient, agencyId: 'AGN-1', agencyEmailId: 'AEM-real-uuid', agencyName: 'Deniz Tur' });
+  const insertCall = adminClient._calls.find(c => c.table === 'activity_logs' && c.method === 'insert');
+  assert.equal(insertCall.payload.entity_id, 'AEM-real-uuid');
+});
+
+test('logInboundReply sets metadata.auto_ingested="true" — the exact convention the Civitatis reservation notification already uses — making the row eligible for the shared operational notification feed', async () => {
+  const adminClient = makeFakeAdminClient({ activity_logs: [{ error: null }] });
+  await sync.logInboundReply({ adminClient, agencyId: 'AGN-1', agencyEmailId: 'AEM-1', agencyName: 'Deniz Tur' });
+  const insertCall = adminClient._calls.find(c => c.table === 'activity_logs' && c.method === 'insert');
+  assert.equal(insertCall.payload.metadata.auto_ingested, 'true');
+});
+
+test('logInboundReply denormalizes agency_name/subject/body_preview into metadata, safely short — never the full body', async () => {
+  const adminClient = makeFakeAdminClient({ activity_logs: [{ error: null }] });
+  await sync.logInboundReply({ adminClient, agencyId: 'AGN-1', agencyEmailId: 'AEM-1', agencyName: 'Deniz Tur', subject: 'Re: Teklif', bodyPreview: 'Kısa önizleme.' });
+  const insertCall = adminClient._calls.find(c => c.table === 'activity_logs' && c.method === 'insert');
+  assert.equal(insertCall.payload.metadata.agency_name, 'Deniz Tur');
+  assert.equal(insertCall.payload.metadata.subject, 'Re: Teklif');
+  assert.equal(insertCall.payload.metadata.body_preview, 'Kısa önizleme.');
+  assert.equal(insertCall.payload.metadata.agency_id, 'AGN-1');
+});
+
+test('processCandidateMessage: a genuinely new match logs an activity row with the real inserted UUID as entity_id, the agency\'s own name, and a short body preview', () => withGmailEnv(async () => {
+  const adminClient = makeFakeAdminClient({
+    agency_emails: [{ data: { id: 'AEM-real-id' }, error: null }],
+    agencies: [{ error: null }],
+    activity_logs: [{ error: null }],
+  });
+  const msg = gmailMessage({
+    id: 'gm-new', threadId: 'th-acme',
+    headers: [{ name: 'From', value: 'contact@acme.com' }, { name: 'Subject', value: 'Re: Teklif' }],
+    bodyText: 'Çok teşekkürler, uygun görünüyor.',
+  });
+  const indexes = sync.buildMatchingIndexes({ agencies: AGENCIES, agencyEmails: [] });
+  const outcome = await sync.processCandidateMessage({
+    adminClient, gmailDeps: { fetch: makeGmailFetch({ messagesById: { 'gm-new': msg } }) }, gmailMessageId: 'gm-new', indexes,
+  });
+  assert.equal(outcome, 'matched');
+  const logCall = adminClient._calls.find(c => c.table === 'activity_logs' && c.method === 'insert');
+  assert.ok(logCall);
+  assert.equal(logCall.payload.entity_id, 'AEM-real-id');
+  assert.equal(logCall.payload.action, 'reply');
+  assert.equal(logCall.payload.metadata.auto_ingested, 'true');
+  assert.equal(logCall.payload.metadata.agency_name, AGENCIES.find(a => a.id === 'AGN-1').name);
+  assert.equal(logCall.payload.metadata.subject, 'Re: Teklif');
+  assert.match(logCall.payload.metadata.body_preview, /teşekkürler/i);
 }));

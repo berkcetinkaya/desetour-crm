@@ -129,9 +129,18 @@ test('7b. an alert just marked read locally (optimistic bridge) disappears immed
 // ── 8. Shared read state with NotificationBell ──────────────────────────
 
 test('8. OnemliUyarilar/useUnreadImportantAlerts and NotificationBell call the EXACT SAME repo method — same useRepo cache key, same read state, no second persistence mechanism', () => {
+  // NotificationBell now goes through the shared useOperationalNotifications()
+  // hook (also used by the homepage "Son Bildirimler" panels and the mobile
+  // bell) rather than calling useRepo directly — but that shared hook itself
+  // still resolves to the exact same underlying query/mutation, asserted below.
   const bellIdx = SOURCE.indexOf('function NotificationBell()');
   const bellBody = SOURCE.slice(bellIdx, SOURCE.indexOf('\nfunction ', bellIdx + 10));
-  assert.match(bellBody, /useRepo\("activity",\s*"getReservationNotifications"\)/);
+  assert.match(bellBody, /useOperationalNotifications\(\)/);
+
+  const sharedHookIdx = SOURCE.indexOf('function useOperationalNotifications()');
+  const sharedHookBody = SOURCE.slice(sharedHookIdx, SOURCE.indexOf('\n}', sharedHookIdx) + 2);
+  assert.match(sharedHookBody, /useRepo\("activity",\s*"getReservationNotifications"\)/);
+  assert.match(sharedHookBody, /mutate\("markReservationNotificationRead",\s*id\)/);
 
   const hookIdx = SOURCE.indexOf('function useUnreadImportantAlerts()');
   const hookBody = SOURCE.slice(hookIdx, SOURCE.indexOf('\nfunction ', hookIdx + 10));
@@ -140,7 +149,6 @@ test('8. OnemliUyarilar/useUnreadImportantAlerts and NotificationBell call the E
   // Both mark-as-read paths call the SAME mutation method name too, so a
   // read recorded from either surface hits the SAME activity_log_reads
   // insert (via SupabaseActivityRepo.markReservationNotificationRead).
-  assert.match(bellBody, /mutMarkRead\("markReservationNotificationRead"/);
   assert.match(hookBody, /mutate\("markReservationNotificationRead"/);
 
   // No second/duplicate persistence mechanism was introduced for this

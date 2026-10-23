@@ -62,6 +62,14 @@ const STALE_HISTORY_RECOVERY_OVERLAP_SECONDS = 60 * 60;
 // raw MIME payload, never the full HTML, never an unbounded quote chain.
 const MAX_INBOUND_BODY_LENGTH = 5000;
 
+// A SEPARATE, much shorter cap for the activity_logs notification preview
+// (never the same ~5000-char body stored on the agency_emails row itself)
+// — this value is read by a global, cross-module operational-notification
+// panel (every authorized role, not just Agencies-module staff who would
+// open the real conversation to read the full message), so it must be a
+// short, safe snippet — never anything resembling the full email body.
+const MAX_NOTIFICATION_PREVIEW_LENGTH = 140;
+
 // ── Pure MIME helpers — no I/O, fully unit-testable ─────────────────────
 
 function getHeader(headers, name) {
@@ -141,6 +149,19 @@ function extractNormalizedPlainTextBody(payload) {
   return '';
 }
 
+/** Collapses whitespace/newlines and truncates to
+ * MAX_NOTIFICATION_PREVIEW_LENGTH, appending an ellipsis only when text
+ * was actually cut — the SHORT, safe snippet stored in a notification's
+ * own metadata, deliberately much shorter than the already-normalized
+ * body stored on the agency_emails row itself (never the full body in a
+ * global, cross-role notification feed). Returns '' for empty input. */
+function truncateForNotificationPreview(text) {
+  const collapsed = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!collapsed) return '';
+  if (collapsed.length <= MAX_NOTIFICATION_PREVIEW_LENGTH) return collapsed;
+  return collapsed.slice(0, MAX_NOTIFICATION_PREVIEW_LENGTH).trim() + '…';
+}
+
 /** Extracts the bare email address from a header value that may be a
  * plain address or a "Display Name <addr>" form. Always lower-cased for
  * case-insensitive comparison against agencies.email. */
@@ -198,14 +219,17 @@ function buildMatchingIndexes({ agencies, agencyEmails }) {
     if (row.provider_message_id) gmailMessageIdToAgencyId.set(row.provider_message_id, row.agency_id);
   }
   const agencyIdsByEmail = new Map();
+  const agencyIdToName = new Map();
   for (const a of (agencies || [])) {
-    if (!a || !a.email) continue;
+    if (!a) continue;
+    if (a.id && a.name) agencyIdToName.set(a.id, a.name);
+    if (!a.email) continue;
     const key = String(a.email).trim().toLowerCase();
     if (!key) continue;
     if (!agencyIdsByEmail.has(key)) agencyIdsByEmail.set(key, []);
     agencyIdsByEmail.get(key).push(a.id);
   }
-  return { threadIdToAgencyId, messageIdToAgencyId, gmailMessageIdToAgencyId, agencyIdsByEmail };
+  return { threadIdToAgencyId, messageIdToAgencyId, gmailMessageIdToAgencyId, agencyIdsByEmail, agencyIdToName };
 }
 
 /**
@@ -412,7 +436,7 @@ async function findSampleOutboundGmailMessageId({ adminClient }) {
 
 async function loadMatchingContext({ adminClient }) {
   const [{ data: agencies, error: agenciesError }, { data: agencyEmails, error: emailsError }] = await Promise.all([
-    adminClient.from('agencies').select('id, email'),
+    adminClient.from('agencies').select('id, email, name'),
     adminClient.from('agency_emails').select('agency_id, provider_thread_id, internet_message_id, provider_message_id'),
   ]);
   if (agenciesError) throw agenciesError;
@@ -444,12 +468,16 @@ async function loadMatchingContext({ adminClient }) {
  * catch here, is the only thing that actually works against a partial
  * unique index.
  *
- * Returns { persisted: true, duplicate: false } on a genuine new insert,
- * or { persisted: false, duplicate: true } when this exact
- * provider_message_id was already recorded.
+ * Returns { persisted: true, duplicate: false, insertedId } on a genuine
+ * new insert — insertedId is the REAL agency_emails row UUID, needed by
+ * the caller to record a correctly-typed notification event (entity_id
+ * is a UUID column; the Gmail message id is a plain string and must
+ * never be written there). Returns { persisted: false, duplicate: true,
+ * insertedId: null } when this exact provider_message_id was already
+ * recorded.
  */
 async function persistInboundMessage({ adminClient, agencyId, fields }) {
-  const { error } = await adminClient
+  const { data, error } = await adminClient
     .from('agency_emails')
     .insert({
       agency_id: agencyId,
@@ -465,14 +493,16 @@ async function persistInboundMessage({ adminClient, agencyId, fields }) {
       in_reply_to: fields.inReplyTo,
       from_email: extractEmailAddress(fields.fromHeader) || null,
       to_email: extractEmailAddress(fields.toHeader) || null,
-    });
+    })
+    .select('id')
+    .single();
   if (error) {
     if (isProviderMessageIdUniqueViolation(error)) {
-      return { persisted: false, duplicate: true };
+      return { persisted: false, duplicate: true, insertedId: null };
     }
     throw error;
   }
-  return { persisted: true, duplicate: false };
+  return { persisted: true, duplicate: false, insertedId: data.id };
 }
 
 /** Mirrors api/agency-send-email.js's advanceAgencyContactState — a
@@ -492,14 +522,45 @@ async function advanceAgencyOnReply({ adminClient, agencyId }) {
   }
 }
 
-async function logInboundReply({ adminClient, agencyId, agencyEmailId }) {
+/**
+ * Records the ONE notification-eligible event for a genuinely new
+ * inbound reply (never called for a duplicate replay — see
+ * processCandidateMessage). `action: 'reply'` deliberately reuses an
+ * ALREADY-ALLOWED activity_logs.action value (see
+ * activity_logs_action_check in supabase_migration_agency_draft_flow.sql)
+ * — 'reply_received' is NOT in that allow-list and would fail this
+ * insert's own CHECK constraint on every call; this was a real,
+ * previously undetected bug (silently swallowed by this function's own
+ * soft-fail catch) now fixed by using the value that already exists.
+ *
+ * `metadata.auto_ingested = 'true'` is the SAME convention the Civitatis
+ * "Yeni Rezervasyon Geldi" notification already uses (see
+ * supabase_migration_civitatis_write*.sql) — this is what makes the row
+ * eligible for the shared operational-notification feed
+ * (SupabaseActivityRepo.getReservationNotifications), reusing that
+ * existing infrastructure rather than building a parallel one.
+ * `agency_name`/`subject`/`body_preview` are denormalized at write time
+ * (the same snapshot-at-the-moment pattern the reservation/cancellation
+ * notifications already use for customer_name/tour_name) so the read
+ * side never needs a live join. `body_preview` is the SHORT,
+ * notification-safe snippet (MAX_NOTIFICATION_PREVIEW_LENGTH) — never
+ * the full normalized body already stored on the agency_emails row.
+ */
+async function logInboundReply({ adminClient, agencyId, agencyEmailId, agencyName, subject, bodyPreview }) {
   try {
     await adminClient.from('activity_logs').insert({
       entity_type: 'agency_email',
       entity_id: agencyEmailId,
-      action: 'reply_received',
+      action: 'reply',
       description: 'Acenteden yanıt alındı.',
-      metadata: { agency_id: agencyId, provider: 'gmail' },
+      metadata: {
+        agency_id: agencyId,
+        agency_name: agencyName || null,
+        subject: subject || null,
+        body_preview: bodyPreview || null,
+        provider: 'gmail',
+        auto_ingested: 'true',
+      },
       performed_by: null,
     });
   } catch (_err) {
@@ -548,7 +609,14 @@ async function processCandidateMessage({ adminClient, gmailDeps, gmailMessageId,
 
   const persistResult = await persistInboundMessage({ adminClient, agencyId: classification.agencyId, fields });
   if (!persistResult.duplicate) {
-    await logInboundReply({ adminClient, agencyId: classification.agencyId, agencyEmailId: fields.gmailMessageId });
+    await logInboundReply({
+      adminClient,
+      agencyId: classification.agencyId,
+      agencyEmailId: persistResult.insertedId,
+      agencyName: indexes.agencyIdToName ? indexes.agencyIdToName.get(classification.agencyId) : null,
+      subject: fields.subject,
+      bodyPreview: truncateForNotificationPreview(fields.body),
+    });
   }
 
   const advanceResult = await advanceAgencyOnReply({ adminClient, agencyId: classification.agencyId });
@@ -811,6 +879,7 @@ module.exports = {
   MAX_MESSAGES_PER_RUN,
   MAX_HISTORY_PAGES_PER_RUN,
   MAX_INBOUND_BODY_LENGTH,
+  MAX_NOTIFICATION_PREVIEW_LENGTH,
   POSTGRES_UNIQUE_VIOLATION_CODE,
   STALE_HISTORY_RECOVERY_MAX_WINDOW_SECONDS,
   STALE_HISTORY_RECOVERY_OVERLAP_SECONDS,
@@ -819,6 +888,7 @@ module.exports = {
   findBodyPartData,
   stripHtmlToText,
   extractNormalizedPlainTextBody,
+  truncateForNotificationPreview,
   extractEmailAddress,
   splitMessageIdList,
   extractMessageFields,
