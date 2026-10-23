@@ -137,6 +137,56 @@ async function loadAndValidate({ adminClient, agencyId, agencyEmailId }) {
 }
 
 /**
+ * Agency Mailbox Phase 7 (hardened) — loads the conversation context for
+ * an EXPLICIT reply, keyed by the exact CRM row the caller selected
+ * (replyToAgencyEmailId) — deliberately never "the agency's most recent
+ * thread": an agency can have more than one Gmail conversation, and the
+ * Reply action always attaches to the specific message/conversation it
+ * was invoked on, never whichever one happens to be newest.
+ *
+ * Loads that row SERVER SIDE and verifies, in order:
+ *   1. it exists;
+ *   2. it belongs to this exact agency (never trusts anything else about
+ *      a browser-supplied row id — a mismatched agency is treated
+ *      identically to "not found", never as a hint to use anyway);
+ *   3. it carries a provider_thread_id — the one hard requirement for "a
+ *      valid stored conversation context" (Gmail's own thread grouping
+ *      needs at least this; a missing RFC Message-Id is tolerated below,
+ *      same leniency this module has always had).
+ *
+ * Derives, from that row's OWN already-stored, already-trusted fields —
+ * never from anything browser-supplied:
+ *   - threadId:   the row's provider_thread_id (Gmail's own thread id).
+ *   - inReplyTo:  the row's own internet_message_id — the specific
+ *                 RFC Message-Id of the message actually being replied to.
+ *   - references: that same internet_message_id, prefixed with the row's
+ *                 own prior in_reply_to chain when it has one — a fuller,
+ *                 still purely server-derived reference chain.
+ *
+ * Returns null (never fabricated data, never a guess) when the row
+ * doesn't exist, belongs to a different agency, or has no stored thread
+ * at all — the caller treats null exactly like a failed lookup: fail
+ * closed, never fall back to a different thread.
+ */
+async function loadReplyContext({ adminClient, agencyId, replyToAgencyEmailId }) {
+  const { data, error } = await adminClient
+    .from('agency_emails')
+    .select('id, agency_id, provider_thread_id, internet_message_id, in_reply_to')
+    .eq('id', replyToAgencyEmailId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) return null;
+  if (data.agency_id !== agencyId) return null;
+  if (!data.provider_thread_id) return null;
+  const referencesChain = [data.in_reply_to, data.internet_message_id].filter(Boolean).join(' ');
+  return {
+    threadId: data.provider_thread_id,
+    inReplyTo: data.internet_message_id || null,
+    references: referencesChain || null,
+  };
+}
+
+/**
  * The ONLY place a draft row is marked as "a send is actually happening
  * right now" — a single atomic UPDATE whose WHERE clause re-checks every
  * condition that matters (same row, same agency, still outbound, still
@@ -272,6 +322,29 @@ async function handler(req, res, deps = {}) {
     return res.status(400).json({ error: 'agency_id ve agency_email_id zorunludur.' });
   }
 
+  // Agency Mailbox Phase 7 hardening — the caller's INTENT (a brand new
+  // outreach vs. an explicit reply inside an existing conversation) is
+  // now part of the API contract, never inferred from whatever the
+  // database happens to contain. 'new_outreach' is the default (and the
+  // only value the one existing Send flow has ever sent), so every
+  // pre-existing caller's behavior is unchanged: it never looks up or
+  // attaches to a prior thread, exactly as before this phase ever
+  // existed. Any other, unrecognized value is rejected outright — never
+  // silently coerced to a default, since that would hide a client bug
+  // exactly where thread continuity matters most.
+  const sendMode = typeof body.send_mode === 'string' ? body.send_mode : 'new_outreach';
+  if (sendMode !== 'new_outreach' && sendMode !== 'reply') {
+    return res.status(400).json({ error: 'Geçersiz gönderim modu (send_mode).' });
+  }
+  // Agency Mailbox Phase 7 (hardened) — an explicit reply is attached to
+  // the SPECIFIC CRM row the caller selected, never "the agency's most
+  // recent thread" (an agency can have more than one Gmail conversation).
+  // Only read when sendMode is actually 'reply' — a new_outreach request
+  // never looks at this field at all, even if present.
+  const replyToAgencyEmailId = sendMode === 'reply' && typeof body.reply_to_agency_email_id === 'string'
+    ? body.reply_to_agency_email_id
+    : null;
+
   let adminClient;
   try {
     const { url, serviceRoleKey } = getSupabaseEnv();
@@ -317,10 +390,51 @@ async function handler(req, res, deps = {}) {
   }
 
   const { agency, email } = validated;
+
+  // Agency Mailbox Phase 7 (hardened) — thread continuation is used ONLY
+  // for an EXPLICIT reply, never inferred merely from an old thread
+  // existing. 'new_outreach' never even looks any thread up: threadContext
+  // stays null and Gmail always starts a fresh thread, exactly as this
+  // endpoint behaved before thread continuation existed at all.
+  //
+  // 'reply' REQUIRES a resolvable context for the SPECIFIC CRM row the
+  // caller selected (reply_to_agency_email_id) — this is the one place a
+  // missing field, a lookup failure, or an unresolvable/mismatched target
+  // is NOT swallowed into "just start a new thread": doing so would
+  // silently fragment a conversation the caller explicitly asked to
+  // continue, with no visible signal to anyone. Any of those failure
+  // modes fails the whole request closed, before Gmail is ever called,
+  // with the SAME safe, generic, Turkish user-facing message — never a
+  // raw database/Gmail error, and never a hint about which specific check
+  // failed (that would leak information about other agencies' rows to a
+  // caller probing with a mismatched id).
+  let threadContext = null;
+  if (sendMode === 'reply') {
+    const lookup = replyToAgencyEmailId
+      ? await loadReplyContext({ adminClient, agencyId, replyToAgencyEmailId }).catch(err => {
+          console.error('[agency-send-email] Reply context lookup failed for an explicit reply:', err.message);
+          return undefined; // distinct from "looked up, found nothing" (null)
+        })
+      : undefined;
+    if (lookup === undefined || lookup === null || !lookup.threadId) {
+      await releaseClaim({ adminClient, agencyEmailId }).catch(() => {});
+      return res.status(409).json({
+        error: 'Bu e-posta konuşmasının yanıt bilgileri bulunamadı. Mesaj gönderilmedi.',
+        stage: 'reply_thread_context_unresolved',
+      });
+    }
+    threadContext = lookup;
+  }
+
   let sendResult;
   try {
     sendResult = await gmailSendClient.sendMessage(
-      { toEmail: agency.email, subject: email.subject, bodyText: email.body },
+      {
+        toEmail: agency.email, subject: email.subject, bodyText: email.body,
+        threadId: threadContext ? threadContext.threadId : undefined,
+        inReplyTo: threadContext && threadContext.inReplyTo ? threadContext.inReplyTo : undefined,
+        references: threadContext && threadContext.references ? threadContext.references : undefined,
+      },
       deps.gmailDeps || {}
     );
   } catch (err) {
@@ -378,3 +492,4 @@ module.exports.releaseClaim = releaseClaim;
 module.exports.persistSentEmail = persistSentEmail;
 module.exports.advanceAgencyContactState = advanceAgencyContactState;
 module.exports.logOutreachSent = logOutreachSent;
+module.exports.loadReplyContext = loadReplyContext;

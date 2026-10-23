@@ -489,3 +489,435 @@ test('[auth] api/_agencies/authorize.js ALLOWED_ROLES is unchanged by this phase
   const { ALLOWED_ROLES } = require(path.join(REPO_ROOT, 'api', '_agencies', 'authorize'));
   assert.deepEqual(ALLOWED_ROLES, ['admin', 'sales']);
 });
+
+// ── G. Agency Mailbox Phase 7 (hardened) — explicit reply (loadReplyContext) ──
+// A richer, fully-chainable fake builder (adds .not/.order/.limit on top of
+// the shared makeThenable above) used ONLY in this section, so none of the
+// pre-existing tests above — which rely on the shared builder's graceful
+// "missing chain method throws, caught as a non-fatal null fallback"
+// behavior — are affected by adding these methods.
+function makeFullThenable(result) {
+  const obj = {
+    select() { return obj; }, update() { return obj; }, insert() { return obj; },
+    eq() { return obj; }, is() { return obj; }, not() { return obj; }, order() { return obj; }, limit() { return obj; },
+    maybeSingle() { return obj; },
+    then(resolve, reject) { return Promise.resolve(result).then(resolve, reject); },
+    catch(fn) { return Promise.resolve(result).catch(fn); },
+  };
+  return obj;
+}
+
+test('loadReplyContext returns null (never fabricated data) when the selected row does not exist', async () => {
+  const adminClient = { from: () => makeFullThenable({ data: null, error: null }) };
+  const result = await handler.loadReplyContext({ adminClient, agencyId: 'agency-1', replyToAgencyEmailId: 'email-missing' });
+  assert.equal(result, null);
+});
+
+test('loadReplyContext returns null when the selected row belongs to a DIFFERENT agency — never trusts a mismatched reply target', async () => {
+  const adminClient = { from: () => makeFullThenable({ data: { id: 'email-1', agency_id: 'agency-OTHER', provider_thread_id: 'th-existing', internet_message_id: '<x@mail.gmail.com>', in_reply_to: null }, error: null }) };
+  const result = await handler.loadReplyContext({ adminClient, agencyId: 'agency-1', replyToAgencyEmailId: 'email-1' });
+  assert.equal(result, null);
+});
+
+test('loadReplyContext returns null when the selected row has no stored provider_thread_id at all — not a valid conversation context', async () => {
+  const adminClient = { from: () => makeFullThenable({ data: { id: 'email-1', agency_id: 'agency-1', provider_thread_id: null, internet_message_id: '<x@mail.gmail.com>', in_reply_to: null }, error: null }) };
+  const result = await handler.loadReplyContext({ adminClient, agencyId: 'agency-1', replyToAgencyEmailId: 'email-1' });
+  assert.equal(result, null);
+});
+
+test('loadReplyContext derives threadId/inReplyTo/references from the SELECTED row\'s own stored fields when everything matches', async () => {
+  const adminClient = { from: () => makeFullThenable({ data: { id: 'email-1', agency_id: 'agency-1', provider_thread_id: 'th-selected', internet_message_id: '<selected@mail.gmail.com>', in_reply_to: '<earlier@mail.gmail.com>' }, error: null }) };
+  const result = await handler.loadReplyContext({ adminClient, agencyId: 'agency-1', replyToAgencyEmailId: 'email-1' });
+  assert.equal(result.threadId, 'th-selected');
+  assert.equal(result.inReplyTo, '<selected@mail.gmail.com>');
+  assert.equal(result.references, '<earlier@mail.gmail.com> <selected@mail.gmail.com>');
+});
+
+test('loadReplyContext still returns a usable context (threadId only) when the selected row has no internet_message_id — same tolerance this module has always had', async () => {
+  const adminClient = { from: () => makeFullThenable({ data: { id: 'email-1', agency_id: 'agency-1', provider_thread_id: 'th-selected', internet_message_id: null, in_reply_to: null }, error: null }) };
+  const result = await handler.loadReplyContext({ adminClient, agencyId: 'agency-1', replyToAgencyEmailId: 'email-1' });
+  assert.equal(result.threadId, 'th-selected');
+  assert.equal(result.inReplyTo, null);
+  assert.equal(result.references, null);
+});
+
+test('loadReplyContext looks up by the row\'s id — the SELECTED conversation, never "most recent"', async () => {
+  const calls = [];
+  const adminClient = {
+    from(table) {
+      calls.push({ table, ops: [] });
+      const record = calls[calls.length - 1];
+      const obj = {
+        select(cols) { record.ops.push(['select', cols]); return obj; },
+        eq(col, val) { record.ops.push(['eq', col, val]); return obj; },
+        maybeSingle() { return Promise.resolve({ data: { id: 'email-77', agency_id: 'agency-77', provider_thread_id: 'th-77', internet_message_id: null, in_reply_to: null }, error: null }); },
+      };
+      return obj;
+    },
+  };
+  await handler.loadReplyContext({ adminClient, agencyId: 'agency-77', replyToAgencyEmailId: 'email-77' });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].table, 'agency_emails');
+  assert.deepEqual(calls[0].ops.find(o => o[0] === 'eq'), ['eq', 'id', 'email-77']);
+  // Never an .order(...).limit(1) "pick the newest" pattern — this test
+  // would fail to compile that assumption in since the fake builder here
+  // has no .order/.limit at all, matching loadReplyContext's own real
+  // query shape (select -> eq(id) -> maybeSingle, nothing else).
+});
+
+test('loadReplyContext throws on a real query error — the caller\'s own .catch() is what makes this non-fatal, not this function swallowing it', async () => {
+  const adminClient = { from: () => makeFullThenable({ data: null, error: { message: 'db unavailable' } }) };
+  let caught = null;
+  try { await handler.loadReplyContext({ adminClient, agencyId: 'agency-1', replyToAgencyEmailId: 'email-1' }); } catch (err) { caught = err; }
+  assert.ok(caught);
+  assert.equal(caught.message, 'db unavailable');
+});
+
+// ── G2. send_mode: 'new_outreach' vs 'reply' (hardened Phase 7) ─────────
+// Thread continuation is now used ONLY for an EXPLICIT send_mode:'reply'
+// — never inferred merely from an old thread existing. 'new_outreach'
+// (the default, and the only value the single existing Send flow has
+// ever sent) never even looks the thread up. 'reply' REQUIRES a
+// resolvable thread context or the whole request fails closed (409),
+// before Gmail is ever called — it must never silently fall back to a
+// new thread just because the lookup came back empty or failed.
+
+test('[new_outreach] an explicit send_mode:"new_outreach" never looks up or attaches to a thread — a fresh Gmail thread, exactly as before Phase 7 ever existed', () => withEnv(async () => {
+  const createClient = fakeCreateClientFactory({
+    script: { staff_users: STAFF_ADMIN_ACTIVE, agencies: [AGENCY_ADAY[0], { status: 'Aday' }], agency_emails: [DRAFT_ROW[0], { ...DRAFT_ROW[0], send_claimed_at: new Date().toISOString() }] },
+  });
+  let capturedBody = null;
+  const gmailDeps = {
+    fetch: async (url, opts) => {
+      if (String(url).includes('oauth2.googleapis.com')) return { ok: true, json: async () => ({ access_token: 'tok', expires_in: 3600 }) };
+      if (String(url).includes('/send')) { capturedBody = JSON.parse(opts.body); return { ok: true, json: async () => ({ id: 'gm-fresh', threadId: 'th-fresh' }) }; }
+      return { ok: true, json: async () => ({ payload: { headers: [] } }) };
+    },
+  };
+  const res = fakeRes();
+  await handler(req({ agency_id: 'agency-1', agency_email_id: 'email-1', send_mode: 'new_outreach' }), res, { createClient, gmailDeps });
+  assert.equal(res._calls.status, 200);
+  assert.ok(capturedBody);
+  assert.equal(capturedBody.threadId, undefined);
+  const decoded = Buffer.from(capturedBody.raw.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');
+  assert.doesNotMatch(decoded, /In-Reply-To:/);
+  assert.doesNotMatch(decoded, /References:/);
+}));
+
+test('[new_outreach] omitting send_mode entirely defaults to new_outreach — the one existing Send flow\'s behavior is unchanged', () => withEnv(async () => {
+  const createClient = fakeCreateClientFactory({
+    script: { staff_users: STAFF_ADMIN_ACTIVE, agencies: [AGENCY_ADAY[0], { status: 'Aday' }], agency_emails: [DRAFT_ROW[0], { ...DRAFT_ROW[0], send_claimed_at: new Date().toISOString() }] },
+  });
+  let capturedBody = null;
+  const gmailDeps = fakeGmailDepsSuccess({ gmailMessageId: 'gm-default', gmailThreadId: 'th-default' });
+  const wrapped = () => {
+    const c = createClient();
+    const origSend = gmailDeps.fetch;
+    gmailDeps.fetch = async (url, opts) => { if (String(url).includes('/send')) capturedBody = JSON.parse(opts.body); return origSend(url, opts); };
+    return c;
+  };
+  const res = fakeRes();
+  await handler(req({ agency_id: 'agency-1', agency_email_id: 'email-1' }), res, { createClient: wrapped, gmailDeps });
+  assert.equal(res._calls.status, 200);
+  assert.ok(capturedBody);
+  assert.equal(capturedBody.threadId, undefined, 'no send_mode given must behave exactly like new_outreach — never silently attach to a thread');
+}));
+
+test('[new_outreach] never auto-attaches to an old thread even when one genuinely exists for this agency — attaching now requires an EXPLICIT send_mode:"reply"', () => withEnv(async () => {
+  // A successful new_outreach send touches agency_emails exactly 3 times:
+  // 1) loadAndValidate's select, 2) claimDraftForSending's update, 3)
+  // persistSentEmail's update. If findExistingThreadContext were (wrongly)
+  // still being called, that would be a 4th agency_emails call — counting
+  // calls, rather than relying on the shared fake builder having (or
+  // lacking) a .not( method, is what actually proves the lookup itself
+  // never happened, not just that one of its internal calls failed.
+  let agencyEmailsCallCount = 0;
+  const createClient = fakeCreateClientFactory({
+    script: { staff_users: STAFF_ADMIN_ACTIVE, agencies: [AGENCY_ADAY[0], { status: 'Aday' }], agency_emails: [DRAFT_ROW[0], { ...DRAFT_ROW[0], send_claimed_at: new Date().toISOString() }] },
+  });
+  const wrapped = () => {
+    const c = createClient();
+    const origFrom = c.from;
+    c.from = (table) => { if (table === 'agency_emails') agencyEmailsCallCount += 1; return origFrom(table); };
+    return c;
+  };
+  let capturedBody = null;
+  const gmailDeps = {
+    fetch: async (url, opts) => {
+      if (String(url).includes('oauth2.googleapis.com')) return { ok: true, json: async () => ({ access_token: 'tok', expires_in: 3600 }) };
+      if (String(url).includes('/send')) { capturedBody = JSON.parse(opts.body); return { ok: true, json: async () => ({ id: 'gm-fresh2', threadId: 'th-fresh2' }) }; }
+      return { ok: true, json: async () => ({ payload: { headers: [] } }) };
+    },
+  };
+  const res = fakeRes();
+  await handler(req({ agency_id: 'agency-1', agency_email_id: 'email-1', send_mode: 'new_outreach' }), res, { createClient: wrapped, gmailDeps });
+  assert.equal(res._calls.status, 200);
+  assert.equal(agencyEmailsCallCount, 3, 'expected exactly 3 agency_emails calls (validate, claim, persist) — a 4th would mean a thread lookup was wrongly attempted');
+  assert.equal(capturedBody.threadId, undefined);
+}));
+
+test('[reply] an existing Gmail thread is continued: threadId reaches the Gmail send body, and In-Reply-To/References carry the selected message\'s own Message-Id', () => withEnv(async () => {
+  const createClient = fakeCreateClientFactory({
+    script: { staff_users: STAFF_ADMIN_ACTIVE, agencies: [AGENCY_ADAY[0], { status: 'Aday' }], agency_emails: [DRAFT_ROW[0], { ...DRAFT_ROW[0], send_claimed_at: new Date().toISOString() }] },
+  });
+  const wrapped = () => {
+    const c = createClient();
+    const origFrom = c.from;
+    let agencyEmailsCalls = 0;
+    // Call order on agency_emails for a successful reply send: 1) loadAndValidate's
+    // select, 2) claimDraftForSending's update, 3) loadReplyContext's
+    // select-by-id (THIS is the one to fake), 4) persistSentEmail's update.
+    c.from = (table) => {
+      if (table !== 'agency_emails') return origFrom(table);
+      agencyEmailsCalls += 1;
+      return agencyEmailsCalls === 3
+        ? makeFullThenable({ data: { id: 'email-inbound-1', agency_id: 'agency-1', provider_thread_id: 'th-continuing', internet_message_id: '<prior@mail.gmail.com>', in_reply_to: null }, error: null })
+        : origFrom(table);
+    };
+    return c;
+  };
+  let capturedBody = null;
+  const gmailDeps = {
+    fetch: async (url, opts) => {
+      if (String(url).includes('oauth2.googleapis.com')) return { ok: true, json: async () => ({ access_token: 'tok', expires_in: 3600 }) };
+      if (String(url).includes('/send')) { capturedBody = JSON.parse(opts.body); return { ok: true, json: async () => ({ id: 'gm-continuing', threadId: 'th-continuing' }) }; }
+      return { ok: true, json: async () => ({ payload: { headers: [] } }) };
+    },
+  };
+  const res = fakeRes();
+  await handler(req({ agency_id: 'agency-1', agency_email_id: 'email-1', send_mode: 'reply', reply_to_agency_email_id: 'email-inbound-1' }), res, { createClient: wrapped, gmailDeps });
+  assert.equal(res._calls.status, 200);
+  assert.ok(capturedBody, 'expected the Gmail send call to have happened');
+  assert.equal(capturedBody.threadId, 'th-continuing');
+  const decoded = Buffer.from(capturedBody.raw.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');
+  assert.match(decoded, /In-Reply-To: <prior@mail\.gmail\.com>/);
+  assert.match(decoded, /References: <prior@mail\.gmail\.com>/);
+}));
+
+test('[reply] an agency with TWO different Gmail threads: replying to the selected (older) one never picks the newest instead', () => withEnv(async () => {
+  const createClient = fakeCreateClientFactory({
+    script: { staff_users: STAFF_ADMIN_ACTIVE, agencies: [AGENCY_ADAY[0], { status: 'Aday' }], agency_emails: [DRAFT_ROW[0], { ...DRAFT_ROW[0], send_claimed_at: new Date().toISOString() }] },
+  });
+  const wrapped = () => {
+    const c = createClient();
+    const origFrom = c.from;
+    let agencyEmailsCalls = 0;
+    c.from = (table) => {
+      if (table !== 'agency_emails') return origFrom(table);
+      agencyEmailsCalls += 1;
+      // The lookup is by id, not "most recent" — this row (the one the
+      // test selects) is the OLDER of the agency's two threads, yet it
+      // must still be the one used, proving recency is never consulted.
+      return agencyEmailsCalls === 3
+        ? makeFullThenable({ data: { id: 'email-older-thread', agency_id: 'agency-1', provider_thread_id: 'th-older', internet_message_id: '<older@mail.gmail.com>', in_reply_to: null }, error: null })
+        : origFrom(table);
+    };
+    return c;
+  };
+  let capturedBody = null;
+  const gmailDeps = {
+    fetch: async (url, opts) => {
+      if (String(url).includes('oauth2.googleapis.com')) return { ok: true, json: async () => ({ access_token: 'tok', expires_in: 3600 }) };
+      if (String(url).includes('/send')) { capturedBody = JSON.parse(opts.body); return { ok: true, json: async () => ({ id: 'gm-older', threadId: 'th-older' }) }; }
+      return { ok: true, json: async () => ({ payload: { headers: [] } }) };
+    },
+  };
+  const res = fakeRes();
+  await handler(req({ agency_id: 'agency-1', agency_email_id: 'email-1', send_mode: 'reply', reply_to_agency_email_id: 'email-older-thread' }), res, { createClient: wrapped, gmailDeps });
+  assert.equal(res._calls.status, 200);
+  assert.equal(capturedBody.threadId, 'th-older', 'must attach to the explicitly selected thread, never a different (e.g. newer) one for the same agency');
+}));
+
+test('[reply] a MISSING reply_to_agency_email_id fails closed with the same safe Turkish message — the lookup is never even attempted without it', () => withEnv(async () => {
+  const createClient = fakeCreateClientFactory({
+    script: { staff_users: STAFF_ADMIN_ACTIVE, agencies: [AGENCY_ADAY[0], { status: 'Aday' }], agency_emails: [DRAFT_ROW[0], { ...DRAFT_ROW[0], send_claimed_at: new Date().toISOString() }] },
+  });
+  let agencyEmailsCallsAfterClaim = 0;
+  const wrapped = () => {
+    const c = createClient();
+    const origFrom = c.from;
+    let agencyEmailsCalls = 0;
+    c.from = (table) => {
+      if (table !== 'agency_emails') return origFrom(table);
+      agencyEmailsCalls += 1;
+      if (agencyEmailsCalls > 2) agencyEmailsCallsAfterClaim += 1;
+      return origFrom(table);
+    };
+    return c;
+  };
+  let gmailSendCalled = false;
+  const gmailDeps = { fetch: async (url) => {
+    if (String(url).includes('/send')) gmailSendCalled = true;
+    return { ok: true, json: async () => ({ access_token: 'tok', expires_in: 3600 }) };
+  } };
+  const res = fakeRes();
+  await handler(req({ agency_id: 'agency-1', agency_email_id: 'email-1', send_mode: 'reply' }), res, { createClient: wrapped, gmailDeps });
+  assert.equal(res._calls.status, 409);
+  assert.equal(res._calls.json.error, 'Bu e-posta konuşmasının yanıt bilgileri bulunamadı. Mesaj gönderilmedi.');
+  assert.equal(res._calls.json.stage, 'reply_thread_context_unresolved');
+  // The claim release IS the one extra agency_emails call after claim —
+  // no reply-context SELECT is attempted when there is no id to look up.
+  assert.equal(agencyEmailsCallsAfterClaim, 1);
+  assert.equal(gmailSendCalled, false);
+}));
+
+test('[reply] a NOT-FOUND reply_to_agency_email_id (no such row) fails closed with the same safe Turkish message — never silently sends as a new thread', () => withEnv(async () => {
+  const createClient = fakeCreateClientFactory({
+    script: { staff_users: STAFF_ADMIN_ACTIVE, agencies: [AGENCY_ADAY[0], { status: 'Aday' }], agency_emails: [DRAFT_ROW[0], { ...DRAFT_ROW[0], send_claimed_at: new Date().toISOString() }] },
+  });
+  const wrapped = () => {
+    const c = createClient();
+    const origFrom = c.from;
+    let agencyEmailsCalls = 0;
+    c.from = (table) => {
+      if (table !== 'agency_emails') return origFrom(table);
+      agencyEmailsCalls += 1;
+      return agencyEmailsCalls === 3
+        ? makeFullThenable({ data: null, error: null })
+        : origFrom(table);
+    };
+    return c;
+  };
+  let gmailSendCalled = false;
+  const gmailDeps = { fetch: async (url) => {
+    if (String(url).includes('/send')) gmailSendCalled = true;
+    return { ok: true, json: async () => ({ access_token: 'tok', expires_in: 3600 }) };
+  } };
+  const res = fakeRes();
+  await handler(req({ agency_id: 'agency-1', agency_email_id: 'email-1', send_mode: 'reply', reply_to_agency_email_id: 'email-does-not-exist' }), res, { createClient: wrapped, gmailDeps });
+  assert.equal(res._calls.status, 409);
+  assert.equal(res._calls.json.error, 'Bu e-posta konuşmasının yanıt bilgileri bulunamadı. Mesaj gönderilmedi.');
+  assert.equal(res._calls.json.stage, 'reply_thread_context_unresolved');
+  assert.equal(gmailSendCalled, false, 'Gmail must never be called when an explicit reply has no resolvable thread context');
+}));
+
+test('[reply][security] a reply_to_agency_email_id belonging to a DIFFERENT agency is rejected, exactly like "not found" — never cross-agency reply', () => withEnv(async () => {
+  const createClient = fakeCreateClientFactory({
+    script: { staff_users: STAFF_ADMIN_ACTIVE, agencies: [AGENCY_ADAY[0], { status: 'Aday' }], agency_emails: [DRAFT_ROW[0], { ...DRAFT_ROW[0], send_claimed_at: new Date().toISOString() }] },
+  });
+  const wrapped = () => {
+    const c = createClient();
+    const origFrom = c.from;
+    let agencyEmailsCalls = 0;
+    c.from = (table) => {
+      if (table !== 'agency_emails') return origFrom(table);
+      agencyEmailsCalls += 1;
+      // A real row exists, with a real thread — but it belongs to a
+      // DIFFERENT agency than the one this request is sending for.
+      return agencyEmailsCalls === 3
+        ? makeFullThenable({ data: { id: 'email-other-agency', agency_id: 'agency-SOMEONE-ELSE', provider_thread_id: 'th-not-yours', internet_message_id: '<x@mail.gmail.com>', in_reply_to: null }, error: null })
+        : origFrom(table);
+    };
+    return c;
+  };
+  let gmailSendCalled = false;
+  const gmailDeps = { fetch: async (url) => {
+    if (String(url).includes('/send')) gmailSendCalled = true;
+    return { ok: true, json: async () => ({ access_token: 'tok', expires_in: 3600 }) };
+  } };
+  const res = fakeRes();
+  await handler(req({ agency_id: 'agency-1', agency_email_id: 'email-1', send_mode: 'reply', reply_to_agency_email_id: 'email-other-agency' }), res, { createClient: wrapped, gmailDeps });
+  assert.equal(res._calls.status, 409);
+  assert.equal(res._calls.json.stage, 'reply_thread_context_unresolved');
+  assert.doesNotMatch(JSON.stringify(res._calls.json), /agency-SOMEONE-ELSE|th-not-yours/, 'never leak another agency\'s identifiers in the error response');
+  assert.equal(gmailSendCalled, false);
+}));
+
+test('[reply] a thread-lookup failure (DB error) ALSO fails closed — never silently falls back to a new thread for an explicit reply', () => withEnv(async () => {
+  const createClient = fakeCreateClientFactory({
+    script: { staff_users: STAFF_ADMIN_ACTIVE, agencies: [AGENCY_ADAY[0], { status: 'Aday' }], agency_emails: [DRAFT_ROW[0], { ...DRAFT_ROW[0], send_claimed_at: new Date().toISOString() }] },
+  });
+  const wrapped = () => {
+    const c = createClient();
+    const origFrom = c.from;
+    let agencyEmailsCalls = 0;
+    c.from = (table) => {
+      if (table !== 'agency_emails') return origFrom(table);
+      agencyEmailsCalls += 1;
+      return agencyEmailsCalls === 3
+        ? makeFullThenable({ data: null, error: { message: 'db unavailable' } })
+        : origFrom(table);
+    };
+    return c;
+  };
+  let gmailSendCalled = false;
+  const gmailDeps = { fetch: async (url) => {
+    if (String(url).includes('/send')) gmailSendCalled = true;
+    return { ok: true, json: async () => ({ access_token: 'tok', expires_in: 3600 }) };
+  } };
+  const res = fakeRes();
+  await handler(req({ agency_id: 'agency-1', agency_email_id: 'email-1', send_mode: 'reply', reply_to_agency_email_id: 'email-inbound-1' }), res, { createClient: wrapped, gmailDeps });
+  assert.equal(res._calls.status, 409);
+  assert.equal(res._calls.json.stage, 'reply_thread_context_unresolved');
+  assert.doesNotMatch(JSON.stringify(res._calls.json), /db unavailable/, 'the raw database error must never reach the response body');
+  assert.equal(gmailSendCalled, false);
+}));
+
+test('[reply] the claim is released on a failed-closed reply rejection, so the draft can be retried', () => withEnv(async () => {
+  let releasedPatch = null;
+  const createClient = fakeCreateClientFactory({
+    script: { staff_users: STAFF_ADMIN_ACTIVE, agencies: [AGENCY_ADAY[0], { status: 'Aday' }], agency_emails: [DRAFT_ROW[0], { ...DRAFT_ROW[0], send_claimed_at: new Date().toISOString() }] },
+  });
+  const wrapped = () => {
+    const c = createClient();
+    const origFrom = c.from;
+    let agencyEmailsCalls = 0;
+    c.from = (table) => {
+      if (table !== 'agency_emails') return origFrom(table);
+      agencyEmailsCalls += 1;
+      if (agencyEmailsCalls === 3) return makeFullThenable({ data: null, error: null });
+      const builder = origFrom(table);
+      const origUpdate = builder.update;
+      builder.update = (patch) => { if (patch.send_claimed_at === null) releasedPatch = patch; return origUpdate(patch); };
+      return builder;
+    };
+    return c;
+  };
+  const res = fakeRes();
+  await handler(req({ agency_id: 'agency-1', agency_email_id: 'email-1', send_mode: 'reply', reply_to_agency_email_id: 'email-inbound-1' }), res, { createClient: wrapped, gmailDeps: {} });
+  assert.equal(res._calls.status, 409);
+  assert.ok(releasedPatch, 'expected the claim to be released (send_claimed_at reset to null) after the failed-closed rejection');
+}));
+
+test('[security] a browser-supplied thread/message id in the request body is never used — an explicit reply\'s thread is derived ONLY from the server-side lookup by reply_to_agency_email_id', () => withEnv(async () => {
+  const createClient = fakeCreateClientFactory({
+    script: { staff_users: STAFF_ADMIN_ACTIVE, agencies: [AGENCY_ADAY[0], { status: 'Aday' }], agency_emails: [DRAFT_ROW[0], { ...DRAFT_ROW[0], send_claimed_at: new Date().toISOString() }] },
+  });
+  const wrapped = () => {
+    const c = createClient();
+    const origFrom = c.from;
+    let agencyEmailsCalls = 0;
+    c.from = (table) => {
+      if (table !== 'agency_emails') return origFrom(table);
+      agencyEmailsCalls += 1;
+      return agencyEmailsCalls === 3
+        ? makeFullThenable({ data: { id: 'email-inbound-1', agency_id: 'agency-1', provider_thread_id: 'th-real-server-side', internet_message_id: '<real@mail.gmail.com>', in_reply_to: null }, error: null })
+        : origFrom(table);
+    };
+    return c;
+  };
+  let capturedBody = null;
+  const gmailDeps = {
+    fetch: async (url, opts) => {
+      if (String(url).includes('oauth2.googleapis.com')) return { ok: true, json: async () => ({ access_token: 'tok', expires_in: 3600 }) };
+      if (String(url).includes('/send')) { capturedBody = JSON.parse(opts.body); return { ok: true, json: async () => ({ id: 'gm-x', threadId: 'th-real-server-side' }) }; }
+      return { ok: true, json: async () => ({ payload: { headers: [] } }) };
+    },
+  };
+  const res = fakeRes();
+  await handler(req({
+    agency_id: 'agency-1', agency_email_id: 'email-1', send_mode: 'reply', reply_to_agency_email_id: 'email-inbound-1',
+    threadId: 'th-attacker-supplied', provider_thread_id: 'th-attacker-supplied', in_reply_to: '<attacker@evil.com>',
+  }), res, { createClient: wrapped, gmailDeps });
+  assert.equal(res._calls.status, 200);
+  assert.equal(capturedBody.threadId, 'th-real-server-side');
+  const decoded = Buffer.from(capturedBody.raw.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');
+  assert.doesNotMatch(decoded, /attacker/);
+}));
+
+test('[validate] an unrecognized send_mode value is rejected with 400 before any claim/Gmail/DB work happens', () => withEnv(async () => {
+  const createClient = fakeCreateClientFactory({ script: { staff_users: STAFF_ADMIN_ACTIVE } });
+  const res = fakeRes();
+  await handler(req({ agency_id: 'agency-1', agency_email_id: 'email-1', send_mode: 'something-else' }), res, { createClient });
+  assert.equal(res._calls.status, 400);
+}));

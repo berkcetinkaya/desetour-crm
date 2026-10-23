@@ -95,11 +95,26 @@ test('handleSendEmail requires an already-saved draft row (editingEmailId) — i
   assert.match(fnBody, /if \(!editingEmailId\) return;/);
 });
 
-test('handleSendEmail posts only {agency_id, agency_email_id} — never raw subject/body/sender as the request payload', () => {
+test('handleSendEmail posts only {agency_id, agency_email_id, send_mode[, reply_to_agency_email_id]} — never raw subject/body/sender as the request payload', () => {
   const body = acenteDetailPageBody();
   const idx = body.indexOf('async function handleSendEmail()');
   const fnBody = body.slice(idx, body.indexOf('\n  }', idx));
-  assert.match(fnBody, /body:\s*JSON\.stringify\(\{\s*agency_id:\s*agency\.id,\s*agency_email_id:\s*editingEmailId\s*\}\)/);
+  // Agency Mailbox Phase 7 (hardened) — the request body is now
+  // conditional on replyTargetEmail (new_outreach vs. an explicit reply
+  // carrying reply_to_agency_email_id), but either branch still sends
+  // only these structural identifiers — never draftSubject/draftBody/
+  // any sender field.
+  assert.match(fnBody, /body:\s*JSON\.stringify\(\s*replyTargetEmail/);
+  assert.match(fnBody, /agency_id:\s*agency\.id,\s*agency_email_id:\s*editingEmailId,\s*send_mode:\s*['"]reply['"],\s*reply_to_agency_email_id:\s*replyTargetEmail\.id/);
+  assert.match(fnBody, /agency_id:\s*agency\.id,\s*agency_email_id:\s*editingEmailId,\s*send_mode:\s*['"]new_outreach['"]/);
+  assert.doesNotMatch(fnBody, /draftSubject|draftBody/);
+});
+
+test('handleSendEmail explicitly sends send_mode:"new_outreach" — this flow has never had a distinct Reply action, so it never silently attaches to a prior Gmail thread', () => {
+  const body = acenteDetailPageBody();
+  const idx = body.indexOf('async function handleSendEmail()');
+  const fnBody = body.slice(idx, body.indexOf('\n  }', idx));
+  assert.match(fnBody, /send_mode:\s*['"]new_outreach['"]/);
 });
 
 test('handleSendEmail attaches the current Supabase session bearer token, the same established pattern as handleGenerateDraft', () => {

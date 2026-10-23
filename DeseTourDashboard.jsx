@@ -840,6 +840,120 @@ function computeUrgent(reservations, payments, reminders) {
   return items.slice(0,5);
 }
 
+// TESTABLE:computeAgencyCrmPlusSummary:start
+// "Agency CRM+" homepage section — aggregates existing agencies/
+// agency_emails rows into the 4 KPI counts plus the two action panels'
+// rows. Pure and dependency-free (only its own parameters and the
+// built-in Date), same testability pattern as computeMonthlyReservationRevenue
+// above — see tests/dashboard/agencyCrmPlusSummary.test.js.
+//
+// METRIC DEFINITIONS (chosen from the EXISTING schema only — no new
+// columns, no new table):
+//   - Bugün Yeni Acente: agencies.created_at falls on today (agencies
+//     table has no other "discovered" timestamp).
+//   - Bugün Mail Gönderildi: agency_emails rows with status='sent' and
+//     sent_at today (direction!=='inbound' is belt-and-suspenders since
+//     outbound sends never have sent_at unset).
+//   - Bugün Yanıt Geldi / Gelen Yanıtlar: agency_emails rows with
+//     direction='inbound'. IMPORTANT, HONEST LIMITATION: 'inbound' is a
+//     real, DB-level-supported value (see supabase_migration_agencies.sql's
+//     original CHECK constraint and supabase_migration_agency_mailbox.sql's
+//     received_at/in_reply_to columns), but it is explicitly documented in
+//     those same migrations as "Reserved for Phase B" / "Never written by
+//     Phase A" — no code path in this repository ever inserts an inbound
+//     row today. This logic is correctly wired to the schema's own reserved
+//     reply-tracking fields so it will start working the moment a future
+//     Phase B reply-ingestion feature writes such rows, with zero changes
+//     needed here — but until that exists, these two metrics will
+//     correctly and honestly show 0 / empty in production.
+//   - Takip Bekleyen / Takip Edilmesi Gereken Acenteler: agencies whose
+//     status is 'İletişime Geçildi' or 'Görüşülüyor' (actively being
+//     pursued — deliberately excludes 'Aday', which needs a FIRST contact,
+//     not a follow-up) AND whose last_contact_at is either null (marked
+//     contacted but no timestamp recorded — a data-quality edge case) or
+//     at least AGENCY_FOLLOWUP_STALE_DAYS old. There is no dedicated
+//     follow-up-due-date column in the schema, so a fixed staleness
+//     threshold on the existing last_contact_at is the safest practical
+//     interpretation; 3 days is a reasonable, easily-adjustable default
+//     for an outreach cadence, named here as one constant rather than a
+//     buried magic number.
+const AGENCY_FOLLOWUP_STALE_DAYS = 3;
+
+function _agencyCrmPlusIsToday(isoString, nowISO) {
+  if (!isoString || !nowISO) return false;
+  return isoString.slice(0, 10) === nowISO.slice(0, 10);
+}
+
+function _agencyCrmPlusDaysSince(isoString, nowISO) {
+  if (!isoString || !nowISO) return null;
+  const then = Date.parse(isoString);
+  const now = Date.parse(nowISO);
+  if (Number.isNaN(then) || Number.isNaN(now)) return null;
+  return Math.floor((now - then) / 86400000);
+}
+
+function computeAgencyCrmPlusSummary(agencies, agencyEmails, nowISO) {
+  const safeAgencies = agencies || [];
+  const safeEmails = agencyEmails || [];
+
+  const newAgenciesToday = safeAgencies.filter(a => _agencyCrmPlusIsToday(a.createdAt, nowISO));
+
+  const outboundSentToday = safeEmails.filter(e =>
+    e.direction !== 'inbound' && e.status === 'sent' && _agencyCrmPlusIsToday(e.sentAt, nowISO)
+  );
+
+  const inboundToday = safeEmails.filter(e =>
+    e.direction === 'inbound' && _agencyCrmPlusIsToday(e.receivedAt || e.createdAt, nowISO)
+  );
+
+  const followUps = safeAgencies
+    .filter(a => a.status === 'İletişime Geçildi' || a.status === 'Görüşülüyor')
+    .map(a => ({ agency: a, daysSinceContact: _agencyCrmPlusDaysSince(a.lastContactAt, nowISO) }))
+    .filter(x => x.daysSinceContact === null || x.daysSinceContact >= AGENCY_FOLLOWUP_STALE_DAYS)
+    .sort((a, b) => {
+      const av = a.daysSinceContact === null ? Infinity : a.daysSinceContact;
+      const bv = b.daysSinceContact === null ? Infinity : b.daysSinceContact;
+      return bv - av;
+    });
+
+  const recentReplies = safeEmails
+    .filter(e => e.direction === 'inbound')
+    .slice()
+    .sort((a, b) => (b.receivedAt || b.createdAt || '').localeCompare(a.receivedAt || a.createdAt || ''));
+
+  return {
+    newAgenciesTodayCount: newAgenciesToday.length,
+    sentTodayCount: outboundSentToday.length,
+    repliesTodayCount: inboundToday.length,
+    followUpCount: followUps.length,
+    followUpItems: followUps.slice(0, 5),
+    recentReplies: recentReplies.slice(0, 5),
+  };
+}
+// TESTABLE:computeAgencyCrmPlusSummary:end
+
+// TESTABLE:formatAgencyRelativeTime:start
+// Turkish relative-time phrasing, matching the "X saat önce" / "X gün
+// önce" / "X dakika önce" wording already used throughout this file's
+// mock data — the only addition is COMPUTING it from a real timestamp
+// instead of hand-authoring the string. Pure and dependency-free.
+function formatAgencyRelativeTime(isoString, nowISO) {
+  if (!isoString || !nowISO) return '—';
+  const then = Date.parse(isoString);
+  const now = Date.parse(nowISO);
+  if (Number.isNaN(then) || Number.isNaN(now)) return '—';
+  const diffMs = now - then;
+  if (diffMs < 0) return '—';
+  const minutes = Math.floor(diffMs / 60000);
+  if (minutes < 1) return 'az önce';
+  if (minutes < 60) return `${minutes} dakika önce`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} saat önce`;
+  const days = Math.floor(hours / 24);
+  return `${days} gün önce`;
+}
+// TESTABLE:formatAgencyRelativeTime:end
+
 // Shared in-flight/resolved fetch cache for useRepo, keyed by
 // "entity:method:arg". Without this, every component that calls
 // useRepo("reservation","getAll") (Sidebar, Dashboard, ReservationsPage, ...)
@@ -1406,6 +1520,32 @@ const AgencyEmailRepository = {
   getByAgencyId(agencyId) {
     return DB.agencyEmails
       .filter(e => e.agencyId === agencyId)
+      .sort((a, b) => (b.createdAt||'').localeCompare(a.createdAt||''));
+  },
+  // Added for the "Agency CRM+" homepage section (computeAgencyCrmPlusSummary),
+  // which needs today's/recent rows ACROSS every agency, not one agency's
+  // own history — the only other consumer of this table so far
+  // (AcenteDetailPage) only ever needed getByAgencyId. Same read-only,
+  // additive shape as SupabaseAgencyRepo.getAll() etc. elsewhere in this file.
+  // Bounded by sinceDays (default 14, 0 = unbounded) — mirrors
+  // SupabaseAgencyEmailRepo.getAll()'s own bound, same reasoning.
+  getAll(f={}) {
+    const sinceDays = typeof f.sinceDays === 'number' ? f.sinceDays : 14;
+    const cutoffMs = sinceDays > 0 ? Date.now() - sinceDays*86400000 : -Infinity;
+    return DB.agencyEmails
+      .filter(e => {
+        const t = e.createdAt ? new Date(e.createdAt).getTime() : NaN;
+        return Number.isNaN(t) ? true : t >= cutoffMs;
+      })
+      .map(e => {
+        const agency = DB.agencies.find(a => a.id === e.agencyId);
+        return {
+          ...e,
+          agencyName: agency?.name || '',
+          agencyCountry: agency?.country || '',
+          agencyLanguages: agency?.languages || [],
+        };
+      })
       .sort((a, b) => (b.createdAt||'').localeCompare(a.createdAt||''));
   },
   create(data) {
@@ -2887,6 +3027,164 @@ function KpiRow() {
   return (
     <div className="dash-kpi-grid" style={{display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:16}}>
       {kpis.map((k,i)=><KpiCard key={i} kpi={k}/>)}
+    </div>
+  );
+}
+
+// Homepage "Agency CRM+" section — gated the same way the Acenteler nav
+// item itself is (admin/sales only, via canAccess), so a role that can't
+// open the Agencies module never sees its data surfaced here either, and
+// never hits an RLS-denied error state for a card it can't act on.
+// Renders nothing (not even a loading skeleton) for any other role.
+function AgencyCrmPlusSection() {
+  const role = getAuthContext().role;
+  if (!canAccess(role, "agencies")) return null;
+
+  const { data:repoAgencies, loading:loadingAgencies } = useRepo("agency", "getAll");
+  const { data:repoEmails,   loading:loadingEmails }   = useRepo("agencyEmail", "getAll", { sinceDays: 14 });
+  const loading = loadingAgencies || loadingEmails;
+
+  const nowISO = new Date().toISOString();
+  const summary = useMemo(
+    () => computeAgencyCrmPlusSummary(repoAgencies, repoEmails, nowISO),
+    // nowISO intentionally excluded — recomputing on a fresh "now" every
+    // render would be pure churn; only the underlying data should trigger it.
+    [repoAgencies, repoEmails]
+  );
+
+  const kpis = [
+    {
+      label:"Bugün Yeni Acente", value: loading ? '…' : String(summary.newAgenciesTodayCount),
+      sub:"Yeni eklenen acente", icon:"M3 21h18 M5 21V7l8-4v18 M19 21V11l-6-4",
+    },
+    {
+      label:"Bugün Mail Gönderildi", value: loading ? '…' : String(summary.sentTodayCount),
+      sub:"Gönderilen outreach e-postası",
+      icon:"M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z M22 6l-10 7L2 6",
+    },
+    {
+      label:"Bugün Yanıt Geldi", value: loading ? '…' : String(summary.repliesTodayCount),
+      sub: summary.repliesTodayCount>0 ? "Gelen yanıt" : "Henüz yanıt yok",
+      icon:"M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z",
+      accent: summary.repliesTodayCount>0,
+    },
+    {
+      label:"Takip Bekleyen", value: loading ? '…' : String(summary.followUpCount),
+      sub: summary.followUpCount>0 ? "Takip gerektiren acente" : "Takip bekleyen yok",
+      icon:"M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0",
+      accent: summary.followUpCount>0,
+    },
+  ];
+
+  return (
+    <Card>
+      <SectionHeader title="Agency CRM+" action="Acenteleri Gör" onAction={()=>NAV_REF.fn && NAV_REF.fn('/agencies')}/>
+
+      <div style={{display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:16, marginBottom:20}}>
+        {kpis.map((k,i)=><KpiCard key={i} kpi={k}/>)}
+      </div>
+
+      <div className="dash-agency-crmplus-row" style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:16}}>
+        <_AgencyFollowUpPanel loading={loading} items={summary.followUpItems} count={summary.followUpCount}/>
+        <_AgencyRepliesPanel loading={loading} replies={summary.recentReplies} nowISO={nowISO}/>
+      </div>
+    </Card>
+  );
+}
+
+function _AgencyFollowUpPanel({ loading, items, count }) {
+  return (
+    <div style={{background:C.white, border:`1px solid ${C.borderLight}`, borderRadius:T.radiusSm, padding:14}}>
+      <div style={{display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:10}}>
+        <div style={{fontSize:13, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif"}}>
+          Takip Edilmesi Gereken Acenteler
+        </div>
+        {count>0 && <Pill label={String(count)} color={C.amber} bg={C.amberBg} small/>}
+      </div>
+      {loading ? (
+        <div style={{fontSize:12.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>Yükleniyor…</div>
+      ) : items.length === 0 ? (
+        <div style={{fontSize:12.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", fontStyle:"italic", padding:"8px 0"}}>
+          Takip bekleyen acente yok.
+        </div>
+      ) : (
+        <div style={{display:"flex", flexDirection:"column", gap:8}}>
+          {items.map(({ agency, daysSinceContact }) => (
+            <div key={agency.id} style={{
+              display:"flex", alignItems:"center", justifyContent:"space-between", gap:10,
+              padding:"8px 10px", borderRadius:8, background:C.amberBg,
+            }}>
+              <div style={{minWidth:0, flex:1}}>
+                <div style={{
+                  fontSize:12.5, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif",
+                  overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap",
+                }}>{agency.name}</div>
+                <div style={{fontSize:11, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", marginTop:2}}>
+                  {agency.country || (agency.languages||[])[0] || "—"}
+                  {" · "}
+                  {daysSinceContact === null ? "Temas kaydı yok" : `${daysSinceContact} gündür yanıt yok`}
+                </div>
+              </div>
+              <button
+                onClick={()=>{ if (typeof NAV_REF.fn === 'function') NAV_REF.fn('/agencies/'+agency.id); }}
+                style={{background:"none", border:"none", cursor:"pointer", color:C.amber, flexShrink:0, display:"flex", alignItems:"center"}}
+              >
+                <Ic d="M9 18l6-6-6-6" size={14} sw={2}/>
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function _AgencyRepliesPanel({ loading, replies, nowISO }) {
+  return (
+    <div style={{background:C.white, border:`1px solid ${C.borderLight}`, borderRadius:T.radiusSm, padding:14}}>
+      <div style={{display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:10}}>
+        <div style={{fontSize:13, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif"}}>Gelen Yanıtlar</div>
+        {replies.length>0 && <Pill label={String(replies.length)} color={C.green} bg={C.greenBg} small/>}
+      </div>
+      {loading ? (
+        <div style={{fontSize:12.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>Yükleniyor…</div>
+      ) : replies.length === 0 ? (
+        <div style={{fontSize:12.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", fontStyle:"italic", padding:"8px 0"}}>
+          Henüz gelen yanıt kaydı yok.
+        </div>
+      ) : (
+        <div style={{display:"flex", flexDirection:"column", gap:8}}>
+          {replies.map(reply => (
+            <div
+              key={reply.id}
+              onClick={()=>{ if (typeof NAV_REF.fn === 'function') NAV_REF.fn('/agencies/'+reply.agencyId); }}
+              style={{cursor:"pointer", padding:"8px 10px", borderRadius:8, background:C.greenBg}}
+            >
+              <div style={{display:"flex", justifyContent:"space-between", gap:8}}>
+                <div style={{
+                  fontSize:12.5, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif",
+                  overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", minWidth:0,
+                }}>{reply.agencyName || 'Acente'}</div>
+                <div style={{fontSize:10.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", flexShrink:0}}>
+                  {formatAgencyRelativeTime(reply.receivedAt || reply.createdAt, nowISO)}
+                </div>
+              </div>
+              <div style={{
+                fontSize:11.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", marginTop:2,
+                overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap",
+              }}>
+                {reply.fromEmail || ''}{reply.subject ? ' — ' + reply.subject : ''}
+              </div>
+              {reply.body && (
+                <div style={{
+                  fontSize:11, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:3,
+                  overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap",
+                }}>{reply.body.slice(0,80)}</div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -4734,6 +5032,9 @@ function Dashboard() {
 
       {}
       <KpiRow/>
+
+      {}
+      <AgencyCrmPlusSection/>
 
       {}
       <CivitatisHakedisPanel/>
@@ -12631,10 +12932,30 @@ const AGENCY_FIT_LEVEL_CFG = {
 // Only "draft" is ever produced in Phase 2 — no send feature exists yet —
 // but "sent" is included so the badge renders correctly once sending is
 // built in a later phase, without needing another edit here.
-const AGENCY_EMAIL_STATUS_CFG = {
-  draft: { color:C.amber, bg:C.amberBg },
-  sent:  { color:C.green, bg:C.greenBg },
+// Agency Mailbox Phase 6 — conversation-timeline badges. Keyed by the
+// already-Turkish display label computed per row (RBadge renders
+// whatever `label` it is given verbatim, with no translation of its
+// own), not by the raw English status/direction values stored in the
+// database — "Gönderildi" distinct from "Yanıt Geldi" is exactly the
+// visual distinction Phase 6 asks for.
+const AGENCY_CONVERSATION_BADGE_CFG = {
+  'Taslak':       { color:C.amber, bg:C.amberBg },
+  'Gönderildi':   { color:C.green, bg:C.greenBg },
+  'Başarısız':    { color:C.red,   bg:C.redBg },
+  'Yanıt Geldi':  { color:C.blue,  bg:C.blueBg },
 };
+
+/** direction/status -> the one Turkish label RBadge actually displays
+ * for a conversation row. Pure, so it's trivially unit-testable without
+ * any rendering. */
+// TESTABLE:agencyConversationBadgeLabel:start
+function agencyConversationBadgeLabel(email) {
+  if (email && email.direction === 'inbound') return 'Yanıt Geldi';
+  if (email && email.status === 'sent') return 'Gönderildi';
+  if (email && email.status === 'failed') return 'Başarısız';
+  return 'Taslak';
+}
+// TESTABLE:agencyConversationBadgeLabel:end
 
 function AcentelerPage({ onSelect }) {
   const { isMobile } = useBreakpoint();
@@ -13130,6 +13451,16 @@ function AcenteDetailPage({ agencyId, onBack }) {
   const [sendError, setSendError] = useState(null);
   const [sentInfo, setSentInfo] = useState(null);
 
+  // Agency Mailbox Phase 7 (hardened) — the EXPLICIT Reply action. Holds
+  // the specific inbound agency_emails row being replied to (its id is
+  // the server-validated reply_to_agency_email_id — never a thread
+  // auto-picked by "most recent"), or null for an ordinary new-outreach
+  // compose session. Cleared whenever a non-reply compose action starts
+  // (generating a fresh draft, opening a different history row) and
+  // after a successful send, so it can never leak into an unrelated
+  // request.
+  const [replyTargetEmail, setReplyTargetEmail] = useState(null);
+
   useEffect(() => {
     if (agency && !notesDirty) setNotesDraft(agency.internalNotes || "");
   }, [agency, notesDirty]);
@@ -13227,6 +13558,7 @@ function AcenteDetailPage({ agencyId, onBack }) {
       setShowSendConfirm(false);
       setSendError(null);
       setSentInfo(null);
+      setReplyTargetEmail(null); // a freshly generated draft is new outreach, never a reply
       _sbLog('agency_email', createdRow.id, 'draft_created', 'Yeni e-posta taslağı oluşturuldu.',
         { agency_id: agency.id, agency_email_id: createdRow.id, language: draftLanguage });
       reloadEmails && reloadEmails();
@@ -13235,6 +13567,41 @@ function AcenteDetailPage({ agencyId, onBack }) {
     } finally {
       setDraftLoading(false);
     }
+  }
+
+  // Agency Mailbox Phase 7 (hardened) — the explicit "Yanıtla" action on
+  // an inbound conversation row. Creates a real draft row (the Send flow
+  // already requires a saved agency_emails id) and opens it for editing,
+  // exactly like handleGenerateDraft's own create step — the only
+  // difference is this session is marked as replying to THIS SPECIFIC
+  // inbound row (replyTargetEmail), which handleSendEmail below turns
+  // into send_mode:'reply' + reply_to_agency_email_id. Never infers a
+  // thread from agency history — the selected inbound row IS the thread.
+  async function handleReplyToEmail(inboundEmail) {
+    const subject = inboundEmail.subject
+      ? (/^re:/i.test(inboundEmail.subject.trim()) ? inboundEmail.subject : `Re: ${inboundEmail.subject}`)
+      : 'Re:';
+    const { data: createdRow, error: createErr } = await mutAgencyEmail("create", {
+      agencyId: agency.id, subject, body: '',
+      createdBy: getAuthContext()?.staff?.id || null,
+    });
+    if (createErr || !createdRow) {
+      showToast("Yanıt taslağı oluşturulamadı: " + (createErr || "bilinmeyen hata"));
+      return;
+    }
+    setEditingEmailId(createdRow.id);
+    setEditingEmailStatus('draft');
+    setDraftSubject(subject);
+    setDraftBody('');
+    setDraftMeta(null);
+    setDraftError(null);
+    setShowSendConfirm(false);
+    setSendError(null);
+    setSentInfo(null);
+    setReplyTargetEmail(inboundEmail);
+    _sbLog('agency_email', createdRow.id, 'draft_created', 'Acenteye yanıt taslağı oluşturuldu.',
+      { agency_id: agency.id, agency_email_id: createdRow.id, reply_to_agency_email_id: inboundEmail.id });
+    reloadEmails && reloadEmails();
   }
 
   // Updates ONLY the currently-selected draft row — never creates a
@@ -13262,6 +13629,7 @@ function AcenteDetailPage({ agencyId, onBack }) {
     setShowSendConfirm(false);
     setSendError(null);
     setSentInfo(null);
+    setReplyTargetEmail(null); // opening a different (outbound) draft is never a reply session
   }
 
   // Agency Mailbox Phase A — calls the server, which re-verifies
@@ -13284,13 +13652,28 @@ function AcenteDetailPage({ agencyId, onBack }) {
       const resp = await fetch('/api/agency-send-email', {
         method: 'POST',
         headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
-        body: JSON.stringify({ agency_id: agency.id, agency_email_id: editingEmailId }),
+        // Agency Mailbox Phase 7 (hardened) — explicit, server-validated
+        // intent. An ordinary draft send (no replyTargetEmail) is always
+        // 'new_outreach' — it never attaches to a prior Gmail thread,
+        // matching this flow's original behavior exactly. The "Yanıtla"
+        // action (handleReplyToEmail) is the ONLY way replyTargetEmail is
+        // ever set, and it sends the SPECIFIC selected inbound row's id
+        // as reply_to_agency_email_id — never a thread auto-picked by
+        // "most recent"; the server loads that exact row, verifies it
+        // belongs to this agency, and derives threadId/In-Reply-To/
+        // References from it alone.
+        body: JSON.stringify(
+          replyTargetEmail
+            ? { agency_id: agency.id, agency_email_id: editingEmailId, send_mode: 'reply', reply_to_agency_email_id: replyTargetEmail.id }
+            : { agency_id: agency.id, agency_email_id: editingEmailId, send_mode: 'new_outreach' }
+        ),
       });
       const payload = await resp.json().catch(() => ({}));
       if (!resp.ok) { setSendError(payload.error || `E-posta gönderilemedi (${resp.status}).`); return; }
       setShowSendConfirm(false);
       setSentInfo({ sentAt: payload.sentAt || new Date().toISOString(), alreadySent: !!payload.alreadySent });
       setEditingEmailStatus('sent');
+      setReplyTargetEmail(null);
       showToast(payload.alreadySent ? "Bu e-posta zaten gönderilmişti." : "E-posta gönderildi ✓");
       reloadEmails && reloadEmails();
       // Refreshes this page's own agency useRepo (status/last_contact_at
@@ -13383,23 +13766,43 @@ function AcenteDetailPage({ agencyId, onBack }) {
       </RCard>
 
       <RCard>
-        <RCardHead title="İlk Temas Taslağı" accent/>
+        <RCardHead title={replyTargetEmail ? "Yanıt Yaz" : "İlk Temas Taslağı"} accent/>
         <div style={{padding:"16px 20px", display:"flex", flexDirection:"column", gap:12}}>
-          <div style={{display:"flex", alignItems:"center", gap:10, flexWrap:"wrap"}}>
-            <SSelect value={draftLanguage} onChange={setDraftLanguage} options={AGENCY_RESEARCH_LANGUAGES}/>
-            <button onClick={handleGenerateDraft} disabled={draftLoading} style={{
-              padding:"8px 16px", borderRadius:7, border:"none",
-              background: draftLoading ? C.ivoryDark : C.navy,
-              color: draftLoading ? C.textFaint : C.white,
-              cursor: draftLoading ? "not-allowed" : "pointer",
-              fontFamily:"'DM Sans',sans-serif", fontSize:13, fontWeight:500,
-            }}>{draftLoading ? "Oluşturuluyor…" : "Taslak Oluştur"}</button>
-            {editingEmailId && editingEmailStatus !== 'sent' && (
-              <span style={{fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>
-                Kayıtlı taslak düzenleniyor — Kaydet güncelleyecek.
-              </span>
-            )}
-          </div>
+          {/* Agency Mailbox Phase 7 (hardened) — a clear, persistent
+              indication that this compose session is an explicit reply to
+              a specific inbound message, not a fresh outreach draft. The
+              AI-generate controls are hidden here: generating a NEW draft
+              is a distinct, unrelated action (handleGenerateDraft already
+              clears replyTargetEmail if used). */}
+          {replyTargetEmail ? (
+            <div style={{padding:"10px 14px", borderRadius:7, background:C.ivory, border:`1px solid ${C.navy}`, display:"flex", alignItems:"center", justifyContent:"space-between", gap:10, flexWrap:"wrap"}}>
+              <div style={{fontSize:12.5, color:C.text, fontFamily:"'DM Sans',sans-serif"}}>
+                <strong>Yanıt veriliyor:</strong> {replyTargetEmail.subject || "(konu yok)"}
+                {replyTargetEmail.fromEmail && <> — {replyTargetEmail.fromEmail}</>}
+              </div>
+              <button onClick={() => { setReplyTargetEmail(null); setEditingEmailId(null); setEditingEmailStatus(null); setDraftSubject(""); setDraftBody(""); setShowSendConfirm(false); setSendError(null); setSentInfo(null); }} style={{
+                padding:"5px 10px", borderRadius:6, border:`1px solid ${C.border}`,
+                background:C.white, cursor:"pointer", color:C.textMid,
+                fontFamily:"'DM Sans',sans-serif", fontSize:11.5,
+              }}>Yanıttan Çık</button>
+            </div>
+          ) : (
+            <div style={{display:"flex", alignItems:"center", gap:10, flexWrap:"wrap"}}>
+              <SSelect value={draftLanguage} onChange={setDraftLanguage} options={AGENCY_RESEARCH_LANGUAGES}/>
+              <button onClick={handleGenerateDraft} disabled={draftLoading} style={{
+                padding:"8px 16px", borderRadius:7, border:"none",
+                background: draftLoading ? C.ivoryDark : C.navy,
+                color: draftLoading ? C.textFaint : C.white,
+                cursor: draftLoading ? "not-allowed" : "pointer",
+                fontFamily:"'DM Sans',sans-serif", fontSize:13, fontWeight:500,
+              }}>{draftLoading ? "Oluşturuluyor…" : "Taslak Oluştur"}</button>
+              {editingEmailId && editingEmailStatus !== 'sent' && (
+                <span style={{fontSize:12, color:C.textFaint, fontFamily:"'DM Sans',sans-serif"}}>
+                  Kayıtlı taslak düzenleniyor — Kaydet güncelleyecek.
+                </span>
+              )}
+            </div>
+          )}
 
           {draftError && (
             <div style={{padding:"10px 14px", borderRadius:7, background:C.redBg, color:C.red, fontSize:12.5, fontFamily:"'DM Sans',sans-serif"}}>
@@ -13490,6 +13893,11 @@ function AcenteDetailPage({ agencyId, onBack }) {
                   <div style={{fontSize:13, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif"}}>
                     Gönderimden Önce Son Kontrol
                   </div>
+                  {replyTargetEmail && (
+                    <div style={{fontSize:12, color:C.navy, fontFamily:"'DM Sans',sans-serif", fontWeight:600}}>
+                      Bu, mevcut bir konuşmaya yanıttır — aynı Gmail konuşmasında kalacaktır.
+                    </div>
+                  )}
                   <RInfoRow label="Alıcı" value={agency.email || "—"} mono/>
                   <RInfoRow label="Konu" value={draftSubject}/>
                   <div>
@@ -13529,30 +13937,65 @@ function AcenteDetailPage({ agencyId, onBack }) {
         ) : !emailHistory || emailHistory.length===0 ? (
           <div style={{padding:"20px", color:C.textFaint, fontSize:13, fontFamily:"'DM Sans',sans-serif"}}>Henüz bir e-posta taslağı oluşturulmadı.</div>
         ) : (
+          // Agency Mailbox Phase 6 — a real conversation timeline, both
+          // directions, chronological (oldest first, like a real thread
+          // reads) — emailHistory itself stays newest-first (other logic
+          // above, e.g. the default-draft-selection effect, depends on
+          // that order), so only this display copy is reversed.
           <div style={{display:"flex", flexDirection:"column"}}>
-            {emailHistory.map(email => (
-              <div key={email.id} style={{
-                display:"flex", alignItems:"center", justifyContent:"space-between", gap:12,
-                padding:"12px 20px", borderTop:`1px solid ${C.borderLight}`,
-              }}>
-                <div style={{minWidth:0}}>
-                  <div style={{fontSize:13.5, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}}>
-                    {email.subject || "(konu yok)"}
+            {emailHistory.slice().reverse().map(email => {
+              const isInbound = email.direction === 'inbound';
+              const badgeLabel = agencyConversationBadgeLabel(email);
+              // Agency Mailbox Phase 7 (hardened) — keeps the SPECIFIC
+              // message a reply is being composed for visibly identifiable
+              // in the timeline while the composer below is open for it.
+              const isReplyTarget = !!(replyTargetEmail && replyTargetEmail.id === email.id);
+              return (
+                <div key={email.id} style={{
+                  display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:12,
+                  padding:"12px 20px", borderTop:`1px solid ${C.borderLight}`,
+                  background: isInbound ? C.blueBg : "transparent",
+                  boxShadow: isReplyTarget ? `inset 0 0 0 1.5px ${C.navy}` : undefined,
+                }}>
+                  <div style={{minWidth:0, flex:1}}>
+                    <div style={{fontSize:13.5, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}}>
+                      {email.subject || "(konu yok)"}
+                    </div>
+                    <div style={{fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:2}}>
+                      {isInbound && (email.fromEmail ? `${email.fromEmail} · ` : '')}
+                      {(() => {
+                        const when = isInbound ? (email.receivedAt || email.createdAt) : email.createdAt;
+                        return when ? new Date(when).toLocaleDateString('tr-TR',{day:'2-digit',month:'short',year:'numeric'}) : "—";
+                      })()}
+                      {isReplyTarget && <span style={{color:C.navy, fontWeight:600}}> · Yanıtlanıyor</span>}
+                    </div>
+                    {isInbound && email.body && (
+                      <div style={{
+                        fontSize:12, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", marginTop:6,
+                        whiteSpace:"pre-wrap", maxHeight:120, overflow:"auto",
+                      }}>{email.body}</div>
+                    )}
                   </div>
-                  <div style={{fontSize:11.5, color:C.textFaint, fontFamily:"'DM Sans',sans-serif", marginTop:2}}>
-                    {email.createdAt ? new Date(email.createdAt).toLocaleDateString('tr-TR',{day:'2-digit',month:'short',year:'numeric'}) : "—"}
+                  <div style={{display:"flex", alignItems:"center", gap:10, flexShrink:0}}>
+                    <RBadge label={badgeLabel} map={AGENCY_CONVERSATION_BADGE_CFG}/>
+                    {isInbound && (
+                      <button onClick={()=>handleReplyToEmail(email)} style={{
+                        padding:"6px 12px", borderRadius:6, border:`1px solid ${C.navy}`,
+                        background:C.white, cursor:"pointer", color:C.navy,
+                        fontFamily:"'DM Sans',sans-serif", fontSize:12, fontWeight:600,
+                      }}>Yanıtla</button>
+                    )}
+                    {!isInbound && (
+                      <button onClick={()=>handleOpenHistoryItem(email)} style={{
+                        padding:"6px 12px", borderRadius:6, border:`1px solid ${C.border}`,
+                        background:C.ivory, cursor:"pointer", color:C.textMid,
+                        fontFamily:"'DM Sans',sans-serif", fontSize:12,
+                      }}>Aç</button>
+                    )}
                   </div>
                 </div>
-                <div style={{display:"flex", alignItems:"center", gap:10, flexShrink:0}}>
-                  <RBadge label={email.status} map={AGENCY_EMAIL_STATUS_CFG}/>
-                  <button onClick={()=>handleOpenHistoryItem(email)} style={{
-                    padding:"6px 12px", borderRadius:6, border:`1px solid ${C.border}`,
-                    background:C.ivory, cursor:"pointer", color:C.textMid,
-                    fontFamily:"'DM Sans',sans-serif", fontSize:12,
-                  }}>Aç</button>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </RCard>
@@ -18270,6 +18713,17 @@ function mapAgencyEmailFromDB(r) {
     id:r.id, agencyId:r.agency_id||null, direction:r.direction||'outbound',
     subject:r.subject||'', body:r.body||'', status:r.status||'draft',
     sentAt:r.sent_at||null, createdBy:r.created_by||null, createdAt:r.created_at||null,
+    // Additive — populated from Phase A's own provider-sync columns
+    // (see supabase_migration_agency_mailbox.sql). receivedAt/fromEmail
+    // are reserved-for-Phase-B fields on outbound-only rows today; see
+    // computeAgencyCrmPlusSummary's own header comment for the honest
+    // limitation this implies for "Gelen Yanıtlar".
+    receivedAt:r.received_at||null, fromEmail:r.from_email||'', toEmail:r.to_email||'',
+    // Only present when the caller's query embedded the parent agency
+    // (see SupabaseAgencyEmailRepo.getAll() below) — undefined otherwise,
+    // which the || defaults here handle the same as a missing column.
+    agencyName:r.agency?.name||'', agencyCountry:r.agency?.country||'',
+    agencyLanguages:r.agency?.languages||[],
     _fromDB:true,
   };
 }
@@ -18277,6 +18731,29 @@ const SupabaseAgencyEmailRepo = {
   async getByAgencyId(agencyId){
     const sb=getSB(); if(!sb) return AgencyEmailRepository.getByAgencyId(agencyId);
     const{data,error}=await sb.from('agency_emails').select('*').eq('agency_id',agencyId).order('created_at',{ascending:false});
+    if(error) throw new Error(error.message);
+    return (data||[]).map(mapAgencyEmailFromDB);
+  },
+  // Added for the "Agency CRM+" homepage section — needs rows ACROSS
+  // every agency (today's sends, today's/recent replies), not one
+  // agency's own history. Embeds the parent agency's name/country/
+  // languages so the dashboard panels never need a second per-row query.
+  // Same RLS (admin/sales SELECT) as every other read of this table —
+  // widening from "rows for one agency" to "all rows the caller's role
+  // can already see" grants no new access.
+  //
+  // BOUNDED by sinceDays (default 14, 0 means unbounded) — the homepage
+  // only ever needs today's counts + top-5 recent replies/follow-ups,
+  // never the agency's entire lifetime history, and this table only
+  // grows over time. A bounded window server-side costs nothing extra
+  // to implement and avoids an obvious unbounded-mailbox-sized load as
+  // outreach volume grows — not a new subsystem, just a WHERE clause.
+  async getAll(f={}){
+    const sb=getSB(); if(!sb) return AgencyEmailRepository.getAll(f);
+    const sinceDays = typeof f.sinceDays === 'number' ? f.sinceDays : 14;
+    let q=sb.from('agency_emails').select('*,agency:agencies(id,name,country,languages)').order('created_at',{ascending:false});
+    if (sinceDays > 0) q = q.gte('created_at', new Date(Date.now() - sinceDays*86400000).toISOString());
+    const{data,error}=await q;
     if(error) throw new Error(error.message);
     return (data||[]).map(mapAgencyEmailFromDB);
   },
@@ -24073,6 +24550,17 @@ function MobileHomePage({ navigate }) {
   // aggregation as the desktop panel; only the JSX differs.
   const { data:civitatisSettlement, loading:civSettleLoading, error:civSettleError } = useRepo("civitatisSettlement", "getSummary");
 
+  // Agency Mailbox Phase 10 — same repo calls, same pure selector
+  // (computeAgencyCrmPlusSummary) as the desktop AgencyCrmPlusSection;
+  // only this page's JSX differs, same split as Civitatis Settlement
+  // above and every other desktop/mobile pair in this file.
+  const { data:repoAgenciesForCrmPlus } = useRepo("agency", "getAll");
+  const { data:repoEmailsForCrmPlus }   = useRepo("agencyEmail", "getAll", { sinceDays: 14 });
+  const agencyCrmPlusSummary = useMemo(
+    () => computeAgencyCrmPlusSummary(repoAgenciesForCrmPlus, repoEmailsForCrmPlus, new Date().toISOString()),
+    [repoAgenciesForCrmPlus, repoEmailsForCrmPlus]
+  );
+
   const urgentItems = useMemo(
     () => computeUrgent(repoRes, repoPays, repoRems),
     [repoRes, repoPays, repoRems]
@@ -24165,6 +24653,54 @@ function MobileHomePage({ navigate }) {
                   <div style={{ fontSize:13, fontWeight:500, color:C.text, fontFamily:"'DM Sans',sans-serif", lineHeight:1.35 }}>{item.title}</div>
                   <div style={{ fontSize:11.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", marginTop:3 }}>{item.sub}</div>
                 </div>
+              </div>
+            </MobileEntityCard>
+          ))}
+        </MobileSection>
+      )}
+
+      {/* Agency Mailbox Phase 10 — same role gate (canAccess ..."agencies")
+          as the desktop AgencyCrmPlusSection, same pure selector; only
+          the markup differs. Placed before Civitatis Hakedişi, mirroring
+          the desktop placement (below the main summary, above Civitatis). */}
+      {canAccess(auth.role, "agencies") && (
+        <MobileSection title="Agency CRM+" action="Acenteleri Gör" onAction={() => navigate('/agencies')}>
+          <MobileEntityCard>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14 }}>
+              <div>
+                <div style={{ fontSize:20, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif" }}>{agencyCrmPlusSummary.newAgenciesTodayCount}</div>
+                <div style={{ fontSize:11, color:C.textMuted, fontFamily:"'DM Sans',sans-serif" }}>Bugün Yeni Acente</div>
+              </div>
+              <div>
+                <div style={{ fontSize:20, fontWeight:700, color:C.text, fontFamily:"'Playfair Display',serif" }}>{agencyCrmPlusSummary.sentTodayCount}</div>
+                <div style={{ fontSize:11, color:C.textMuted, fontFamily:"'DM Sans',sans-serif" }}>Bugün Mail Gönderildi</div>
+              </div>
+              <div>
+                <div style={{ fontSize:20, fontWeight:700, color: agencyCrmPlusSummary.repliesTodayCount>0 ? C.blue : C.text, fontFamily:"'Playfair Display',serif" }}>{agencyCrmPlusSummary.repliesTodayCount}</div>
+                <div style={{ fontSize:11, color:C.textMuted, fontFamily:"'DM Sans',sans-serif" }}>Bugün Yanıt Geldi</div>
+              </div>
+              <div>
+                <div style={{ fontSize:20, fontWeight:700, color: agencyCrmPlusSummary.followUpCount>0 ? C.amber : C.text, fontFamily:"'Playfair Display',serif" }}>{agencyCrmPlusSummary.followUpCount}</div>
+                <div style={{ fontSize:11, color:C.textMuted, fontFamily:"'DM Sans',sans-serif" }}>Takip Bekleyen</div>
+              </div>
+            </div>
+          </MobileEntityCard>
+          {agencyCrmPlusSummary.recentReplies.slice(0,3).map(reply => (
+            <MobileEntityCard key={reply.id} onClick={() => navigate('/agencies/'+reply.agencyId)}>
+              <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:10 }}>
+                <div style={{ minWidth:0, flex:1 }}>
+                  <div style={{ fontSize:13, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{reply.agencyName || 'Acente'}</div>
+                  <div style={{ fontSize:11.5, color:C.textMuted, fontFamily:"'DM Sans',sans-serif", marginTop:2, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{reply.subject || '(konu yok)'}</div>
+                </div>
+                <MobileStatusChip label="Yanıt Geldi" tone="info"/>
+              </div>
+            </MobileEntityCard>
+          ))}
+          {agencyCrmPlusSummary.followUpItems.slice(0,3).map(({ agency }) => (
+            <MobileEntityCard key={agency.id} onClick={() => navigate('/agencies/'+agency.id)}>
+              <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:10 }}>
+                <div style={{ fontSize:13, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{agency.name}</div>
+                <MobileStatusChip label="Takip" tone="warn"/>
               </div>
             </MobileEntityCard>
           ))}

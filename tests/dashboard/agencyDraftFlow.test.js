@@ -171,10 +171,16 @@ test('_sbLog accepts an optional metadata parameter, backward compatible with ev
 });
 
 test('draft_created/draft_updated events carry only agency_id/agency_email_id/language — never the email body or subject', () => {
-  const body = acenteDetailPageBody();
-  const createdIdx = body.indexOf("_sbLog('agency_email'");
+  // Scoped to each function's OWN body (brace-depth aware) rather than
+  // naive whole-file ordinal search — handleReplyToEmail (Phase 7
+  // hardened) also logs a 'draft_created' event with its own, different
+  // payload shape (reply_to_agency_email_id instead of language), so a
+  // "2nd occurrence in the file" assumption would wrongly pick that one
+  // up instead of handleSaveDraft's 'draft_updated' call.
+  const generateBody = fnBody('handleGenerateDraft');
+  const createdIdx = generateBody.indexOf("_sbLog('agency_email'");
   assert.ok(createdIdx !== -1);
-  const createdCall = body.slice(createdIdx, body.indexOf(');', createdIdx));
+  const createdCall = generateBody.slice(createdIdx, generateBody.indexOf(');', createdIdx));
   assert.match(createdCall, /'draft_created'/);
   assert.match(createdCall, /agency_id: agency\.id/);
   assert.match(createdCall, /agency_email_id: createdRow\.id/);
@@ -182,11 +188,28 @@ test('draft_created/draft_updated events carry only agency_id/agency_email_id/la
   assert.doesNotMatch(createdCall, /subject/i);
   assert.doesNotMatch(createdCall, /\bbody\b/);
 
-  const updatedIdx = body.indexOf("_sbLog('agency_email'", createdIdx + 1);
+  const saveBody = fnBody('handleSaveDraft');
+  const updatedIdx = saveBody.indexOf("_sbLog('agency_email'");
   assert.ok(updatedIdx !== -1);
-  const updatedCall = body.slice(updatedIdx, body.indexOf(');', updatedIdx));
+  const updatedCall = saveBody.slice(updatedIdx, saveBody.indexOf(');', updatedIdx));
   assert.match(updatedCall, /'draft_updated'/);
   assert.doesNotMatch(updatedCall, /subject/i);
+});
+
+test('handleReplyToEmail\'s own draft_created event carries only agency_id/agency_email_id/reply_to_agency_email_id — never the email body or subject', () => {
+  const body = acenteDetailPageBody();
+  const idx = body.indexOf('async function handleReplyToEmail(');
+  const end = body.indexOf('\n  }', idx);
+  const fn = body.slice(idx, end);
+  const logIdx = fn.indexOf("_sbLog('agency_email'");
+  assert.ok(logIdx !== -1);
+  const call = fn.slice(logIdx, fn.indexOf(');', logIdx));
+  assert.match(call, /'draft_created'/);
+  assert.match(call, /agency_id: agency\.id/);
+  assert.match(call, /agency_email_id: createdRow\.id/);
+  assert.match(call, /reply_to_agency_email_id: inboundEmail\.id/);
+  assert.doesNotMatch(call, /subject/i);
+  assert.doesNotMatch(call, /\bbody\b/);
 });
 
 // ── E. No regression on auth/send/MFA ───────────────────────────────────

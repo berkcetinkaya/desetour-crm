@@ -31,6 +31,10 @@
     "api/agency-send-email.js": {
       "maxDuration": 30,
       "memory": 512
+    },
+    "api/agency-mailbox-sync.js": {
+      "maxDuration": 60,
+      "memory": 512
     }
   },
   "rewrites": [

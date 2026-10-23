@@ -1,0 +1,97 @@
+# Agency Mailbox Scheduled Sync
+# ─────────────────────────────────────────────────────────────────────────
+# Calls the already-protected api/agency-mailbox-sync.js endpoint on a
+# schedule, mirroring civitatis-scheduled-ingestion.yml's own pattern
+# exactly. This workflow contains NO sync logic of its own — its entire
+# job is one authenticated HTTP request; every real decision (the
+# capability preflight, Gmail History API pagination, the matching
+# hierarchy, persistence) lives in the endpoint and the code it calls.
+#
+# IMPORTANT — inert until merged to the repository's default branch,
+# same caveat as civitatis-scheduled-ingestion.yml: GitHub only evaluates
+# a `schedule:` trigger against the default branch's own copy of this
+# file. `workflow_dispatch` is the one exception, usable from any branch
+# that has this file once the required secrets/variable exist.
+#
+# SECRETS: AGENCY_MAILBOX_SYNC_SECRET (below) is a GitHub Actions
+# encrypted secret — never printed, never committed, redacted by GitHub
+# from any log output. The SAME value must separately be set as the
+# AGENCY_MAILBOX_SYNC_SECRET environment variable on the Vercel
+# deployment this workflow targets — see api/agency-mailbox-sync.js's
+# isAuthorizedSchedulerRequest, which is what actually checks it.
+# AGENCY_MAILBOX_SYNC_URL (a repository VARIABLE, not a secret — a plain
+# HTTPS endpoint URL; the authorization boundary is the header, never the
+# URL's own secrecy) must be set to the deployed endpoint's full URL,
+# e.g. https://<your-production-domain>/api/agency-mailbox-sync — neither
+# is set by this change.
+#
+# Runs the DEFAULT (incremental) mode only — never ?mode=backfill. The
+# bounded historical catch-up (Phase 8) is a deliberately separate,
+# manually-triggered action (see the implementation report), never part
+# of routine scheduled operation.
+# ─────────────────────────────────────────────────────────────────────────
+name: Agency Mailbox Scheduled Sync
+
+on:
+  schedule:
+    # Every 15 minutes, same cadence as the Civitatis scheduled
+    # ingestion — GitHub's best-effort scheduling delay is harmless here:
+    # the Gmail History API cursor means a late run simply picks up
+    # everything since the last one, nothing is missed.
+    - cron: '*/15 * * * *'
+  workflow_dispatch: {}
+
+permissions: {}
+
+concurrency:
+  group: agency-mailbox-scheduled-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Call the protected Agency mailbox sync endpoint
+        env:
+          SCHEDULER_SECRET: ${{ secrets.AGENCY_MAILBOX_SYNC_SECRET }}
+          SYNC_URL: ${{ vars.AGENCY_MAILBOX_SYNC_URL }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${SYNC_URL}" ]; then
+            echo "::error::AGENCY_MAILBOX_SYNC_URL repository variable is not set — see the activation instructions."
+            exit 1
+          fi
+
+          http_status=$(curl -sS -o response.json -w '%{http_code}' \
+            --max-time 90 \
+            -X GET \
+            -H "Authorization: Bearer ${SCHEDULER_SECRET}" \
+            "${SYNC_URL}")
+
+          echo "HTTP status: ${http_status}"
+          echo "Response body:"
+          cat response.json
+
+          if [ "${http_status}" -lt 200 ] || [ "${http_status}" -ge 300 ]; then
+            echo "::error::Agency mailbox sync endpoint returned a non-2xx status (${http_status})"
+            exit 1
+          fi
+
+          # A capability_check_failed stage means Gmail OAuth re-
+          # authorization is required (see the endpoint's own safe,
+          # classified-only error) — this is a real, actionable failure,
+          # never a silent green, but it is reported as a warning rather
+          # than hard-failing the whole scheduled job on every single
+          # 15-minute run until someone re-authorizes: the job already
+          # surfaces it loudly via the workflow run's own red HTTP-status
+          # check above only if the endpoint itself returns non-2xx
+          # (it does, 503 — see api/agency-mailbox-sync.js), so this
+          # extra check is redundant insurance, not the primary signal.
+          stage=$(jq -r '.stage // "unknown"' response.json)
+          if [ "${stage}" = "capability_check_failed" ]; then
+            capability=$(jq -r '.capability // "unknown"' response.json)
+            echo "::error::Agency mailbox sync capability preflight failed (${capability}) — Gmail OAuth re-authorization required."
+            exit 1
+          fi
