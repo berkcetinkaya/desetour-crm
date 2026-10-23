@@ -308,24 +308,33 @@ test('the conversation timeline (E-posta Geçmişi) still distinguishes inbound/
   assert.doesNotMatch(body, /gmailMessageId|gmailThreadId|provider_message_id|provider_thread_id/);
 });
 
-// ── Typography: no new font dependency ───────────────────────────────────
+// ── Typography ─────────────────────────────────────────────────────────
+// A later design-polish phase explicitly, deliberately retypefaced the
+// app onto Geist (operational UI) + Instrument Serif (major headings
+// only) + DM Mono (unchanged). Playfair Display and DM Sans stay loaded
+// too, but only for ProposalTemplate/ProposalPreviewModal and the Resend
+// HTML email template, which were deliberately left on the old pairing
+// as a self-contained branded document — not because Agencies itself
+// still uses them.
 
-test('no new font dependency was introduced — the Agencies redesign only uses the already-loaded Playfair Display / DM Sans / DM Mono', () => {
+test('exactly one Google Fonts stylesheet request loads the app\'s full type system (Geist, Instrument Serif, DM Mono, plus Playfair Display/DM Sans kept only for the print-proposal template)', () => {
   const indexHtml = fs.readFileSync(path.join(__dirname, '..', '..', 'index.html'), 'utf8');
   const fontLinkMatch = indexHtml.match(/fonts\.googleapis\.com\/css2\?family=[^"]+/);
   assert.ok(fontLinkMatch);
+  assert.match(fontLinkMatch[0], /Geist/);
+  assert.match(fontLinkMatch[0], /Instrument\+Serif/);
   assert.match(fontLinkMatch[0], /Playfair\+Display/);
   assert.match(fontLinkMatch[0], /DM\+Sans/);
   assert.match(fontLinkMatch[0], /DM\+Mono/);
-  // Exactly one Google Fonts request in the whole document — no second
-  // stylesheet link was added for a new typeface.
+  // Exactly one Google Fonts request in the whole document.
   const allFontLinks = indexHtml.match(/fonts\.googleapis\.com\/css2[^"]*/g) || [];
   assert.equal(allFontLinks.length, 1);
 });
 
-test('AcenteDetailPage\'s header and section headings use Playfair Display (editorial) while operational text uses DM Sans — the established pairing, not a new face', () => {
+test('AcenteDetailPage\'s header uses Instrument Serif for the agency name (a major heading) while the rest of its operational text uses Geist — the current type system, not the retired Playfair/DM Sans pairing', () => {
   const headerIdx = ACENTE_DETAIL_BODY.indexOf('linear-gradient');
   const headerBody = ACENTE_DETAIL_BODY.slice(headerIdx, headerIdx + 800);
-  assert.match(headerBody, /fontFamily:"'Playfair Display',serif"/);
-  assert.match(headerBody, /fontFamily:"'DM Sans',sans-serif"/);
+  assert.match(headerBody, /fontFamily:"'Instrument Serif',serif"/);
+  assert.match(headerBody, /fontFamily:"'Geist',sans-serif"/);
+  assert.doesNotMatch(headerBody, /'Playfair Display'|'DM Sans'/);
 });

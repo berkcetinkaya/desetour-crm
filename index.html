@@ -3,6 +3,23 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+
+  <!-- Theme bootstrap — runs synchronously before anything paints, so the
+       stored/system theme preference applies immediately instead of a
+       flash of the other theme once DeseTourDashboard.jsx's own style
+       tag (which defines the actual --c-* variables) mounts and its
+       useTheme() effect fires. Mirrors useTheme()'s own read exactly. -->
+  <script>
+    (function() {
+      try {
+        var t = localStorage.getItem('dese_theme');
+        if (t !== 'light' && t !== 'dark') {
+          t = (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
+        }
+        document.documentElement.setAttribute('data-theme', t);
+      } catch (e) {}
+    })();
+  </script>
   <meta name="description" content="Dese Tour Operasyon Merkezi — CRM"/>
   <title>Dese Tour Operasyon Merkezi</title>
 
@@ -25,15 +42,26 @@
   ══════════════════════════════════════════════════════════════════════
   -->
 
-  <!-- ── Google Fonts (Playfair Display + DM Sans) ── -->
+  <!-- ── Google Fonts ──────────────────────────────────────────────────
+       Geist (operational UI, almost everywhere) + Instrument Serif
+       (major page titles / selected editorial headings only) + DM Mono
+       (numeric/technical, unchanged). Playfair Display + DM Sans stay
+       loaded at a reduced weight set too, but ONLY for ProposalTemplate/
+       ProposalPreviewModal (the printable customer quote document) and
+       the Resend HTML email template (which actually carries its own
+       independent @import and doesn't need this one) — both are
+       deliberately left on the old pairing as a self-contained branded
+       document, not part of the operational UI this phase retypefaces.
+       Real Google Fonts family names: "Geist" (not "Geist Sans") and
+       "Instrument Serif" (weight 400 only, italic + normal). -->
   <link rel="preconnect" href="https://fonts.googleapis.com"/>
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
-  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600;700&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Instrument+Serif:ital@0;1&family=Playfair+Display:wght@500;600;700&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
 
   <style>
     *, *::before, *::after { box-sizing: border-box; }
     html, body { margin: 0; padding: 0; height: 100%; }
-    body { font-family: 'DM Sans', -apple-system, Helvetica, Arial, sans-serif; }
+    body { font-family: 'Geist', -apple-system, Helvetica, Arial, sans-serif; }
     #root { height: 100%; }
 
     /* Loading screen shown while scripts download */
@@ -51,7 +79,7 @@
       animation: spin .8s linear infinite;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
-    .boot-text { color: rgba(248,245,238,0.6); font-size: 13px; font-family: 'DM Sans', sans-serif; }
+    .boot-text { color: rgba(248,245,238,0.6); font-size: 13px; font-family: 'Geist', sans-serif; }
   </style>
 
   <style>
@@ -72,7 +100,7 @@
     }
     /* Modal responsive */
     @media (max-width: 767px) {
-      .modal-inner { max-width: 100% !important; max-height: 95vh !important; margin: 0 !important; border-radius: 12px 12px 0 0 !important; }
+      .modal-inner { max-width: 100% !important; max-height: 95vh !important; margin: 0 !important; border-radius: 16px 16px 0 0 !important; }
     }
     /* Animation */
     @keyframes fadeInUp {
