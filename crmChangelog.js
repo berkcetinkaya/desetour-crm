@@ -101,6 +101,21 @@ const CRM_CHANGELOG_CATEGORIES = [
 // Newest first. See the release convention above before editing.
 const CRM_CHANGELOG = [
   {
+    version: '12.49',
+    date: '2026-10-23',
+    title: 'CRM+ ve Yeni Arayüz',
+    summary: 'CRM operasyonlarını daha görünür ve daha hızlı hale getiren Agency CRM+, Son Hareketler ve yeni premium arayüz kullanıma alındı.',
+    categories: ['Yeni Özellik', 'Arayüz'],
+    highlights: [
+      'Agency CRM+: acentelerden gelen e-posta yanıtları artık otomatik takip ediliyor, konuşma geçmişi üzerinden doğrudan yanıt verilebiliyor ve yeni acente/mail/yanıt/takip durumları tek panelden izlenebiliyor',
+      'Bildirimler: yeni acente yanıtları ve önemli operasyonel gelişmeler artık Son Bildirimler alanı ve bildirim ziliyle anında görülüp ilgili kayda doğrudan gidilebiliyor',
+      'Son Hareketler: rezervasyon, rehber atama, acente iletişimi ve notlar gibi önemli işlemlerin kim tarafından yapıldığı takip edilebiliyor; yöneticiler için ayrı bir ekip aktivite görünümü eklendi',
+      'Acenteler: liste ve detay ekranları daha modern ve kompakt bir çalışma alanına dönüştü; yeni yanıtlar, takip bekleyenler, partner durumları, konuşmalar ve notlar daha kolay ayırt edilebiliyor',
+      'Yeni tasarım sistemi: Geist ve Instrument Serif tipografisiyle daha aydınlık ve sade bir arayüz, cihazda hatırlanan açık/koyu tema desteği ve kartlar/tablolar/modallar/mobil genelinde görsel iyileştirmeler',
+    ],
+    author: 'Berk',
+  },
+  {
     version: '12.48',
     date: '2026-10-22',
     title: 'Civitatis Rezervasyon Alım Sürecinde Sessiz Kayıp Önleme',
@@ -263,22 +278,6 @@ const CRM_CHANGELOG = [
     ],
     author: 'Berk',
     technicalNote: 'Bilet hazırlığı tamamlama ve geri alma işlemleri yalnızca yönetici ve operasyon rolleri tarafından yapılabiliyor; geri alma özelliği bilinçli bir düzeltme adımı olması için sadece Rezervasyon Detayı\'nda sunuluyor, Ana Sayfa\'ya eklenmedi.',
-  },
-  {
-    version: '12.37',
-    date: '2026-09-30',
-    title: 'Tur Bilgi Merkezi',
-    summary: 'Tur detayları artık operasyon ekibinin ihtiyaç duyduğu her bilgiyi Türkçe olarak bir arada sunan kapsamlı bir Tur Bilgi Merkezi\'ne dönüştü; Ana Sayfa da okunmamış önemli operasyon uyarılarını artık öne çıkarıyor.',
-    categories: ['Yeni Özellik', 'Operasyon'],
-    highlights: [
-      'Tur detaylarının kapsamlı bir Tur Bilgi Merkezi olarak görüntülenmesi',
-      'Yabancı dilde satılan turların operasyon bilgilerinin CRM içinde Türkçe tutulabilmesi',
-      'Durak bazlı tur rotası, dahil/hariç hizmetler, buluşma-bitiş bilgileri ve rezervasyon/iptal kurallarının tur bazında görüntülenmesi',
-      'Dese Tour\'a özel rehber operasyon notlarının marketplace içeriğinden ayrı tutulması ve rehberlerin kendilerine atanmış turları salt okunur görebilmesi',
-      'Ana Sayfa\'da Civitatis rezervasyon iptalleri gibi okunmamış önemli operasyon uyarılarının öne çıkarılması',
-    ],
-    author: 'Berk',
-    technicalNote: 'Rehberler yalnızca kendilerine atanmış rezervasyonların tur bilgilerini görebiliyor; ticari satış kanalı ve fiyat bilgileri bu görünümde yer almıyor, düzenleme yapamıyorlar.',
   },
 ];
 
