@@ -19,6 +19,12 @@
  * History API pass since the last stored cursor (public.settings). Mode
  * `backfill`: the explicit, separately-triggered Phase 8 bounded catch-up
  * (never run automatically, never unbounded — see buildBackfillQuery).
+ * Mode `capability`: a pre-production, STRICTLY READ-ONLY probe — calls
+ * only gmailInboundSync.checkMailboxCapability and returns immediately;
+ * it never reaches incremental sync or backfill, performs zero Supabase
+ * writes (no agency_emails/agencies/activity_logs/settings cursor
+ * writes), and never ingests a mailbox message. Intended to be run
+ * against a Preview deployment before any real sync is attempted there.
  *
  * SAFETY: the capability preflight (gmailSendClient.checkInboundBodyCapability)
  * is re-checked on EVERY invocation, never cached across runs and never
@@ -89,9 +95,29 @@ async function handler(req, res, deps = {}) {
   }
 
   const query = req.query || {};
-  const mode = query.mode === 'backfill' ? 'backfill' : 'incremental';
+  const mode = query.mode === 'backfill' ? 'backfill' : query.mode === 'capability' ? 'capability' : 'incremental';
   const gmailDeps = deps.gmailDeps || {};
   const gmailInboundSync = deps.gmailInboundSync || realGmailInboundSync;
+
+  // Mode 'capability' is a dead end, deliberately: it returns immediately
+  // with the minimal safe shape below and NEVER falls through to the
+  // incremental/backfill dispatch or the shared response-building code
+  // further down (which merges in extra fields like `mode` or structural
+  // run counts) — this response is exactly {ok, capability}, nothing else.
+  if (mode === 'capability') {
+    try {
+      const capResult = await gmailInboundSync.checkMailboxCapability({ adminClient, gmailDeps });
+      if (!capResult.ok) {
+        console.error('[agency-mailbox-sync] Capability-only probe failed:', { capability: capResult.capability });
+        return res.status(503).json({ ok: false, capability: capResult.capability });
+      }
+      console.info('[agency-mailbox-sync] Capability-only probe succeeded.');
+      return res.status(200).json({ ok: true, capability: capResult.capability });
+    } catch (err) {
+      console.error('[agency-mailbox-sync] Capability-only probe failed unexpectedly:', err.message);
+      return res.status(500).json({ ok: false, capability: 'unknown_error' });
+    }
+  }
 
   try {
     let result;

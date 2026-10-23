@@ -607,6 +607,36 @@ async function recoverFromStaleHistoryId({ adminClient, gmailDeps, lastSyncedAt 
 }
 
 /**
+ * Pre-production safety mode — a STRICTLY READ-ONLY probe of whether the
+ * current hello@desetour.com OAuth grant can read a full message body,
+ * with NO other side effect whatsoever: never fetches/classifies/
+ * persists a single mailbox message, never touches agencies or
+ * activity_logs, never reads or writes the Gmail sync cursor in
+ * settings, never advances any historyId, never runs the History API or
+ * the bounded backfill. The ONE Supabase call it makes
+ * (findSampleOutboundGmailMessageId) is a plain SELECT against the
+ * already-existing agency_emails rows this mailbox has already sent —
+ * needed only because checkInboundBodyCapability requires a real,
+ * already-known message id to probe against and never discovers one
+ * itself; this is a read, never a write.
+ *
+ * Returns the same minimal, safe classification
+ * checkInboundBodyCapability itself returns ({capability: 'full_body_ok'
+ * | 'insufficient_scope' | 'unknown_error'}) plus an `ok` flag — never a
+ * raw Gmail error, never a token, never a scope name, never any mailbox
+ * content or identifier. Intended to be run against a Preview deployment
+ * before any real incremental/backfill sync is ever attempted there.
+ */
+async function checkMailboxCapability({ adminClient, gmailDeps = {} }) {
+  const sampleGmailMessageId = await findSampleOutboundGmailMessageId({ adminClient });
+  if (!sampleGmailMessageId) {
+    return { ok: false, capability: 'unknown_error' };
+  }
+  const capability = await gmailClient.checkInboundBodyCapability({ sampleGmailMessageId }, gmailDeps);
+  return { ok: capability.capability === 'full_body_ok', capability: capability.capability };
+}
+
+/**
  * The full Phase 2 incremental sync, one invocation. Always re-checks
  * the capability preflight live (never assumes a prior success still
  * holds).
@@ -807,6 +837,7 @@ module.exports = {
   logInboundReply,
   processCandidateMessage,
   recoverFromStaleHistoryId,
+  checkMailboxCapability,
   syncAgencyMailbox,
   runBoundedBackfill,
 };

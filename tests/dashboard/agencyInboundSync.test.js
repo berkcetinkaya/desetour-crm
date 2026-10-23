@@ -966,3 +966,55 @@ test('syncAgencyMailbox: the cursor DOES advance on the run where the follow-up 
   assert.ok(upsertCall, 'the stable cursor must advance once the repaired run fully converges');
   assert.equal(JSON.parse(upsertCall.payload.value).historyId, '200');
 }));
+
+// ═══════════════ H5. checkMailboxCapability — read-only pre-prod probe ═
+// Must never touch any table beyond the one sample-id SELECT, never
+// fetch/classify/persist a mailbox message, and never run History API
+// pagination or the bounded backfill.
+
+test('checkMailboxCapability returns {ok:true, capability:"full_body_ok"} when a sample exists and format=full succeeds', () => withGmailEnv(async () => {
+  const adminClient = makeFakeAdminClient({ agency_emails: [{ data: { provider_message_id: 'gm-sample' }, error: null }] });
+  const gmailDeps = { fetch: makeGmailFetch({ messagesById: { 'gm-sample': gmailMessage({ id: 'gm-sample' }) } }) };
+  const result = await sync.checkMailboxCapability({ adminClient, gmailDeps });
+  assert.deepEqual(result, { ok: true, capability: 'full_body_ok' });
+}));
+
+test('checkMailboxCapability returns {ok:false, capability:"insufficient_scope"} on Gmail\'s documented scope rejection', () => withGmailEnv(async () => {
+  const adminClient = makeFakeAdminClient({ agency_emails: [{ data: { provider_message_id: 'gm-sample' }, error: null }] });
+  const gmailDeps = { fetch: async (url) => {
+    if (String(url).includes('oauth2.googleapis.com')) return { ok: true, json: async () => ({ access_token: 'tok', expires_in: 3600 }) };
+    return { ok: false, status: 400, text: async () => "Metadata scope doesn't allow format FULL" };
+  } };
+  const result = await sync.checkMailboxCapability({ adminClient, gmailDeps });
+  assert.deepEqual(result, { ok: false, capability: 'insufficient_scope' });
+}));
+
+test('checkMailboxCapability returns {ok:false, capability:"unknown_error"} when there is no prior outbound send to sample against', () => withGmailEnv(async () => {
+  const adminClient = makeFakeAdminClient({ agency_emails: [{ data: null, error: null }] });
+  const result = await sync.checkMailboxCapability({ adminClient, gmailDeps: {} });
+  assert.deepEqual(result, { ok: false, capability: 'unknown_error' });
+}));
+
+test('checkMailboxCapability never calls fetchMessageFull/classifyInboundMessage/persistInboundMessage — it only probes capability, never reads a real mailbox message', () => withGmailEnv(async () => {
+  const adminClient = makeFakeAdminClient({ agency_emails: [{ data: { provider_message_id: 'gm-sample' }, error: null }] });
+  let messagesFetched = 0;
+  const gmailDeps = { fetch: async (url) => {
+    if (String(url).includes('oauth2.googleapis.com')) return { ok: true, json: async () => ({ access_token: 'tok', expires_in: 3600 }) };
+    messagesFetched += 1;
+    return { ok: true, json: async () => gmailMessage({ id: 'gm-sample' }) };
+  } };
+  await sync.checkMailboxCapability({ adminClient, gmailDeps });
+  // Exactly the ONE capability probe fetch (format=full on the sample id)
+  // — never a second fetch, never History API pagination, never backfill.
+  assert.equal(messagesFetched, 1);
+  assert.ok(!adminClient._calls.some(c => c.method !== 'select' && c.method !== 'eq' && c.method !== 'not' && c.method !== 'order' && c.method !== 'limit' && c.method !== 'maybeSingle'), 'no write of any kind');
+}));
+
+test('checkMailboxCapability performs exactly one Supabase call (the sample-id read) and nothing else', () => withGmailEnv(async () => {
+  const adminClient = makeFakeAdminClient({ agency_emails: [{ data: { provider_message_id: 'gm-sample' }, error: null }] });
+  const gmailDeps = { fetch: makeGmailFetch({ messagesById: { 'gm-sample': gmailMessage({ id: 'gm-sample' }) } }) };
+  await sync.checkMailboxCapability({ adminClient, gmailDeps });
+  const tablesTouched = new Set(adminClient._calls.map(c => c.table));
+  assert.deepEqual([...tablesTouched], ['agency_emails']);
+  assert.ok(!adminClient._calls.some(c => ['insert', 'update', 'upsert'].includes(c.method)), 'never a write of any kind');
+}));

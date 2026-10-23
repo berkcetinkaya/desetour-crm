@@ -177,6 +177,143 @@ test('an unexpected thrown error is reported as a generic 500, never leaking the
   assert.doesNotMatch(JSON.stringify(res.body), /leaked-internal-detail-marker/);
 }));
 
+// ── mode=capability — strictly read-only pre-production probe ──────────
+// A dedicated, dead-end branch: requires the SAME scheduler secret as
+// every other mode, calls ONLY gmailInboundSync.checkMailboxCapability,
+// never falls through to incremental/backfill, and returns the minimal
+// {ok, capability} shape — nothing else, never a raw Gmail error.
+
+test('capability mode requires the same scheduler secret as every other mode', () => withSecretEnv(async () => {
+  const req = makeReq({ query: { mode: 'capability' }, authorization: 'Bearer wrong-secret' });
+  const res = makeRes();
+  let called = false;
+  const gmailInboundSync = { checkMailboxCapability: async () => { called = true; return { ok: true, capability: 'full_body_ok' }; } };
+  await handler(req, res, { createClient: fakeCreateClient, gmailInboundSync });
+  assert.equal(res.statusCode, 401);
+  assert.equal(called, false, 'the capability checker must never be called without a valid scheduler secret');
+}));
+
+test('capability mode calls gmailInboundSync.checkMailboxCapability exactly once', () => withSecretEnv(async () => {
+  const req = makeReq({ query: { mode: 'capability' }, authorization: 'Bearer test-secret' });
+  const res = makeRes();
+  let callCount = 0;
+  const gmailInboundSync = { checkMailboxCapability: async () => { callCount += 1; return { ok: true, capability: 'full_body_ok' }; } };
+  await handler(req, res, { createClient: fakeCreateClient, gmailInboundSync });
+  assert.equal(callCount, 1);
+  assert.equal(res.statusCode, 200);
+  assert.deepEqual(res.body, { ok: true, capability: 'full_body_ok' });
+}));
+
+test('capability mode performs zero Supabase writes end-to-end, through the REAL checkMailboxCapability (not stubbed) — only one read, never an insert/update/upsert', () => withSecretEnv(async () => {
+  const req = makeReq({ query: { mode: 'capability' }, authorization: 'Bearer test-secret' });
+  const res = makeRes();
+  const calls = [];
+  const adminClient = {
+    from(table) {
+      const b = {
+        select() { return b; },
+        eq() { return b; },
+        not() { return b; },
+        order() { return b; },
+        limit() { return b; },
+        maybeSingle() { calls.push({ table, method: 'read' }); return Promise.resolve({ data: { provider_message_id: 'gm-sample' }, error: null }); },
+        insert(payload) { calls.push({ table, method: 'insert', payload }); return Promise.resolve({ error: null }); },
+        update(payload) { calls.push({ table, method: 'update', payload }); return b; },
+        upsert(payload, opts) { calls.push({ table, method: 'upsert', payload, opts }); return Promise.resolve({ error: null }); },
+      };
+      return b;
+    },
+  };
+  const gmailDeps = { fetch: async (url) => {
+    if (String(url).includes('oauth2.googleapis.com')) return { ok: true, json: async () => ({ access_token: 'tok', expires_in: 3600 }) };
+    return { ok: true, json: async () => ({ id: 'gm-sample', payload: { headers: [] } }) };
+  } };
+  const gmailEnvKeys = ['AGENCY_GMAIL_CLIENT_ID', 'AGENCY_GMAIL_CLIENT_SECRET', 'AGENCY_GMAIL_REFRESH_TOKEN', 'AGENCY_GMAIL_FROM'];
+  const prevGmailEnv = {};
+  for (const k of gmailEnvKeys) prevGmailEnv[k] = process.env[k];
+  process.env.AGENCY_GMAIL_CLIENT_ID = 'x'; process.env.AGENCY_GMAIL_CLIENT_SECRET = 'x';
+  process.env.AGENCY_GMAIL_REFRESH_TOKEN = 'x'; process.env.AGENCY_GMAIL_FROM = 'hello@desetour.com';
+  try {
+    // No `gmailInboundSync` passed in deps here — this exercises the real
+    // module (gmailSendClient's real checkInboundBodyCapability included),
+    // not a stub, so "zero writes" is a genuine guarantee, not an artifact
+    // of a test double.
+    await handler(req, res, { createClient: () => adminClient, gmailDeps });
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(res.body, { ok: true, capability: 'full_body_ok' });
+    assert.ok(!calls.some(c => c.method !== 'read'), 'capability mode must never insert/update/upsert anything');
+    assert.equal(calls.filter(c => c.method === 'read').length, 1, 'exactly one read — the sample outbound message id lookup — nothing else');
+  } finally {
+    for (const k of gmailEnvKeys) { if (prevGmailEnv[k] === undefined) delete process.env[k]; else process.env[k] = prevGmailEnv[k]; }
+  }
+}));
+
+test('capability mode never calls syncAgencyMailbox (incremental sync)', () => withSecretEnv(async () => {
+  const req = makeReq({ query: { mode: 'capability' }, authorization: 'Bearer test-secret' });
+  const res = makeRes();
+  const gmailInboundSync = {
+    checkMailboxCapability: async () => ({ ok: true, capability: 'full_body_ok' }),
+    syncAgencyMailbox: async () => { throw new Error('syncAgencyMailbox must never be called in capability mode'); },
+    runBoundedBackfill: async () => { throw new Error('runBoundedBackfill must never be called in capability mode'); },
+  };
+  await handler(req, res, { createClient: fakeCreateClient, gmailInboundSync });
+  assert.equal(res.statusCode, 200);
+}));
+
+test('capability mode never calls runBoundedBackfill, even if ?since is also present', () => withSecretEnv(async () => {
+  const req = makeReq({ query: { mode: 'capability', since: '1700000000' }, authorization: 'Bearer test-secret' });
+  const res = makeRes();
+  const gmailInboundSync = {
+    checkMailboxCapability: async () => ({ ok: true, capability: 'full_body_ok' }),
+    runBoundedBackfill: async () => { throw new Error('runBoundedBackfill must never be called in capability mode'); },
+    syncAgencyMailbox: async () => { throw new Error('syncAgencyMailbox must never be called in capability mode'); },
+  };
+  await handler(req, res, { createClient: fakeCreateClient, gmailInboundSync });
+  assert.equal(res.statusCode, 200);
+  assert.deepEqual(res.body, { ok: true, capability: 'full_body_ok' });
+}));
+
+test('capability mode: insufficient_scope returns a safe 503 with only {ok:false, capability} — no scope name, no token, no raw error', () => withSecretEnv(async () => {
+  const req = makeReq({ query: { mode: 'capability' }, authorization: 'Bearer test-secret' });
+  const res = makeRes();
+  const gmailInboundSync = { checkMailboxCapability: async () => ({ ok: false, capability: 'insufficient_scope' }) };
+  await handler(req, res, { createClient: fakeCreateClient, gmailInboundSync });
+  assert.equal(res.statusCode, 503);
+  assert.deepEqual(res.body, { ok: false, capability: 'insufficient_scope' });
+  // 'insufficient_scope' itself is the safe, intended classification
+  // value — what must never appear is an actual OAuth scope name, a
+  // bearer token, or any other raw credential/provider detail.
+  const serialized = JSON.stringify(res.body);
+  assert.doesNotMatch(serialized, /gmail\.readonly|gmail\.metadata|Bearer |ya29\.|refresh_token|access_token/i);
+}));
+
+test('capability mode: an unknown Gmail failure never exposes raw provider details, only the safe classification', () => withSecretEnv(async () => {
+  const req = makeReq({ query: { mode: 'capability' }, authorization: 'Bearer test-secret' });
+  const res = makeRes();
+  const gmailInboundSync = { checkMailboxCapability: async () => ({ ok: false, capability: 'unknown_error' }) };
+  await handler(req, res, { createClient: fakeCreateClient, gmailInboundSync });
+  assert.equal(res.statusCode, 503);
+  assert.deepEqual(res.body, { ok: false, capability: 'unknown_error' });
+}));
+
+test('capability mode: an unexpected thrown error (e.g. a Gmail transport failure) is reported as a safe 500 — never the raw error message', () => withSecretEnv(async () => {
+  const req = makeReq({ query: { mode: 'capability' }, authorization: 'Bearer test-secret' });
+  const res = makeRes();
+  const gmailInboundSync = { checkMailboxCapability: async () => { throw new Error('leaked-internal-gmail-error-marker'); } };
+  await handler(req, res, { createClient: fakeCreateClient, gmailInboundSync });
+  assert.equal(res.statusCode, 500);
+  assert.doesNotMatch(JSON.stringify(res.body), /leaked-internal-gmail-error-marker/);
+  assert.equal(res.body.ok, false);
+}));
+
+test('capability mode response never carries extra fields (mode/matched/skipped/historyId/...) — exactly {ok, capability}', () => withSecretEnv(async () => {
+  const req = makeReq({ query: { mode: 'capability' }, authorization: 'Bearer test-secret' });
+  const res = makeRes();
+  const gmailInboundSync = { checkMailboxCapability: async () => ({ ok: true, capability: 'full_body_ok' }) };
+  await handler(req, res, { createClient: fakeCreateClient, gmailInboundSync });
+  assert.deepEqual(Object.keys(res.body).sort(), ['capability', 'ok']);
+}));
+
 // ── Missing Supabase configuration ───────────────────────────────────────
 
 test('missing Supabase env vars produce a 503 db_configuration response rather than throwing', () => withSecretEnv(async () => {
