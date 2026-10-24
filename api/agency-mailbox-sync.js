@@ -53,6 +53,42 @@ function isAuthorizedSchedulerRequest({ configuredSecret, authorizationHeader })
   return !!configuredSecret && authorizationHeader === `Bearer ${configuredSecret}`;
 }
 
+/* ═════════════════════════════════════════════════════════════════════
+ * TEMPORARY DIAGNOSTIC — added to debug a persistent 401 on the
+ * scheduled Agency Mailbox sync despite a GitHub repo secret and a
+ * Vercel Production env var that are confirmed to hold the same value
+ * (including a redeploy after the env var was set). Computes ONLY safe
+ * boolean/length metadata about the auth inputs — it never returns or
+ * logs the secret, the Authorization header, any substring of either,
+ * or any reversible encoding. Does NOT change isAuthorizedSchedulerRequest
+ * or the accepted auth contract in any way — this function is read-only
+ * diagnostic computed AFTER the real (unmodified) auth check has already
+ * failed. Remove this function, its one call site below, and its test
+ * coverage once the root cause is confirmed and fixed.
+ * ═════════════════════════════════════════════════════════════════════ */
+function _diagnoseUnauthorizedRequest({ configuredSecret, authorizationHeader }) {
+  const BEARER_PREFIX = 'Bearer ';
+  const hasConfigured = typeof configuredSecret === 'string' && configuredSecret.length > 0;
+  const hasHeader = typeof authorizationHeader === 'string' && authorizationHeader.length > 0;
+  const schemeIsBearer = hasHeader && authorizationHeader.startsWith(BEARER_PREFIX);
+  const providedBearerValue = schemeIsBearer ? authorizationHeader.slice(BEARER_PREFIX.length) : null;
+
+  const configuredTrimmed = hasConfigured ? configuredSecret.trim() : '';
+  const providedTrimmed = providedBearerValue !== null ? providedBearerValue.trim() : '';
+
+  return {
+    configuredSecretPresent: hasConfigured,
+    authorizationHeaderPresent: hasHeader,
+    authorizationSchemeIsBearer: schemeIsBearer,
+    configuredSecretLength: hasConfigured ? configuredSecret.length : 0,
+    providedBearerValueLength: providedBearerValue !== null ? providedBearerValue.length : 0,
+    exactMatch: hasConfigured && providedBearerValue !== null && providedBearerValue === configuredSecret,
+    trimmedMatch: hasConfigured && providedBearerValue !== null && providedTrimmed === configuredTrimmed,
+    configuredHasLeadingOrTrailingWhitespace: hasConfigured && configuredSecret !== configuredTrimmed,
+    providedHasLeadingOrTrailingWhitespace: providedBearerValue !== null && providedBearerValue !== providedTrimmed,
+  };
+}
+
 function getSupabaseEnv() {
   const url = process.env.SUPABASE_URL;
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -79,6 +115,14 @@ async function handler(req, res, deps = {}) {
     authorizationHeader: req.headers['authorization'],
   });
   if (!authorized) {
+    // TEMPORARY DIAGNOSTIC — server-log only (Vercel Function Logs), never
+    // in the HTTP response, so no browser/caller ever sees it. Safe
+    // metadata only — see _diagnoseUnauthorizedRequest's own header
+    // comment. Remove this block once the 401 is root-caused and fixed.
+    console.error('[agency-mailbox-sync][TEMP-DIAGNOSTIC-401]', _diagnoseUnauthorizedRequest({
+      configuredSecret: process.env.AGENCY_MAILBOX_SYNC_SECRET,
+      authorizationHeader: req.headers['authorization'],
+    }));
     return res.status(401).json({ error: 'Unauthorized.' });
   }
 
@@ -169,3 +213,6 @@ async function handler(req, res, deps = {}) {
 module.exports = handler;
 module.exports.ConfigurationError = ConfigurationError;
 module.exports.isAuthorizedSchedulerRequest = isAuthorizedSchedulerRequest;
+// TEMPORARY DIAGNOSTIC export — see _diagnoseUnauthorizedRequest's own
+// header comment. Remove alongside the rest of the diagnostic.
+module.exports._diagnoseUnauthorizedRequest = _diagnoseUnauthorizedRequest;
