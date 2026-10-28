@@ -101,6 +101,21 @@ const CRM_CHANGELOG_CATEGORIES = [
 // Newest first. See the release convention above before editing.
 const CRM_CHANGELOG = [
   {
+    version: '12.50',
+    date: '2026-10-28',
+    title: 'Acente Araştırması ve Veri Kalitesi',
+    summary: 'Acente araştırma sistemi daha temiz, daha güvenilir ve doğrudan iletişime uygun adaylar üretecek şekilde geliştirildi.',
+    categories: ['Otomasyon', 'İyileştirme'],
+    highlights: [
+      'CRM\'de daha önce kayıtlı olan acenteler yeni araştırmalardan otomatik olarak dışlanıyor; aynı acentenin farklı website formatlarıyla (www, http/https, path, query, port) tekrar bulunması engelleniyor',
+      'Araştırmada kullanılabilir iletişim maili bulunamayan yeni acenteler artık CRM\'e eklenmiyor; sonuçlar doğrudan outreach yapılabilecek gerçek adaylardan oluşuyor',
+      'Website adresleri normalize edilerek aynı acentenin farklı yazımlarla tekrar kaydedilmesi engelleniyor; bu koruma artık ek bir güvenlik katmanıyla destekleniyor',
+      'Acente detay sayfasından mail adresi, iletişim kişisi, telefon ve website bilgileri manuel olarak güncellenebiliyor; daha önce maili bulunamayan acentelere sonradan iletişim bilgisi eklenebiliyor',
+      'Araştırma sonuçlarında mevcut CRM kayıtları, tekrar eden adaylar ve iletişim maili olmayan sonuçlar filtreleniyor; yalnızca yeni ve kullanılabilir adaylar sonuç listesinde gösteriliyor',
+    ],
+    author: 'Berk',
+  },
+  {
     version: '12.49',
     date: '2026-10-23',
     title: 'CRM+ ve Yeni Arayüz',
@@ -262,22 +277,6 @@ const CRM_CHANGELOG = [
     ],
     author: 'Berk',
     technicalNote: 'EUR cinsinden hakedişler, CRM\'in operasyonel görünümünde sabit bir kur (1 EUR = 55 TL) ile TL karşılığıyla gösteriliyor; bu yalnızca ekrandaki bilgilendirme amaçlıdır, gerçek tahsilat tutarını yansıtmaz.',
-  },
-  {
-    version: '12.38',
-    date: '2026-10-02',
-    title: 'Tur Hazırlıkları Takibi',
-    summary: 'Civitatis rezervasyonları için gerekli bilet hazırlıkları artık otomatik olarak belirleniyor; Ana Sayfa ve Rezervasyon Detayı\'ndan takip edilip tamamlanabiliyor, yanlışlıkla tamamlanan bir hazırlık da güvenle geri alınabiliyor.',
-    categories: ['Yeni Özellik', 'Operasyon', 'Otomasyon'],
-    highlights: [
-      'Yeni veya değişen Civitatis rezervasyonları için gerekli giriş bileti hazırlıklarının (örn. Ayasofya, Topkapı Sarayı + Harem) misafir sayısına göre otomatik belirlenmesi',
-      'Ana Sayfa\'da Bilet Hazırlıkları panelinde Bekleyenler ve Tamamlananlar olarak ayrı takip, "Hazırlandı" ile tek tıkla tamamlama',
-      'Rezervasyon Detayı\'nda o rezervasyona ait tüm bilet hazırlıklarının görüntülenebilmesi',
-      'Yemek dahil/dahil değil bilgisinin Rezervasyon Detayı\'nda ve Ana Sayfa\'da ayrıca görülebilmesi',
-      'Yanlışlıkla tamamlanan bir bilet hazırlığının Rezervasyon Detayı\'ndan onay adımıyla güvenle yeniden bekleyen durumuna alınabilmesi',
-    ],
-    author: 'Berk',
-    technicalNote: 'Bilet hazırlığı tamamlama ve geri alma işlemleri yalnızca yönetici ve operasyon rolleri tarafından yapılabiliyor; geri alma özelliği bilinçli bir düzeltme adımı olması için sadece Rezervasyon Detayı\'nda sunuluyor, Ana Sayfa\'ya eklenmedi.',
   },
 ];
 
