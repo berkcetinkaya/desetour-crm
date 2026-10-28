@@ -105,7 +105,11 @@ test('[3] sanitizeCandidate never invents email/contact_person/phone — empty s
 });
 
 test('the prompt still explicitly forbids guessing an email address pattern', () => {
-  assert.match(RESEARCH_PROVIDER_SRC, /Never guess an email/);
+  // Strengthened (Agency CRM research workflow follow-up, PART 1): now
+  // also tells the model a usable email is mandatory for a candidate to
+  // be worth including at all, not just "never guess one".
+  assert.match(RESEARCH_PROVIDER_SRC, /Never guess, infer, or fabricate an email address pattern/);
+  assert.match(RESEARCH_PROVIDER_SRC, /MANDATORY for a company to be worth including/);
 });
 
 // ═══════════════ [4] Yüksek Uyum still requires evidence + source URL ════

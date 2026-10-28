@@ -1592,6 +1592,79 @@ const GuideRepository = {
   },
 };
 
+// Agency CRM research workflow — PART 4 (defense in depth). Deterministic
+// duplicate detection applied immediately before any agency is persisted,
+// in BOTH AgencyRepository.create (mock) and SupabaseAgencyRepo.create
+// (real) below — never relies on the research AI prompt's own
+// instructions alone, so a duplicate agency can never be created even if
+// the provider ignores its exclusion context, the same research is run
+// twice, or a candidate URL's www/protocol/path/query-string varies
+// between results. Same algorithm, same priority order (canonical website
+// domain first, then email, then normalized company name) as
+// api/_agencies/duplicateMatching.js's findLikelyDuplicate — duplicated
+// here, not imported, because this single-file browser script has no
+// module system to import a server-side (CommonJS) file from; kept
+// behaviorally identical on purpose (see this file's own tests).
+// TESTABLE:_findExistingAgencyMatch:start
+// TESTABLE:_normalizeAgencyWebsiteDomain:start
+// Kept in exact parity with api/_agencies/duplicateMatching.js's
+// normalizeWebsite AND the proposed database-level
+// canonical_agency_domain() SQL function — same step order (lowercase/
+// trim, strip scheme, strip "www.", strip path/query/fragment, strip
+// port). Only the literal "www." prefix collapses; a real subdomain like
+// "booking.acme.com" stays distinct from "acme.com" — see
+// tests/dashboard/agencyCanonicalDomainParity.test.js.
+function _normalizeAgencyWebsiteDomain(url) {
+  if (!url || typeof url !== 'string') return '';
+  let s = url.trim().toLowerCase();
+  s = s.replace(/^https?:\/\//, '').replace(/^www\./, '');
+  s = s.split(/[/?#]/)[0];
+  s = s.replace(/:[0-9]+$/, '');
+  return s;
+}
+// TESTABLE:_normalizeAgencyWebsiteDomain:end
+// TESTABLE:_normalizeAgencyEmailForMatch:start
+function _normalizeAgencyEmailForMatch(email) {
+  if (!email || typeof email !== 'string') return '';
+  return email.trim().toLowerCase();
+}
+// TESTABLE:_normalizeAgencyEmailForMatch:end
+// TESTABLE:_normalizeAgencyNameForMatch:start
+function _normalizeAgencyNameForMatch(name) {
+  if (!name || typeof name !== 'string') return '';
+  return name
+    .toLowerCase()
+    .replace(/[.,]/g, ' ')
+    .replace(/\b(s\.?l\.?|s\.?a\.?|ltd|llc|inc|gmbh|srl|sl|sa|co|corp|travel|tours|agency|tourism|turizm)\b/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+// TESTABLE:_normalizeAgencyNameForMatch:end
+function _findExistingAgencyMatch(candidate, existingAgencies) {
+  if (!candidate || !Array.isArray(existingAgencies) || existingAgencies.length === 0) return null;
+
+  const candWebsite = _normalizeAgencyWebsiteDomain(candidate.website);
+  if (candWebsite) {
+    const hit = existingAgencies.find(a => _normalizeAgencyWebsiteDomain(a.website) === candWebsite);
+    if (hit) return hit;
+  }
+
+  const candEmail = _normalizeAgencyEmailForMatch(candidate.email);
+  if (candEmail) {
+    const hit = existingAgencies.find(a => _normalizeAgencyEmailForMatch(a.email) === candEmail);
+    if (hit) return hit;
+  }
+
+  const candName = _normalizeAgencyNameForMatch(candidate.name);
+  if (candName) {
+    const hit = existingAgencies.find(a => _normalizeAgencyNameForMatch(a.name) === candName);
+    if (hit) return hit;
+  }
+
+  return null;
+}
+// TESTABLE:_findExistingAgencyMatch:end
+
 // Acenteler Phase 1 — mock-mode agency directory. No research/discovery,
 // no email sending: this repository only ever does what Phase 1 needs
 // (getAll/getById/create/update), same restraint as the real schema's
@@ -1613,7 +1686,14 @@ const AgencyRepository = {
     return items;
   },
   getById(id) { return DB.agencies.find(a => a.id === id) || null; },
+  // PART 4 defense in depth — refuses/skips idempotently: a duplicate
+  // (by canonical website domain, then email, then normalized name — see
+  // _findExistingAgencyMatch) never becomes a second row; the existing
+  // one is returned instead, flagged so callers can tell the two cases
+  // apart without a second query.
   create(data) {
+    const dup = _findExistingAgencyMatch(data, DB.agencies);
+    if (dup) return { ...dup, _duplicateOfExisting: true };
     const id = 'AGN-' + String(DB.agencies.length + 1).padStart(3, '0');
     const record = {
       id, status:'Aday', languages:[],
@@ -13723,7 +13803,11 @@ function AcentelerPage({ onSelect }) {
                     </td>
                     <td style={{padding:"14px 12px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle"}}>
                       <div style={{fontSize:13, color:C.textMid, fontFamily:"'Geist',sans-serif"}}>{a.contactPerson || "—"}</div>
-                      <div style={{fontSize:11.5, color:C.textFaint, fontFamily:"'Geist',sans-serif", marginTop:2}}>{a.email || "—"}</div>
+                      {a.email ? (
+                        <div style={{fontSize:11.5, color:C.textFaint, fontFamily:"'Geist',sans-serif", marginTop:2}}>{a.email}</div>
+                      ) : (
+                        <div style={{fontSize:11.5, color:C.amber, fontStyle:"italic", fontFamily:"'Geist',sans-serif", marginTop:2}}>Email eksik</div>
+                      )}
                     </td>
                     <td style={{padding:"14px 12px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle"}}>
                       <RBadge label={a.status} map={AGENCY_STATUS_CFG} small/>
@@ -13806,7 +13890,7 @@ function NewAgencyModal({ onClose }) {
   async function handleSubmit() {
     const e = validate({name:{required:"Acente adı zorunludur"},email:{email:true}},{name,email});
     setErrs(e); if (Object.keys(e).length) return;
-    const { error } = await mutAgency("create", {
+    const { data, error } = await mutAgency("create", {
       name, country:country||"", city:city||"", website:website||"",
       contactPerson:contactPerson||"", email:email||"", phone:phone||"",
       languages: languages.map(l=>l.name), fitNote:fitNote||"", internalNotes:internalNotes||"",
@@ -13814,6 +13898,14 @@ function NewAgencyModal({ onClose }) {
     if (error) {
       console.error('[NewAgencyModal] agency create failed:', error);
       showToast("Acente kaydedilemedi: " + error);
+      return;
+    }
+    // PART 4 defense in depth — create() returns the EXISTING agency
+    // instead of inserting a second one when the website/email/name
+    // already matches a row in the CRM (see SupabaseAgencyRepo.create).
+    if (data && data._duplicateOfExisting) {
+      showToast(`Bu acente zaten CRM'de kayıtlı: ${data.name}`);
+      onClose();
       return;
     }
     showToast("Acente oluşturuldu ✓"); onClose();
@@ -13854,15 +13946,27 @@ function AgencyResearchModal({ existingAgencies, onClose }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [candidates, setCandidates] = useState(null); // null = no search run yet
+  // PART 5 — safe summary counts (examined/excludedExistingInCrm/
+  // excludedNoEmail/actionable), see researchProvider.js's researchAgencies
+  // for exactly what each one measures and its one honest limitation.
+  const [summary, setSummary] = useState(null);
   const [importedKeys, setImportedKeys] = useState(() => new Set());
   const [importingKey, setImportingKey] = useState(null);
+  // PART 4 defense in depth — api/agency-research.js already excludes any
+  // candidate matching an existing agency BEFORE it ever reaches this
+  // modal (see researchProvider.js's filterUsableCandidates), so this map
+  // should in practice stay empty; it exists purely as the UI's reaction
+  // to the final, persistence-time check (SupabaseAgencyRepo.create)
+  // catching the rare case that early exclusion somehow missed — never a
+  // normal, expected result for this modal to show.
+  const [duplicateOf, setDuplicateOf] = useState(() => new Map());
   const { mutate: mutAgency } = useRepoMutation("agency");
 
   function candidateKey(c) { return (c.website || c.email || c.name || '').toLowerCase(); }
 
   async function handleResearch() {
     if (!country) { setError("Lütfen bir ülke seçin."); return; }
-    setLoading(true); setError(null); setCandidates(null);
+    setLoading(true); setError(null); setCandidates(null); setSummary(null);
     try {
       const sb = getSB();
       let token = null;
@@ -13888,6 +13992,7 @@ function AgencyResearchModal({ existingAgencies, onClose }) {
         setError(payload.error || `Araştırma başarısız oldu (${resp.status}).`); return;
       }
       setCandidates(payload.candidates || []);
+      setSummary(payload.summary || null);
     } catch (err) {
       setError("Araştırma isteği gönderilemedi: " + err.message);
     } finally {
@@ -13895,10 +14000,25 @@ function AgencyResearchModal({ existingAgencies, onClose }) {
     }
   }
 
+  // PART 3 defense in depth — fails closed if THIS specific candidate
+  // object lacks a usable email, however it got into that state: the
+  // server already filters these out (api/agency-research.js's
+  // filterCandidatesWithCounts), but a malformed/manipulated response or
+  // a tampered browser state must never be able to import a no-email
+  // agency through the research path regardless. Reuses the SAME shared
+  // validate() helper (and its SAME email regex) every other form in this
+  // app already uses — never a new one. Scoped to research import only:
+  // manual "Yeni Acente Ekle" (NewAgencyModal) and editing an existing
+  // agency with no email both remain unaffected, by design.
   async function handleImport(candidate) {
     const key = candidateKey(candidate);
+    const emailCheck = validate({ email: { required: true, email: true } }, { email: candidate.email });
+    if (Object.keys(emailCheck).length) {
+      showToast("Bu aday geçerli bir e-posta adresi içermiyor, eklenemedi.");
+      return;
+    }
     setImportingKey(key);
-    const { error: e } = await mutAgency("create", {
+    const { data, error: e } = await mutAgency("create", {
       name: candidate.name,
       country: candidate.country || country,
       city: candidate.city || "",
@@ -13918,6 +14038,11 @@ function AgencyResearchModal({ existingAgencies, onClose }) {
     });
     setImportingKey(null);
     if (e) { showToast("Acente eklenemedi: " + e); return; }
+    if (data && data._duplicateOfExisting) {
+      setDuplicateOf(prev => { const next = new Map(prev); next.set(key, data); return next; });
+      showToast(`Bu acente zaten CRM'de kayıtlı: ${data.name}`);
+      return;
+    }
     setImportedKeys(prev => { const next = new Set(prev); next.add(key); return next; });
     showToast("Acente CRM'e eklendi ✓");
   }
@@ -13941,6 +14066,16 @@ function AgencyResearchModal({ existingAgencies, onClose }) {
         </div>
       )}
 
+      {/* PART 5 — safe research result summary. Only ever the 4 reliably-
+          computed counts (see researchProvider.js); no fabricated numbers,
+          and the candidate list below always shows ONLY the actionable
+          ones — this line is informational context, not a second list. */}
+      {summary && !error && (
+        <div style={{ marginTop:16, padding:"10px 14px", borderRadius:8, background:C.ivory, border:`1px solid ${C.border}`, fontSize:12.5, color:C.textMid, fontFamily:"'Geist',sans-serif", lineHeight:1.6 }}>
+          {summary.examined} şirket incelendi · {summary.excludedExistingInCrm} mevcut CRM kaydı elendi · {summary.excludedNoEmail} iletişim maili bulunamadığı için elendi · {summary.actionable} yeni uygun acente bulundu
+        </div>
+      )}
+
       {candidates && candidates.length === 0 && !error && (
         <div style={{ marginTop:16, fontSize:13, color:C.textFaint, fontFamily:"'Geist',sans-serif" }}>
           Bu kriterlere uyan aday bulunamadı.
@@ -13952,7 +14087,14 @@ function AgencyResearchModal({ existingAgencies, onClose }) {
           {candidates.map((c, i) => {
             const key = candidateKey(c);
             const importedNow = importedKeys.has(key);
-            const alreadyInCrm = !!c.existingAgencyId;
+            // Early exclusion (api/agency-research.js) already keeps a
+            // candidate matching an existing agency out of this list
+            // entirely — alreadyInCrm only ever becomes true as a
+            // reaction to the rare defense-in-depth case at persistence
+            // time (see handleImport), never a pre-computed "normal"
+            // result the user sees before clicking "CRM'e Ekle".
+            const existingMatch = duplicateOf.get(key);
+            const alreadyInCrm = !!existingMatch;
             const fcm = AGENCY_FIT_LEVEL_CFG[c.fit_level] || { color:C.textMuted, bg:C.ivoryDark };
             // Each analytical section (Ne yapıyor? / Neden DeseTour'a
             // uygun? / Kanıt / İş Birliği Fırsatı) renders only when the
@@ -14021,7 +14163,7 @@ function AgencyResearchModal({ existingAgencies, onClose }) {
 
                 <div style={{ marginTop:10 }}>
                   {alreadyInCrm ? (
-                    <button onClick={()=>{ onClose(); if (NAV_REF.fn) NAV_REF.fn('/agencies/'+c.existingAgencyId); }} style={{
+                    <button onClick={()=>{ onClose(); if (NAV_REF.fn) NAV_REF.fn('/agencies/'+existingMatch.id); }} style={{
                       padding:"7px 14px", borderRadius:7, border:`1px solid ${C.border}`, background:C.ivory,
                       color:C.textMid, fontSize:12.5, fontFamily:"'Geist',sans-serif", cursor:"pointer",
                     }}>Zaten CRM'de — Aç</button>
@@ -14057,6 +14199,70 @@ function AcenteDetailPage({ agencyId, onBack }) {
   const { mutate:mutAgency, mutating } = useRepoMutation("agency");
   const [notesDraft, setNotesDraft] = useState("");
   const [notesDirty, setNotesDirty] = useState(false);
+
+  // PART 1 — manual İletişim (contact) editing. Compact read/edit toggle,
+  // same "explicit Kaydet action, never auto-save" shape as Notlar above.
+  // Reuses the SAME update() mutation (and therefore the SAME existing
+  // 'updated' activity-log action — see SupabaseAgencyRepo.update) status/
+  // notes editing already goes through; no new action value, no new log
+  // architecture, and the log description only ever lists the field NAMES
+  // that changed, never the values themselves.
+  const [contactEditMode, setContactEditMode] = useState(false);
+  const [contactWebsiteDraft, setContactWebsiteDraft] = useState("");
+  const [contactPersonDraft, setContactPersonDraft] = useState("");
+  const [contactEmailDraft, setContactEmailDraft] = useState("");
+  const [contactPhoneDraft, setContactPhoneDraft] = useState("");
+  const [contactErrors, setContactErrors] = useState({});
+
+  function handleStartEditContact() {
+    setContactWebsiteDraft(agency.website || "");
+    setContactPersonDraft(agency.contactPerson || "");
+    setContactEmailDraft(agency.email || "");
+    setContactPhoneDraft(agency.phone || "");
+    setContactErrors({});
+    setContactEditMode(true);
+  }
+
+  function handleCancelEditContact() {
+    setContactEditMode(false);
+    setContactErrors({});
+  }
+
+  async function handleSaveContact() {
+    // Normalize leading/trailing whitespace before validating/storing —
+    // the normalized value is what gets saved, never the raw input.
+    const normalizedEmail = (contactEmailDraft || "").trim();
+    const normalizedWebsite = (contactWebsiteDraft || "").trim();
+    const normalizedPerson = (contactPersonDraft || "").trim();
+    const normalizedPhone = (contactPhoneDraft || "").trim();
+
+    // Same shared validate() helper (and the SAME email regex) every other
+    // form in this app already uses — an empty email is allowed (not
+    // required by this form; Part 2's "email required" rule applies to
+    // NEW research candidates, never to editing an existing agency), but
+    // a non-empty value must be a well-formed address.
+    const e = validate({ email: { email: true } }, { email: normalizedEmail });
+    setContactErrors(e);
+    if (Object.keys(e).length) return;
+
+    // Only send fields that actually changed — an explicit, meaningful
+    // contact change, never a blanket re-write of every field on every
+    // save (keeps the activity-log description accurate, e.g. "E-posta,
+    // Telefon" instead of always listing all four fields).
+    const patch = {};
+    if (normalizedWebsite !== (agency.website || "")) patch.website = normalizedWebsite;
+    if (normalizedPerson  !== (agency.contactPerson || "")) patch.contactPerson = normalizedPerson;
+    if (normalizedEmail   !== (agency.email || "")) patch.email = normalizedEmail;
+    if (normalizedPhone   !== (agency.phone || "")) patch.phone = normalizedPhone;
+
+    if (Object.keys(patch).length === 0) { setContactEditMode(false); return; }
+
+    const { error: err } = await mutAgency("update", agency.id, patch);
+    if (err) { showToast("İletişim bilgileri güncellenemedi: " + err); return; }
+    showToast("İletişim bilgileri güncellendi ✓");
+    setContactEditMode(false);
+  }
+
   // Agency Detail's own "Son Hareketler" — reuses activity_logs via
   // getAgencyActivity(agencyId), no new table, no parallel architecture.
   const { activities:agencyActivities, loading:agencyActivitiesLoading } = useAgencyActivity(agencyId);
@@ -14686,13 +14892,50 @@ function AcenteDetailPage({ agencyId, onBack }) {
       </RCard>
 
       <RCard>
-        <RCardHead title="İletişim" accent/>
+        <RCardHead title="İletişim" accent right={
+          !contactEditMode && (
+            <button onClick={handleStartEditContact} style={{
+              padding:"4px 11px", borderRadius:6, border:"1px solid rgba(248,245,238,0.3)",
+              background:"transparent", cursor:"pointer", color:"rgba(248,245,238,0.85)",
+              fontFamily:"'Geist',sans-serif", fontSize:11.5, fontWeight:500,
+            }}>Düzenle</button>
+          )
+        }/>
         <RInfoRow label="Ülke" value={agency.country || "—"}/>
         <RInfoRow label="Şehir" value={agency.city || "—"}/>
-        <RInfoRow label="Website" value={agency.website || "—"}/>
-        <RInfoRow label="İletişim Kişisi" value={agency.contactPerson || "—"}/>
-        <RInfoRow label="E-posta" value={agency.email || "—"} mono/>
-        <RInfoRow label="Telefon" value={agency.phone || "—"} mono/>
+        {!contactEditMode ? (
+          <>
+            <RInfoRow label="Website" value={agency.website || "—"}/>
+            <RInfoRow label="İletişim Kişisi" value={agency.contactPerson || "—"}/>
+            {/* PART 2/6 — subtle, non-blocking "Email Eksik" state for an
+                existing agency with no email: never a gate, never a large
+                new feature, just a quiet signal this record still needs a
+                manual contact fix before outreach is possible. */}
+            <RInfoRow label="E-posta" value={agency.email || <span style={{color:C.amber, fontStyle:"italic"}}>Email eksik</span>} mono/>
+            <RInfoRow label="Telefon" value={agency.phone || "—"} mono/>
+          </>
+        ) : (
+          <div style={{padding:"14px 20px", display:"flex", flexDirection:"column", gap:12}}>
+            <FRow label="Website"><FText value={contactWebsiteDraft} onChange={setContactWebsiteDraft} placeholder="https://…"/></FRow>
+            <FRow label="İletişim Kişisi"><FText value={contactPersonDraft} onChange={setContactPersonDraft} placeholder="Ad Soyad"/></FRow>
+            <FRow label="E-posta" error={contactErrors.email}><FText value={contactEmailDraft} onChange={setContactEmailDraft} placeholder="email@example.com" type="email"/></FRow>
+            <FRow label="Telefon"><FText value={contactPhoneDraft} onChange={setContactPhoneDraft} placeholder="+34 600 000 000" mono/></FRow>
+            <div style={{display:"flex", gap:8}}>
+              <button onClick={handleSaveContact} disabled={mutating} style={{
+                padding:"8px 16px", borderRadius:7, border:"none",
+                background: mutating ? C.ivoryDark : C.navy,
+                color: mutating ? C.textFaint : C.white,
+                cursor: mutating ? "not-allowed" : "pointer",
+                fontFamily:"'Geist',sans-serif", fontSize:13, fontWeight:500,
+              }}>{mutating ? "Kaydediliyor…" : "Kaydet"}</button>
+              <button onClick={handleCancelEditContact} disabled={mutating} style={{
+                padding:"8px 16px", borderRadius:7, border:`1px solid ${C.border}`,
+                background:C.white, color:C.textMid, cursor: mutating ? "not-allowed" : "pointer",
+                fontFamily:"'Geist',sans-serif", fontSize:13, fontWeight:500,
+              }}>Vazgeç</button>
+            </div>
+          </div>
+        )}
       </RCard>
 
       <RCard>
@@ -19464,11 +19707,54 @@ const SupabaseAgencyRepo = {
     if(error) throw new Error(error.message);
     return mapAgencyFromDB(data);
   },
+  // PART 4 defense in depth — one last deterministic check immediately
+  // before the INSERT, even though api/agency-research.js's early
+  // exclusion already filters candidates server-side (see
+  // researchProvider.js's filterUsableCandidates): this repo is the one
+  // place EVERY agency-creation path (research import, manual "Yeni
+  // Acente Ekle") actually persists, so it is the right place to refuse
+  // or skip a duplicate idempotently regardless of how create() was
+  // reached, never relying on the research AI prompt alone. A match (by
+  // canonical website domain, then email, then normalized name — see
+  // _findExistingAgencyMatch) returns the EXISTING row untouched, flagged
+  // _duplicateOfExisting, instead of inserting a second one.
   async create(d){
     const sb=getSB(); if(!sb) return AgencyRepository.create(d);
+    const{data:existingRows,error:existErr}=await sb.from('agencies').select('id,name,website,email');
+    if(!existErr){
+      const dup=_findExistingAgencyMatch(d, existingRows||[]);
+      if(dup){
+        const{data:full,error:fullErr}=await sb.from('agencies').select('*').eq('id',dup.id).maybeSingle();
+        if(!fullErr && full) return { ...mapAgencyFromDB(full), _duplicateOfExisting:true };
+      }
+    }
     const row=mapAgencyToDB(d); if(!row.name) row.name=d.name||'Bilinmiyor'; if(!row.status) row.status='Aday';
     const{data:a,error}=await sb.from('agencies').insert(row).select().single();
-    if(error) throw new Error(error.message);
+    if(error){
+      // PART 3 — the pre-check above is TOCTOU-safe only up to the moment
+      // it ran; a truly concurrent insert for the same canonical website
+      // domain can still slip in between that check and this INSERT.
+      // idx_agencies_canonical_domain_unique (see
+      // supabase_migration_agencies_canonical_domain_uniqueness.sql) is the
+      // final, race-safe authority and rejects it with 23505. Losing that
+      // race is not a failure to surface — the Agency now exists (the
+      // other request just created it), so resolve it the same
+      // deterministic way the pre-check above does and return it exactly
+      // like a pre-check hit: no raw DB error, no activity log, no second
+      // row, no treating it as a brand-new Agency.
+      if(error.code==='23505'){
+        const{data:raceRows,error:raceErr}=await sb.from('agencies').select('id,name,website,email');
+        if(!raceErr){
+          const raceDup=_findExistingAgencyMatch(d, raceRows||[]);
+          if(raceDup){
+            const{data:full,error:fullErr}=await sb.from('agencies').select('*').eq('id',raceDup.id).maybeSingle();
+            if(!fullErr && full) return { ...mapAgencyFromDB(full), _duplicateOfExisting:true };
+          }
+        }
+        throw new Error("Bu website zaten CRM'de başka bir acentaya ait.");
+      }
+      throw new Error(error.message);
+    }
     // Son Hareketler quality — a candidate imported from Pazar Araştırması
     // (AgencyResearchModal's handleImport) always carries researchEvidence
     // or researchSourceUrl at creation time; a manually-added agency never
@@ -19482,7 +19768,30 @@ const SupabaseAgencyRepo = {
     const sb=getSB(); if(!sb) return AgencyRepository.update(id,p);
     const row=mapAgencyToDB(p);
     const{data:a,error}=await sb.from('agencies').update(row).eq('id',id).select().single();
-    if(error) throw new Error(error.message);
+    if(error){
+      // PART 4 — a website edit collided with
+      // idx_agencies_canonical_domain_unique: Postgres rejected the WHOLE
+      // UPDATE statement, so nothing in the same patch (contact person,
+      // email, phone, ...) was partially saved either — this is a single
+      // atomic .update() call, never a sequence of separate writes. Surface
+      // a clear Turkish error instead of the raw DB message; try to name
+      // the other Agency under current RLS for a precise message, falling
+      // back to a generic one if that row can't be resolved.
+      if(error.code==='23505'){
+        let existingName=null;
+        if(p.website){
+          const{data:others,error:othersErr}=await sb.from('agencies').select('id,name,website').neq('id',id);
+          if(!othersErr){
+            const match=_findExistingAgencyMatch({website:p.website}, others||[]);
+            if(match) existingName=match.name||null;
+          }
+        }
+        throw new Error(existingName
+          ? `Bu website zaten CRM'de kayıtlı: ${existingName}`
+          : "Bu website zaten CRM'de başka bir acentaya ait.");
+      }
+      throw new Error(error.message);
+    }
     // Son Hareketler quality — handleStatusChange and handleSaveNotes
     // (AcenteDetailPage) each call this SAME update() with one clean,
     // single-purpose patch ({status} / {internalNotes}); a general edit

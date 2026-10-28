@@ -94,7 +94,10 @@ test('[2] the model and web_search tool are byte-for-byte unchanged; max_tokens 
 });
 
 test('fetchCandidatesFromProvider still takes an injectable fetchImpl — no hardcoded global fetch, still directly testable', () => {
-  assert.match(RESEARCH_PROVIDER_SRC, /async function fetchCandidatesFromProvider\(\{ country, language, limit, minimumFit \}, \{ apiKey, fetchImpl \}\)/);
+  // Signature gained excludedDomains (Agency CRM research workflow follow-
+  // up, PART 1 prompt-side exclusion) — apiKey/fetchImpl injection itself
+  // is unchanged.
+  assert.match(RESEARCH_PROVIDER_SRC, /async function fetchCandidatesFromProvider\(\{ country, language, limit, minimumFit, excludedDomains \}, \{ apiKey, fetchImpl \}\)/);
 });
 
 // ═══════════════ [3] Yüksek Uyum evidence gating unchanged ══════════════
@@ -116,12 +119,30 @@ test('[4] the OUTPUT LANGUAGE RULE (Turkish analytical fields) is still present,
   assert.match(RESEARCH_PROVIDER_SRC, /natural, fluent TURKISH/);
 });
 
-// ═══════════════ [5] Duplicate detection unchanged ═══════════════════════
+// ═══════════════ [5] Duplicate detection — now early exclusion ══════════
+// Agency CRM research workflow follow-up: duplicate detection moved from
+// a post-hoc "Zaten CRM'de" annotation (what this test originally
+// asserted) to early exclusion inside researchProvider.js's own
+// filterUsableCandidates, using the SAME underlying matching logic
+// (duplicateMatching.js's findLikelyDuplicate) — see
+// tests/dashboard/agencyResearchDuplicateExclusion.test.js for full
+// coverage of the new behavior. This test now proves the duration-fix
+// phase's own scope (timeout handling) never touched that matching logic
+// itself, from the OTHER side: existingAgencies is threaded through
+// unmodified and the matching module's own exports are untouched.
 
-test('[5] agency-research.js still annotates duplicates via the real, unmodified findLikelyDuplicate', () => {
-  assert.match(AGENCY_RESEARCH_SRC, /const \{ findLikelyDuplicate \} = require\('\.\/_agencies\/duplicateMatching'\);/);
-  assert.match(AGENCY_RESEARCH_SRC, /const dup = findLikelyDuplicate\(candidate, existingAgencies\);/);
-  assert.match(AGENCY_RESEARCH_SRC, /existingAgencyId: dup \? dup\.id : null,/);
+test('[5] duplicate matching logic itself (duplicateMatching.js) is unmodified by the timeout fix — still website, then email, then name, in that order', () => {
+  const duplicateMatching = require(path.join(REPO_ROOT, 'api', '_agencies', 'duplicateMatching'));
+  const existing = [{ id: 'A1', name: 'Other Name', website: 'https://acme.com', email: '' }];
+  assert.deepEqual(
+    duplicateMatching.findLikelyDuplicate({ name: 'X', website: 'https://www.Acme.com/', email: '' }, existing),
+    { id: 'A1', name: 'Other Name', matchedOn: 'website' }
+  );
+});
+
+test('[5] api/agency-research.js fetches existing agencies and threads them into researchAgencies as existingAgencies — early exclusion, not post-hoc annotation', () => {
+  assert.match(AGENCY_RESEARCH_SRC, /const existingAgencies = await fetchExistingAgenciesForDuplicateCheck\(\);/);
+  assert.match(AGENCY_RESEARCH_SRC, /researchProvider\.researchAgencies\(input, \{ existingAgencies \}\)/);
 });
 
 // ═══════════════ [6][7] Provider failures fail closed, never fabricated ═

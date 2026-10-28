@@ -57,7 +57,14 @@ function fakeResponse(contentBlocks) {
 
 const VALID_CANDIDATE = {
   name: 'Turismo São Paulo Ltda', website: 'www.turismosp.com.br', country: 'Brazil', city: 'São Paulo',
-  contact_person: '', email: '', phone: '', language: 'Portuguese',
+  // Agency CRM research workflow follow-up: a usable email is now
+  // required for a candidate to survive researchAgencies' own
+  // filterUsableCandidates — '' here (as it legitimately can be, per the
+  // provider's own "never guess an email" rule) would make every
+  // end-to-end test in this file fail for a reason that has nothing to do
+  // with what they actually test (JSON-parsing robustness), so this fixed
+  // fixture carries a real one.
+  contact_person: '', email: 'contato@turismosp.com.br', phone: '', language: 'Portuguese',
   travel_focus: 'İstanbul ve Kapadokya turları düzenliyor.', turkiye_signal: 'Var',
   fit_level: 'Yüksek Uyum', fit_reason: 'Türkiye paketleri mevcut.',
   evidence_summary: 'Resmi web sitesinde İstanbul turları listeleniyor.',

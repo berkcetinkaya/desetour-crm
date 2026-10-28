@@ -43,14 +43,41 @@
  * here) plus one new field, cooperation_angle, sanitized the same way as
  * every other free-text field. It does NOT participate in the Yüksek Uyum
  * evidence gate below — only evidence_summary + source_url do, unchanged.
+ *
+ * ACTIONABLE-PROSPECTS-ONLY GATE (outreach-quality follow-up): a sanitized
+ * candidate still has to pass filterUsableCandidates before it is ever
+ * returned — mechanically enforced here, never left to the prompt alone:
+ *   - no usable contact email → dropped (an agency research can't yet
+ *     contact is not an actionable prospect for this workflow).
+ *   - matches an agency already in the CRM, by canonical website domain
+ *     first, then email, then normalized name (see duplicateMatching.js)
+ *     → dropped (early exclusion, before the candidate is ever shown,
+ *     counted, or offered for import — not a late "already in CRM" badge).
+ * Existing agencies created before this change with no email are NOT
+ * affected — they are never touched by this module at all; see
+ * AcenteDetailPage's own manual contact-editing capability instead.
  * ─────────────────────────────────────────────────────────────────────────
  */
 'use strict';
+
+const { findLikelyDuplicate, isValidEmailAddress, normalizeWebsite } = require('./duplicateMatching');
 
 const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
 const ANTHROPIC_MODEL = 'claude-opus-5-5';
 
 const MAX_CANDIDATES = 20;
+
+// PART 1 (prompt-side exclusion) — bounded so the exclusion context never
+// grows unbounded as the CRM's agency list grows; 200 canonical domains is
+// generous for this B2B tool's realistic scale while keeping the prompt
+// small. If the CRM ever has more agencies with a website than this, the
+// LEAST useful ones to exclude at the prompt level are simply left off —
+// the deterministic post-provider filter (filterCandidatesWithCounts)
+// still catches every one of them regardless of this cap, since it
+// checks against the FULL existingAgencies list, not the capped prompt
+// list. This cap only affects how many domains the model is TOLD about
+// up front, never what gets silently excluded afterward.
+const MAX_EXCLUSION_DOMAINS = 200;
 
 const ALLOWED_LANGUAGES = ['English', 'Spanish', 'Portuguese', 'Italian'];
 const ALLOWED_MINIMUM_FIT = ['Yüksek Uyum', 'Orta Uyum ve Üzeri'];
@@ -169,6 +196,66 @@ function sanitizeCandidate(raw) {
     cooperation_angle: str(raw.cooperation_angle),
     source_url: sourceUrl,
   };
+}
+
+/**
+ * PART 2/3/4 — the deterministic acceptance gate a research candidate must
+ * pass BEFORE it is ever shown to the user, let alone capped to `limit` or
+ * offered for import. Two independent, non-AI-reliant rules, both pure:
+ *
+ *   1. USABLE EMAIL REQUIRED — a candidate with no usable contact email is
+ *      not an actionable outreach prospect for this CRM's current
+ *      workflow. Dropped here means: never returned to the browser, never
+ *      shown as a successful new prospect, never counted toward the
+ *      requested `limit`, never a row anyone can accidentally import.
+ *
+ *   2. EARLY EXCLUSION OF EXISTING AGENCIES — matched via the SAME
+ *      findLikelyDuplicate used for the (now-removed) post-hoc "Zaten
+ *      CRM'de" annotation, canonical-domain-first (see
+ *      duplicateMatching.js's own header). A match means this candidate
+ *      is silently dropped — never shown, never counted, never an extra
+ *      "already in CRM" row the user has to notice and skip past.
+ *      existingAgencies starts as whatever is already in public.agencies
+ *      (fetched once by the caller) and GROWS by one entry each time a
+ *      candidate passes both checks — so if the research provider's own
+ *      result happens to list the same company twice (different URL
+ *      formatting, two sources), the second occurrence is excluded by
+ *      the exact same mechanism, not a second one.
+ *
+ * Order relative to filterAndCapCandidates below matters: this runs
+ * FIRST, so `limit` and the fit-level filter apply only to the pool of
+ * genuinely actionable, non-duplicate candidates — a candidate dropped
+ * here never consumes one of the user's requested slots.
+ */
+/**
+ * Same gate as filterUsableCandidates, but ALSO returns the two rejection
+ * counts (excludedNoEmail, excludedDuplicate) — needed for the research
+ * result summary (PART 5: "25 şirket incelendi / 11 mevcut CRM kaydı
+ * elendi / 6 e-posta bulunamadığı için elendi / 8 yeni uygun acente").
+ * filterUsableCandidates (below) is kept as a thin wrapper over this, so
+ * its existing bare-array contract and every caller/test of it is
+ * completely unchanged — this is purely additive.
+ */
+function filterCandidatesWithCounts(sanitizedCandidates, existingAgencies) {
+  let excludedNoEmail = 0;
+  let excludedDuplicate = 0;
+  const usable = [];
+  for (const c of sanitizedCandidates) {
+    if (isValidEmailAddress(c.email)) usable.push(c);
+    else excludedNoEmail++;
+  }
+  const exclusionPool = Array.isArray(existingAgencies) ? existingAgencies.slice() : [];
+  const accepted = [];
+  for (const candidate of usable) {
+    if (findLikelyDuplicate(candidate, exclusionPool)) { excludedDuplicate++; continue; } // silently skip
+    accepted.push(candidate);
+    exclusionPool.push({ id: null, name: candidate.name, website: candidate.website, email: candidate.email });
+  }
+  return { accepted, excludedNoEmail, excludedDuplicate };
+}
+
+function filterUsableCandidates(sanitizedCandidates, existingAgencies) {
+  return filterCandidatesWithCounts(sanitizedCandidates, existingAgencies).accepted;
 }
 
 /**
@@ -350,8 +437,12 @@ function buildSystemPrompt() {
     "  agency's own official website (homepage, about page, destination/tour pages, contact page). Use",
     '  secondary sources only when the official site is unavailable or insufficient.',
     '- If you cannot find a contact person, leave contact_person as an empty string.',
-    '- If you cannot find a public business email, leave email as an empty string. Never guess an email',
-    '  address pattern (e.g. never invent info@domain.com unless you actually saw it published).',
+    '- A usable, real contact email is MANDATORY for a company to be worth including in your results — this',
+    '  CRM only acts on candidates it can actually email. If you cannot find a public business email for a',
+    "  company you were about to include, DO NOT include it with an empty email field — skip that company",
+    '  entirely and look for a different one instead, so you do not waste a result slot on a company nobody',
+    '  can contact. Never guess, infer, or fabricate an email address pattern under any circumstances (e.g.',
+    '  never invent info@domain.com unless you actually saw that exact address published).',
     '- Never fabricate company size, number of customers, annual revenue, awards, specialization, destination',
     '  list, group volume, or client profile. Only state what you found evidence for.',
     '- evidence_summary must be short (one or two factual sentences) and specific, e.g. "Resmi web sitesinde',
@@ -394,10 +485,49 @@ function buildSystemPrompt() {
   ].join('\n');
 }
 
-function buildUserPrompt({ country, language, limit, minimumFit }) {
-  return `Research up to ${limit} tourism agencies / tour operators based in ${country}, operating primarily ` +
+/**
+ * PART 1 (prompt-side exclusion) — derives the bounded, canonical-domain-
+ * only exclusion context sent to the provider. ONLY a website's canonical
+ * domain is ever extracted here — never the agency's name, email, status,
+ * internal notes, or any other CRM field; those never leave this CRM for
+ * this purpose. An existing agency with no website simply contributes
+ * nothing to this list (there is no reliable domain to exclude it by at
+ * the prompt level — the deterministic post-provider filter still catches
+ * it by email/name if the provider happens to return it anyway).
+ */
+function buildExclusionDomains(existingAgencies) {
+  if (!Array.isArray(existingAgencies)) return [];
+  const domains = new Set();
+  for (const a of existingAgencies) {
+    const d = normalizeWebsite(a && a.website);
+    if (d) domains.add(d);
+  }
+  return Array.from(domains).sort().slice(0, MAX_EXCLUSION_DOMAINS);
+}
+
+/**
+ * excludedDomains: see buildExclusionDomains — a bounded array of
+ * canonical domains already in the CRM, or [] when none apply. This is a
+ * PROMPT-LEVEL HINT only, to stop the provider from spending result slots
+ * on companies we already have — it is NOT relied upon for correctness.
+ * The deterministic filterCandidatesWithCounts below re-checks every
+ * candidate against the FULL existing-agencies list regardless of
+ * whether the provider honored this instruction, so provider
+ * non-compliance can never let a duplicate through.
+ */
+function buildUserPrompt({ country, language, limit, minimumFit, excludedDomains }) {
+  let prompt = `Research up to ${limit} tourism agencies / tour operators based in ${country}, operating primarily ` +
     `in ${language}, that meet at least the "${minimumFit}" fit bar. Return the JSON array described in your ` +
     `instructions, ranked strongest fit first.`;
+
+  if (Array.isArray(excludedDomains) && excludedDomains.length > 0) {
+    prompt += `\n\nEXCLUSION LIST — these canonical domains are already DeseTour CRM contacts; do NOT return any ` +
+      `company whose own official website's canonical domain (ignoring protocol, "www.", path, and query string) ` +
+      `exactly matches one of these: ${excludedDomains.join(', ')}. If a company you were about to include turns ` +
+      `out to be on this list, skip it and research a different company instead — do not spend a result slot on it.`;
+  }
+
+  return prompt;
 }
 
 /**
@@ -424,7 +554,7 @@ function buildUserPrompt({ country, language, limit, minimumFit }) {
  * fails. It is never the response content itself, so logging it can never
  * leak contact/research data, let alone a secret.
  */
-async function fetchCandidatesFromProvider({ country, language, limit, minimumFit }, { apiKey, fetchImpl }) {
+async function fetchCandidatesFromProvider({ country, language, limit, minimumFit, excludedDomains }, { apiKey, fetchImpl }) {
   const response = await fetchImpl(ANTHROPIC_API_URL, {
     method: 'POST',
     headers: {
@@ -437,7 +567,7 @@ async function fetchCandidatesFromProvider({ country, language, limit, minimumFi
       max_tokens: 8192,
       system: buildSystemPrompt(),
       tools: [{ type: 'web_search_20250305', name: 'web_search' }],
-      messages: [{ role: 'user', content: buildUserPrompt({ country, language, limit, minimumFit }) }],
+      messages: [{ role: 'user', content: buildUserPrompt({ country, language, limit, minimumFit, excludedDomains }) }],
     }),
   });
 
@@ -469,8 +599,16 @@ async function fetchCandidatesFromProvider({ country, language, limit, minimumFi
 
 /**
  * @param {{country:string, language:string, limit:number, minimumFit:string}} input - already validated
- * @param {{apiKey?:string, fetchImpl?:Function}} [deps]
- * @returns {Promise<{candidates: object[]}>}
+ * @param {{apiKey?:string, fetchImpl?:Function, existingAgencies?:Array<{id:string,name?:string,website?:string,email?:string}>}} [deps]
+ *   existingAgencies: the agencies already in the CRM — used BOTH to build
+ *   the bounded canonical-domain exclusion context sent to the provider
+ *   (buildExclusionDomains) AND for the deterministic post-provider
+ *   re-check (filterCandidatesWithCounts) that never trusts provider
+ *   compliance. Defaults to [] — an empty exclusion set, never a reason to
+ *   fail the whole request if the caller's own DB read came back empty
+ *   (same "best-effort, never blocks results" philosophy
+ *   api/agency-research.js already documents for this data).
+ * @returns {Promise<{candidates: object[], summary: {examined:number, excludedExistingInCrm:number, excludedNoEmail:number, actionable:number}}>}
  */
 async function researchAgencies(input, deps = {}) {
   const apiKey = deps.apiKey !== undefined ? deps.apiKey : process.env.ANTHROPIC_API_KEY;
@@ -481,8 +619,15 @@ async function researchAgencies(input, deps = {}) {
     );
   }
   const fetchImpl = deps.fetchImpl || fetch;
+  const existingAgencies = Array.isArray(deps.existingAgencies) ? deps.existingAgencies : [];
 
-  const { rawText, diagnostics } = await fetchCandidatesFromProvider(input, { apiKey, fetchImpl });
+  // PART 1 — bounded, canonical-domain-only exclusion context sent to the
+  // provider itself, so it does not spend result slots on companies
+  // already in the CRM. Prompt-level hint only; see
+  // filterCandidatesWithCounts below for the deterministic re-check that
+  // never trusts provider compliance.
+  const excludedDomains = buildExclusionDomains(existingAgencies);
+  const { rawText, diagnostics } = await fetchCandidatesFromProvider({ ...input, excludedDomains }, { apiKey, fetchImpl });
 
   let rawCandidates;
   try {
@@ -501,9 +646,30 @@ async function researchAgencies(input, deps = {}) {
   }
 
   const sanitized = rawCandidates.map(sanitizeCandidate).filter(Boolean);
-  const final = filterAndCapCandidates(sanitized, input);
+  const { accepted, excludedNoEmail, excludedDuplicate } = filterCandidatesWithCounts(sanitized, existingAgencies);
+  const final = filterAndCapCandidates(accepted, input);
 
-  return { candidates: final };
+  // PART 5 — research result summary counts. "examined" is the number of
+  // raw candidate objects the provider's own response actually contained
+  // (before any sanitization/filtering) — genuinely known, not invented.
+  // excludedExistingInCrm/excludedNoEmail are the real counts from the
+  // deterministic filter above. "actionable" is the final, already-
+  // fit-level-filtered-and-capped list this function returns. HONEST
+  // LIMITATION: these four numbers will not always sum exactly to
+  // `examined` — a raw candidate sanitizeCandidate rejects outright (e.g.
+  // missing a name, or an invalid fit_level) or one filterAndCapCandidates
+  // drops for too-low fit level is not separately counted here; adding a
+  // 5th/6th bucket for those was judged not worth the added complexity
+  // for what is, in practice, a rare occurrence — never silently invented
+  // to make the numbers appear to add up.
+  const summary = {
+    examined: rawCandidates.length,
+    excludedExistingInCrm: excludedDuplicate,
+    excludedNoEmail,
+    actionable: final.length,
+  };
+
+  return { candidates: final, summary };
 }
 
 module.exports = {
@@ -517,7 +683,11 @@ module.exports = {
   validateResearchInput,
   allowedFitLevelsFor,
   sanitizeCandidate,
+  filterUsableCandidates,
+  filterCandidatesWithCounts,
   filterAndCapCandidates,
+  buildExclusionDomains,
+  MAX_EXCLUSION_DOMAINS,
   extractCandidateArray,
   stripMarkdownFence,
   parseCandidateJson,

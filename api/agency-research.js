@@ -17,22 +17,29 @@
  * auth mechanism; see that file's header for why this is still needed
  * even though this is a browser-called endpoint.
  *
- * DUPLICATE ANNOTATION: for every candidate, checks against the agencies
- * already in the CRM (website / email / normalized name) and attaches
- * existingAgencyId/existingAgencyName so the UI can show "Zaten CRM'de"
- * instead of letting the user import a second row for the same agency.
+ * EARLY EXCLUSION (outreach-quality follow-up): the agencies already in
+ * the CRM are fetched BEFORE calling the research provider and passed in
+ * as researchAgencies' own existingAgencies dep — a candidate matching one
+ * of them (canonical website domain first, then email, then normalized
+ * name — see duplicateMatching.js) is silently dropped inside
+ * researchProvider.js itself, never returned here, never shown in the
+ * result list. This replaced the previous behavior of annotating every
+ * candidate with existingAgencyId/existingAgencyName for the UI to show a
+ * late "Zaten CRM'de" warning on — that was correct but too late; this
+ * endpoint no longer returns a result for an agency already in the CRM at
+ * all. See DeseTourDashboard.jsx's SupabaseAgencyRepo.create() for the
+ * separate, final defense-in-depth check immediately before persistence.
  * ─────────────────────────────────────────────────────────────────────────
  */
 'use strict';
 
 const { requireAgencyRole } = require('./_agencies/authorize');
 const researchProvider = require('./_agencies/researchProvider');
-const { findLikelyDuplicate } = require('./_agencies/duplicateMatching');
 
 async function fetchExistingAgenciesForDuplicateCheck() {
   const url = process.env.SUPABASE_URL;
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !serviceRoleKey) return []; // duplicate annotation is best-effort, never blocks research results
+  if (!url || !serviceRoleKey) return []; // early exclusion is best-effort — never blocks research results on its own
   const { createClient } = require('@supabase/supabase-js');
   const client = createClient(url, serviceRoleKey);
   const { data, error } = await client.from('agencies').select('id,name,website,email');
@@ -69,9 +76,11 @@ async function handler(req, res) {
     throw err;
   }
 
+  const existingAgencies = await fetchExistingAgenciesForDuplicateCheck();
+
   let result;
   try {
-    result = await researchProvider.researchAgencies(input);
+    result = await researchProvider.researchAgencies(input, { existingAgencies });
   } catch (err) {
     if (err instanceof researchProvider.ConfigurationError) {
       return res.status(503).json({ error: err.message, stage: 'provider_configuration' });
@@ -91,17 +100,10 @@ async function handler(req, res) {
     return res.status(500).json({ error: 'Agency research failed unexpectedly. See function logs for details.' });
   }
 
-  const existingAgencies = await fetchExistingAgenciesForDuplicateCheck();
-  const candidates = result.candidates.map(candidate => {
-    const dup = findLikelyDuplicate(candidate, existingAgencies);
-    return {
-      ...candidate,
-      existingAgencyId: dup ? dup.id : null,
-      existingAgencyName: dup ? dup.name : null,
-    };
-  });
-
-  return res.status(200).json({ candidates });
+  // PART 5 — safe summary counts (see researchProvider.js's researchAgencies
+  // for exactly what each one means and its one honest limitation). Only
+  // ever structural counts, never candidate content.
+  return res.status(200).json({ candidates: result.candidates, summary: result.summary });
 }
 
 module.exports = handler;
