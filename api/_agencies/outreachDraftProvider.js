@@ -45,6 +45,30 @@ const ANTHROPIC_MODEL = 'claude-opus-5-5';
 const ALLOWED_LANGUAGES = ['English', 'Spanish', 'Portuguese', 'Italian'];
 const ALLOWED_FIT_LEVELS = ['Yüksek Uyum', 'Orta Uyum', 'Düşük Uyum', ''];
 
+// The real DeseTour outreach sender — every draft's sign-off must carry this
+// name directly, never a bracketed placeholder the user has to remember to
+// replace by hand before sending (that manual-edit step was the exact
+// reported failure: an edited placeholder not being saved before Gönder,
+// so the email still went out reading "[Name]"). Prompted below AND
+// mechanically enforced by fillSenderNamePlaceholder as a safety net, same
+// "don't just hope the prompt works" discipline as BANNED_PHRASES/emoji.
+const OUTREACH_SENDER_NAME = 'Deniz Bulut';
+
+// Catches a bracketed name placeholder in any of the 4 ALLOWED_LANGUAGES
+// the model might produce it in: "name" (English), "nombre" (Spanish),
+// "nome" (Portuguese and Italian share this word) — e.g. "[Name]",
+// "[Your Name]", "[Nombre]", "[Su Nombre]", "[Nome]", "[Il Tuo Nome]".
+const SENDER_NAME_PLACEHOLDER_PATTERN = /\[[^[\]]*\b(?:name|nombre|nome)\b[^[\]]*\]/gi;
+
+/** Replaces any bracketed sender-name placeholder with the real sender
+ * name. A plain, deterministic string substitution — never a content
+ * rewrite of anything else — so the final draft always carries a real
+ * name, with nothing left for the user to remember to edit by hand. */
+function fillSenderNamePlaceholder(text) {
+  if (typeof text !== 'string' || !text) return text;
+  return text.replace(SENDER_NAME_PLACEHOLDER_PATTERN, OUTREACH_SENDER_NAME);
+}
+
 // Verbatim from the product brief — never ship a draft containing any of these.
 const BANNED_PHRASES = [
   'i hope this email finds you well',
@@ -208,6 +232,11 @@ function buildSystemPrompt() {
     '   list every possible service.',
     '4. A low-pressure call to action, e.g. asking if a short conversation would make sense, or offering to',
     '   send a short overview if useful.',
+    '5. A closing sign-off appropriate to the target language (e.g. "Best regards," in English), followed by',
+    `   the sender's name on its own line: write exactly "${OUTREACH_SENDER_NAME}" — a real person's name, never`,
+    '   translated, abbreviated, or altered — then "DeseTour" on the line after. NEVER write a placeholder',
+    '   like "[Name]", "[Your Name]", "[Nombre]", or "[Nome]": the sign-off must always be ready to send with',
+    '   no further editing required.',
     '',
     'Write the email in the target language given in the user message below — it must read as naturally',
     'written by a native business speaker of that language, never like a literal machine translation.',
@@ -464,7 +493,15 @@ async function draftOutreach(input, deps = {}) {
 
   try {
     const rawDraft = extractDraftObject(rawText);
-    return enforceWritingStandard(rawDraft);
+    const draft = enforceWritingStandard(rawDraft);
+    // Deterministic safety net (see fillSenderNamePlaceholder) — runs even
+    // though the prompt already asks for the real name directly, so a
+    // draft can never ship with an unresolved "[Name]"-style placeholder.
+    return {
+      ...draft,
+      subject: fillSenderNamePlaceholder(draft.subject),
+      body: fillSenderNamePlaceholder(draft.body),
+    };
   } catch (err) {
     if (err instanceof ProviderError) {
       // Safe structural diagnostics only (see fetchDraftFromProvider) plus
@@ -493,12 +530,14 @@ module.exports = {
   BANNED_PHRASES,
   TARGET_MIN_WORDS,
   TARGET_MAX_WORDS,
+  OUTREACH_SENDER_NAME,
   validateDraftInput,
   countWords,
   isWithinTargetLength,
   findBannedPhrase,
   containsEmoji,
   enforceWritingStandard,
+  fillSenderNamePlaceholder,
   extractDraftObject,
   stripMarkdownFence,
   findBalancedJsonSpan,
