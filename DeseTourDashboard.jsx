@@ -8476,9 +8476,32 @@ function formatReservationTourLabel(tourName, tourLanguage) {
 }
 // TESTABLE:formatReservationTourLabel:end
 
+// Reservations UX simplification — "Aktif Rezervasyonlar" is a pure
+// presentation/filtering rule over the EXISTING opStatus values, never a
+// new database status: a reservation belongs to the active operational
+// workflow unless it has reached one of the two final states (completed
+// or cancelled). Expressed as an exclusion, not an allow-list, so any
+// additional non-final status the status model gains later stays included
+// automatically, with no change needed here. Shared by the desktop tab
+// filter/count and the KPI card below so both can never disagree.
+// TESTABLE:_isActiveOperationalReservation:start
+function _isActiveOperationalReservation(r) {
+  return !["Tamamlandı", "İptal"].includes(r?.opStatus);
+}
+// TESTABLE:_isActiveOperationalReservation:end
+
+// Compact, tab-specific empty states for the three buckets this page's
+// redesign introduces/renames. Any other tab (Hazırlanıyor/Onaylandı/Tur
+// Günü) falls back to the existing generic copy — unchanged.
+const RESERVATIONS_TAB_EMPTY_TEXT = {
+  "Aktif Rezervasyonlar": "Aktif rezervasyon bulunmuyor.",
+  "Tamamlanan Turlar": "Tamamlanan tur bulunmuyor.",
+  "İptal": "İptal edilmiş rezervasyon bulunmuyor.",
+};
+
 function ReservationsPage({ onSelect }) {
   const [showNewRes, setShowNewRes] = useState(false);
-  const [activeTab, setActiveTab] = useState("Tümü");
+  const [activeTab, setActiveTab] = useState("Aktif Rezervasyonlar");
   const [search, setSearch]       = useState("");
   const { data:repoRes, loading:resLoading, error:resError, reload:reloadRes }
     = useRepo("reservation", "getAll");
@@ -8487,25 +8510,36 @@ function ReservationsPage({ onSelect }) {
   const { data:guideListForAssign } = useRepo("guide", "getAll");
   const activeGuidesForAssign = (guideListForAssign||[]).filter(g=>g.status!=="Pasif");
 
-  const TABS = ["Tümü", "Hazırlanıyor", "Onaylandı", "Tur Günü", "Tamamlandı", "İptal"];
+  const TABS = ["Aktif Rezervasyonlar", "Hazırlanıyor", "Onaylandı", "Tur Günü", "Tamamlanan Turlar", "İptal"];
 
   const _allRes = repoRes ?? [];  // null while loading, empty when no data
   const filtered = _allRes.filter(r => {
-    const tabOk  = activeTab === "Tümü" || r.opStatus === activeTab;
+    const tabOk  = activeTab === "Aktif Rezervasyonlar" ? _isActiveOperationalReservation(r)
+      : activeTab === "Tamamlanan Turlar" ? r.opStatus === "Tamamlandı"
+      : r.opStatus === activeTab;
     const srchOk = !search ||
       (r.name||'').toLowerCase().includes(search.toLowerCase()) ||
       r.tour.toLowerCase().includes(search.toLowerCase()) ||
       (r.resNumber||r.id).toLowerCase().includes(search.toLowerCase());
     return tabOk && srchOk;
-  });
+  })
+    // Every other tab keeps the repo's own upcoming-first (check-in
+    // ascending) order as-is — only Tamamlanan Turlar flips to newest-
+    // completed-first, since "oldest finished tour first" is the one
+    // ordering that is never useful to scan. No stored data is touched;
+    // this is a render-time sort of the already-fetched list.
+    .sort((a, b) => activeTab === "Tamamlanan Turlar"
+      ? (b.checkIn || b.date || '').localeCompare(a.checkIn || a.date || '')
+      : 0);
 
   const counts = TABS.reduce((acc, t) => {
-    acc[t] = t === "Tümü" ? _allRes.length
+    acc[t] = t === "Aktif Rezervasyonlar" ? _allRes.filter(_isActiveOperationalReservation).length
+      : t === "Tamamlanan Turlar" ? _allRes.filter(r => r.opStatus === "Tamamlandı").length
       : _allRes.filter(r => r.opStatus === t).length;
     return acc;
   }, {});
 
-  const upcoming   = _allRes.filter(r => !["Tamamlandı","İptal"].includes(r.opStatus)).length;
+  const upcoming   = _allRes.filter(_isActiveOperationalReservation).length;
   const noGuide    = _allRes.filter(r => !r.guideId && !r.guide && r.opStatus !== "İptal").length;
   const pendingPay = _allRes.filter(r => r.payStatus === "Kapora Ödendi" || r.payStatus === "Ödeme Bekliyor").length;
   const completed  = _allRes.filter(r => r.opStatus === "Tamamlandı").length;
@@ -8627,8 +8661,9 @@ function ReservationsPage({ onSelect }) {
         {filtered.length === 0 ? (
           <div style={{ padding:"60px", textAlign:"center" }}>
             <div style={{ fontSize:32, opacity:.2, marginBottom:12 }}>📋</div>
-            <div style={{ fontSize:15, fontWeight:600, color:C.text, fontFamily:"'Geist',sans-serif", marginBottom:6 }}>Rezervasyon bulunamadı.</div>
-            <div style={{ fontSize:13, color:C.textMuted, fontFamily:"'Geist',sans-serif" }}>Bu filtre için kayıt yok.</div>
+            <div style={{ fontSize:15, fontWeight:600, color:C.text, fontFamily:"'Geist',sans-serif" }}>
+              {RESERVATIONS_TAB_EMPTY_TEXT[activeTab] || "Bu filtre için kayıt yok."}
+            </div>
           </div>
         ) : resLoading ? (
           <div style={{padding:"20px"}}><LoadingState label="Rezervasyonlar yükleniyor…"/></div>
@@ -26170,19 +26205,42 @@ function _MobileAccordionTicketRow({ row, navigate, canComplete, completing, onC
    glance (confirmed / guide missing / payment pending) without opening
    the record; no secondary metadata competing for attention.
    ══════════════════════════════════════════════════════════════════════ */
+// Compact, filter-specific empty states for the two buckets this page's
+// redesign introduces. "Bugün"/"Sorunlu" keep the existing generic copy.
+const MOBILE_RESERVATIONS_FILTER_EMPTY_TEXT = {
+  "Aktif Rezervasyonlar": "Aktif rezervasyon bulunmuyor.",
+  "Tamamlanan Turlar": "Tamamlanan tur bulunmuyor.",
+  "İptal": "İptal edilmiş rezervasyon bulunmuyor.",
+};
+
 function MobileReservationsPage({ onSelect }) {
-  const [filter, setFilter] = useState("Yaklaşan");
+  const [filter, setFilter] = useState("Aktif Rezervasyonlar");
   const { data:repoRes, loading } = useRepo("reservation", "getAll");
   const [showNew, setShowNew] = useState(false);
 
   const all = repoRes ?? [];
-  const FILTERS = ["Yaklaşan","Bugün","Sorunlu","Tümü"];
+  const FILTERS = ["Aktif Rezervasyonlar","Bugün","Sorunlu","Tamamlanan Turlar","İptal"];
   const filtered = all.filter(r => {
-    if (filter === "Tümü") return true;
-    if (filter === "Bugün") return r.date === _TODAY_STR || r.checkIn === _TODAY_ISO;
-    if (filter === "Sorunlu") return !r.guide || r.payStatus === "Bekliyor" || !r.pickup;
-    return !["Tamamlandı","İptal"].includes(r.opStatus);
-  });
+    if (filter === "Tamamlanan Turlar") return r.opStatus === "Tamamlandı";
+    if (filter === "İptal") return r.opStatus === "İptal";
+    // Bugün/Sorunlu are cross-cutting operational filters, not status
+    // filters — but a completed or cancelled reservation still belongs
+    // only in Tamamlanan Turlar / İptal, even if it happens to match
+    // today's date or look "problematic". _isActiveOperationalReservation
+    // is ANDed in as the first condition; the existing today/problematic
+    // calculations themselves are unchanged.
+    if (filter === "Bugün") return _isActiveOperationalReservation(r) && (r.date === _TODAY_STR || r.checkIn === _TODAY_ISO);
+    if (filter === "Sorunlu") return _isActiveOperationalReservation(r) && (!r.guide || r.payStatus === "Bekliyor" || !r.pickup);
+    // "Aktif Rezervasyonlar" (default) — same active-operational-workflow
+    // rule the desktop page uses, see _isActiveOperationalReservation.
+    return _isActiveOperationalReservation(r);
+  })
+    // Same fix as the desktop page's Tamamlanan Turlar tab: newest
+    // completed tour first, never oldest-first. Every other filter keeps
+    // the repo's own check-in-ascending order, unchanged.
+    .sort((a, b) => filter === "Tamamlanan Turlar"
+      ? (b.checkIn || b.date || '').localeCompare(a.checkIn || a.date || '')
+      : 0);
 
   const OP_TONE = { "Onaylandı":"good", "Rehber Atandı":"good", "Hazırlanıyor":"warn", "Tur Günü":"info", "Tamamlandı":"neutral", "İptal":"bad" };
   const PAY_TONE = { "Ödendi":"good", "Kapora Ödendi":"warn", "Kısmi Ödendi":"warn", "Bekliyor":"bad", "Gecikmiş":"bad", "İade Edildi":"neutral" };
@@ -26215,7 +26273,9 @@ function MobileReservationsPage({ onSelect }) {
 
       {loading ? <LoadingState label="Rezervasyonlar yükleniyor…"/> : filtered.length === 0 ? (
         <MobileEntityCard style={{ textAlign:"center", padding:"36px 16px" }}>
-          <div style={{ fontSize:13, color:C.textFaint, fontFamily:"'Geist',sans-serif" }}>Bu filtre için rezervasyon yok.</div>
+          <div style={{ fontSize:13, color:C.textFaint, fontFamily:"'Geist',sans-serif" }}>
+            {MOBILE_RESERVATIONS_FILTER_EMPTY_TEXT[filter] || "Bu filtre için rezervasyon yok."}
+          </div>
         </MobileEntityCard>
       ) : (
         <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
