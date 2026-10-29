@@ -103,6 +103,7 @@ const { materializeReservationPreparationsForBookingPlan, materializeReservation
 const { parseCivitatisEmail } = require('./_civitatis/parser');
 const { detectCivitatisEvent } = require('./_civitatis/eventDetector');
 const { planCivitatisCancellations, executeCivitatisCancellationPlan } = require('./_civitatis/cancellationAdapter');
+const { planCivitatisClientMessages, executeCivitatisClientMessagePlan } = require('./_civitatis/clientMessageAdapter');
 
 const DEFAULT_MAX_MESSAGES = 25;
 const HARD_MAX_MESSAGES = 100; // same bound as /api/ingest-civitatis, for the same reason (function time budget)
@@ -399,6 +400,54 @@ function decorateCancellationResult(entry) {
   };
 }
 
+/** Splits classification==='client_message' messages out of a batch —
+ * same shape as splitCancellationMessages, applied to the remainder
+ * AFTER cancellations have already been split out (see
+ * runCivitatisWriteOrchestration). */
+function splitClientMessages(messages) {
+  const clientMessages = [];
+  const other = [];
+  for (const m of messages || []) {
+    const detection = detectCivitatisEvent({ from: m && m.from, subject: m && m.subject });
+    if (detection.classification === 'client_message') clientMessages.push(m);
+    else other.push(m);
+  }
+  return { clientMessages, other };
+}
+
+/** Dry-run reporting for client messages — mirrors
+ * buildCancellationDryRunResults' shape/spirit, flat (one entry per
+ * email). A mismatch entry (forceAmbiguous:true) is reported distinctly
+ * so a dry run makes the fail-closed diagnostic outcome visible too,
+ * never indistinguishable from an ordinary match attempt. */
+function buildClientMessageDryRunResults(plan) {
+  return plan.plans.map(entry => ({
+    gmailMessageId: entry.gmailMessageId,
+    externalBookingId: entry.externalBookingId,
+    decision: entry.forceAmbiguous
+      ? `WOULD_RECORD_AMBIGUOUS (${entry.mismatchReason})`
+      : 'WOULD_INGEST (dry run — write mode not active for this request)',
+    rpcResult: null,
+  }));
+}
+
+/** Write-mode reporting for client messages — same never-leak-PII/never-
+ * leak-message-body discipline as decorateCancellationResult. The
+ * message text itself is NEVER included here. */
+function decorateClientMessageResult(entry) {
+  const rpcResult = entry.rpcResult || {};
+  const resultValue = rpcResult.result;
+  return {
+    gmailMessageId: entry.gmailMessageId,
+    externalBookingId: entry.externalBookingId,
+    decision: entry.unknownResult ? 'UNKNOWN_RPC_RESULT (failed closed)' : (resultValue || 'UNKNOWN'),
+    rpcResult: resultValue || null,
+    reservationMessageId: rpcResult.reservation_message_id || null,
+    reservationId: rpcResult.reservation_id || null,
+    reason: rpcResult.reason || null,
+  };
+}
+
 /**
  * The full orchestration, with `repo`, `rpcCaller` (write mode only), and
  * `cancellationRpcCaller` (write mode only) INJECTED — no Gmail/Supabase
@@ -429,12 +478,17 @@ function decorateCancellationResult(entry) {
  * result from planCivitatisIngestion (an invalid confirmedCustomerId)
  * is passed straight through so the HTTP handler can map it to a 400.
  */
-async function runCivitatisWriteOrchestration({ messages, repo, externalBookingId, writeModeActive, rpcCaller, cancellationRpcCaller, markNeedsReviewRpcCaller, identityDecision = null }) {
+async function runCivitatisWriteOrchestration({ messages, repo, externalBookingId, writeModeActive, rpcCaller, cancellationRpcCaller, clientMessageRpcCaller, markNeedsReviewRpcCaller, identityDecision = null }) {
   const filteredMessages = externalBookingId
     ? filterMessagesByExternalBookingId(messages, externalBookingId)
     : (messages || []);
 
-  const { cancellations: cancellationMessages, other: bookingMessages } = splitCancellationMessages(filteredMessages);
+  const { cancellations: cancellationMessages, other: afterCancellationSplit } = splitCancellationMessages(filteredMessages);
+  // A third, independent split (same shape as cancellations) — client
+  // messages never reach planCivitatisIngestion/the booking RPC either,
+  // for exactly the same reason cancellations don't: they carry no
+  // booking fields to extract.
+  const { clientMessages, other: bookingMessages } = splitClientMessages(afterCancellationSplit);
 
   const plan = await planCivitatisIngestion({ messages: bookingMessages, repo, identityDecision });
   if (!plan.ok) return { ok: false, error: plan.error, stage: plan.stage };
@@ -442,8 +496,16 @@ async function runCivitatisWriteOrchestration({ messages, repo, externalBookingI
   const cancellationPlan = await planCivitatisCancellations({ messages: cancellationMessages, repo });
   if (!cancellationPlan.ok) return { ok: false, error: cancellationPlan.error };
 
+  const clientMessagePlan = await planCivitatisClientMessages({ messages: clientMessages, repo });
+  if (!clientMessagePlan.ok) return { ok: false, error: clientMessagePlan.error };
+
   if (!writeModeActive) {
-    return { ok: true, results: buildDryRunResults(plan), cancellations: buildCancellationDryRunResults(cancellationPlan) };
+    return {
+      ok: true,
+      results: buildDryRunResults(plan),
+      cancellations: buildCancellationDryRunResults(cancellationPlan),
+      clientMessages: buildClientMessageDryRunResults(clientMessagePlan),
+    };
   }
 
   const eventTypeByGmailId = buildEventTypeMap(plan);
@@ -495,10 +557,18 @@ async function runCivitatisWriteOrchestration({ messages, repo, externalBookingI
     console.error('[ingest-civitatis-write] Reservation preparation materialization error (cancellation):', err.message);
   }
 
+  // Client messages: a third, fully independent write step — never
+  // enrichment of the booking/cancellation writes above, so no isolating
+  // try/catch is needed here (same reasoning as cancellations: each
+  // email is already fully independent, and a client-message write
+  // failure must be visible in the real response, not swallowed).
+  const executedClientMessages = await executeCivitatisClientMessagePlan(clientMessagePlan.plans, clientMessageRpcCaller);
+
   return {
     ok: true,
     results: buildWriteResults(executed, eventTypeByGmailId),
     cancellations: executedCancellations.map(decorateCancellationResult),
+    clientMessages: executedClientMessages.map(decorateClientMessageResult),
   };
 }
 
@@ -530,6 +600,28 @@ function buildRealCancellationRpcCaller() {
   const sb = getServiceRoleClient();
   return async function cancellationRpcCaller(payload) {
     const { data, error } = await sb.rpc('cancel_civitatis_booking', payload);
+    if (error) {
+      return { result: 'failed', error: `RPC call error: ${error.message}` };
+    }
+    return data;
+  };
+}
+
+/** The ONLY place a real client-message RPC call is ever constructed —
+ * deliberately a separate function calling a separate RPC
+ * (ingest_civitatis_reservation_message — see
+ * supabase_migration_civitatis_client_messages.sql), never routed
+ * through buildRealRpcCaller/ingest_civitatis_booking or
+ * buildRealCancellationRpcCaller/cancel_civitatis_booking. Same call-
+ * level-error-to-{result:'failed'} translation as the two builders
+ * above, for the same reason: executeCivitatisClientMessagePlan's
+ * existing fail-closed unknownResult handling already treats any value
+ * outside KNOWN_CLIENT_MESSAGE_RPC_RESULTS correctly without needing
+ * special-case logic here. */
+function buildRealClientMessageRpcCaller() {
+  const sb = getServiceRoleClient();
+  return async function clientMessageRpcCaller(payload) {
+    const { data, error } = await sb.rpc('ingest_civitatis_reservation_message', payload);
     if (error) {
       return { result: 'failed', error: `RPC call error: ${error.message}` };
     }
@@ -798,11 +890,13 @@ async function handler(req, res) {
 
   let rpcCaller = null;
   let cancellationRpcCaller = null;
+  let clientMessageRpcCaller = null;
   let markNeedsReviewRpcCaller = null;
   if (writeModeActive) {
     try {
       rpcCaller = buildRealRpcCaller();
       cancellationRpcCaller = buildRealCancellationRpcCaller();
+      clientMessageRpcCaller = buildRealClientMessageRpcCaller();
       markNeedsReviewRpcCaller = buildRealMarkNeedsReviewRpcCaller();
     } catch (err) {
       if (err instanceof ConfigurationError) {
@@ -816,7 +910,7 @@ async function handler(req, res) {
   try {
     outcome = await runCivitatisWriteOrchestration({
       messages, repo, externalBookingId, writeModeActive, rpcCaller, cancellationRpcCaller,
-      markNeedsReviewRpcCaller, identityDecision,
+      clientMessageRpcCaller, markNeedsReviewRpcCaller, identityDecision,
     });
   } catch (err) {
     console.error('[ingest-civitatis-write] Orchestration error:', err.message);
@@ -836,7 +930,7 @@ async function handler(req, res) {
 
   const summary = buildIngestionSummary({ results: outcome.results, cancellations: outcome.cancellations, discoveredCount: messages.length });
 
-  if (externalBookingId && outcome.results.length === 0 && outcome.cancellations.length === 0) {
+  if (externalBookingId && outcome.results.length === 0 && outcome.cancellations.length === 0 && outcome.clientMessages.length === 0) {
     return res.status(200).json({
       mode: writeModeActive ? 'write' : 'dryRun',
       writeEnabled: writeEnvValue === 'true',
@@ -844,6 +938,7 @@ async function handler(req, res) {
       externalBookingId,
       results: [],
       cancellations: [],
+      clientMessages: [],
       summary,
       message: `No Gmail messages matching external booking id "${externalBookingId}" were found in this fetched page (maxMessages=${maxMessages}${pageToken ? ', pageToken supplied' : ''}). Try a larger maxMessages or supply pageToken to look further back.`,
       pagination: { requestedMaxMessages: maxMessages, nextPageToken: nextPageToken || null },
@@ -857,6 +952,7 @@ async function handler(req, res) {
     externalBookingId: externalBookingId || null,
     results: outcome.results,
     cancellations: outcome.cancellations,
+    clientMessages: outcome.clientMessages,
     summary,
     pagination: { requestedMaxMessages: maxMessages, nextPageToken: nextPageToken || null },
   });
@@ -883,10 +979,14 @@ handler.runCivitatisWriteOrchestration = runCivitatisWriteOrchestration;
 handler.splitCancellationMessages = splitCancellationMessages;
 handler.buildCancellationDryRunResults = buildCancellationDryRunResults;
 handler.decorateCancellationResult = decorateCancellationResult;
+handler.splitClientMessages = splitClientMessages;
+handler.buildClientMessageDryRunResults = buildClientMessageDryRunResults;
+handler.decorateClientMessageResult = decorateClientMessageResult;
 // Reused as-is by api/cron-ingest-civitatis-write.js so the scheduled
 // entry point duplicates none of this ingestion/RPC logic.
 handler.buildRealRpcCaller = buildRealRpcCaller;
 handler.buildRealCancellationRpcCaller = buildRealCancellationRpcCaller;
+handler.buildRealClientMessageRpcCaller = buildRealClientMessageRpcCaller;
 handler.buildRealMarkNeedsReviewRpcCaller = buildRealMarkNeedsReviewRpcCaller;
 handler.DEFAULT_MAX_MESSAGES = DEFAULT_MAX_MESSAGES;
 handler.HARD_MAX_MESSAGES = HARD_MAX_MESSAGES;

@@ -520,6 +520,19 @@ function parseCivitatisEmail(message) {
     };
   }
 
+  // Same defense-in-depth as the cancellation branch immediately above,
+  // for the same reason: a client-message email is handled entirely by
+  // api/_civitatis/clientMessageAdapter.js + the dedicated
+  // ingest_civitatis_reservation_message RPC, never by this function's
+  // booking-field parsing.
+  if (detection.classification === 'client_message') {
+    return {
+      ok: false, status: 'client_message_event',
+      reasons: ['this is a Civitatis client-message email, handled by the separate client-message pipeline — never by parseCivitatisEmail/ingest_civitatis_booking'],
+      externalBookingId: detection.externalBookingIdFromSubject, ...base,
+    };
+  }
+
   const eventType = detection.classification; // 'new_booking' | 'modified'
 
   // A genuinely empty/unreadable body for a message we already know, from

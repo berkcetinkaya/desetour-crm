@@ -4,6 +4,7 @@
  * The gate before any body parsing happens. Decides, from sender + subject
  * alone, whether a message is:
  *   - a supported Civitatis reservation event (new_booking | modified)
+ *   - a supported Civitatis client/reservation message (client_message)
  *   - clearly irrelevant (invoices, marketing, account-manager, review
  *     requests, "new activity available", etc.) -> ignored
  *   - apparently reservation-related but not in a currently supported
@@ -11,12 +12,38 @@
  *     guessed into new_booking/modified
  *
  * The civitatis.com domain alone is deliberately NOT sufficient — the
- * sender must be the exact reservation-notification address.
+ * sender must be one of the two EXACT, explicitly enumerated Civitatis
+ * addresses below. Never a substring/domain check, never trust based on
+ * the "From" header's display name alone (extractEmailAddress always
+ * reads the real address out of "Display Name <address>", the display
+ * name itself is never consulted), and never widened to any other
+ * civitatis.com address without the same explicit, evidence-based
+ * addition made here.
  * ─────────────────────────────────────────────────────────────────────────
  */
 'use strict';
 
+// The single historical sender address — unchanged, still the exact
+// value booking/modification/cancellation detection has always trusted.
+// Kept as its own export for backward compatibility (existing callers/
+// tests reference it directly) — never replaced by the second address
+// below, only ever ADDED to.
 const CIVITATIS_SENDER = 'notificaciones@civitatis.com';
+
+// Confirmed on real production evidence: a genuine "New client message
+// about your reservation <number>" email arrives from this second,
+// equally legitimate Civitatis address — a different automated sender
+// for a different Civitatis email category, not a replacement for the
+// one above. Both are trusted, exactly, nothing else: two entries, no
+// substring match, no bare-domain match, no display-name trust.
+const CIVITATIS_TRUSTED_SENDERS = Object.freeze([
+  CIVITATIS_SENDER,
+  'notifications@civitatis.com',
+]);
+
+function isTrustedCivitatisSender(email) {
+  return CIVITATIS_TRUSTED_SENDERS.includes(email);
+}
 
 const NEW_BOOKING_SUBJECT = /^New booking A(\d+):/;
 const MODIFIED_SUBJECT = /^Booking A(\d+) modified:/;
@@ -27,6 +54,14 @@ const MODIFIED_SUBJECT = /^Booking A(\d+) modified:/;
 // "cancellation" elsewhere (e.g. a policy notice) or by a non-Civitatis
 // sender, since the sender gate above always runs first.
 const CANCELLATION_SUBJECT = /^Cancellation A(\d+):/;
+
+// Confirmed verbatim on real production evidence: "New client message
+// about your reservation 42414893". Anchored at the START of the
+// subject, same discipline as the three patterns above — a bare-digit
+// reservation number (no "A" prefix, unlike NEW_BOOKING_SUBJECT/
+// MODIFIED_SUBJECT/CANCELLATION_SUBJECT above), matching the exact shape
+// already stored in reservations.external_booking_id.
+const CLIENT_MESSAGE_SUBJECT = /^New client message about your reservation\s+(\d+)/;
 
 // A stricter "this looks structurally like a booking-event subject we
 // just don't support yet" signal (e.g. a future "Booking A########
@@ -57,18 +92,18 @@ function extractEmailAddress(fromHeader) {
 /**
  * @param {{ from: string, subject: string }} message
  * @returns {{
- *   classification: 'new_booking' | 'modified' | 'cancelled' | 'ignored' | 'needs_review',
+ *   classification: 'new_booking' | 'modified' | 'cancelled' | 'client_message' | 'ignored' | 'needs_review',
  *   externalBookingIdFromSubject: string | null,
  *   reason: string | null,
  * }}
  */
 function detectCivitatisEvent({ from, subject }) {
   const senderEmail = extractEmailAddress(from);
-  if (senderEmail !== CIVITATIS_SENDER) {
+  if (!isTrustedCivitatisSender(senderEmail)) {
     return {
       classification: 'ignored',
       externalBookingIdFromSubject: null,
-      reason: `sender "${senderEmail || '(none)'}" is not exactly ${CIVITATIS_SENDER}`,
+      reason: `sender "${senderEmail || '(none)'}" is not one of the exact trusted Civitatis addresses (${CIVITATIS_TRUSTED_SENDERS.join(', ')})`,
     };
   }
 
@@ -101,6 +136,15 @@ function detectCivitatisEvent({ from, subject }) {
     };
   }
 
+  const clientMessageMatch = CLIENT_MESSAGE_SUBJECT.exec(subjectText);
+  if (clientMessageMatch) {
+    return {
+      classification: 'client_message',
+      externalBookingIdFromSubject: clientMessageMatch[1],
+      reason: null,
+    };
+  }
+
   // Sender is genuinely Civitatis reservations, but the subject didn't
   // match any of the three supported patterns. Distinguish "looks like a
   // booking event we don't support yet" (some other, still-unimplemented
@@ -123,4 +167,4 @@ function detectCivitatisEvent({ from, subject }) {
   };
 }
 
-module.exports = { detectCivitatisEvent, extractEmailAddress, CIVITATIS_SENDER };
+module.exports = { detectCivitatisEvent, extractEmailAddress, isTrustedCivitatisSender, CIVITATIS_SENDER, CIVITATIS_TRUSTED_SENDERS };

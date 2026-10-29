@@ -555,6 +555,13 @@ const DB = {
   // "CRM'e Ekle"); only ever grows via "Taslağı Kaydet" in mock mode.
   agencyEmails: [],
 
+  // Civitatis client/reservation messages — ONLY ever ingested server-side
+  // (public.ingest_civitatis_reservation_message), never created from the
+  // mock UI. Empty in mock mode: there is no mock Gmail/ingestion pipeline
+  // to populate it, matching production's own "no messages yet" state for
+  // a reservation with none.
+  reservationMessages: [],
+
   reservations: [
     {
       id:"R-2026-001", leadId:"LEAD-001", quoteId:"Q-2026-001", customerId:"CUST-001", tourId:"TUR-001", guideId:null,
@@ -1768,6 +1775,20 @@ const AgencyEmailRepository = {
     Object.assign(DB.agencyEmails[idx], patch);
     Store.notify();
     return DB.agencyEmails[idx];
+  },
+};
+
+// Civitatis client/reservation messages — read-only from the app's own
+// perspective (see SupabaseReservationMessageRepo below: no create/
+// update/delete method exists on either repo, by design — only the
+// server-side ingestion RPC ever writes a row). Chronological, oldest
+// first, matching a conversation timeline rather than the newest-first
+// convention most other lists in this app use.
+const ReservationMessageRepository = {
+  getByReservationId(reservationId) {
+    return DB.reservationMessages
+      .filter(m => m.reservationId === reservationId)
+      .sort((a, b) => (a.receivedAt||'').localeCompare(b.receivedAt||''));
   },
 };
 
@@ -8510,6 +8531,19 @@ function ReservationsPage({ onSelect }) {
   const { data:guideListForAssign } = useRepo("guide", "getAll");
   const activeGuidesForAssign = (guideListForAssign||[]).filter(g=>g.status!=="Pasif");
 
+  // "Yeni Mesaj" row indicator — reuses the EXISTING notification
+  // infrastructure as-is (same hook NotificationBell already uses, no
+  // new query/table): a reservation has an unread Civitatis client
+  // message when an unread activity_logs-backed notification exists
+  // whose metadata.source==='civitatis_message' points at it. Never a
+  // new architecture, never a redesign of this table.
+  const { unread: unreadOperationalNotifications } = useOperationalNotifications();
+  const reservationsWithUnreadCivitatisMessage = new Set(
+    (unreadOperationalNotifications||[])
+      .filter(n => n.source === 'civitatis_message' && n.reservationId)
+      .map(n => n.reservationId)
+  );
+
   const TABS = ["Aktif Rezervasyonlar", "Hazırlanıyor", "Onaylandı", "Tur Günü", "Tamamlanan Turlar", "İptal"];
 
   const _allRes = repoRes ?? [];  // null while loading, empty when no data
@@ -8712,7 +8746,16 @@ function ReservationsPage({ onSelect }) {
                       </td>
                       {}
                       <td style={{ padding:"14px 12px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle" }}>
-                        <div style={{ fontSize:13.5, fontWeight:600, color:C.text, fontFamily:"'Geist',sans-serif" }}>{r.flag} {r.name}</div>
+                        <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                          <span style={{ fontSize:13.5, fontWeight:600, color:C.text, fontFamily:"'Geist',sans-serif" }}>{r.flag} {r.name}</span>
+                          {reservationsWithUnreadCivitatisMessage.has(r.id) && (
+                            <span style={{
+                              fontSize:9.5, fontWeight:600, padding:"2px 6px", borderRadius:99,
+                              color:C.gold, background:`${C.gold}1a`, fontFamily:"'Geist',sans-serif",
+                              whiteSpace:"nowrap", flexShrink:0,
+                            }}>Yeni Mesaj</span>
+                          )}
+                        </div>
                         <div style={{ fontSize:11.5, color:C.textFaint, fontFamily:"'Geist',sans-serif", marginTop:2 }}>{r.country}</div>
                       </td>
                       {}
@@ -8936,6 +8979,66 @@ const RES_ACTIVITY_LABEL = {
   created:"Oluşturuldu", updated:"Güncellendi", status_changed:"Durum güncellendi",
   payment:"Ödeme alındı", deposit:"Kapora alındı", cancelled:"İptal edildi",
 };
+
+// TESTABLE:formatReservationMessageTimestamp:start
+// "29 Eki · 11:59" — short Turkish month, no year (unlike
+// formatBuildTimestampTR's long-month/with-year shape, a different
+// context), always Europe/Istanbul local time regardless of the
+// viewer's own timezone, same Intl timeZone technique already
+// established by formatBuildTimestampTR/istanbulNowParts.
+function formatReservationMessageTimestamp(isoString) {
+  if (!isoString) return '';
+  const d = new Date(isoString);
+  if (isNaN(d.getTime())) return '';
+  const datePart = d.toLocaleDateString('tr-TR', { day:'2-digit', month:'short', timeZone:'Europe/Istanbul' });
+  const timePart = d.toLocaleTimeString('tr-TR', { hour:'2-digit', minute:'2-digit', timeZone:'Europe/Istanbul' });
+  return `${datePart} · ${timePart}`;
+}
+// TESTABLE:formatReservationMessageTimestamp:end
+
+// Civitatis client/reservation messages — a communication TIMELINE, kept
+// visually and structurally separate from internal staff notes (never
+// written into r.notes/r.internalNotes, never fetched/rendered inside
+// any notes card). Self-contained (own useRepo call), same pattern
+// ResTimeline/ReviewCard already use. Renders nothing at all when there
+// are no messages — "do not waste large vertical space" for the common
+// case (most reservations have none). message_text is already clean,
+// sanitized plain text (stripped server-side); rendered here as a plain
+// React text child, never dangerouslySetInnerHTML, so no raw HTML can
+// ever reach the DOM from this table. Chronological, oldest first — a
+// conversation reads top-to-bottom, newest at the bottom.
+function ReservationMessagesCard({ r }) {
+  const { data: messages, loading } = useRepo("reservationMessage", "getByReservationId", r.id);
+  const list = messages || [];
+  if (loading || list.length === 0) return null;
+
+  return (
+    <RCard>
+      <RCardHead title="Civitatis Mesajları"/>
+      <div style={{ display:"flex", flexDirection:"column" }}>
+        {list.map((m, i) => (
+          <div key={m.id} style={{
+            padding:"12px 18px",
+            borderBottom: i < list.length - 1 ? `1px solid ${C.borderLight}` : "none",
+          }}>
+            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:10, marginBottom:5 }}>
+              <span style={{ fontSize:11.5, fontWeight:600, color:C.text, fontFamily:"'Geist',sans-serif" }}>Civitatis</span>
+              <span style={{ fontSize:11, color:C.textFaint, fontFamily:"'Geist',sans-serif", flexShrink:0 }}>{formatReservationMessageTimestamp(m.receivedAt)}</span>
+            </div>
+            <div style={{ fontSize:12.5, color:C.textMid, fontFamily:"'Geist',sans-serif", lineHeight:1.5, whiteSpace:"pre-wrap" }}>
+              {m.messageText}
+            </div>
+            {m.externalBookingId && (
+              <div style={{ fontSize:10.5, color:C.textFaint, fontFamily:"'DM Mono',monospace", marginTop:6 }}>
+                #{m.externalBookingId}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </RCard>
+  );
+}
 
 function ResTimeline({ r }) {
   // Real activity log for this reservation — the fixed 5-step template with
@@ -9857,6 +9960,9 @@ function ReservationDetailPage({ resId, onBack }) {
 
           {}
           <ReviewCard r={r}/>
+
+          {}
+          <ReservationMessagesCard r={r}/>
 
           {}
           <RCard>
@@ -19848,6 +19954,39 @@ const SupabaseAgencyRepo = {
 // NEVER sets sent_at and NEVER touches agencies.last_contact_at — saving
 // a draft is not a real contact (see the Phase 2 migration-free design:
 // this table already exists from Phase 1's foundation migration).
+// Civitatis client/reservation messages — see
+// supabase_migration_civitatis_client_messages.sql. message_text is
+// already clean, sanitized plain text by the time it reaches this table
+// (stripped server-side in api/_civitatis/clientMessageExtraction.js);
+// rendered here as plain React text (never dangerouslySetInnerHTML), so
+// it is HTML-sanitized twice over — once at ingestion, once again simply
+// by how React renders a plain string child.
+function mapReservationMessageFromDB(r) {
+  if (!r) return null;
+  return {
+    id: r.id, reservationId: r.reservation_id || null,
+    source: r.source || 'civitatis', direction: r.direction || 'inbound',
+    matchStatus: r.match_status || 'unmatched',
+    externalBookingId: r.external_booking_id || '',
+    subject: r.subject || '', messageText: r.message_text || '',
+    externalUrl: r.external_url || null,
+    receivedAt: r.received_at || null, createdAt: r.created_at || null,
+  };
+}
+// Read-only from the app's own perspective — intentionally NO create/
+// update/delete method on this repo. RLS (see the migration) already
+// grants no authenticated role an INSERT/UPDATE/DELETE policy either;
+// only the server-side ingest_civitatis_reservation_message RPC, run by
+// the scheduled Civitatis ingestion job, ever writes a row.
+const SupabaseReservationMessageRepo = {
+  async getByReservationId(reservationId){
+    const sb=getSB(); if(!sb) return ReservationMessageRepository.getByReservationId(reservationId);
+    const{data,error}=await sb.from('reservation_messages').select('*').eq('reservation_id',reservationId).order('received_at',{ascending:true});
+    if(error) throw new Error(error.message);
+    return (data||[]).map(mapReservationMessageFromDB);
+  },
+};
+
 function mapAgencyEmailFromDB(r) {
   if (!r) return null;
   return {
@@ -20356,6 +20495,7 @@ function getActiveRepo(entity) {
   if(entity==='guidePayment')return useReal ? SupabaseGuidePaymentRepo : GuidePaymentRepository;
   if(entity==='agency')     return useReal ? SupabaseAgencyRepo       : AgencyRepository;
   if(entity==='agencyEmail')return useReal ? SupabaseAgencyEmailRepo  : AgencyEmailRepository;
+  if(entity==='reservationMessage')return useReal ? SupabaseReservationMessageRepo : ReservationMessageRepository;
   if(entity==='review')     return useReal ? SupabaseReviewRepo       : ReviewRepository;
   if(entity==='staff')      return useReal ? SupabaseStaffRepo       : { getAll: async () => DB.staff };
   if(entity==='reservationPreparation') return useReal ? SupabaseReservationPreparationRepo : { getByReservation: async () => [], getUpcomingPending: async () => [], getRecentCompleted: async () => [], complete: async () => ({ ok:false, reason:'invalid' }), reopen: async () => ({ ok:false, reason:'invalid' }) };
@@ -27294,6 +27434,11 @@ function MobileReservationDetailPage({ resId, onBack }) {
 
   const { data:r, loading, error } = useRepo("reservation", "getById", resId);
   const { data:cust } = useRepo("customer", "getById", r?.customerId || null);
+  // Civitatis client/reservation messages — same repo/entity the desktop
+  // ReservationMessagesCard uses, rendered here as compact mobile cards
+  // (never the desktop's own layout) inside a dedicated MobileSection,
+  // visually separate from "Notlar" below.
+  const { data:mobResMessages } = useRepo("reservationMessage", "getByReservationId", resId);
   // Tour Preparation Intelligence Phase C2D-1 — same repository call and
   // the same pure helpers (_sortPreparations/_preparationViewModel) as the
   // desktop page, so business logic is never duplicated between the two;
@@ -27493,6 +27638,23 @@ function MobileReservationDetailPage({ resId, onBack }) {
       {r.opNotes && (
         <MobileSection title="Notlar">
           <MobileEntityCard><div style={{ fontSize:13, color:C.textMid, fontFamily:"'Geist',sans-serif", lineHeight:1.6 }}>{r.opNotes}</div></MobileEntityCard>
+        </MobileSection>
+      )}
+
+      {}
+      {(mobResMessages||[]).length > 0 && (
+        <MobileSection title="Civitatis Mesajları">
+          <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+            {mobResMessages.map(m => (
+              <MobileEntityCard key={m.id}>
+                <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:8, marginBottom:5 }}>
+                  <span style={{ fontSize:12, fontWeight:700, color:C.text, fontFamily:"'Geist',sans-serif" }}>Civitatis</span>
+                  <span style={{ fontSize:11, color:C.textFaint, fontFamily:"'Geist',sans-serif" }}>{formatReservationMessageTimestamp(m.receivedAt)}</span>
+                </div>
+                <div style={{ fontSize:13, color:C.textMid, fontFamily:"'Geist',sans-serif", lineHeight:1.55, whiteSpace:"pre-wrap" }}>{m.messageText}</div>
+              </MobileEntityCard>
+            ))}
+          </div>
         </MobileSection>
       )}
     </div>

@@ -135,7 +135,7 @@ test('fetchAllMessagesWithinCeiling uses the real fetchMessagePage by default (c
 test('buildCivitatisSearchQueryWithWindow narrows the existing sender query with a documented after: operator, never changing the sender filter itself', () => {
   const q = gmailClient.buildCivitatisSearchQueryWithWindow(1750000000);
   assert.equal(q, `${gmailClient.buildCivitatisSearchQuery()} after:1750000000`);
-  assert.ok(q.includes('from:(notificaciones@civitatis.com)'));
+  assert.ok(q.includes('from:(notificaciones@civitatis.com OR notifications@civitatis.com)'));
   assert.ok(q.includes('after:1750000000'));
 });
 

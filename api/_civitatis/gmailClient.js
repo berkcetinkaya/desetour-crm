@@ -531,7 +531,15 @@ async function fetchAllMatchingMessages(query) {
  * as sufficient".
  */
 function buildCivitatisSearchQuery() {
-  return 'from:(notificaciones@civitatis.com)';
+  // Both exact, explicitly trusted Civitatis sender addresses — sourced
+  // from eventDetector.js's own CIVITATIS_TRUSTED_SENDERS so this query
+  // can never silently drift out of sync with the real security boundary
+  // (eventDetector.js's sender check, not this query, is what actually
+  // enforces trust — see this function's own doc comment below). Gmail's
+  // from:(a OR b) syntax matches either address exactly, never a
+  // substring or the bare civitatis.com domain.
+  const { CIVITATIS_TRUSTED_SENDERS } = require('./eventDetector');
+  return `from:(${CIVITATIS_TRUSTED_SENDERS.join(' OR ')})`;
 }
 
 /**

@@ -222,11 +222,13 @@ async function handler(req, res) {
 
   let rpcCaller = null;
   let cancellationRpcCaller = null;
+  let clientMessageRpcCaller = null;
   let markNeedsReviewRpcCaller = null;
   if (writeModeActive) {
     try {
       rpcCaller = writeEndpoint.buildRealRpcCaller();
       cancellationRpcCaller = writeEndpoint.buildRealCancellationRpcCaller();
+      clientMessageRpcCaller = writeEndpoint.buildRealClientMessageRpcCaller();
       markNeedsReviewRpcCaller = writeEndpoint.buildRealMarkNeedsReviewRpcCaller();
     } catch (err) {
       if (err instanceof ConfigurationError) {
@@ -246,7 +248,7 @@ async function handler(req, res) {
     // run never applies one.
     outcome = await writeEndpoint.runCivitatisWriteOrchestration({
       messages, repo, externalBookingId: null, writeModeActive, rpcCaller, cancellationRpcCaller,
-      markNeedsReviewRpcCaller,
+      clientMessageRpcCaller, markNeedsReviewRpcCaller,
     });
   } catch (err) {
     console.error('[cron-ingest-civitatis-write] Orchestration error:', err.message);
@@ -267,6 +269,7 @@ async function handler(req, res) {
     writeEnabled: writeEnvValue === 'true',
     results: outcome.results,
     cancellations: outcome.cancellations,
+    clientMessages: outcome.clientMessages,
     summary,
     discovery: {
       sinceUnixSeconds,

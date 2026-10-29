@@ -45,7 +45,7 @@ test('a non-Civitatis sender is never classified "cancelled" even with an identi
   const r = detectCivitatisEvent({ from: F.FROM_OTHER, subject: 'Cancellation A38807986: Visita guiada pela Istambul imprescindível' });
   assert.notEqual(r.classification, 'cancelled');
   assert.equal(r.classification, 'ignored');
-  assert.match(r.reason, /is not exactly/);
+  assert.match(r.reason, /is not one of the exact trusted Civitatis addresses/);
 });
 
 test('a spoofed display name around the real address is still accepted (matches existing sender-extraction behavior) — but a genuinely different address is not', () => {
