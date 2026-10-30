@@ -101,6 +101,21 @@ const CRM_CHANGELOG_CATEGORIES = [
 // Newest first. See the release convention above before editing.
 const CRM_CHANGELOG = [
   {
+    version: '13.01',
+    date: '2026-10-30',
+    title: 'Civitatis Mesajları Rezervasyonlarda',
+    summary: 'Civitatis üzerinden gelen misafir mesajları artık ilgili rezervasyonla otomatik eşleştiriliyor, rezervasyon detayından takip edilebiliyor ve operasyon ekibine bildirim olarak yansıyor.',
+    categories: ['Yeni Özellik', 'Otomasyon'],
+    highlights: [
+      'Civitatis misafir mesajları artık rezervasyon numarası üzerinden ilgili rezervasyonla otomatik eşleştiriliyor',
+      'Rezervasyon detayına yeni "Civitatis Mesajları" bölümü eklendi; mesaj içerikleri daha temiz ve okunabilir şekilde gösteriliyor',
+      'Yeni mesajlar operasyon bildirimlerine ve rezervasyon aktivite geçmişine yansıyor',
+      'Rezervasyon listesinde yeni mesaj bulunan kayıtlar daha kolay fark edilebiliyor',
+      'Aynı Civitatis mesajının tekrar işlenmesi duplicate kayıt oluşturmuyor',
+    ],
+    author: 'Berk',
+  },
+  {
     version: '12.50',
     date: '2026-10-28',
     title: 'Acente Araştırması ve Veri Kalitesi',
@@ -261,22 +276,6 @@ const CRM_CHANGELOG = [
       'Dört dilde kişiselleştirilmiş ilk temas taslağı',
     ],
     author: 'Berk',
-  },
-  {
-    version: '12.39',
-    date: '2026-10-04',
-    title: 'Civitatis Hakediş Yönetimi',
-    summary: 'Ödemeler ekranına eklenen Civitatis Hakedişleri ile Civitatis rezervasyonlarının hakedişleri artık Doğrudan Ödemelerden ayrı, dönem bazında takip edilip talep ve ödeme adımlarıyla yönetilebiliyor.',
-    categories: ['Yeni Özellik', 'Operasyon'],
-    highlights: [
-      'Ödemeler ekranına "Civitatis Hakedişleri" sekmesinin eklenmesi; Civitatis hakedişlerinin Doğrudan Ödemelerden tamamen ayrı takip edilmesi (Doğrudan Ödemeler mevcut haliyle kullanılmaya devam ediyor)',
-      'Hakediş ekranında Talep Edilebilir, Bu Ay Biriken, Talep Edildi ve Ödenen özetlerinin tek bakışta görülebilmesi',
-      'Hakedişlerin aylara göre gruplanması; her dönemde toplam hakediş tutarı, rezervasyon sayısı, misafir sayısı ve hakediş durumunun görülebilmesi, dönem açılarak rezervasyon bazındaki detayların incelenebilmesi',
-      'Bir dönem talep edilebilir hale geldiğinde "Talep Edildi Olarak İşaretle" ile Civitatis\'e CRM dışında yapılan talebin kayda geçirilmesi, ödeme geldikten sonra "Ödendi Olarak İşaretle" ile dönemin kapatılması; henüz talep edilebilir olmayan dönemlerde bu işlemlerin yapılamaması',
-      'Tutarsız bir finansal durum tespit edildiğinde yanlış işlem yapılmasını önlemek için ilgili dönemin "Kontrol Gerekli" olarak işaretlenmesi',
-    ],
-    author: 'Berk',
-    technicalNote: 'EUR cinsinden hakedişler, CRM\'in operasyonel görünümünde sabit bir kur (1 EUR = 55 TL) ile TL karşılığıyla gösteriliyor; bu yalnızca ekrandaki bilgilendirme amaçlıdır, gerçek tahsilat tutarını yansıtmaz.',
   },
 ];
 
