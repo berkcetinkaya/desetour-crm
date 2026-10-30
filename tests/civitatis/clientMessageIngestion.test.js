@@ -168,70 +168,182 @@ test('[11] neither subject nor body has a usable number -> no externalBookingId,
   assert.equal(r.mismatch, false);
 });
 
-// ── 4. Actual message-text extraction ────────────────────────────────────
+// ── 4. Actual message-text extraction (anchor-based rewrite, production incident fix) ──
+//
+// Root cause of the production incident: the FIRST shipped extractor
+// worked by subtraction (strip a small "known noise" blacklist, keep
+// whatever survives) — fragile against any template shape it had not
+// anticipated. The real production text/plain body is NOT the short
+// "label: value" transcription a booking-confirmation email has; it is
+// a much larger block also containing "Original message"/"See message"
+// tracking-link sections and a full footer — all of which silently
+// survived the old blacklist and were persisted as "the message". The
+// rewrite below is structural (an anchor + bounded span), proven against
+// a fixture shaped like the real production email.
 
-test('[12] actual client-message text extraction: the real confirmed example is extracted verbatim, never translated/rewritten/summarized', () => {
-  const body = textBody(['Civitatis', 'Reservation number: 42414893', 'Activity: Private Istanbul Experience', REAL_MESSAGE, 'Retail price: 120 EUR']);
-  assert.equal(extractClientMessageText(body), REAL_MESSAGE);
+const PRODUCTION_SHAPED_BODY = textBody([
+  'Civitatis',
+  'You have a message from an agency',
+  '',
+  REAL_MESSAGE,
+  '',
+  'See message: https://track.civitatis.com/abc?utm_source=email&utm_campaign=clientmsg',
+  '',
+  'Original message',
+  'Hi, we wanted to let you know about an unrelated prior exchange...',
+  '',
+  'Activity: Private Istanbul Experience',
+  'Reservation number: 42414893',
+  'Full name: John Smith',
+  'Date: 29 Oct 2026',
+  'Hour: 10:00',
+  'People: 2',
+  'Total price: 120 EUR',
+  '',
+  'Comments:',
+  REAL_MESSAGE,
+  '',
+  'Thank you for choosing our services',
+  '',
+  'Civitatis.com',
+  'Facebook',
+  'Twitter',
+  '© 2026 Civitatis. All rights reserved.',
+  'https://civitatis.com/unsubscribe?x=1',
+]);
+
+test('[12] production-shaped fixture: only the actual customer text is returned — nothing else survives', () => {
+  assert.equal(extractClientMessageText(PRODUCTION_SHAPED_BODY), REAL_MESSAGE);
 });
 
-test('[13] Civitatis template/footer removal: branding, social links, legal footer, and price/activity-summary lines are all stripped', () => {
-  const body = textBody([
-    'Civitatis', 'Civitatis.com', 'Facebook', 'Twitter', 'Instagram',
-    '© 2026 Civitatis. All rights reserved.', 'Unsubscribe', 'https://civitatis.com/voucher/123',
-    'Reservation number: 42414893', 'Activity: Private Istanbul Experience', 'City: Istanbul',
-    'Language: English', 'Date: 29 Oct 2026', 'Hour: 10:00', 'Duration: 3 hours', 'People: 2',
-    'Retail price: 120 EUR', 'Net price: 90 EUR',
-    REAL_MESSAGE,
-  ]);
-  assert.equal(extractClientMessageText(body), REAL_MESSAGE);
+test('[12a] tracking URLs are excluded', () => {
+  assert.doesNotMatch(extractClientMessageText(PRODUCTION_SHAPED_BODY) || '', /track\.civitatis\.com|utm_source|utm_campaign/);
 });
 
-test('[14] the generic "you have a message" framing sentence is stripped, never persisted as if it were the message', () => {
-  const body = textBody(['You have received a new message from the client', REAL_MESSAGE]);
-  assert.equal(extractClientMessageText(body), REAL_MESSAGE);
+test('[12b] the "See message" link/section is excluded', () => {
+  assert.doesNotMatch(extractClientMessageText(PRODUCTION_SHAPED_BODY) || '', /See message/i);
 });
 
-test('[15] duplicate message text (dedicated block + same-line Comments) is persisted only ONCE', () => {
-  const body = textBody([
-    REAL_MESSAGE,
-    'Reservation number: 42414893',
-    `Comments: ${REAL_MESSAGE}`,
-  ]);
-  const extracted = extractClientMessageText(body);
+test('[12c] the "Original message" duplicate/unrelated section is excluded', () => {
+  const extracted = extractClientMessageText(PRODUCTION_SHAPED_BODY) || '';
+  assert.doesNotMatch(extracted, /Original message/i);
+  assert.doesNotMatch(extracted, /unrelated prior exchange/);
+});
+
+test('[12d] the Comments duplicate is excluded when it is the same as the main anchored block — never concatenated, never counted twice', () => {
+  const extracted = extractClientMessageText(PRODUCTION_SHAPED_BODY);
   assert.equal(extracted, REAL_MESSAGE);
-  // Prove it is not double-concatenated — the message appears exactly once.
-  assert.equal((extracted.match(new RegExp(REAL_MESSAGE.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length, 1);
+  const occurrences = (extracted.match(new RegExp(REAL_MESSAGE.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length;
+  assert.equal(occurrences, 1);
 });
 
-test('[16] duplicate message text (dedicated block + bare-label Comments on the next line) is persisted only ONCE', () => {
-  const body = textBody([REAL_MESSAGE, 'Comments:', REAL_MESSAGE]);
-  const extracted = extractClientMessageText(body);
-  assert.equal(extracted, REAL_MESSAGE);
-  assert.equal((extracted.match(new RegExp(REAL_MESSAGE.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length, 1);
+test('[12e] Activity is excluded from message_text', () => {
+  assert.doesNotMatch(extractClientMessageText(PRODUCTION_SHAPED_BODY) || '', /Private Istanbul Experience/);
 });
 
-test('[17] Comments is used as a fallback only when no dedicated block survives stripping', () => {
+test('[12f] Reservation number is excluded from message_text', () => {
+  assert.doesNotMatch(extractClientMessageText(PRODUCTION_SHAPED_BODY) || '', /42414893/);
+});
+
+test('[12g] Full name is excluded from message_text', () => {
+  assert.doesNotMatch(extractClientMessageText(PRODUCTION_SHAPED_BODY) || '', /John Smith/);
+});
+
+test('[12h] Date and Hour are excluded from message_text', () => {
+  const extracted = extractClientMessageText(PRODUCTION_SHAPED_BODY) || '';
+  assert.doesNotMatch(extracted, /29 Oct 2026/);
+  assert.doesNotMatch(extracted, /10:00/);
+});
+
+test('[12i] People and pricing are excluded from message_text', () => {
+  const extracted = extractClientMessageText(PRODUCTION_SHAPED_BODY) || '';
+  assert.doesNotMatch(extracted, /120 EUR/);
+  assert.doesNotMatch(extracted, /Total price/i);
+});
+
+test('[12j] footer/social content ("Thank you for choosing our services", Civitatis branding, social links, copyright) is excluded', () => {
+  const extracted = extractClientMessageText(PRODUCTION_SHAPED_BODY) || '';
+  assert.doesNotMatch(extracted, /Thank you for choosing our services/i);
+  assert.doesNotMatch(extracted, /Facebook|Twitter/);
+  assert.doesNotMatch(extracted, /All rights reserved/i);
+  assert.doesNotMatch(extracted, /unsubscribe/i);
+});
+
+test('[13] the start anchor tolerates trailing text on the same line ("You have a message from an agency: <text>")', () => {
+  const body = textBody(['You have a message from an agency: ' + REAL_MESSAGE, 'Activity: Tour']);
+  assert.equal(extractClientMessageText(body), REAL_MESSAGE);
+});
+
+test('[14] Comments is used as a fallback ONLY when the anchor cannot be reliably identified (no "You have a message from an agency" heading at all)', () => {
   const body = textBody(['Civitatis', 'Reservation number: 42414893', `Comments: ${REAL_MESSAGE}`]);
   assert.equal(extractClientMessageText(body), REAL_MESSAGE);
 });
 
-test('[18] extractCommentsValue tolerates both real Civitatis layouts (same-line and bare-label-next-line)', () => {
+test('[15] duplicate message text (anchored block + same-line Comments) is persisted only ONCE', () => {
+  const body = textBody([
+    'You have a message from an agency',
+    REAL_MESSAGE,
+    'Activity: Tour',
+    `Comments: ${REAL_MESSAGE}`,
+  ]);
+  const extracted = extractClientMessageText(body);
+  assert.equal(extracted, REAL_MESSAGE);
+  assert.equal((extracted.match(new RegExp(REAL_MESSAGE.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length, 1);
+});
+
+test('[16] duplicate message text (anchored block + bare-label Comments on the next line) is persisted only ONCE', () => {
+  const body = textBody(['You have a message from an agency', REAL_MESSAGE, 'Activity: Tour', 'Comments:', REAL_MESSAGE]);
+  const extracted = extractClientMessageText(body);
+  assert.equal(extracted, REAL_MESSAGE);
+  assert.equal((extracted.match(new RegExp(REAL_MESSAGE.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length, 1);
+});
+
+test('[17] extractCommentsValue tolerates both real Civitatis layouts (same-line and bare-label-next-line)', () => {
   assert.deepEqual(extractCommentsValue(['Comments: hello']), { value: 'hello', consumedIndices: [0] });
   assert.deepEqual(extractCommentsValue(['Comments:', 'hello']), { value: 'hello', consumedIndices: [0, 1] });
   assert.deepEqual(extractCommentsValue(['no comments label here']), { value: null, consumedIndices: [] });
 });
 
-test('[19] nothing extractable at all (only template/noise lines) returns null, never a fabricated message', () => {
-  const body = textBody(['Civitatis', 'Reservation number: 42414893', 'Activity: Tour', 'Retail price: 1 EUR']);
+test('[18] UTF-8 Turkish address text survives extraction completely unchanged (accents, "İ"/"ş"/"ğ" preserved)', () => {
+  const turkish = 'Gedikpaşa Cd. No:4, 34126 Fatih/İstanbul — Şişli tarafındaki girişi kullanın.';
+  const body = textBody(['You have a message from an agency', turkish, 'Activity: Tour']);
+  assert.equal(extractClientMessageText(body), turkish);
+});
+
+test('[19] FAIL CLOSED: a client-message email with no trustworthy message block (no anchor, no Comments) returns null — never the whole body as a fallback', () => {
+  const body = textBody(['Civitatis', 'Reservation number: 42414893', 'Activity: Tour', 'Total price: 1 EUR', 'Facebook', 'Civitatis.com']);
   assert.equal(extractClientMessageText(body), null);
+});
+
+test('[19a] FAIL CLOSED is never satisfied by substituting the raw template: the null result never equals, or contains, the full unrelated input', () => {
+  const noisyBody = textBody(['Civitatis', 'Activity: Tour', 'Reservation number: 1', 'Total price: 1 EUR']);
+  const result = extractClientMessageText(noisyBody);
+  assert.equal(result, null);
 });
 
 // ── 5. HTML sanitization ──────────────────────────────────────────────────
 
-test('[20] HTML sanitization: residual markup is stripped from the extracted message text (defense in depth beyond gmailClient\'s own plain-text conversion)', () => {
+test('[20] HTML sanitization: residual markup is stripped, and HTML entities decode correctly, inside the extracted message text', () => {
   assert.equal(stripResidualHtmlTags('They are staying at <b>Enderun Hotel</b>.'), 'They are staying at Enderun Hotel.');
-  assert.equal(extractClientMessageText(textBody(['<b>' + REAL_MESSAGE + '</b>'])), REAL_MESSAGE);
+  // Only the common entities (amp/lt/gt/quot/apos/nbsp) are re-decoded here
+  // as a defense-in-depth backstop — gmailClient.js's own decodeHtmlEntities
+  // (which does handle &mdash; and the wider named-entity set) already runs
+  // on the real body before this module ever sees it in production.
+  const body = textBody(['You have a message from an agency', '<b>' + REAL_MESSAGE + '</b> &amp; they asked about check-in, thanks!', 'Activity: Tour']);
+  const extracted = extractClientMessageText(body);
+  assert.doesNotMatch(extracted, /<[^>]+>/);
+  assert.doesNotMatch(extracted, /&amp;/);
+  assert.match(extracted, /& they asked about check-in/);
+});
+
+test('[20a] a customer-authored URL embedded inside the actual message (alongside other words) is preserved, never stripped', () => {
+  const body = textBody(['You have a message from an agency', 'Please see the hotel location here: https://maps.example.com/hotel123 and let us know.', 'Activity: Tour']);
+  assert.equal(extractClientMessageText(body), 'Please see the hotel location here: https://maps.example.com/hotel123 and let us know.');
+});
+
+test('[20b] a BARE tracking-URL line (nothing else on the line) is stripped — the one, narrow URL-stripping rule, never a global URL strip', () => {
+  const body = textBody(['You have a message from an agency', REAL_MESSAGE, 'https://track.civitatis.com/x?utm_source=1', 'Activity: Tour']);
+  assert.equal(extractClientMessageText(body), REAL_MESSAGE);
 });
 
 test('[21] the rendered message is never passed through dangerouslySetInnerHTML anywhere in the reservation detail UI (desktop or mobile)', () => {
@@ -258,7 +370,7 @@ test('[22] planCivitatisClientMessages re-checks classification itself (defensiv
 
 test('[23] planCivitatisClientMessages dedupes same-batch Gmail ids, same convention as cancellationAdapter.js', async () => {
   const repo = { getCivitatisSource: async () => ({ id: 'src-1' }) };
-  const body = textBody(['Reservation number: 42414893', REAL_MESSAGE]);
+  const body = textBody(['You have a message from an agency', REAL_MESSAGE, 'Reservation number: 42414893']);
   const messages = [
     { from: CIVITATIS_SENDER, subject: REAL_SUBJECT, body, gmailMessageId: 'g1' },
     { from: CIVITATIS_SENDER, subject: REAL_SUBJECT, body, gmailMessageId: 'g1' },
