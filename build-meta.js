@@ -1,1 +1,1 @@
-window.__DESETOUR_BUILD__ = {"version":"13.01","major":13,"minor":1,"buildTimestamp":"2026-10-30T07:47:46.560Z","commitSha":"fb55c7593ae9c1f172121dad7251040fb1f8a0ee","commitShaShort":"fb55c75","branch":"claude/wizardly-mayer-tbzeta"};
+window.__DESETOUR_BUILD__ = {"version":"13.01","major":13,"minor":1,"buildTimestamp":"2026-11-01T05:23:22.949Z","commitSha":"dc01d838c6f397e27817ea874fad1fa5b4f7fe19","commitShaShort":"dc01d83","branch":"claude/wizardly-mayer-tbzeta"};

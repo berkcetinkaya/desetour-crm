@@ -9040,6 +9040,23 @@ function ReservationMessagesCard({ r }) {
   );
 }
 
+// Civitatis "yolcu isimleri eksik" warning — derived purely from the
+// reservation's own already-fetched activity_logs rows (the SAME data
+// ResTimeline below reads via useRepo("activity","getAll",{entityType:
+// "reservation", entityId}), sharing useRepo's fetch cache, so checking
+// for this never adds a second query). Only the explicit, server-written
+// alert_type='civitatis_missing_passenger_names' marker (written once,
+// by ingest_civitatis_booking, exactly when a Civitatis booking is
+// created with zero usable passenger names) ever makes this true — never
+// a generic "pax>0 and zero guests" heuristic, which would risk false
+// positives on legacy/manually-created reservations that simply never
+// had guests entered.
+// TESTABLE:_hasCivitatisMissingPassengerNamesWarning:start
+function _hasCivitatisMissingPassengerNamesWarning(activity) {
+  return (activity || []).some(a => a?.metadata?.alert_type === 'civitatis_missing_passenger_names');
+}
+// TESTABLE:_hasCivitatisMissingPassengerNamesWarning:end
+
 function ResTimeline({ r }) {
   // Real activity log for this reservation — the fixed 5-step template with
   // hardcoded dates/staff names below always showed the same fake sequence
@@ -9500,6 +9517,10 @@ function ReservationDetailPage({ resId, onBack }) {
   // fetch from the customer above: the customer is the booking contact
   // (who/what made the booking), these are the people actually traveling.
   const { data:resGuests } = useRepo("reservation", "getGuests", resId);
+  // Drives the subtle "Yolcu isimleri eksik" notice inside the Yolcular
+  // card below — same cache entry ResTimeline's own activity fetch uses,
+  // so this adds no second query. See _hasCivitatisMissingPassengerNamesWarning.
+  const { data:resActivity } = useRepo("activity", "getAll", { entityType:"reservation", entityId:resId });
   // Tour Preparation Intelligence Phase C2D-1 — one dedicated query via
   // the repository layer, never a raw Supabase call here. Loading/error
   // states are deliberately swallowed below (card omitted, never a broken
@@ -9640,9 +9661,20 @@ function ReservationDetailPage({ resId, onBack }) {
               }
             />
             {!resGuests || resGuests.length === 0 ? (
-              <div style={{ padding:"18px 20px", fontSize:12.5, color:C.textFaint, fontFamily:"'Geist',sans-serif", fontStyle:"italic" }}>
-                Bu rezervasyon için henüz yolcu bilgisi kaydedilmedi.
-              </div>
+              _hasCivitatisMissingPassengerNamesWarning(resActivity) ? (
+                <div style={{ padding:"14px 20px", display:"flex", flexDirection:"column", gap:2 }}>
+                  <div style={{ fontSize:12.5, fontWeight:600, color:C.text, fontFamily:"'Geist',sans-serif" }}>
+                    Yolcu isimleri eksik
+                  </div>
+                  <div style={{ fontSize:12, color:C.textMuted, fontFamily:"'Geist',sans-serif" }}>
+                    Civitatis bu rezervasyon için yolcu isimlerini iletmedi.
+                  </div>
+                </div>
+              ) : (
+                <div style={{ padding:"18px 20px", fontSize:12.5, color:C.textFaint, fontFamily:"'Geist',sans-serif", fontStyle:"italic" }}>
+                  Bu rezervasyon için henüz yolcu bilgisi kaydedilmedi.
+                </div>
+              )
             ) : (
               <div style={{ padding:"6px 0" }}>
                 {resGuests.map((g, i) => (
@@ -27439,6 +27471,11 @@ function MobileReservationDetailPage({ resId, onBack }) {
   // (never the desktop's own layout) inside a dedicated MobileSection,
   // visually separate from "Notlar" below.
   const { data:mobResMessages } = useRepo("reservationMessage", "getByReservationId", resId);
+  // Drives the "Yolcu isimleri eksik" line inside the existing
+  // "Operasyonel Uyarı" warning card below — see
+  // _hasCivitatisMissingPassengerNamesWarning. Same cache entry any other
+  // reservation-scoped activity fetch on this page would use.
+  const { data:mobResActivity } = useRepo("activity", "getAll", { entityType:"reservation", entityId:resId });
   // Tour Preparation Intelligence Phase C2D-1 — same repository call and
   // the same pure helpers (_sortPreparations/_preparationViewModel) as the
   // desktop page, so business logic is never duplicated between the two;
@@ -27478,6 +27515,7 @@ function MobileReservationDetailPage({ resId, onBack }) {
   if (!r.guide) warnings.push("Rehber atanmadı");
   if (!r.pickup) warnings.push("Pickup bilgisi eksik");
   if (r.payStatus==="Bekliyor" || r.payStatus==="Gecikmiş") warnings.push("Ödeme bekliyor");
+  if (_hasCivitatisMissingPassengerNamesWarning(mobResActivity)) warnings.push("Yolcu isimleri eksik — Civitatis bu rezervasyon için yolcu isimlerini iletmedi");
   const waHref = cust?.phone ? `https://wa.me/${String(cust.phone).replace(/[^0-9]/g,'')}` : null;
 
   return (
