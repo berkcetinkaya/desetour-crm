@@ -1,1 +1,1 @@
-window.__DESETOUR_BUILD__ = {"version":"13.02","major":13,"minor":2,"buildTimestamp":"2026-11-05T12:49:42.531Z","commitSha":"e6051390c942b2c1f60a689da5481f367f3082a7","commitShaShort":"e605139","branch":"ui-app-footer-v1302"};
+window.__DESETOUR_BUILD__ = {"version":"13.02","major":13,"minor":2,"buildTimestamp":"2026-11-05T13:17:37.167Z","commitSha":"f5ea4570f11a5b93bcf5abf957a27a75d846d4bd","commitShaShort":"f5ea457","branch":"ui-dark-mode-modernization"};

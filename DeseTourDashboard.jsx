@@ -171,11 +171,11 @@ const C = {
   ivory:"var(--c-ivory)", ivoryDark:"var(--c-ivory-dark)", white:"var(--c-white)",
   border:"var(--c-border)", borderLight:"var(--c-border-light)",
   text:"var(--c-text)", textMid:"var(--c-text-mid)", textMuted:"var(--c-text-muted)", textFaint:"var(--c-text-faint)",
-  green:"var(--c-green)", greenBg:"var(--c-green-bg)",
-  red:"var(--c-red)", redBg:"var(--c-red-bg)",
-  amber:"var(--c-amber)", amberBg:"var(--c-amber-bg)",
-  blue:"var(--c-blue)", blueBg:"var(--c-blue-bg)",
-  orange:"var(--c-orange)", orangeBg:"var(--c-orange-bg)",
+  green:"var(--c-green)", greenBg:"var(--c-green-bg)", greenBorder:"var(--c-green-border)",
+  red:"var(--c-red)", redBg:"var(--c-red-bg)", redBorder:"var(--c-red-border)",
+  amber:"var(--c-amber)", amberBg:"var(--c-amber-bg)", amberBorder:"var(--c-amber-border)",
+  blue:"var(--c-blue)", blueBg:"var(--c-blue-bg)", blueBorder:"var(--c-blue-border)",
+  orange:"var(--c-orange)", orangeBg:"var(--c-orange-bg)", orangeBorder:"var(--c-orange-border)",
 };
 
 // Shared desktop visual tokens — one place to keep radius/spacing/shadow/
@@ -853,12 +853,12 @@ function IDLink({ id, type }) {
       fontFamily:"'DM Mono',monospace", fontSize:12, fontWeight:600,
       color:C.blue, textDecoration:"none",
       background:C.blueBg, padding:"2px 7px", borderRadius:4,
-      border:`1px solid ${C.blue}22`,
+      border:`1px solid ${C.blueBorder}`,
       cursor:"pointer", display:"inline-block",
       transition:"background .1s, border-color .1s",
     }}
-      onMouseEnter={e=>{ e.currentTarget.style.background=`${C.blue}22`; e.currentTarget.style.borderColor=C.blue; }}
-      onMouseLeave={e=>{ e.currentTarget.style.background=C.blueBg; e.currentTarget.style.borderColor=`${C.blue}22`; }}
+      onMouseEnter={e=>{ e.currentTarget.style.background=C.blueBg; e.currentTarget.style.borderColor=C.blue; }}
+      onMouseLeave={e=>{ e.currentTarget.style.background=C.blueBg; e.currentTarget.style.borderColor=C.blueBorder; }}
     >{id} →</a>
   );
 }
@@ -2561,7 +2561,7 @@ function ChangelogNavRow({ currentBase, onNavigate, collapsed, variant }) {
           <path d={CHANGELOG_NAV_ICON}/>
         </svg>
         {hasNewUpdate && (
-          <span style={{position:"absolute", top:-3, right:-3, width:6, height:6, borderRadius:"50%", background:C.goldLight, border:`1.5px solid ${light ? C.white : C.navyDeep}`}}/>
+          <span style={{position:"absolute", top:-3, right:-3, width:6, height:6, borderRadius:"50%", background:C.goldLight, border:`1.5px solid ${C.white}`}}/>
         )}
       </span>
       {!collapsed && (
@@ -2862,9 +2862,19 @@ function Sidebar({ currentBase, collapsed, onToggle, mobileOpen, onMobileClose, 
   return (
     <aside style={{
       position:"fixed", top:0, left:0, bottom:0, width:W,
-      background: light ? C.white : `linear-gradient(180deg, ${C.navyDeep} 0%, ${C.navy} 100%)`,
+      // Dark used to be a fixed top-to-bottom navy gradient — the single
+      // heaviest "old CRM" cue in the whole app. It's now just C.white
+      // (the dark theme's own card/surface token, same one every Card/
+      // Modal already uses), flat, one tone, a bit lighter than the page
+      // canvas (C.ivoryDark) behind it — "a refined dark surface" rather
+      // than a separate navy chrome block. Light is unchanged.
+      background: C.white,
       display:"flex", flexDirection:"column", zIndex:50,
-      boxShadow: light ? T.shadowCard : "3px 0 24px rgba(15,29,53,0.28)",
+      // Dark's shadow used to be a hand-tuned heavy navy cast
+      // (rgba(15,29,53,0.28), 24px blur) — now the same restrained
+      // T.shadowCard every other surface uses, so the sidebar doesn't
+      // read as a separately-lit panel.
+      boxShadow: T.shadowCard,
       borderRight:"1px solid var(--sidebar-edge)",
       transition:`width ${T.motionBase} cubic-bezier(0.4,0,0.2,1)`,
       overflow:"hidden",
@@ -2877,13 +2887,16 @@ function Sidebar({ currentBase, collapsed, onToggle, mobileOpen, onMobileClose, 
           position:"absolute", top:"50%", right:-16,
           transform:"translateY(-50%)",
           width:16, height:48, zIndex:10,
-          background: light ? C.white : C.navy,
-          border:`1px solid ${light ? C.border : "rgba(201,168,76,0.35)"}`,
+          // Matches the sidebar's own (now flat, token-based) surface in
+          // both themes instead of dark using the saturated brand navy —
+          // this is a small UI chrome control, not a branded action.
+          background: C.white,
+          border:`1px solid ${C.border}`,
           borderLeft:"none",
           borderRadius:"0 8px 8px 0",
           display:"flex", alignItems:"center", justifyContent:"center",
           cursor:"pointer",
-          boxShadow: light ? T.shadowSoft : "3px 0 8px rgba(15,29,53,0.25)",
+          boxShadow: T.shadowSoft,
         }}>
         {}
         <svg width="9" height="14" viewBox="0 0 9 14" fill="none"
@@ -2894,7 +2907,7 @@ function Sidebar({ currentBase, collapsed, onToggle, mobileOpen, onMobileClose, 
           }
         </svg>
       </button>
-      <div style={{padding:"22px 16px 16px", borderBottom:`1px solid ${light ? C.borderLight : "rgba(255,255,255,0.08)"}`}}>
+      <div style={{padding:"22px 16px 16px", borderBottom:`1px solid ${C.borderLight}`}}>
         {/* dese-logo-mark.png is the properly re-extracted transparent
             cutout (navy "Dese" + gold "TOUR", see its own definition
             comment) — crisp on a light surface. seffafdeselogo.png is an
@@ -2933,11 +2946,11 @@ function Sidebar({ currentBase, collapsed, onToggle, mobileOpen, onMobileClose, 
         <nav style={{padding:"12px 10px 0", display:"flex", flexDirection:"column", gap:2}}>
           {NAV_TOP.map(it=><NavItem key={it.id} item={{...withLiveBadge(it),_collapsed:collapsed}} currentBase={currentBase} variant={light?"light":"dark"}/>)}
         </nav>
-        <div style={{height:1, background: light ? C.borderLight : "rgba(255,255,255,0.07)", margin:"12px 18px"}}/>
+        <div style={{height:1, background:C.borderLight, margin:"12px 18px"}}/>
         <nav style={{padding:"0 10px", display:"flex", flexDirection:"column", gap:2}}>
           {NAV_BOT.map(it=><NavItem key={it.id} item={{...withLiveBadge(it),_collapsed:collapsed}} currentBase={currentBase} variant={light?"light":"dark"}/>)}
         </nav>
-        <div style={{height:1, background: light ? C.borderLight : "rgba(255,255,255,0.07)", margin:"12px 18px"}}/>
+        <div style={{height:1, background:C.borderLight, margin:"12px 18px"}}/>
         <nav style={{padding:"0 10px", display:"flex", flexDirection:"column", gap:2}}>
           {NAV_SETTINGS.map(it=><NavItem key={it.id} item={{...withLiveBadge(it),_collapsed:collapsed}} currentBase={currentBase} variant={light?"light":"dark"}/>)}
           {canAccess(auth.role, "changelog") && (
@@ -2946,7 +2959,7 @@ function Sidebar({ currentBase, collapsed, onToggle, mobileOpen, onMobileClose, 
         </nav>
       </div>
       <div style={{
-        padding:"12px 10px", borderTop:`1px solid ${light ? C.borderLight : "rgba(255,255,255,0.08)"}`,
+        padding:"12px 10px", borderTop:`1px solid ${C.borderLight}`,
         display:"flex", alignItems:"center",
         gap: collapsed ? 0 : 10,
         justifyContent: collapsed ? "center" : "flex-start",
@@ -3530,7 +3543,7 @@ function UrgentPanel() {
               display:"flex", alignItems:"flex-start", gap:14,
               padding:"14px 16px", borderRadius:10,
               background: item.level === "high" ? C.redBg : C.amberBg,
-              border:`1px solid ${item.level === "high" ? "rgba(192,57,43,0.15)" : "rgba(180,83,9,0.15)"}`,
+              border:`1px solid ${item.level === "high" ? C.redBorder : C.amberBorder}`,
               position:"relative",
             }}>
               {}
@@ -5218,7 +5231,7 @@ function _TicketPrepRow({ row, accentColor, badgeMap, canComplete, completing, o
             disabled={completing}
             style={{
               padding:"5px 12px", borderRadius:T.radiusSm,
-              border:`1px solid ${C.green}66`, background:C.greenBg, color:C.green,
+              border:`1px solid ${C.greenBorder}`, background:C.greenBg, color:C.green,
               cursor: completing ? "default" : "pointer",
               opacity: completing ? 0.6 : 1,
               fontSize:11.5, fontWeight:600, fontFamily:"'Geist',sans-serif",
@@ -6399,7 +6412,7 @@ function NextActionCard({ lead, openTasks, tasksLoading }) {
         ) : next ? (
           <div style={{
             background: C.amberBg, borderRadius: 10, padding: "14px 16px",
-            border: `1px solid ${C.amber}22`, marginBottom: 14,
+            border: `1px solid ${C.amberBorder}`, marginBottom: 14,
             display: "flex", gap: 12, alignItems: "flex-start",
           }}>
             <div style={{
@@ -7518,7 +7531,7 @@ function QuoteStepGuest({ s, setS, customerList, errs }) {
     return (
       <div>
         {s.fromLeadId && (
-          <div style={{marginBottom:16, padding:"10px 14px", background:C.blueBg, border:`1px solid ${C.blue}30`, borderRadius:8, display:"flex", alignItems:"center", gap:8}}>
+          <div style={{marginBottom:16, padding:"10px 14px", background:C.blueBg, border:`1px solid ${C.blueBorder}`, borderRadius:8, display:"flex", alignItems:"center", gap:8}}>
             <span style={{fontSize:12, color:C.blue, fontFamily:"'Geist',sans-serif"}}>Talepten oluşturuluyor:</span>
             <IDLink id={s.fromLeadId} type="lead"/>
           </div>
@@ -7541,7 +7554,7 @@ function QuoteStepGuest({ s, setS, customerList, errs }) {
   return (
     <div style={{display:"flex", flexDirection:"column", gap:16}}>
       {s.fromLeadId && (
-        <div style={{padding:"10px 14px", background:C.blueBg, border:`1px solid ${C.blue}30`, borderRadius:8, display:"flex", alignItems:"center", gap:8}}>
+        <div style={{padding:"10px 14px", background:C.blueBg, border:`1px solid ${C.blueBorder}`, borderRadius:8, display:"flex", alignItems:"center", gap:8}}>
           <span style={{fontSize:12, color:C.blue, fontFamily:"'Geist',sans-serif"}}>Talepten oluşturuluyor:</span>
           <IDLink id={s.fromLeadId} type="lead"/>
         </div>
@@ -8023,7 +8036,7 @@ function AssignGuideModal({ r, onClose }) {
       {conflicts.length > 0 && (
         <div style={{
           display:"flex", gap:10, alignItems:"flex-start", padding:"10px 14px", marginTop:6,
-          background:C.amberBg, border:`1px solid ${C.amber}44`, borderRadius:8,
+          background:C.amberBg, border:`1px solid ${C.amberBorder}`, borderRadius:8,
         }}>
           <URIc d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" size={16} sw={2} color={C.amber}/>
           <div style={{fontSize:12.5, color:C.text, fontFamily:"'Geist',sans-serif", lineHeight:1.5}}>
@@ -8332,7 +8345,7 @@ function AddEditReviewModal({ resId, guideId, guideName, review, onClose }) {
           {assignedToOtherGuide && (
             <div style={{
               display:"flex", alignItems:"flex-start", gap:8, padding:"10px 12px", marginBottom:14,
-              background:C.amberBg, border:`1px solid ${C.amber}66`, borderRadius:8,
+              background:C.amberBg, border:`1px solid ${C.amberBorder}`, borderRadius:8,
               fontSize:12, color:C.text, fontFamily:"'Geist',sans-serif", lineHeight:1.5,
             }}>
               <span style={{color:C.amber, flexShrink:0}}>⚠</span>
@@ -8584,7 +8597,7 @@ function NewReservationModal({ onClose, onSuccess, customerId, customerName }) {
       {conflicts.length > 0 && (
         <div style={{
           display:"flex", gap:10, alignItems:"flex-start", padding:"10px 14px",
-          background:C.amberBg, border:`1px solid ${C.amber}44`, borderRadius:8, marginBottom:14,
+          background:C.amberBg, border:`1px solid ${C.amberBorder}`, borderRadius:8, marginBottom:14,
         }}>
           <URIc d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" size={16} sw={2} color={C.amber}/>
           <div style={{fontSize:12.5, color:C.text, fontFamily:"'Geist',sans-serif", lineHeight:1.5}}>
@@ -9053,7 +9066,7 @@ function StatusStepper({ current, hasGuide }) {
       {isCancelled ? (
         <div style={{
           padding:"12px 16px", borderRadius:8,
-          background:C.redBg, border:`1px solid ${C.red}22`,
+          background:C.redBg, border:`1px solid ${C.redBorder}`,
           display:"flex", alignItems:"center", gap:10,
           color:C.red, fontFamily:"'Geist',sans-serif", fontSize:13, fontWeight:500,
         }}>
@@ -9382,7 +9395,7 @@ function ResQuickActions({ res, onAssignGuide }) {
                 display:"flex", alignItems:"center", gap:10,
                 width:"100%", padding:"10px 12px",
                 borderRadius:8, marginBottom: i < visibleActions.length-1 ? 6 : 0,
-                border: a.primary ? "none" : a.green ? `1px solid ${C.green}44` : `1px solid ${C.border}`,
+                border: a.primary ? "none" : a.green ? `1px solid ${C.greenBorder}` : `1px solid ${C.border}`,
                 background: a.primary ? C.navy : a.green ? C.greenBg : C.white,
                 cursor:"pointer",
                 color: a.primary ? C.white : a.green ? C.green : C.text,
@@ -10118,7 +10131,7 @@ function ReservationDetailPage({ resId, onBack }) {
                             disabled={completingPrepId === p.id}
                             style={{
                               padding:"5px 12px", borderRadius:T.radiusSm,
-                              border:`1px solid ${C.green}66`, background:C.greenBg, color:C.green,
+                              border:`1px solid ${C.greenBorder}`, background:C.greenBg, color:C.green,
                               cursor: completingPrepId === p.id ? "default" : "pointer",
                               opacity: completingPrepId === p.id ? 0.6 : 1,
                               fontSize:11.5, fontWeight:600, fontFamily:"'Geist',sans-serif",
@@ -11383,7 +11396,7 @@ function PaymentDrawer({ payment, onClose }) {
                   style={{
                     display:"flex", alignItems:"center", gap:7,
                     padding:"9px 12px", borderRadius:8, cursor:"pointer",
-                    border: a.primary ? "none" : a.green ? `1px solid ${C.green}44` : `1px solid ${C.border}`,
+                    border: a.primary ? "none" : a.green ? `1px solid ${C.greenBorder}` : `1px solid ${C.border}`,
                     background: a.primary ? C.navy : a.green ? C.greenBg : C.white,
                     color: a.primary ? C.white : a.green ? C.green : C.text,
                     fontFamily:"'Geist',sans-serif", fontSize:12, fontWeight: a.primary?600:400,
@@ -25848,11 +25861,11 @@ function App() {
           --c-text-faint: #B0A898;
           --c-gold-pale: #F5EDD4;
           --c-gold-pale-wash: #FBF7EC;
-          --c-green: #2E7D52;  --c-green-bg: #EBF5EF;
-          --c-red: #C0392B;    --c-red-bg: #FDECEC;
-          --c-amber: #B45309;  --c-amber-bg: #FEF3E2;
-          --c-blue: #1A6FAE;   --c-blue-bg: #E8F2FB;
-          --c-orange: #C05621; --c-orange-bg: #FEF0E8;
+          --c-green: #2E7D52;  --c-green-bg: #EBF5EF;  --c-green-border: rgba(46,125,82,0.18);
+          --c-red: #C0392B;    --c-red-bg: #FDECEC;    --c-red-border: rgba(192,57,43,0.15);
+          --c-amber: #B45309;  --c-amber-bg: #FEF3E2;  --c-amber-border: rgba(180,83,9,0.15);
+          --c-blue: #1A6FAE;   --c-blue-bg: #E8F2FB;   --c-blue-border: rgba(26,111,174,0.18);
+          --c-orange: #C05621; --c-orange-bg: #FEF0E8; --c-orange-border: rgba(192,86,33,0.18);
           --shadow-soft: 0 1px 2px rgba(15,29,53,0.05);
           --shadow-card: 0 1px 3px rgba(15,29,53,0.06);
           --shadow-modal: 0 16px 40px rgba(13,27,62,0.22);
@@ -25889,15 +25902,30 @@ function App() {
           --c-text-faint: #5B6170;
           --c-gold-pale: rgba(201,168,76,0.16);
           --c-gold-pale-wash: rgba(201,168,76,0.09);
-          --c-green: #4FBE85;  --c-green-bg: rgba(79,190,133,0.14);
-          --c-red: #E2685A;    --c-red-bg: rgba(226,104,90,0.14);
-          --c-amber: #E0A542;  --c-amber-bg: rgba(224,165,66,0.14);
-          --c-blue: #5FA8DC;   --c-blue-bg: rgba(95,168,220,0.14);
-          --c-orange: #E08A58; --c-orange-bg: rgba(224,138,88,0.14);
-          --shadow-soft: 0 1px 2px rgba(0,0,0,0.30);
-          --shadow-card: 0 1px 4px rgba(0,0,0,0.40);
-          --shadow-modal: 0 16px 40px rgba(0,0,0,0.55);
-          --shadow-popover: 0 12px 32px rgba(0,0,0,0.45);
+          /* Phase (dark-mode modernization): *-bg wash opacity brought down
+             from 0.14 to 0.10 — at 0.14 a semantic tint composited over a
+             dark card surface reads as a muddy brown/red block rather than
+             a restrained wash (red/amber especially); 0.10 keeps the tint
+             legible as a status cue without it dominating the surface.
+             *-border is new/additive — a slightly stronger (~0.30-0.34)
+             tint of the same semantic color, for the thin accent border a
+             warning/status card uses instead of (or alongside) the full
+             wash fill. Text-role colors (C.red/C.amber/etc, used at full
+             opacity for text/icons) are unchanged. */
+          --c-green: #4FBE85;  --c-green-bg: rgba(79,190,133,0.10);  --c-green-border: rgba(79,190,133,0.32);
+          --c-red: #E2685A;    --c-red-bg: rgba(226,104,90,0.10);    --c-red-border: rgba(226,104,90,0.34);
+          --c-amber: #E0A542;  --c-amber-bg: rgba(224,165,66,0.10);  --c-amber-border: rgba(224,165,66,0.34);
+          --c-blue: #5FA8DC;   --c-blue-bg: rgba(95,168,220,0.10);   --c-blue-border: rgba(95,168,220,0.32);
+          --c-orange: #E08A58; --c-orange-bg: rgba(224,138,88,0.10); --c-orange-border: rgba(224,138,88,0.32);
+          /* Softened from the original 0.30/0.40/0.55/0.45 alphas — on a
+             dark canvas those read as heavy, saturated cast shadows that
+             made every card/sidebar/modal feel like a separate "heavy dark
+             block" rather than a quiet, lifted surface. Lower alpha keeps
+             the elevation cue without the visual weight. */
+          --shadow-soft: 0 1px 2px rgba(0,0,0,0.20);
+          --shadow-card: 0 1px 3px rgba(0,0,0,0.24);
+          --shadow-modal: 0 16px 40px rgba(0,0,0,0.42);
+          --shadow-popover: 0 12px 32px rgba(0,0,0,0.34);
           --focus-ring: 0 0 0 3px rgba(201,168,76,0.35);
           --scrollbar-thumb: #343C48;
           --row-hover: rgba(255,255,255,0.035);
@@ -26711,7 +26739,7 @@ function _MobileAccordionTicketRow({ row, navigate, canComplete, completing, onC
         </div>
         {canComplete && (
           <button onClick={(e)=>{ e.stopPropagation(); onComplete(); }} disabled={completing} style={{
-            padding:"4px 10px", borderRadius:T.radiusSm, border:`1px solid ${C.green}66`, background:C.greenBg, color:C.green,
+            padding:"4px 10px", borderRadius:T.radiusSm, border:`1px solid ${C.greenBorder}`, background:C.greenBg, color:C.green,
             cursor: completing ? "default" : "pointer", opacity: completing ? 0.6 : 1,
             fontSize:11, fontWeight:600, fontFamily:"'Geist',sans-serif", whiteSpace:"nowrap", minHeight:26,
           }}>{completing ? "…" : "Hazırlandı ✓"}</button>
@@ -28038,7 +28066,7 @@ function MobileReservationDetailPage({ resId, onBack }) {
                     disabled={completingPrepIdMobile === p.id}
                     style={{
                       marginTop:10, width:"100%", padding:"8px 0", borderRadius:10,
-                      border:`1px solid ${C.green}66`, background:C.greenBg, color:C.green,
+                      border:`1px solid ${C.greenBorder}`, background:C.greenBg, color:C.green,
                       cursor: completingPrepIdMobile === p.id ? "default" : "pointer",
                       opacity: completingPrepIdMobile === p.id ? 0.6 : 1,
                       fontSize:12.5, fontWeight:600, fontFamily:"'Geist',sans-serif",
