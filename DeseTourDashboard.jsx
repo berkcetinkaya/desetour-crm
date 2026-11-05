@@ -2562,7 +2562,7 @@ function SidebarInner({ currentBase, onNavItem, liveBadges }) {
           {visibleItems(NAV_TOP).map(it=>(
             <button key={it.id} onClick={()=>handleItemClick(it.id)} style={{
               display:"flex", alignItems:"center", gap:10, width:"100%",
-              padding:"9px 14px", border:"none", borderRadius:7, marginBottom:2,
+              padding:"9px 14px", border:"none", borderRadius:8, marginBottom:2,
               background: currentBase===it.id ? "rgba(184,151,58,0.13)" : "transparent",
               color: currentBase===it.id ? C.goldLight : "rgba(248,245,238,0.6)",
               cursor:"pointer", textAlign:"left",
@@ -2585,7 +2585,7 @@ function SidebarInner({ currentBase, onNavItem, liveBadges }) {
           {visibleItems(NAV_BOT).map(it=>(
             <button key={it.id} onClick={()=>handleItemClick(it.id)} style={{
               display:"flex", alignItems:"center", gap:10, width:"100%",
-              padding:"9px 14px", border:"none", borderRadius:7, marginBottom:2,
+              padding:"9px 14px", border:"none", borderRadius:8, marginBottom:2,
               background: currentBase===it.id ? "rgba(184,151,58,0.13)" : "transparent",
               color: currentBase===it.id ? C.goldLight : "rgba(248,245,238,0.6)",
               cursor:"pointer", textAlign:"left",
@@ -2607,7 +2607,7 @@ function SidebarInner({ currentBase, onNavItem, liveBadges }) {
           {visibleItems(NAV_SETTINGS).map(it=>(
             <button key={it.id} onClick={()=>handleItemClick(it.id)} style={{
               display:"flex", alignItems:"center", gap:10, width:"100%",
-              padding:"9px 14px", border:"none", borderRadius:7, marginBottom:2,
+              padding:"9px 14px", border:"none", borderRadius:8, marginBottom:2,
               background: currentBase===it.id ? "rgba(184,151,58,0.13)" : "transparent",
               color: currentBase===it.id ? C.goldLight : "rgba(248,245,238,0.6)",
               cursor:"pointer", textAlign:"left",
@@ -2644,7 +2644,7 @@ function SidebarInner({ currentBase, onNavItem, liveBadges }) {
         </div>
         <button onClick={()=>auth.logout()} style={{
           display:"flex", alignItems:"center", gap:8, width:"100%",
-          minHeight:40, padding:"8px 10px", border:"none", borderRadius:7,
+          minHeight:40, padding:"8px 10px", border:"none", borderRadius:8,
           background:"rgba(255,255,255,0.04)", color:"rgba(248,245,238,0.5)",
           cursor:"pointer", textAlign:"left", fontSize:12.5,
           fontFamily:"'Geist',sans-serif",
@@ -2720,7 +2720,7 @@ function SidebarVersionInfo({ padded = true }) {
         <div style={{
           position:"absolute", bottom:"calc(100% + 8px)", left:16, width:216,
           background:C.white, border:`1px solid ${C.border}`, borderRadius:T.radiusSm,
-          boxShadow:"0 12px 32px rgba(13,27,62,0.22)", padding:"11px 13px", zIndex:200,
+          boxShadow:T.shadowPopover, padding:"11px 13px", zIndex:200,
         }}>
           <div style={{fontSize:11.5, color:C.textMid, fontFamily:"'Geist',sans-serif", marginBottom:5}}>
             <span style={{color:C.textFaint}}>Sürüm:</span> <b style={{color:C.text}}>{versionLabel}</b>
@@ -3653,6 +3653,9 @@ function TodayTours() {
 function UpcomingResRow({ r, isLast }) {
   return (
     <div key={r.id} className="dt-row"
+      onClick={()=>{ if(NAV_REF.fn) NAV_REF.fn('/reservations/'+r.id); }}
+      tabIndex={0}
+      onKeyDown={e=>{ if (e.target===e.currentTarget && (e.key==="Enter"||e.key===" ") && NAV_REF.fn) { e.preventDefault(); NAV_REF.fn('/reservations/'+r.id); } }}
       style={{
         display:"grid", gridTemplateColumns:"56px 1fr 80px 120px",
         gap:12, padding:"14px 0",
@@ -3838,7 +3841,7 @@ function ActivityRow({ entry, compact }) {
         <div style={{fontSize:11, color:C.textFaint, fontFamily:"'Geist',sans-serif", marginTop:3}}>{relTime}</div>
       </div>
       <div style={{
-        width:26, height:26, borderRadius:7, flexShrink:0, marginTop:1,
+        width:26, height:26, borderRadius:8, flexShrink:0, marginTop:1,
         display:"flex", alignItems:"center", justifyContent:"center",
         background:cat.bg,
       }}>
@@ -6436,8 +6439,8 @@ function LeadDetailPage({ onBack, leadId }) {
   if (_sp.invalid) return (
     <div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',padding:60,gap:16}}>
       <div style={{fontSize:36}}>🔍</div>
-      <div style={{fontSize:16,fontWeight:600,color:'#1B2D4F',fontFamily:"'Geist',sans-serif"}}>Kayıt bulunamadı</div>
-      <div style={{fontSize:13,color:'#6B7280'}}>
+      <div style={{fontSize:16,fontWeight:600,color:C.text,fontFamily:"'Geist',sans-serif"}}>Kayıt bulunamadı</div>
+      <div style={{fontSize:13,color:C.textMuted}}>
         {_sp.reason==='demo' ? 'Bu demo kayıt Supabase modunda görüntülenemez.' : 'Geçersiz kayıt kimliği.'}
       </div>
       <button onClick={onBack} style={{padding:'9px 20px',borderRadius:8,border:'none',background:'#1B2D4F',color:'#fff',cursor:'pointer',fontSize:13}}>Geri Dön</button>
@@ -6544,7 +6547,7 @@ function LeadDetailPage({ onBack, leadId }) {
           {}
           <button style={{
             display: "flex", alignItems: "center", gap: 6,
-            padding: "7px 14px", borderRadius: 7,
+            padding: "7px 14px", borderRadius:8,
             border: `1.5px solid ${C.gold}`, background: C.goldPale,
             cursor: "pointer", color: C.gold,
             fontFamily: "'Geist',sans-serif", fontSize: 12.5, fontWeight: 500,
@@ -6697,8 +6700,8 @@ function QuoteDetailPage({ quoteId, onBack }) {
   if (_sp.invalid) return (
     <div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',padding:60,gap:16}}>
       <div style={{fontSize:36}}>🔍</div>
-      <div style={{fontSize:16,fontWeight:600,color:'#1B2D4F',fontFamily:"'Geist',sans-serif"}}>Kayıt bulunamadı</div>
-      <div style={{fontSize:13,color:'#6B7280'}}>
+      <div style={{fontSize:16,fontWeight:600,color:C.text,fontFamily:"'Geist',sans-serif"}}>Kayıt bulunamadı</div>
+      <div style={{fontSize:13,color:C.textMuted}}>
         {_sp.reason==='demo' ? 'Bu demo kayıt Supabase modunda görüntülenemez.' : 'Geçersiz kayıt kimliği.'}
       </div>
       <button onClick={onBack} style={{padding:'9px 20px',borderRadius:8,border:'none',background:'#1B2D4F',color:'#fff',cursor:'pointer',fontSize:13}}>Geri Dön</button>
@@ -6781,7 +6784,7 @@ function QuoteDetailPage({ quoteId, onBack }) {
           <button onClick={onBack} style={{
             display:"flex", alignItems:"center", gap:6,
             background:C.ivory, border:`1px solid ${C.border}`,
-            borderRadius:7, padding:"6px 12px", cursor:"pointer",
+            borderRadius:8, padding:"6px 12px", cursor:"pointer",
             color:C.textMid, fontFamily:"'Geist',sans-serif", fontSize:12.5,
           }}
             onMouseEnter={e=>e.currentTarget.style.background=C.ivoryDark}
@@ -6812,7 +6815,7 @@ function QuoteDetailPage({ quoteId, onBack }) {
             Geçerlilik: <span style={{ color:C.text, fontWeight:500 }}>{q.validUntil}</span>
           </div>
           <button onClick={()=>NAV_REF.fn && NAV_REF.fn(`/quotes/${q.id}/edit`)} style={{
-            padding:"7px 14px", borderRadius:7,
+            padding:"7px 14px", borderRadius:8,
             border:`1.5px solid ${C.gold}`, background:C.goldPale,
             cursor:"pointer", color:C.gold,
             fontFamily:"'Geist',sans-serif", fontSize:12.5, fontWeight:500,
@@ -7323,7 +7326,7 @@ function qwNumInputStyle(error) {
 }
 function qwPill(active) {
   return {
-    flex:1, padding:"9px 0", borderRadius:7, cursor:"pointer", textAlign:"center",
+    flex:1, padding:"9px 0", borderRadius:8, cursor:"pointer", textAlign:"center",
     border: active ? `1.5px solid ${C.navy}` : `1px solid ${C.border}`,
     background: active ? C.navy : C.white,
     color: active ? C.white : C.textMid,
@@ -7442,7 +7445,7 @@ function QuoteStepGuest({ s, setS, customerList, errs }) {
               <span style={{fontSize:12.5, color:C.textFaint, fontFamily:"'Geist',sans-serif"}}>{s.nationality || "Uyruk belirtilmedi"} · {s.language}</span>
             </div>
           </div>
-          <button onClick={clearLink} style={{padding:"6px 12px", borderRadius:7, border:`1px solid ${C.border}`, background:C.white, color:C.textMid, cursor:"pointer", fontFamily:"'Geist',sans-serif", fontSize:12}}>Değiştir</button>
+          <button onClick={clearLink} style={{padding:"6px 12px", borderRadius:8, border:`1px solid ${C.border}`, background:C.white, color:C.textMid, cursor:"pointer", fontFamily:"'Geist',sans-serif", fontSize:12}}>Değiştir</button>
         </div>
       </div>
     );
@@ -7732,7 +7735,7 @@ function QuoteWizard({ onBack, editQuote }) {
           <button onClick={onBack} style={{
             display:"flex", alignItems:"center", gap:6,
             background:C.ivory, border:`1px solid ${C.border}`,
-            borderRadius:7, padding:"6px 12px", cursor:"pointer",
+            borderRadius:8, padding:"6px 12px", cursor:"pointer",
             color:C.textMid, fontFamily:"'Geist',sans-serif", fontSize:12.5,
           }}>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M15 18l-6-6 6-6"/></svg>
@@ -7993,7 +7996,7 @@ function GuideAssignCell({ r, guides }) {
         <div style={{
           position:"absolute", top:"calc(100% + 6px)", left:0, zIndex:40, minWidth:230,
           background:C.white, border:`1px solid ${C.border}`, borderRadius:10,
-          boxShadow:"0 10px 28px rgba(13,27,62,0.18)", padding:6,
+          boxShadow:T.shadowPopover, padding:6,
           maxHeight:280, overflowY:"auto",
         }}>
           {guides.length === 0 && (
@@ -8006,7 +8009,7 @@ function GuideAssignCell({ r, guides }) {
                 onClick={() => !mutating && pick(g.id)}
                 style={{
                   display:"flex", alignItems:"center", justifyContent:"space-between", gap:8,
-                  padding:"8px 10px", borderRadius:7, cursor: mutating ? "default" : "pointer",
+                  padding:"8px 10px", borderRadius:8, cursor: mutating ? "default" : "pointer",
                   background: isCurrent ? C.ivory : "transparent",
                 }}
                 onMouseEnter={e=>{ if(!mutating) e.currentTarget.style.background = C.ivory; }}
@@ -8028,7 +8031,7 @@ function GuideAssignCell({ r, guides }) {
               <div
                 onClick={() => !mutating && pick(null)}
                 style={{
-                  padding:"8px 10px", borderRadius:7, cursor: mutating ? "default" : "pointer",
+                  padding:"8px 10px", borderRadius:8, cursor: mutating ? "default" : "pointer",
                   fontSize:12.5, color:C.red, fontFamily:"'Geist',sans-serif",
                 }}
                 onMouseEnter={e=>e.currentTarget.style.background=C.redBg}
@@ -8437,14 +8440,14 @@ function NewReservationModal({ onClose, onSuccess, customerId, customerName }) {
         <FRow label="Musteri" required error={errs.custId}>
           {customerId ? (
             <div style={{
-              width:"100%", boxSizing:"border-box", padding:"9px 10px", borderRadius:7,
+              width:"100%", boxSizing:"border-box", padding:"9px 10px", borderRadius:8,
               border:`1.5px solid ${C.border}`, fontSize:13.5, color:C.text, background:C.ivory,
             }}>
               {customerName || customers.find(c=>c.id===customerId)?.name || customerId}
             </div>
           ) : (
             <select value={custId} onChange={e=>setCustId(e.target.value)}
-              style={{width:"100%",padding:"9px 10px",borderRadius:7,border:`1.5px solid ${errs.custId?C.red:C.border}`,fontSize:13.5,color:C.text,background:C.white}}>
+              style={{width:"100%",padding:"9px 10px",borderRadius:8,border:`1.5px solid ${errs.custId?C.red:C.border}`,fontSize:13.5,color:C.text,background:C.white}}>
               <option value="">-- Musteri secin --</option>
               {customers.map(c=><option key={c.id} value={c.id}>{c.name||c.full_name||c.id}</option>)}
             </select>
@@ -8455,7 +8458,7 @@ function NewReservationModal({ onClose, onSuccess, customerId, customerName }) {
         </FRow>
         <FRow label="Tur (opsiyonel)">
           <select value={tourId} onChange={e=>setTourId(e.target.value)}
-            style={{width:"100%",padding:"9px 10px",borderRadius:7,border:`1.5px solid ${C.border}`,fontSize:13.5,color:C.text,background:C.white}}>
+            style={{width:"100%",padding:"9px 10px",borderRadius:8,border:`1.5px solid ${C.border}`,fontSize:13.5,color:C.text,background:C.white}}>
             <option value="">-- Tur secin --</option>
             {tours.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}
           </select>
@@ -9688,8 +9691,8 @@ function ReservationDetailPage({ resId, onBack }) {
   if (_sp.invalid) return (
     <div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',padding:60,gap:16}}>
       <div style={{fontSize:36}}>🔍</div>
-      <div style={{fontSize:16,fontWeight:600,color:'#1B2D4F',fontFamily:"'Geist',sans-serif"}}>Kayıt bulunamadı</div>
-      <div style={{fontSize:13,color:'#6B7280'}}>
+      <div style={{fontSize:16,fontWeight:600,color:C.text,fontFamily:"'Geist',sans-serif"}}>Kayıt bulunamadı</div>
+      <div style={{fontSize:13,color:C.textMuted}}>
         {_sp.reason==='demo' ? 'Bu demo kayıt Supabase modunda görüntülenemez.' : 'Geçersiz kayıt kimliği.'}
       </div>
       <button onClick={onBack} style={{padding:'9px 20px',borderRadius:8,border:'none',background:'#1B2D4F',color:'#fff',cursor:'pointer',fontSize:13}}>Geri Dön</button>
@@ -9787,7 +9790,7 @@ function ReservationDetailPage({ resId, onBack }) {
           <button onClick={onBack} style={{
             display:"flex", alignItems:"center", gap:6,
             background:C.ivory, border:`1px solid ${C.border}`,
-            borderRadius:7, padding:"6px 12px", cursor:"pointer",
+            borderRadius:8, padding:"6px 12px", cursor:"pointer",
             color:C.textMid, fontFamily:"'Geist',sans-serif", fontSize:12.5,
           }}
             onMouseEnter={e=>e.currentTarget.style.background=C.ivoryDark}
@@ -9857,7 +9860,7 @@ function ReservationDetailPage({ resId, onBack }) {
               _hasCivitatisMissingPassengerNamesWarning(resActivity) ? (
                 <div style={{ padding:"14px 20px", display:"flex", gap:10, alignItems:"flex-start" }}>
                   <div style={{
-                    width:28, height:28, borderRadius:7, flexShrink:0,
+                    width:28, height:28, borderRadius:8, flexShrink:0,
                     background:C.amberBg, display:"flex", alignItems:"center", justifyContent:"center", color:C.amber,
                   }}>
                     <RIc d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" size={14} sw={1.8}/>
@@ -10079,7 +10082,7 @@ function ReservationDetailPage({ resId, onBack }) {
                 {r.retailAmount != null && (
                   <div style={{
                     display:"flex", justifyContent:"space-between", alignItems:"center",
-                    marginTop:10, padding:"8px 10px", borderRadius:7,
+                    marginTop:10, padding:"8px 10px", borderRadius:8,
                     background:C.ivory, border:`1px solid ${C.borderLight}`,
                   }}>
                     <span style={{ fontSize:11.5, color:C.textMuted, fontFamily:"'Geist',sans-serif" }}>
@@ -10987,7 +10990,7 @@ function CalendarPage() {
           {}
           <div style={{ display:"flex", alignItems:"center", gap:10, width: isMobile ? "100%" : "auto" }}>
             <button onClick={goToday} style={{
-              padding: isMobile ? "9px 12px" : "7px 14px", borderRadius:7,
+              padding: isMobile ? "9px 12px" : "7px 14px", borderRadius:8,
               border:`1px solid ${C.border}`, background:C.ivory,
               cursor:"pointer", color:C.text, flexShrink:0,
               fontFamily:"'Geist',sans-serif", fontSize:12.5, fontWeight:500,
@@ -10999,7 +11002,7 @@ function CalendarPage() {
             {}
             <div style={{
               display:"flex", alignItems:"center", gap:0,
-              border:`1px solid ${C.border}`, borderRadius:7, overflow:"hidden",
+              border:`1px solid ${C.border}`, borderRadius:8, overflow:"hidden",
               flex: isMobile ? 1 : "none", minWidth:0,
             }}>
               <button onClick={goBack} style={{
@@ -11292,7 +11295,7 @@ function PaymentDrawer({ payment, onClose }) {
                   onMouseLeave={e=>e.currentTarget.style.opacity="1"}
                   style={{
                     display:"flex", alignItems:"center", gap:7,
-                    padding:"9px 12px", borderRadius:7, cursor:"pointer",
+                    padding:"9px 12px", borderRadius:8, cursor:"pointer",
                     border: a.primary ? "none" : a.green ? `1px solid ${C.green}44` : `1px solid ${C.border}`,
                     background: a.primary ? C.navy : a.green ? C.greenBg : C.white,
                     color: a.primary ? C.white : a.green ? C.green : C.text,
@@ -11595,6 +11598,8 @@ function _CivitatisHakedisleriView() {
                 <div key={p.settlementPeriod} style={{border:`1px solid ${C.borderLight}`, borderRadius:10, overflow:"hidden"}}>
                   <div
                     onClick={()=>setExpanded(isOpen ? null : p.settlementPeriod)}
+                    role="button" tabIndex={0} aria-expanded={isOpen}
+                    onKeyDown={e=>{ if (e.target===e.currentTarget && (e.key==="Enter"||e.key===" ")) { e.preventDefault(); setExpanded(isOpen ? null : p.settlementPeriod); } }}
                     style={{display:"flex", alignItems:"center", justifyContent:"space-between", padding:"14px 16px", cursor:"pointer", background:canRequest ? C.goldPale : C.white}}
                   >
                     <div>
@@ -12091,18 +12096,19 @@ function ReminderRow({ rem, isLast, onToggle }) {
     >
       {}
       <td style={{padding:"13px 8px 13px 20px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle", width:40}}>
-        <div
+        <button
           onClick={()=>onToggle(rem.id)}
+          role="checkbox" aria-checked={done} aria-label="Tamamlandı olarak işaretle"
           style={{
-            width:18, height:18, borderRadius:5, cursor:"pointer",
+            width:18, height:18, borderRadius:5, cursor:"pointer", padding:0,
             border: done ? "none" : `1.5px solid ${C.border}`,
             background: done ? C.green : C.white,
             display:"flex", alignItems:"center", justifyContent:"center",
-            transition:"all .15s",
+            transition:`background ${T.motionFast} ease, border-color ${T.motionFast} ease`,
           }}
         >
           {done && <HIc d="M20 6L9 17l-5-5" size={11} sw={2.5} color="#fff"/>}
-        </div>
+        </button>
       </td>
 
       {}
@@ -12233,7 +12239,7 @@ function RemSidebar({ reminders, loading }) {
                 }}
               >
                 <div style={{
-                  width:28, height:28, borderRadius:7, flexShrink:0,
+                  width:28, height:28, borderRadius:8, flexShrink:0,
                   background:bgColor, border:`1px solid ${borderColor}22`,
                   display:"flex", alignItems:"center", justifyContent:"center",
                   color:borderColor,
@@ -12816,7 +12822,7 @@ function DossierItineraryStop({ stop, index }) {
         )}
         {stop.operationalNote && (
           <div style={{
-            marginTop:8, padding:"8px 12px", background:C.ivory, borderRadius:7,
+            marginTop:8, padding:"8px 12px", background:C.ivory, borderRadius:8,
             borderLeft:`2px solid ${C.gold}`,
           }}>
             <div style={{ fontSize:9.5, fontWeight:700, color:C.textFaint, textTransform:"uppercase", letterSpacing:"0.07em", fontFamily:"'Geist',sans-serif", marginBottom:3 }}>
@@ -13045,7 +13051,7 @@ function GuideTourInfoModal({ tourId, onClose }) {
               {tour?.name || "Tur"}
             </div>
           </div>
-          <button onClick={onClose} style={{
+          <button onClick={onClose} aria-label="Kapat" style={{
             width:32, height:32, borderRadius:T.radiusSm, border:`1px solid ${C.border}`,
             background:"transparent", cursor:"pointer", color:C.textFaint,
             display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0,
@@ -13077,8 +13083,8 @@ function TourDetailPage({ tourId, onBack }) {
   if (_sp.invalid) return (
     <div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',padding:60,gap:16}}>
       <div style={{fontSize:36}}>🔍</div>
-      <div style={{fontSize:16,fontWeight:600,color:'#1B2D4F',fontFamily:"'Geist',sans-serif"}}>Kayıt bulunamadı</div>
-      <div style={{fontSize:13,color:'#6B7280'}}>
+      <div style={{fontSize:16,fontWeight:600,color:C.text,fontFamily:"'Geist',sans-serif"}}>Kayıt bulunamadı</div>
+      <div style={{fontSize:13,color:C.textMuted}}>
         {_sp.reason==='demo' ? 'Bu demo kayıt Supabase modunda görüntülenemez.' : 'Geçersiz kayıt kimliği.'}
       </div>
       <button onClick={onBack} style={{padding:'9px 20px',borderRadius:8,border:'none',background:'#1B2D4F',color:'#fff',cursor:'pointer',fontSize:13}}>Geri Dön</button>
@@ -13258,7 +13264,7 @@ function TourDetailPage({ tourId, onBack }) {
           <button onClick={onBack} style={{
             display:"flex", alignItems:"center", gap:6, flexShrink:0,
             background:C.ivory, border:`1px solid ${C.border}`,
-            borderRadius:7, padding:"6px 12px", cursor:"pointer",
+            borderRadius:8, padding:"6px 12px", cursor:"pointer",
             color:C.textMid, fontFamily:"'Geist',sans-serif", fontSize:12.5,
           }}
             onMouseEnter={e=>e.currentTarget.style.background=C.ivoryDark}
@@ -13285,7 +13291,7 @@ function TourDetailPage({ tourId, onBack }) {
             canEdit && (
               <button onClick={enterEdit} style={{
                 display:"flex", alignItems:"center", gap:7,
-                padding:"8px 18px", borderRadius:7,
+                padding:"8px 18px", borderRadius:8,
                 border:"none", background:C.navy, cursor:"pointer", color:C.onDarkSolid,
                 fontFamily:"'Geist',sans-serif", fontSize:13, fontWeight:600,
               }}>
@@ -13296,13 +13302,13 @@ function TourDetailPage({ tourId, onBack }) {
           ) : (
             <>
               <button onClick={cancelEdit} style={{
-                padding:"8px 16px", borderRadius:7, cursor:"pointer",
+                padding:"8px 16px", borderRadius:8, cursor:"pointer",
                 border:`1px solid ${C.border}`, background:C.white,
                 color:C.textMid, fontFamily:"'Geist',sans-serif", fontSize:13,
               }}>İptal</button>
               <button onClick={handleSave} disabled={tourSaving} style={{
                 display:"flex", alignItems:"center", gap:7,
-                padding:"8px 18px", borderRadius:7,
+                padding:"8px 18px", borderRadius:8,
                 border:"none", background:C.navy, cursor: tourSaving ? "default" : "pointer",
                 color:C.onDarkSolid, opacity: tourSaving ? 0.7 : 1,
                 fontFamily:"'Geist',sans-serif", fontSize:13, fontWeight:600,
@@ -13717,7 +13723,7 @@ function FMultiSelect({ value, onChange, options, placeholder, error }) {
         <div style={{
           position:"absolute", top:"calc(100% + 4px)", left:0, right:0, zIndex:30,
           background:C.white, border:`1px solid ${C.border}`, borderRadius:T.radiusSm,
-          boxShadow:"0 10px 28px rgba(13,27,62,0.18)", maxHeight:260, display:"flex", flexDirection:"column",
+          boxShadow:T.shadowPopover, maxHeight:260, display:"flex", flexDirection:"column",
         }}>
           <input autoFocus value={q} onChange={e=>setQ(e.target.value)} placeholder="Dil ara…"
             style={{
@@ -14092,11 +14098,13 @@ function AcentelerPage({ onSelect }) {
                 const rowBg = a.hasNewReply ? "rgba(184,151,58,0.05)" : a.status === "Partner" ? "rgba(46,125,82,0.04)" : C.white;
                 return (
                   <tr key={a.id} className="dt-row" onClick={()=>onSelect?onSelect(a.id):(NAV_REF.fn&&NAV_REF.fn('/agencies/'+a.id))}
+                    tabIndex={0}
+                    onKeyDown={e=>{ if (e.target===e.currentTarget && (e.key==="Enter"||e.key===" ")) { e.preventDefault(); onSelect?onSelect(a.id):(NAV_REF.fn&&NAV_REF.fn('/agencies/'+a.id)); } }}
                     style={{background:rowBg, cursor:"pointer", borderLeft:`3px solid ${accentColor}`}}>
                     <td style={{padding:"14px 16px 14px 19px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle"}}>
                       <div style={{display:"flex", alignItems:"center", gap:7}}>
                         <div style={{fontSize:13.5, fontWeight:700, color:C.text, fontFamily:"'Geist',sans-serif"}}>{a.name}</div>
-                        {a.hasNewReply && <span title="Yeni yanıt" style={{width:7, height:7, borderRadius:"50%", background:C.gold, flexShrink:0}}/>}
+                        {a.hasNewReply && <span title="Yeni yanıt" role="img" aria-label="Yeni yanıt" style={{width:7, height:7, borderRadius:"50%", background:C.gold, flexShrink:0}}/>}
                       </div>
                       {a.website && <div style={{fontSize:11.5, color:C.textFaint, fontFamily:"'DM Mono',monospace", marginTop:2}}>{a.website}</div>}
                       {(a.languages||[]).length > 0 && (
@@ -14471,14 +14479,14 @@ function AgencyResearchModal({ existingAgencies, onClose }) {
                 <div style={{ marginTop:10 }}>
                   {alreadyInCrm ? (
                     <button onClick={()=>{ onClose(); if (NAV_REF.fn) NAV_REF.fn('/agencies/'+existingMatch.id); }} style={{
-                      padding:"7px 14px", borderRadius:7, border:`1px solid ${C.border}`, background:C.ivory,
+                      padding:"7px 14px", borderRadius:8, border:`1px solid ${C.border}`, background:C.ivory,
                       color:C.textMid, fontSize:12.5, fontFamily:"'Geist',sans-serif", cursor:"pointer",
                     }}>Zaten CRM'de — Aç</button>
                   ) : importedNow ? (
                     <span style={{ fontSize:12.5, color:C.green, fontFamily:"'Geist',sans-serif", fontWeight:500 }}>Eklendi ✓</span>
                   ) : (
                     <button onClick={()=>handleImport(c)} disabled={importingKey===key} style={{
-                      padding:"7px 14px", borderRadius:7, border:"none",
+                      padding:"7px 14px", borderRadius:8, border:"none",
                       background: importingKey===key ? C.ivoryDark : C.navy,
                       color: importingKey===key ? C.textFaint : C.white,
                       fontSize:12.5, fontFamily:"'Geist',sans-serif", fontWeight:500,
@@ -14861,7 +14869,7 @@ function AcenteDetailPage({ agencyId, onBack }) {
       <button onClick={onBack} style={{
         display:"flex", alignItems:"center", gap:6, alignSelf:"flex-start",
         background:C.ivory, border:`1px solid ${C.border}`,
-        borderRadius:7, padding:"6px 12px", cursor:"pointer",
+        borderRadius:8, padding:"6px 12px", cursor:"pointer",
         color:C.textMid, fontFamily:"'Geist',sans-serif", fontSize:12.5,
       }}>
         <URIc d="M19 12H5M12 19l-7-7 7-7" size={14} sw={1.8}/>
@@ -14923,7 +14931,7 @@ function AcenteDetailPage({ agencyId, onBack }) {
               is a distinct, unrelated action (handleGenerateDraft already
               clears replyTargetEmail if used). */}
           {replyTargetEmail ? (
-            <div style={{padding:"10px 14px", borderRadius:7, background:C.ivory, border:`1px solid ${C.navy}`, display:"flex", alignItems:"center", justifyContent:"space-between", gap:10, flexWrap:"wrap"}}>
+            <div style={{padding:"10px 14px", borderRadius:8, background:C.ivory, border:`1px solid ${C.navy}`, display:"flex", alignItems:"center", justifyContent:"space-between", gap:10, flexWrap:"wrap"}}>
               <div style={{fontSize:12.5, color:C.text, fontFamily:"'Geist',sans-serif"}}>
                 <strong>Yanıt veriliyor:</strong> {replyTargetEmail.subject || "(konu yok)"}
                 {replyTargetEmail.fromEmail && <> — {replyTargetEmail.fromEmail}</>}
@@ -14938,7 +14946,7 @@ function AcenteDetailPage({ agencyId, onBack }) {
             <div style={{display:"flex", alignItems:"center", gap:10, flexWrap:"wrap"}}>
               <SSelect value={draftLanguage} onChange={setDraftLanguage} options={AGENCY_RESEARCH_LANGUAGES}/>
               <button onClick={handleGenerateDraft} disabled={draftLoading} style={{
-                padding:"8px 16px", borderRadius:7, border:"none",
+                padding:"8px 16px", borderRadius:8, border:"none",
                 background: draftLoading ? C.ivoryDark : C.navy,
                 color: draftLoading ? C.textFaint : C.white,
                 cursor: draftLoading ? "not-allowed" : "pointer",
@@ -14953,7 +14961,7 @@ function AcenteDetailPage({ agencyId, onBack }) {
           )}
 
           {draftError && (
-            <div style={{padding:"10px 14px", borderRadius:7, background:C.redBg, color:C.red, fontSize:12.5, fontFamily:"'Geist',sans-serif"}}>
+            <div style={{padding:"10px 14px", borderRadius:8, background:C.redBg, color:C.red, fontSize:12.5, fontFamily:"'Geist',sans-serif"}}>
               {draftError}
             </div>
           )}
@@ -14963,12 +14971,12 @@ function AcenteDetailPage({ agencyId, onBack }) {
               re-sent from here. Regenerating (Taslak Oluştur) still
               always creates a brand-new draft row regardless. */}
           {editingEmailStatus === 'sent' && (draftSubject || draftBody) && (
-            <div style={{padding:"12px 14px", borderRadius:7, background:"rgba(76,175,80,0.08)", border:"1px solid rgba(76,175,80,0.25)", display:"flex", flexDirection:"column", gap:10}}>
+            <div style={{padding:"12px 14px", borderRadius:8, background:"rgba(76,175,80,0.08)", border:"1px solid rgba(76,175,80,0.25)", display:"flex", flexDirection:"column", gap:10}}>
               <div style={{fontSize:12.5, fontWeight:600, color:"#2E7D32", fontFamily:"'Geist',sans-serif"}}>
                 ✓ Bu e-posta gönderildi — artık düzenlenemez.
               </div>
               <RInfoRow label="Konu" value={draftSubject}/>
-              <div style={{whiteSpace:"pre-wrap", fontSize:13, color:C.text, fontFamily:"'Geist',sans-serif", lineHeight:1.6, background:C.white, border:`1px solid ${C.border}`, borderRadius:7, padding:"10px 12px"}}>
+              <div style={{whiteSpace:"pre-wrap", fontSize:13, color:C.text, fontFamily:"'Geist',sans-serif", lineHeight:1.6, background:C.white, border:`1px solid ${C.border}`, borderRadius:8, padding:"10px 12px"}}>
                 {draftBody}
               </div>
             </div>
@@ -14992,7 +15000,7 @@ function AcenteDetailPage({ agencyId, onBack }) {
               )}
               <div style={{display:"flex", alignItems:"center", gap:10, flexWrap:"wrap"}}>
                 <button onClick={handleSaveDraft} disabled={emailMutating || !draftSubject || !draftBody} style={{
-                  padding:"8px 16px", borderRadius:7, border:"none",
+                  padding:"8px 16px", borderRadius:8, border:"none",
                   background: (emailMutating||!draftSubject||!draftBody) ? C.ivoryDark : C.gold,
                   color: (emailMutating||!draftSubject||!draftBody) ? C.textFaint : C.white,
                   cursor: (emailMutating||!draftSubject||!draftBody) ? "not-allowed" : "pointer",
@@ -15005,7 +15013,7 @@ function AcenteDetailPage({ agencyId, onBack }) {
                     fresh subject/body text handed to it directly. */}
                 {editingEmailId && !sentInfo && (
                   <button onClick={()=>{ setShowSendConfirm(true); setSendError(null); }} disabled={sending || !draftSubject || !draftBody} style={{
-                    padding:"8px 16px", borderRadius:7, border:"none",
+                    padding:"8px 16px", borderRadius:8, border:"none",
                     background: (sending||!draftSubject||!draftBody) ? C.ivoryDark : C.navy,
                     color: (sending||!draftSubject||!draftBody) ? C.textFaint : C.white,
                     cursor: (sending||!draftSubject||!draftBody) ? "not-allowed" : "pointer",
@@ -15015,13 +15023,13 @@ function AcenteDetailPage({ agencyId, onBack }) {
               </div>
 
               {sendError && (
-                <div style={{padding:"10px 14px", borderRadius:7, background:C.redBg, color:C.red, fontSize:12.5, fontFamily:"'Geist',sans-serif"}}>
+                <div style={{padding:"10px 14px", borderRadius:8, background:C.redBg, color:C.red, fontSize:12.5, fontFamily:"'Geist',sans-serif"}}>
                   {sendError}
                 </div>
               )}
 
               {sentInfo && (
-                <div style={{padding:"12px 14px", borderRadius:7, background:"rgba(76,175,80,0.08)", border:"1px solid rgba(76,175,80,0.25)", display:"flex", flexDirection:"column", gap:4}}>
+                <div style={{padding:"12px 14px", borderRadius:8, background:"rgba(76,175,80,0.08)", border:"1px solid rgba(76,175,80,0.25)", display:"flex", flexDirection:"column", gap:4}}>
                   <div style={{fontSize:13, fontWeight:600, color:"#2E7D32", fontFamily:"'Geist',sans-serif"}}>
                     ✓ Gönderildi{sentInfo.alreadySent ? " (daha önce gönderilmişti)" : ""}
                   </div>
@@ -15050,20 +15058,20 @@ function AcenteDetailPage({ agencyId, onBack }) {
                   <RInfoRow label="Konu" value={draftSubject}/>
                   <div>
                     <label style={{display:"block", fontSize:11.5, color:C.textFaint, fontFamily:"'Geist',sans-serif", marginBottom:5}}>Gövde</label>
-                    <div style={{whiteSpace:"pre-wrap", fontSize:13, color:C.text, fontFamily:"'Geist',sans-serif", lineHeight:1.6, background:C.white, border:`1px solid ${C.border}`, borderRadius:7, padding:"10px 12px"}}>
+                    <div style={{whiteSpace:"pre-wrap", fontSize:13, color:C.text, fontFamily:"'Geist',sans-serif", lineHeight:1.6, background:C.white, border:`1px solid ${C.border}`, borderRadius:8, padding:"10px 12px"}}>
                       {draftBody}
                     </div>
                   </div>
                   <div style={{display:"flex", gap:10}}>
                     <button onClick={handleSendEmail} disabled={sending} style={{
-                      padding:"9px 18px", borderRadius:7, border:"none",
+                      padding:"9px 18px", borderRadius:8, border:"none",
                       background: sending ? C.ivoryDark : C.navy,
                       color: sending ? C.textFaint : C.white,
                       cursor: sending ? "not-allowed" : "pointer",
                       fontFamily:"'Geist',sans-serif", fontSize:13, fontWeight:600,
                     }}>{sending ? "Gönderiliyor…" : "Gönderimi Onayla"}</button>
                     <button onClick={()=>setShowSendConfirm(false)} disabled={sending} style={{
-                      padding:"9px 18px", borderRadius:7, border:`1px solid ${C.border}`,
+                      padding:"9px 18px", borderRadius:8, border:`1px solid ${C.border}`,
                       background:C.white, color:C.textMid,
                       cursor: sending ? "not-allowed" : "pointer",
                       fontFamily:"'Geist',sans-serif", fontSize:13, fontWeight:500,
@@ -15229,14 +15237,14 @@ function AcenteDetailPage({ agencyId, onBack }) {
             <FRow label="Telefon"><FText value={contactPhoneDraft} onChange={setContactPhoneDraft} placeholder="+34 600 000 000" mono/></FRow>
             <div style={{display:"flex", gap:8}}>
               <button onClick={handleSaveContact} disabled={mutating} style={{
-                padding:"8px 16px", borderRadius:7, border:"none",
+                padding:"8px 16px", borderRadius:8, border:"none",
                 background: mutating ? C.ivoryDark : C.navy,
                 color: mutating ? C.textFaint : C.white,
                 cursor: mutating ? "not-allowed" : "pointer",
                 fontFamily:"'Geist',sans-serif", fontSize:13, fontWeight:500,
               }}>{mutating ? "Kaydediliyor…" : "Kaydet"}</button>
               <button onClick={handleCancelEditContact} disabled={mutating} style={{
-                padding:"8px 16px", borderRadius:7, border:`1px solid ${C.border}`,
+                padding:"8px 16px", borderRadius:8, border:`1px solid ${C.border}`,
                 background:C.white, color:C.textMid, cursor: mutating ? "not-allowed" : "pointer",
                 fontFamily:"'Geist',sans-serif", fontSize:13, fontWeight:500,
               }}>Vazgeç</button>
@@ -15251,7 +15259,7 @@ function AcenteDetailPage({ agencyId, onBack }) {
           <FTextArea value={notesDraft} onChange={v=>{ setNotesDraft(v); setNotesDirty(true); }} placeholder="Bu acente hakkında iç notlar…"/>
           <div>
             <button onClick={handleSaveNotes} disabled={!notesDirty || mutating} style={{
-              padding:"8px 16px", borderRadius:7, border:"none",
+              padding:"8px 16px", borderRadius:8, border:"none",
               background: (!notesDirty||mutating) ? C.ivoryDark : C.navy,
               color: (!notesDirty||mutating) ? C.textFaint : C.white,
               cursor: (!notesDirty||mutating) ? "not-allowed" : "pointer",
@@ -15451,6 +15459,8 @@ function GuidesPage({ onSelect }) {
                 const s = statsByGuide[g.id] || { totalTours:0, upcoming:null, totalPaidEur:0 };
                 return (
                   <tr key={g.id} className="dt-row" onClick={()=>onSelect?onSelect(g.id):(NAV_REF.fn&&NAV_REF.fn('/guides/'+g.id))}
+                    tabIndex={0}
+                    onKeyDown={e=>{ if (e.target===e.currentTarget && (e.key==="Enter"||e.key===" ")) { e.preventDefault(); onSelect?onSelect(g.id):(NAV_REF.fn&&NAV_REF.fn('/guides/'+g.id)); } }}
                     style={{background:C.white, cursor:"pointer", opacity:g.status==="Pasif"?0.6:1}}>
                     <td style={{padding:"14px 16px 14px 22px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle"}}>
                       <div style={{fontSize:13.5, fontWeight:600, color:C.text, fontFamily:"'Geist',sans-serif"}}>{g.name}</div>
@@ -15663,8 +15673,8 @@ function GuideDetailPage({ guideId, onBack }) {
   if (_sp.invalid) return (
     <div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',padding:60,gap:16}}>
       <div style={{fontSize:36}}>🔍</div>
-      <div style={{fontSize:16,fontWeight:600,color:'#1B2D4F',fontFamily:"'Geist',sans-serif"}}>Kayıt bulunamadı</div>
-      <div style={{fontSize:13,color:'#6B7280'}}>
+      <div style={{fontSize:16,fontWeight:600,color:C.text,fontFamily:"'Geist',sans-serif"}}>Kayıt bulunamadı</div>
+      <div style={{fontSize:13,color:C.textMuted}}>
         {_sp.reason==='demo' ? 'Bu demo kayıt Supabase modunda görüntülenemez.' : 'Geçersiz kayıt kimliği.'}
       </div>
       <button onClick={onBack} style={{padding:'9px 20px',borderRadius:8,border:'none',background:'#1B2D4F',color:'#fff',cursor:'pointer',fontSize:13}}>Geri Dön</button>
@@ -15786,7 +15796,7 @@ function GuideDetailPage({ guideId, onBack }) {
           <button onClick={onBack} style={{
             display:"flex", alignItems:"center", gap:6, flexShrink:0,
             background:C.ivory, border:`1px solid ${C.border}`,
-            borderRadius:7, padding:"6px 12px", cursor:"pointer",
+            borderRadius:8, padding:"6px 12px", cursor:"pointer",
             color:C.textMid, fontFamily:"'Geist',sans-serif", fontSize:12.5,
           }}
             onMouseEnter={e=>e.currentTarget.style.background=C.ivoryDark}
@@ -15853,7 +15863,7 @@ function GuideDetailPage({ guideId, onBack }) {
           <GuideSectionCard title={`Değerlendirmeler (${reviews.length})`} action={
             canWriteReview ? (
               <button onClick={()=>setShowAddReview(true)} style={{
-                padding:"6px 12px", borderRadius:7, border:"none", background:C.navy,
+                padding:"6px 12px", borderRadius:8, border:"none", background:C.navy,
                 color:C.onDarkSolid, fontSize:12, fontWeight:500, fontFamily:"'Geist',sans-serif", cursor:"pointer",
               }}>+ Değerlendirme Ekle</button>
             ) : null
@@ -15888,7 +15898,7 @@ function GuideDetailPage({ guideId, onBack }) {
 
           <GuideSectionCard title={`Ödeme Geçmişi (${payments.length})`} action={
             <button onClick={()=>setShowAddPayment(true)} style={{
-              padding:"6px 12px", borderRadius:7, border:"none", background:C.navy,
+              padding:"6px 12px", borderRadius:8, border:"none", background:C.navy,
               color:C.onDarkSolid, fontSize:12, fontWeight:500, fontFamily:"'Geist',sans-serif", cursor:"pointer",
             }}>+ Ödeme Ekle</button>
           }>
@@ -16172,7 +16182,7 @@ function SaveBtn({ saved, onClick }) {
   return (
     <button onClick={onClick} style={{
       display:"flex", alignItems:"center", gap:7,
-      padding:"8px 18px", borderRadius:7,
+      padding:"8px 18px", borderRadius:8,
       border:"none", background:saved?C.green:C.navy,
       cursor:"pointer", color:C.onDarkSolid,
       fontFamily:"'Geist',sans-serif", fontSize:13, fontWeight:600,
@@ -16356,7 +16366,7 @@ function SettingsPage() {
                 <SSelect value={currency} onChange={setCurrency} options={["EUR","USD","TRY","GBP"]}/>
               </SField>
               {!AppConfig.useSupabase && (
-                <div style={{padding:"8px 12px", borderRadius:7, background:"rgba(201,168,76,0.08)",
+                <div style={{padding:"8px 12px", borderRadius:8, background:"rgba(201,168,76,0.08)",
                   border:"1px solid rgba(201,168,76,0.2)", marginBottom:10,
                   fontSize:12, color:"#854F0B", fontFamily:"'Geist',sans-serif"}}>
                   Bu ayarlar canlı veritabanına sonraki sürümde kaydedilecek.
@@ -16487,7 +16497,7 @@ function SettingsPage() {
               <div style={{paddingTop:14}}>
                 <button style={{
                   display:"flex", alignItems:"center", gap:7,
-                  padding:"9px 16px", borderRadius:7,
+                  padding:"9px 16px", borderRadius:8,
                   border:`1.5px dashed ${C.border}`, background:C.white,
                   cursor:"pointer", color:C.textMuted,
                   fontFamily:"'Geist',sans-serif", fontSize:13,
@@ -16540,12 +16550,12 @@ function SettingsPage() {
                   onKeyDown={e=>{ if(e.key==="Enter"&&newSource.trim()){ setSources(p=>[...p,{id:Date.now(),label:newSource.trim(),active:true}]); setNewSource(""); } }}
                   placeholder="Yeni kaynak ekle…"
                   style={{
-                    flex:1, padding:"8px 12px", border:`1px solid ${C.border}`, borderRadius:7,
+                    flex:1, padding:"8px 12px", border:`1px solid ${C.border}`, borderRadius:8,
                     background:C.ivory, fontSize:13, color:C.text,
                     fontFamily:"'Geist',sans-serif", outline:"none",
                   }}/>
                 <button onClick={()=>{ if(newSource.trim()){ setSources(p=>[...p,{id:Date.now(),label:newSource.trim(),active:true}]); setNewSource(""); } }} style={{
-                  padding:"8px 16px", borderRadius:7, cursor:"pointer",
+                  padding:"8px 16px", borderRadius:8, cursor:"pointer",
                   background:C.navy, border:"none", color:C.onDarkSolid,
                   fontSize:13, fontFamily:"'Geist',sans-serif", fontWeight:500,
                 }}>+ Ekle</button>
@@ -16606,7 +16616,7 @@ function SettingsPage() {
                     {grp.items.map((item,ii)=>(
                       <div key={ii} style={{
                         display:"flex", alignItems:"center", gap:8,
-                        padding:"8px 10px", borderRadius:7, marginBottom:5,
+                        padding:"8px 10px", borderRadius:8, marginBottom:5,
                         background:item.bg,
                       }}>
                         <span style={{width:7, height:7, borderRadius:"50%", background:item.color, flexShrink:0}}/>
@@ -17285,7 +17295,7 @@ function RpSection({ title, icon, children, action }) {
         display:"flex", alignItems:"center", justifyContent:"space-between",
       }}>
         <div style={{display:"flex", alignItems:"center", gap:9}}>
-          <div style={{width:30, height:30, borderRadius:7, background:C.navy, display:"flex", alignItems:"center", justifyContent:"center"}}>
+          <div style={{width:30, height:30, borderRadius:8, background:C.navy, display:"flex", alignItems:"center", justifyContent:"center"}}>
             <RpIc d={icon} size={14} sw={1.8} color={C.goldLight}/>
           </div>
           <span style={{fontSize:15, fontWeight:600, color:C.text, fontFamily:"'Geist',sans-serif"}}>{title}</span>
@@ -17424,7 +17434,7 @@ function ReportsPage() {
             const on=period===p;
             return (
               <button key={p} onClick={()=>setPeriod(p)} style={{
-                padding:"6px 14px", borderRadius:7, cursor:"pointer",
+                padding:"6px 14px", borderRadius:8, cursor:"pointer",
                 border:"none", background:on?C.navy:"transparent",
                 color:on?C.white:C.textMuted,
                 fontFamily:"'Geist',sans-serif", fontSize:13,
@@ -17687,7 +17697,7 @@ function ReportsPage() {
             {metrics.countries.length === 0 ? (
               <EmptyState icon="🌍" title="Bu dönem için veri yok" subtitle="Seçilen tarih aralığında ülke bazlı rezervasyon bulunmuyor."/>
             ) : (
-            <table style={{width:"100%", borderCollapse:"collapse"}}>
+            <div style={{overflowX:"auto"}}><table style={{width:"100%", borderCollapse:"collapse", minWidth:420}}>
               <thead>
                 <tr style={{borderBottom:`1px solid ${C.border}`}}>
                   {["Ülke","Rezervasyon","Pay"].map((h,i)=>(
@@ -17725,7 +17735,7 @@ function ReportsPage() {
                   );
                 })}
               </tbody>
-            </table>
+            </table></div>
             )}
           </RpSection>
 
@@ -17819,7 +17829,7 @@ function ReportsPage() {
               display:"flex", alignItems:"center", gap:10,
             }}>
               <div style={{
-                width:30, height:30, borderRadius:7, flexShrink:0,
+                width:30, height:30, borderRadius:8, flexShrink:0,
                 background:"rgba(201,168,76,0.2)", border:"1px solid rgba(201,168,76,0.3)",
                 display:"flex", alignItems:"center", justifyContent:"center",
               }}>
@@ -17875,7 +17885,7 @@ function ReportsPage() {
                 }}>
                   <div style={{display:"flex", alignItems:"flex-start", gap:10}}>
                     <div style={{
-                      width:28, height:28, borderRadius:7, flexShrink:0,
+                      width:28, height:28, borderRadius:8, flexShrink:0,
                       background:"rgba(255,255,255,0.5)",
                       display:"flex", alignItems:"center", justifyContent:"center",
                     }}>
@@ -18049,7 +18059,7 @@ function GSection({ title, icon, children, noPad, action }) {
         padding:"13px 20px", background:C.ivory, borderBottom:`1px solid ${C.borderLight}`,
         display:"flex", alignItems:"center", gap:8,
       }}>
-        <div style={{width:28, height:28, borderRadius:7, background:C.navy, display:"flex", alignItems:"center", justifyContent:"center"}}>
+        <div style={{width:28, height:28, borderRadius:8, background:C.navy, display:"flex", alignItems:"center", justifyContent:"center"}}>
           <GIc d={icon} size={13} sw={1.8} color={C.goldLight}/>
         </div>
         <span style={{fontSize:14, fontWeight:600, color:C.text, fontFamily:"'Geist',sans-serif"}}>{title}</span>
@@ -18124,8 +18134,8 @@ function GuestDetailPage({ guestId, onBack, onNavigate }) {
   if (_sp.invalid) return (
     <div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',padding:60,gap:16}}>
       <div style={{fontSize:36}}>🔍</div>
-      <div style={{fontSize:16,fontWeight:600,color:'#1B2D4F',fontFamily:"'Geist',sans-serif"}}>Kayıt bulunamadı</div>
-      <div style={{fontSize:13,color:'#6B7280'}}>
+      <div style={{fontSize:16,fontWeight:600,color:C.text,fontFamily:"'Geist',sans-serif"}}>Kayıt bulunamadı</div>
+      <div style={{fontSize:13,color:C.textMuted}}>
         {_sp.reason==='demo' ? 'Bu demo kayıt Supabase modunda görüntülenemez.' : 'Geçersiz kayıt kimliği.'}
       </div>
       <button onClick={onBack} style={{padding:'9px 20px',borderRadius:8,border:'none',background:'#1B2D4F',color:'#fff',cursor:'pointer',fontSize:13}}>Geri Dön</button>
@@ -18234,7 +18244,7 @@ function GuestDetailPage({ guestId, onBack, onNavigate }) {
           <button onClick={onBack} style={{
             display:"flex", alignItems:"center", gap:6, flexShrink:0,
             background:C.ivory, border:`1px solid ${C.border}`,
-            borderRadius:7, padding:"6px 12px", cursor:"pointer",
+            borderRadius:8, padding:"6px 12px", cursor:"pointer",
             color:C.textMid, fontFamily:"'Geist',sans-serif", fontSize:12.5,
           }}
             onMouseEnter={e=>e.currentTarget.style.background=C.ivoryDark}
@@ -18324,7 +18334,7 @@ function GuestDetailPage({ guestId, onBack, onNavigate }) {
               <GSection title="Misafir Profili" icon="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2 M23 21v-2a4 4 0 00-3-3.87 M16 3.13a4 4 0 010 7.75"
                 action={
                   <button onClick={()=>setShowEditGuest(true)} style={{
-                    padding:"7px 14px", borderRadius:7, border:`1px solid ${C.border}`,
+                    padding:"7px 14px", borderRadius:8, border:`1px solid ${C.border}`,
                     background:C.white, cursor:"pointer", color:C.text,
                     fontFamily:"'Geist',sans-serif", fontSize:12, fontWeight:500,
                   }}>Düzenle</button>
@@ -18384,7 +18394,10 @@ function GuestDetailPage({ guestId, onBack, onNavigate }) {
                   <tbody>
                     {g.relatedLeads.map((lead,i)=>{
                       return (
-                        <tr key={i} className="dt-row" style={{background:C.white, cursor:"pointer", transition:"background .1s"}}>
+                        <tr key={i} className="dt-row" style={{background:C.white, cursor:"pointer", transition:`background ${T.motionFast} ease`}}
+                          tabIndex={0}
+                          onKeyDown={e=>{ if (e.target===e.currentTarget && (e.key==="Enter"||e.key===" ") && NAV_REF.fn) { e.preventDefault(); NAV_REF.fn('/leads/'+lead.id); } }}
+                          onClick={()=>{ if(NAV_REF.fn) NAV_REF.fn('/leads/'+lead.id); }}>
                           <td style={{padding:"12px 16px", borderBottom:`1px solid ${C.borderLight}`, fontSize:13, color:C.text, fontFamily:"'Geist',sans-serif"}}>{lead.date}</td>
                           <td style={{padding:"12px 16px", borderBottom:`1px solid ${C.borderLight}`}}>
                             <span style={{fontSize:12.5, color:C.textMid, fontFamily:"'Geist',sans-serif"}}>{lead.source}</span>
@@ -18426,7 +18439,10 @@ function GuestDetailPage({ guestId, onBack, onNavigate }) {
                     {g.relatedQuotes.map((q,i)=>{
                       const qm = QUOTE_STATUS[q.status]||{color:C.textMuted,bg:C.ivoryDark};
                       return (
-                        <tr key={i} className="dt-row" style={{background:C.white, cursor:"pointer", transition:"background .1s"}}>
+                        <tr key={i} className="dt-row" style={{background:C.white, cursor:"pointer", transition:`background ${T.motionFast} ease`}}
+                          tabIndex={0}
+                          onKeyDown={e=>{ if (e.target===e.currentTarget && (e.key==="Enter"||e.key===" ") && NAV_REF.fn) { e.preventDefault(); NAV_REF.fn('/quotes/'+q.id); } }}
+                          onClick={()=>{ if(NAV_REF.fn) NAV_REF.fn('/quotes/'+q.id); }}>
                           <td style={{padding:"12px 16px", borderBottom:`1px solid ${C.borderLight}`}}>
                             <span style={{fontSize:12, fontWeight:600, color:C.text, fontFamily:"'DM Mono',monospace", background:C.ivory, border:`1px solid ${C.borderLight}`, padding:"2px 7px", borderRadius:5}}>{q.id}</span>
                           </td>
@@ -18464,7 +18480,10 @@ function GuestDetailPage({ guestId, onBack, onNavigate }) {
                       const rsm = RES_STATUS[r.opStatus]||{color:C.textMuted,bg:C.ivoryDark};
                       const rpm = PAY_STATUS_MAP[r.payStatus]||{color:C.textMuted,bg:C.ivoryDark};
                       return (
-                        <tr key={i} className="dt-row" style={{background:C.white, cursor:"pointer", transition:"background .1s"}}>
+                        <tr key={i} className="dt-row" style={{background:C.white, cursor:"pointer", transition:`background ${T.motionFast} ease`}}
+                          tabIndex={0}
+                          onKeyDown={e=>{ if (e.target===e.currentTarget && (e.key==="Enter"||e.key===" ") && NAV_REF.fn) { e.preventDefault(); NAV_REF.fn('/reservations/'+r.id); } }}
+                          onClick={()=>{ if(NAV_REF.fn) NAV_REF.fn('/reservations/'+r.id); }}>
                           <td style={{padding:"12px 16px", borderBottom:`1px solid ${C.borderLight}`}}>
                             <span style={{fontSize:12, fontWeight:600, color:C.text, fontFamily:"'DM Mono',monospace", background:C.ivory, border:`1px solid ${C.borderLight}`, padding:"2px 7px", borderRadius:5}}>{r.id}</span>
                           </td>
@@ -18514,7 +18533,7 @@ function GuestDetailPage({ guestId, onBack, onNavigate }) {
                     onMouseLeave={e=>e.currentTarget.style.background=""}
                     style={{
                       display:"flex", alignItems:"center", gap:9, width:"100%",
-                      padding:"9px 11px", borderRadius:7, marginBottom:i<QUICK_ACTIONS.length-1?5:0,
+                      padding:"9px 11px", borderRadius:8, marginBottom:i<QUICK_ACTIONS.length-1?5:0,
                       border: a.primary?"none": a.wa?`1px solid #128C7E44`:`1px solid ${C.border}`,
                       background: a.primary?C.navy: a.wa?"#F2FAF8":C.white,
                       cursor:"pointer",
@@ -18544,7 +18563,7 @@ function GuestDetailPage({ guestId, onBack, onNavigate }) {
                 {g.notes}
               </div>
               <button style={{
-                marginTop:10, width:"100%", padding:"8px", borderRadius:7, cursor:"pointer",
+                marginTop:10, width:"100%", padding:"8px", borderRadius:8, cursor:"pointer",
                 border:`1px dashed ${C.border}`, background:C.white, color:C.textFaint,
                 fontSize:12.5, fontFamily:"'Geist',sans-serif",
                 display:"flex", alignItems:"center", justifyContent:"center", gap:6,
@@ -18744,7 +18763,9 @@ function CustomersPage({ onSelectGuest }) {
                   return (
                     <tr key={g.id} className="dt-row"
                       onClick={()=>onSelectGuest&&onSelectGuest(g.id)}
-                      style={{background:C.white, cursor:"pointer", transition:"background .1s"}}>
+                      tabIndex={0}
+                      onKeyDown={e=>{ if (e.target===e.currentTarget && (e.key==="Enter"||e.key===" ")) { e.preventDefault(); onSelectGuest&&onSelectGuest(g.id); } }}
+                      style={{background:C.white, cursor:"pointer", transition:`background ${T.motionFast} ease`}}>
                       {}
                       <td style={{padding:"14px 16px 14px 22px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle"}}>
                         <div style={{display:"flex", alignItems:"center", gap:10}}>
@@ -19016,7 +19037,7 @@ function ConvContext({ conv }) {
           <div style={{fontSize:10.5,fontWeight:600,color:C.textFaint,textTransform:"uppercase",letterSpacing:"0.08em",fontFamily:"'Geist',sans-serif",marginBottom:8}}>Hızlı İşlemler</div>
           <div style={{display:"flex",flexDirection:"column",gap:5}}>
             {ACTIONS.map((a,i)=>(
-              <a key={i} href={a.to?"#"+a.to:undefined} onClick={a.to?(e)=>{e.preventDefault();if(ROUTER_STATE.setPath)ROUTER_STATE.setPath(a.to);else if(NAV_REF.fn)NAV_REF.fn(a.to);}:e=>e.preventDefault()} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 10px",borderRadius:7,border:`1px solid ${a.to?C.border:C.borderLight}`,background:a.to?C.white:C.ivoryDark,color:a.to?C.text:C.textFaint,textDecoration:"none",cursor:a.to?"pointer":"not-allowed",fontSize:12.5,fontFamily:"'Geist',sans-serif",opacity:a.to?1:0.5}}
+              <a key={i} href={a.to?"#"+a.to:undefined} onClick={a.to?(e)=>{e.preventDefault();if(ROUTER_STATE.setPath)ROUTER_STATE.setPath(a.to);else if(NAV_REF.fn)NAV_REF.fn(a.to);}:e=>e.preventDefault()} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 10px",borderRadius:8,border:`1px solid ${a.to?C.border:C.borderLight}`,background:a.to?C.white:C.ivoryDark,color:a.to?C.text:C.textFaint,textDecoration:"none",cursor:a.to?"pointer":"not-allowed",fontSize:12.5,fontFamily:"'Geist',sans-serif",opacity:a.to?1:0.5}}
                 onMouseEnter={e=>{if(a.to)e.currentTarget.style.background=C.ivory;}}
                 onMouseLeave={e=>{if(a.to)e.currentTarget.style.background=C.white;}}>
                 <MsgIc d={a.icon} size={13} sw={1.6}/>{a.label}
@@ -19088,7 +19109,7 @@ function MessagesPage() {
           </div>
         </div>
         <div style={{position:"relative"}}>
-          <input placeholder="Konuşma ara…" style={{width:"100%",boxSizing:"border-box",padding:"7px 10px 7px 30px",border:`1px solid ${C.border}`,borderRadius:7,background:C.white,fontSize:13,color:C.text,fontFamily:"'Geist',sans-serif",outline:"none"}}/>
+          <input placeholder="Konuşma ara…" style={{width:"100%",boxSizing:"border-box",padding:"7px 10px 7px 30px",border:`1px solid ${C.border}`,borderRadius:8,background:C.white,fontSize:13,color:C.text,fontFamily:"'Geist',sans-serif",outline:"none"}}/>
           <span style={{position:"absolute",left:9,top:"50%",transform:"translateY(-50%)",pointerEvents:"none"}}>
             <MsgIc d="M21 21l-4.35-4.35 M17 11A6 6 0 105 11a6 6 0 0012 0z" size={13} sw={1.7} color={C.textFaint}/>
           </span>
@@ -19290,7 +19311,7 @@ function NewReminderModal({ onClose, resId, customerId, customerName }) {
       <FRow label="İlgili Müşteri">
         {customerId ? (
           <div style={{
-            width:"100%", boxSizing:"border-box", padding:"9px 10px", borderRadius:7,
+            width:"100%", boxSizing:"border-box", padding:"9px 10px", borderRadius:8,
             border:`1.5px solid ${C.border}`, fontSize:13.5, color:C.text, background:C.ivory,
           }}>
             {customerName || DB.customers.find(c=>c.id===customerId)?.name || customerId}
@@ -19337,7 +19358,7 @@ function NewPaymentModal({ onClose, resId: presetResId, customerId: presetCustom
       <FRow label="Müşteri">
         {presetCustomerId ? (
           <div style={{
-            width:"100%", boxSizing:"border-box", padding:"9px 10px", borderRadius:7,
+            width:"100%", boxSizing:"border-box", padding:"9px 10px", borderRadius:8,
             border:`1.5px solid ${C.border}`, fontSize:13.5, color:C.text, background:C.ivory,
           }}>
             {customerName || DB.customers.find(c=>c.id===presetCustomerId)?.name || presetCustomerId}
@@ -19350,7 +19371,7 @@ function NewPaymentModal({ onClose, resId: presetResId, customerId: presetCustom
       <FRow label="Rezervasyon">
         {presetResId ? (
           <div style={{
-            width:"100%", boxSizing:"border-box", padding:"9px 10px", borderRadius:7,
+            width:"100%", boxSizing:"border-box", padding:"9px 10px", borderRadius:8,
             border:`1.5px solid ${C.border}`, fontSize:13.5, color:C.text, background:C.ivory,
           }}>
             {presetResId}
@@ -20748,7 +20769,7 @@ function ErrorState({ message, onRetry }) {
       </div>
       <div style={{fontSize:13.5,fontWeight:600,color:C.text,fontFamily:"'Geist',sans-serif"}}>Veriler yüklenemedi</div>
       <div style={{fontSize:12.5,color:C.textMuted,fontFamily:"'Geist',sans-serif"}}>{message||"Veriler yüklenirken bir hata oluştu."}</div>
-      {onRetry && <button onClick={onRetry} style={{padding:"7px 16px",borderRadius:7,cursor:"pointer",border:`1px solid ${C.border}`,background:C.white,color:C.text,fontFamily:"'Geist',sans-serif",fontSize:13}}>Tekrar Dene</button>}
+      {onRetry && <button onClick={onRetry} style={{padding:"7px 16px",borderRadius:8,cursor:"pointer",border:`1px solid ${C.border}`,background:C.white,color:C.text,fontFamily:"'Geist',sans-serif",fontSize:13}}>Tekrar Dene</button>}
     </div>
   );
 }
@@ -22570,7 +22591,7 @@ function Modal({ title, onClose, onSubmit, submitLabel, children, wide, danger }
           <div style={{fontSize:17, fontWeight:700, color:C.text, fontFamily:"'Geist',sans-serif"}}>
             {title}
           </div>
-          <button onClick={onClose} style={{
+          <button onClick={onClose} aria-label="Kapat" style={{
             width:32, height:32, borderRadius:T.radiusSm, border:`1px solid ${C.border}`,
             background:"transparent", cursor:"pointer", color:C.textFaint,
             display:"flex", alignItems:"center", justifyContent:"center",
@@ -22862,7 +22883,7 @@ function TourChannelRows({ channels, setChannels, sources, srcLoading }) {
                   options={[["","— Seçiniz —"], ...sources.filter(s=>s.id===c.sourceId || !usedSourceIds.has(s.id)).map(s=>[s.id, s.name])]}/>
               </div>
               <button type="button" onClick={()=>removeRow(i)} style={{
-                padding:"9px 10px", borderRadius:7, border:`1px solid ${C.border}`, background:C.white,
+                padding:"9px 10px", borderRadius:8, border:`1px solid ${C.border}`, background:C.white,
                 cursor:"pointer", color:C.red, flexShrink:0, display:"flex", alignItems:"center",
               }}><RIc d="M18 6L6 18M6 6l12 12" size={13} sw={2}/></button>
             </div>
@@ -22909,7 +22930,7 @@ function TourChannelRows({ channels, setChannels, sources, srcLoading }) {
       })}
       <button type="button" onClick={addRow} disabled={allUsed} style={{
         alignSelf:"flex-start", display:"flex", alignItems:"center", gap:6,
-        padding:"8px 14px", borderRadius:7, border:`1px dashed ${C.border}`, background:C.white,
+        padding:"8px 14px", borderRadius:8, border:`1px dashed ${C.border}`, background:C.white,
         cursor: allUsed ? "not-allowed" : "pointer",
         color:C.text, fontFamily:"'Geist',sans-serif", fontSize:12.5, fontWeight:500,
         opacity: allUsed ? 0.5 : 1,
@@ -22937,14 +22958,14 @@ function TourInclusionsEditor({ items, setItems, addLabel, placeholder }) {
             <FText value={val} onChange={v=>updateRow(i,v)} placeholder={placeholder}/>
           </div>
           <button type="button" onClick={()=>removeRow(i)} style={{
-            padding:"9px 10px", borderRadius:7, border:`1px solid ${C.border}`, background:C.white,
+            padding:"9px 10px", borderRadius:8, border:`1px solid ${C.border}`, background:C.white,
             cursor:"pointer", color:C.red, flexShrink:0, display:"flex", alignItems:"center",
           }}><RIc d="M18 6L6 18M6 6l12 12" size={13} sw={2}/></button>
         </div>
       ))}
       <button type="button" onClick={addRow} style={{
         alignSelf:"flex-start", display:"flex", alignItems:"center", gap:6,
-        padding:"8px 14px", borderRadius:7, border:`1px dashed ${C.border}`, background:C.white,
+        padding:"8px 14px", borderRadius:8, border:`1px dashed ${C.border}`, background:C.white,
         cursor:"pointer", color:C.text, fontFamily:"'Geist',sans-serif", fontSize:12.5, fontWeight:500,
       }}>
         <RIc d="M12 5v14m-7-7h14" size={13} sw={2}/>
@@ -22982,17 +23003,17 @@ function TourItineraryStopRows({ stops, setStops }) {
             </div>
             <div style={{ display:"flex", gap:4, flexShrink:0 }}>
               <button type="button" onClick={()=>move(i,-1)} disabled={i===0} style={{
-                padding:"9px 8px", borderRadius:7, border:`1px solid ${C.border}`, background:C.white,
+                padding:"9px 8px", borderRadius:8, border:`1px solid ${C.border}`, background:C.white,
                 cursor: i===0 ? "not-allowed" : "pointer", color: i===0 ? C.textFaint : C.textMid,
                 opacity: i===0 ? 0.5 : 1, display:"flex", alignItems:"center",
               }}><RIc d="M18 15l-6-6-6 6" size={13} sw={2}/></button>
               <button type="button" onClick={()=>move(i,1)} disabled={i===list.length-1} style={{
-                padding:"9px 8px", borderRadius:7, border:`1px solid ${C.border}`, background:C.white,
+                padding:"9px 8px", borderRadius:8, border:`1px solid ${C.border}`, background:C.white,
                 cursor: i===list.length-1 ? "not-allowed" : "pointer", color: i===list.length-1 ? C.textFaint : C.textMid,
                 opacity: i===list.length-1 ? 0.5 : 1, display:"flex", alignItems:"center",
               }}><RIc d="M6 9l6 6 6-6" size={13} sw={2}/></button>
               <button type="button" onClick={()=>removeRow(i)} style={{
-                padding:"9px 10px", borderRadius:7, border:`1px solid ${C.border}`, background:C.white,
+                padding:"9px 10px", borderRadius:8, border:`1px solid ${C.border}`, background:C.white,
                 cursor:"pointer", color:C.red, display:"flex", alignItems:"center",
               }}><RIc d="M18 6L6 18M6 6l12 12" size={13} sw={2}/></button>
             </div>
@@ -23015,7 +23036,7 @@ function TourItineraryStopRows({ stops, setStops }) {
       ))}
       <button type="button" onClick={addRow} style={{
         alignSelf:"flex-start", display:"flex", alignItems:"center", gap:6,
-        padding:"8px 14px", borderRadius:7, border:`1px dashed ${C.border}`, background:C.white,
+        padding:"8px 14px", borderRadius:8, border:`1px dashed ${C.border}`, background:C.white,
         cursor:"pointer", color:C.text, fontFamily:"'Geist',sans-serif", fontSize:12.5, fontWeight:500,
       }}>
         <RIc d="M12 5v14m-7-7h14" size={13} sw={2}/>
@@ -23156,7 +23177,7 @@ function TourFormFields({
             const m = TOUR_STATUS_CFG[s]; const on = status===s;
             return (
               <button key={s} type="button" onClick={()=>setStatus(s)} style={{
-                flex:1, padding:"9px 0", borderRadius:7, cursor:"pointer",
+                flex:1, padding:"9px 0", borderRadius:8, cursor:"pointer",
                 border: on?`1.5px solid ${m.color}`:`1px solid ${C.border}`,
                 background: on?m.bg:C.white, color: on?m.color:C.textMid,
                 fontFamily:"'Geist',sans-serif", fontSize:13, fontWeight:on?600:400,
@@ -24635,7 +24656,7 @@ function ProposalPreviewModal({ data, quoteNumber, onClose, onSend }) {
 
         <div style={{ display:'flex', gap:8 }}>
           {pdfError && !sent && (
-            <div style={{ padding:'6px 12px', borderRadius:7, background:'rgba(201,168,76,0.1)',
+            <div style={{ padding:'6px 12px', borderRadius:8, background:'rgba(201,168,76,0.1)',
               border:'1px solid rgba(201,168,76,0.3)',
               fontSize:12, fontFamily:"'DM Sans',sans-serif", color:'#92660A' }}>
               ⚠ {pdfError}
@@ -25475,7 +25496,7 @@ function MobileNotificationBell() {
             marginTop:"calc(48px + env(safe-area-inset-top, 0px))",
             background:C.white, maxHeight:"70vh", overflowY:"auto",
             borderBottomLeftRadius:T.radiusSm, borderBottomRightRadius:T.radiusSm,
-            boxShadow:"0 12px 32px rgba(13,27,62,0.25)",
+            boxShadow:T.shadowPopover,
           }}>
             <NotificationPanelBody notifications={notifications} loading={loading} unreadCount={unread.length} onSelect={handleSelect}/>
           </div>
@@ -25774,7 +25795,6 @@ function App() {
         ::-webkit-scrollbar-track { background: transparent; }
         ::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 99px; }
         @keyframes fadeUp { from { opacity:0; transform:translateY(7px); } to { opacity:1; transform:translateY(0); } }
-        @keyframes slideIn { from { transform:translateX(-100%); } to { transform:translateX(0); } }
         .fade { animation: fadeUp 0.25s ease both; }
         a { cursor: pointer; }
 
@@ -26255,7 +26275,7 @@ function BottomNav({ active, navigate }) {
       {BOTTOM_NAV_ITEMS.map(it=>{
         const on = active === it.id;
         return (
-          <button key={it.id} onClick={()=>navigate('/'+it.id)} style={{
+          <button key={it.id} onClick={()=>navigate('/'+it.id)} aria-current={on ? "page" : undefined} style={{
             flex:1, border:"none", background:"transparent", cursor:"pointer",
             display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center",
             gap:3, padding:"8px 4px 6px", minHeight:52,
@@ -26851,7 +26871,10 @@ function _MobileCivitatisHakedisleriView() {
           const busy = mutating && busyPeriod === p.settlementPeriod;
           return (
             <MobileEntityCard key={p.settlementPeriod} style={canRequest ? { border:`1.5px solid ${C.gold}`, background:C.goldPale } : undefined}>
-              <div onClick={()=>setExpanded(isOpen ? null : p.settlementPeriod)} style={{cursor:"pointer"}}>
+              <div onClick={()=>setExpanded(isOpen ? null : p.settlementPeriod)}
+                role="button" tabIndex={0} aria-expanded={isOpen}
+                onKeyDown={e=>{ if (e.target===e.currentTarget && (e.key==="Enter"||e.key===" ")) { e.preventDefault(); setExpanded(isOpen ? null : p.settlementPeriod); } }}
+                style={{cursor:"pointer"}}>
                 <div style={{display:"flex", justifyContent:"space-between", alignItems:"flex-start"}}>
                   <div style={{fontSize:14, fontWeight:700, color:C.text, fontFamily:"'Geist',sans-serif"}}>{_formatCivitatisPeriodLabel(p.settlementPeriod)}</div>
                   {p.hasUnsupportedCurrency ? (
@@ -28022,7 +28045,7 @@ function MobileMessagesPage() {
         }}>
           <textarea value={draft} onChange={e=>setDraft(e.target.value)} placeholder="Mesaj yazın…" rows={1}
             style={{ flex:1, resize:"none", padding:"10px 14px", borderRadius:20, border:`1px solid ${C.border}`, fontSize:14, fontFamily:"'Geist',sans-serif", outline:"none", maxHeight:90 }}/>
-          <button onClick={send} disabled={!draft.trim()} style={{
+          <button onClick={send} disabled={!draft.trim()} aria-label="Gönder" style={{
             width:40, height:40, borderRadius:"50%", flexShrink:0, border:"none",
             cursor: draft.trim() ? "pointer" : "default",
             background: draft.trim() ? C.navy : C.borderLight,
