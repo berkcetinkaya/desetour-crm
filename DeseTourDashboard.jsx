@@ -2908,23 +2908,27 @@ function Sidebar({ currentBase, collapsed, onToggle, mobileOpen, onMobileClose, 
         </svg>
       </button>
       <div style={{padding:"22px 16px 16px", borderBottom:`1px solid ${C.borderLight}`}}>
-        {/* Same asset, same colors, in both themes — dese-logo-mark.png is
-            the properly re-extracted transparent cutout (navy "Dese" +
-            gold "TOUR"). Dark used to swap in seffafdeselogo.png (an
-            OPAQUE, differently-drawn asset) via a mixBlendMode:"screen"
-            trick, which read as a washed-out, visually different logo
-            system rather than the same DeseTour mark — exactly the "does
-            not match light theme" complaint. A brightness/saturate lift
-            (dark only) keeps this literal navy+gold file legible against
-            the dark sidebar surface without changing a single pixel of
-            the PNG or touching light mode's rendering at all. */}
+        {/* Same asset in both themes — dese-logo-mark.png is the properly
+            re-extracted transparent cutout (navy "Dese" + gold "TOUR").
+            Dark used to swap in seffafdeselogo.png (an OPAQUE, differently-
+            drawn asset) via a mixBlendMode:"screen" trick, which read as a
+            washed-out, visually different logo system rather than the same
+            DeseTour mark. A brightness/saturate lift was tried next, but
+            keeping the literal navy/gold colors meant the navy "Dese" half
+            still sat close in luminance to the dark sidebar and kept fading
+            — not the fully visible, high-contrast mark asked for. dark now
+            uses brightness(0) invert(1): this flattens every opaque pixel
+            of the (alpha-transparent) PNG to solid white regardless of its
+            original color, so "Dese" and "TOUR" both render as one crisp
+            white silhouette — same file, same size/position, no pixel of
+            the PNG touched, light mode untouched. */}
         <img
           src="/dese-logo-mark.png"
           alt="Dese Tour"
           style={{
             width:"100%", maxWidth:collapsed?40:160,
             height:"auto", display:"block",
-            filter: light ? "none" : "brightness(1.6) saturate(1.05)",
+            filter: light ? "none" : "brightness(0) invert(1)",
             transition:`max-width ${T.motionBase} cubic-bezier(0.4,0,0.2,1)`,
           }}
         />
