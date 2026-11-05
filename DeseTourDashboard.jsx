@@ -2794,24 +2794,6 @@ function SidebarVersionInfo({ padded = true, light = false }) {
   );
 }
 
-// Quiet "Powered by" platform attribution — desktop sidebar footer only
-// (per the brief, the mobile BottomNav/drawer don't need it, and the
-// sidebar's own collapsed rail drops it rather than squeezing the full
-// logo into ~40px). qiteos-logo.png is the official transparent wordmark
-// (confirmed via composite test against navy/white/ivory — no background
-// box, reads cleanly everywhere), used as uploaded with no recoloring or
-// redrawing.
-function QiteosAttribution({ light }) {
-  return (
-    <div style={{ padding:"0 16px 10px", display:"flex", alignItems:"center", gap:6 }}>
-      <span style={{ fontSize:9, color: light ? C.textFaint : "rgba(248,245,238,0.3)", fontFamily:"'Geist',sans-serif" }}>
-        Powered by
-      </span>
-      <img src="/qiteos-logo.png" alt="QITEOS" style={{ height:15, width:"auto", display:"block" }}/>
-    </div>
-  );
-}
-
 function Sidebar({ currentBase, collapsed, onToggle, mobileOpen, onMobileClose, theme }) {
   const auth = useAuthContext();
   const light = theme === "light";
@@ -3003,7 +2985,6 @@ function Sidebar({ currentBase, collapsed, onToggle, mobileOpen, onMobileClose, 
         </button>
       </div>
       {!collapsed && <SidebarVersionInfo light={light}/>}
-      {!collapsed && <QiteosAttribution light={light}/>}
       {/* Phase 2: no longer its own separately-bordered block — the
           profile block above already opened the "account/meta" zone
           with ONE divider; stacking a second divider here right after
@@ -20906,6 +20887,34 @@ function DataSourceBadge({ isMobile }) {
   );
 }
 
+// "Powered by QITEOS" platform attribution — desktop app-shell only,
+// rendered once as a sibling AFTER the routed page content inside
+// <main> (not fixed/sticky, not per-page), so it's the last thing in
+// normal document flow: reached by scrolling to the actual end of a
+// page's content, never floating over cards/tables/forms regardless of
+// viewport height or scroll position. A previous fixed bottom-right
+// version was rejected for exactly that overlap risk (confirmed on the
+// Dashboard, where a tall right-column card or KPI row can reach the
+// viewport's bottom-right corner depending on height) — this version
+// has no position/z-index at all, so that risk doesn't exist here.
+// Deliberately placed OUTSIDE the <div className="fade" key={path}>
+// wrapper so it doesn't re-trigger that per-navigation fade animation.
+// Mobile keeps no QITEOS attribution anywhere (not above/below
+// BottomNav); the sidebar footer went back to carrying only DeseTour
+// CRM/account/version info. qiteos-logo.png is the official transparent
+// asset, used unmodified — no shadow needed now that it never sits over
+// unpredictable content.
+function QiteosGlobalAttribution() {
+  return (
+    <div style={{ display:"flex", justifyContent:"flex-end", marginTop:28 }}>
+      <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:4 }}>
+        <span style={{ fontSize:10, color:C.textFaint, fontFamily:"'Geist',sans-serif" }}>Powered by</span>
+        <img src="/qiteos-logo.png" alt="QITEOS" style={{ width:80, height:"auto", display:"block" }}/>
+      </div>
+    </div>
+  );
+}
+
 // "leads"/"quotes" stay in the Satış/Operasyon lists even though neither
 // role has a nav entry pointing at them anymore — that only retired the
 // list/create/edit entry points (Talepler/Teklifler simplification); the
@@ -26057,6 +26066,7 @@ function App() {
         <div className="fade" key={path}>
           <PageRouter base={base} param={param} isMobile={isMobile} navigate={navigate}/>
         </div>
+        {!isMobile && <QiteosGlobalAttribution/>}
       </main>
       {toastMsg && <Toast msg={toastMsg} onDone={()=>setToastMsg(null)}/>}
       <DataSourceBadge isMobile={isMobile}/>
