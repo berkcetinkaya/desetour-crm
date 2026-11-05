@@ -7838,6 +7838,32 @@ function RBadge({ label, map, small }) {
   );
 }
 
+// Phase 5 — shared compact stat card, matching the Phase 3/4 visual
+// language already established on Dashboard/Reservations: a plain,
+// small icon next to a quiet label, the big value below, no boxed/
+// tinted icon tile. `icon` is a pre-rendered icon element (each page
+// keeps using its own local Ic/URIc/GIc/HIc/RpIc renderer) so this
+// component has no dependency on any one icon component. Used by
+// Phase 5's secondary pages (Payments, Reminders, Tours, Agencies,
+// Guides, Guide Detail, Customers) in place of their old oversized
+// colored icon-tile stat cards — Dashboard/KpiCard and the
+// Reservations list's own stat row are untouched, by design.
+function StatCard({ icon, color, value, label, sub }) {
+  return (
+    <div style={{
+      background:C.white, border:`1px solid ${C.border}`, borderRadius:T.radius,
+      padding:"16px 18px", display:"flex", flexDirection:"column", gap:8,
+    }}>
+      <div style={{ display:"flex", alignItems:"center", gap:7 }}>
+        <span style={{ display:"flex", flexShrink:0, color: color || C.textFaint }}>{icon}</span>
+        <span style={{ fontSize:11, color:C.textMuted, fontFamily:"'Geist',sans-serif" }}>{label}</span>
+      </div>
+      <div style={{ fontSize:24, fontWeight:700, color: color || C.text, fontFamily:"'Geist',sans-serif", lineHeight:1 }}>{value}</div>
+      {sub ? <div style={{ fontSize:11, color:C.textFaint, fontFamily:"'Geist',sans-serif" }}>{sub}</div> : null}
+    </div>
+  );
+}
+
 function GuideChip({ name }) {
   if (!name) return (
     <span style={{
@@ -11149,7 +11175,7 @@ function PaymentDrawer({ payment, onClose }) {
         position:"relative", zIndex:1,
         width:400, height:"100%",
         background:C.white,
-        boxShadow:"-8px 0 40px rgba(13,27,62,0.18)",
+        boxShadow:T.shadowModal,
         display:"flex", flexDirection:"column",
         overflowY:"auto",
       }}>
@@ -11292,9 +11318,11 @@ function PaymentRow({ p, isLast, onOpen }) {
   return (
     <tr className="dt-row"
       onClick={()=>onOpen(p)}
+      tabIndex={0}
+      onKeyDown={e=>{ if (e.target===e.currentTarget && (e.key==="Enter"||e.key===" ")) { e.preventDefault(); onOpen(p); } }}
       style={{
         background:C.white,
-        cursor:"pointer", transition:"background .1s",
+        cursor:"pointer", transition:`background ${T.motionFast} ease`,
         opacity: p.status === "İade Edildi" ? 0.65 : 1,
       }}
     >
@@ -11773,53 +11801,46 @@ function _DogrudanOdemelerView() {
               label:"Beklenen Toplam Gelir", val:`€${totalExp.toLocaleString("tr-TR")}`,
               sub:"EUR bazlı rezervasyonlar",
               icon:"M12 2v20M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6",
-              color:C.text, iconColor:C.textMuted, iconBg:C.ivoryDark,
+              color:C.text, iconColor:C.textMuted,
               progress:null,
             },
             {
               label:"Tahsil Edilen", val:`€${totalColl.toLocaleString("tr-TR")}`,
               sub:`%${collPct} tahsil edildi`,
               icon:"M22 11.08V12a10 10 0 11-5.93-9.14 M22 4L12 14.01l-3-3",
-              color:C.green, iconColor:C.green, iconBg:C.greenBg,
+              color:C.green, iconColor:C.green,
               progress:collPct,
             },
             {
               label:"Bekleyen Ödemeler", val:`€${totalPending.toLocaleString("tr-TR")}`,
               sub:`${_allPays.filter(p=>p.remaining>0&&p.currency==="EUR"&&!["İade Edildi"].includes(p.status)).length} rezervasyon`,
               icon:"M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z",
-              color:C.red, iconColor:C.red, iconBg:C.redBg,
+              color:C.red, iconColor:C.red,
               progress:null,
             },
             {
               label:"Bu Ayki Tahsilat", val:`€${thisMonth.toLocaleString("tr-TR")}`,
               sub:new Date().toLocaleDateString("tr-TR",{month:"long",year:"numeric"}),
               icon:"M8 2v4M16 2v4M3 10h18M21 8a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2h14a2 2 0 002-2V8z",
-              color:C.gold, iconColor:C.gold, iconBg:C.goldPale,
+              color:C.gold, iconColor:C.gold,
               progress:null,
             },
           ].map((k,i)=>(
             <div key={i} style={{
-              background:C.white, border:`1px solid ${C.border}`, borderRadius:12,
-              padding:"18px 20px",
+              background:C.white, border:`1px solid ${C.border}`, borderRadius:T.radius,
+              padding:"16px 18px", display:"flex", flexDirection:"column", gap:8,
             }}>
-              <div style={{display:"flex", alignItems:"flex-start", gap:14, marginBottom: k.progress!=null ? 10 : 0}}>
-                <div style={{
-                  width:42, height:42, borderRadius:10, flexShrink:0,
-                  background:k.iconBg, display:"flex", alignItems:"center", justifyContent:"center",
-                }}>
-                  <PIc d={k.icon} size={18} sw={1.6} color={k.iconColor}/>
-                </div>
-                <div style={{flex:1}}>
-                  <div style={{fontSize:11.5, color:C.textFaint, fontFamily:"'Geist',sans-serif", marginBottom:4}}>{k.label}</div>
-                  <div style={{fontSize:24, fontWeight:700, color:k.color, fontFamily:"'Geist',sans-serif", lineHeight:1}}>{k.val}</div>
-                  <div style={{fontSize:11.5, color:C.textFaint, fontFamily:"'Geist',sans-serif", marginTop:4}}>{k.sub}</div>
-                </div>
+              <div style={{display:"flex", alignItems:"center", gap:7}}>
+                <span style={{display:"flex", flexShrink:0, color:k.iconColor}}>
+                  <PIc d={k.icon} size={13} sw={1.6}/>
+                </span>
+                <span style={{fontSize:11, color:C.textMuted, fontFamily:"'Geist',sans-serif"}}>{k.label}</span>
               </div>
+              <div style={{fontSize:24, fontWeight:700, color:k.color, fontFamily:"'Geist',sans-serif", lineHeight:1}}>{k.val}</div>
+              <div style={{fontSize:11, color:C.textFaint, fontFamily:"'Geist',sans-serif"}}>{k.sub}</div>
               {k.progress != null && (
-                <div>
-                  <div style={{height:5, background:C.ivoryDark, borderRadius:99, overflow:"hidden"}}>
-                    <div style={{width:`${k.progress}%`, height:"100%", background:C.green, borderRadius:99}}/>
-                  </div>
+                <div style={{height:5, background:C.ivoryDark, borderRadius:T.radiusPill, overflow:"hidden"}}>
+                  <div style={{width:`${k.progress}%`, height:"100%", background:C.green, borderRadius:T.radiusPill}}/>
                 </div>
               )}
             </div>
@@ -12064,7 +12085,7 @@ function ReminderRow({ rem, isLast, onToggle }) {
     <tr className="dt-row"
       style={{
         background:C.white,
-        transition:"background .1s",
+        transition:`background ${T.motionFast} ease`,
         opacity: done ? 0.65 : 1,
       }}
     >
@@ -12411,22 +12432,7 @@ function RemindersPage() {
           { label:"Yarınki Turlar",      val:todayTours,  icon:"M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z M9 22V12h6v10", color:C.amber, bg:C.amberBg, sub:"04 Haziran 2026" },
           { label:"Ödeme Hatırlatması",  val:payPending,  icon:"M2 9a2 2 0 012-2h16a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V9zM2 13h20", color:C.orange,bg:C.orangeBg,sub:"Ödeme takibi gerekli" },
         ].map((k,i)=>(
-          <div key={i} style={{
-            background:C.white, border:`1px solid ${C.border}`, borderRadius:12,
-            padding:"18px 20px", display:"flex", alignItems:"flex-start", gap:14,
-          }}>
-            <div style={{
-              width:42, height:42, borderRadius:10, flexShrink:0,
-              background:k.bg, display:"flex", alignItems:"center", justifyContent:"center",
-            }}>
-              <HIc d={k.icon} size={18} sw={1.6} color={k.color}/>
-            </div>
-            <div style={{flex:1}}>
-              <div style={{fontSize:26, fontWeight:700, color:k.color, fontFamily:"'Geist',sans-serif", lineHeight:1, marginBottom:4}}>{k.val}</div>
-              <div style={{fontSize:12, color:C.textMuted, fontFamily:"'Geist',sans-serif", marginBottom:2}}>{k.label}</div>
-              <div style={{fontSize:11, color:C.textFaint, fontFamily:"'Geist',sans-serif"}}>{k.sub}</div>
-            </div>
-          </div>
+          <StatCard key={i} icon={<HIc d={k.icon} size={13} sw={1.6}/>} color={k.color} value={k.val} label={k.label} sub={k.sub}/>
         ))}
       </div>
 
@@ -13492,18 +13498,7 @@ function ToursPage({ onSelect }) {
           { label:"Taslak",          val:allTours.filter(t=>t.status==="Taslak").length,icon:"M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z", color:C.amber, bg:C.amberBg },
           { label:"Yayındaki Kanal", val:activeChannelCount,                            icon:"M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01", color:C.blue,  bg:C.blueBg },
         ].map((k,i)=>(
-          <div key={i} style={{
-            background:C.white, border:`1px solid ${C.border}`, borderRadius:12,
-            padding:"18px 20px", display:"flex", alignItems:"center", gap:14,
-          }}>
-            <div style={{width:40, height:40, borderRadius:10, flexShrink:0, background:k.bg, display:"flex", alignItems:"center", justifyContent:"center"}}>
-              <URIc d={k.icon} size={18} sw={1.6} color={k.color}/>
-            </div>
-            <div>
-              <div style={{fontSize:24, fontWeight:700, color:k.color, fontFamily:"'Geist',sans-serif", lineHeight:1, marginBottom:3}}>{k.val}</div>
-              <div style={{fontSize:12, color:C.textMuted, fontFamily:"'Geist',sans-serif"}}>{k.label}</div>
-            </div>
-          </div>
+          <StatCard key={i} icon={<URIc d={k.icon} size={13} sw={1.6}/>} color={k.color} value={k.val} label={k.label}/>
         ))}
       </div>
 
@@ -13570,8 +13565,10 @@ function ToursPage({ onSelect }) {
                   return (
                     <tr key={tour.id} className="dt-row"
                       onClick={()=>onSelect&&onSelect(tour.id)}
+                      tabIndex={0}
+                      onKeyDown={e=>{ if (e.target===e.currentTarget && (e.key==="Enter"||e.key===" ") && onSelect) { e.preventDefault(); onSelect(tour.id); } }}
                       style={{
-                        background:C.white, cursor:"pointer", transition:"background .1s",
+                        background:C.white, cursor:"pointer", transition:`background ${T.motionFast} ease`,
                         opacity:tour.status==="Arşiv"?0.65:1,
                       }}>
                       {}
@@ -14046,18 +14043,7 @@ function AcentelerPage({ onSelect }) {
 
       <div className="rsp-stat-grid" style={{display:"grid", gridTemplateColumns:"repeat(6,1fr)", gap:12}}>
         {OVERVIEW_METRICS.map((k,i)=>(
-          <div key={i} style={{
-            background:C.white, border:`1px solid ${C.border}`, borderRadius:12,
-            padding:"14px 14px", display:"flex", flexDirection:"column", gap:10,
-          }}>
-            <div style={{width:32, height:32, borderRadius:8, flexShrink:0, background:k.bg, display:"flex", alignItems:"center", justifyContent:"center"}}>
-              <URIc d={k.icon} size={15} sw={1.7} color={k.color}/>
-            </div>
-            <div>
-              <div style={{fontSize:21, fontWeight:700, color:k.color, fontFamily:"'Geist',sans-serif", lineHeight:1, marginBottom:3}}>{k.val}</div>
-              <div style={{fontSize:11, color:C.textMuted, fontFamily:"'Geist',sans-serif"}}>{k.label}</div>
-            </div>
-          </div>
+          <StatCard key={i} icon={<URIc d={k.icon} size={13} sw={1.7}/>} color={k.color} value={k.val} label={k.label}/>
         ))}
       </div>
 
@@ -15425,18 +15411,7 @@ function GuidesPage({ onSelect }) {
           { label:"Bugün Görevli",        val:onDutyToday,  icon:"M8 2v4M16 2v4M3 10h18M21 8a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2h14a2 2 0 002-2V8z", color:C.amber, bg:C.amberBg },
           { label:"Bu Ay Rehber Ödemeleri", val:`€${monthPaidEur.toLocaleString("tr-TR")}`, icon:"M12 2v20M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6", color:C.gold, bg:C.goldPale },
         ].map((k,i)=>(
-          <div key={i} style={{
-            background:C.white, border:`1px solid ${C.border}`, borderRadius:12,
-            padding:"18px 20px", display:"flex", alignItems:"center", gap:14,
-          }}>
-            <div style={{width:40, height:40, borderRadius:10, flexShrink:0, background:k.bg, display:"flex", alignItems:"center", justifyContent:"center"}}>
-              <URIc d={k.icon} size={18} sw={1.6} color={k.color}/>
-            </div>
-            <div>
-              <div style={{fontSize:24, fontWeight:700, color:k.color, fontFamily:"'Geist',sans-serif", lineHeight:1, marginBottom:3}}>{k.val}</div>
-              <div style={{fontSize:12, color:C.textMuted, fontFamily:"'Geist',sans-serif"}}>{k.label}</div>
-            </div>
-          </div>
+          <StatCard key={i} icon={<URIc d={k.icon} size={13} sw={1.6}/>} color={k.color} value={k.val} label={k.label}/>
         ))}
       </div>
 
@@ -15843,18 +15818,7 @@ function GuideDetailPage({ guideId, onBack }) {
 
       <div className="rsp-stat-grid" style={{display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:14}}>
         {KPIS.map((k,i)=>(
-          <div key={i} style={{
-            background:C.white, border:`1px solid ${C.border}`, borderRadius:12,
-            padding:"14px 16px", display:"flex", alignItems:"center", gap:12,
-          }}>
-            <div style={{width:36, height:36, borderRadius:9, flexShrink:0, background:k.bg, display:"flex", alignItems:"center", justifyContent:"center"}}>
-              <URIc d={k.icon} size={16} sw={1.6} color={k.color}/>
-            </div>
-            <div>
-              <div style={{fontSize:18, fontWeight:700, color:k.color, fontFamily:"'Geist',sans-serif", lineHeight:1}}>{k.val}</div>
-              <div style={{fontSize:11, color:C.textFaint, fontFamily:"'Geist',sans-serif", marginTop:3}}>{k.label}</div>
-            </div>
-          </div>
+          <StatCard key={i} icon={<URIc d={k.icon} size={13} sw={1.6}/>} color={k.color} value={k.val} label={k.label}/>
         ))}
       </div>
 
@@ -16112,15 +16076,18 @@ function SIc({ d, size=15, sw=1.6, color }) {
 
 function SToggle({ on, onChange }) {
   return (
-    <div onClick={()=>onChange(!on)} style={{
-      width:44, height:24, borderRadius:99, cursor:"pointer",
-      background:on?C.navy:C.borderLight, transition:"background .2s",
-      position:"relative", flexShrink:0,
-    }}>
+    <div onClick={()=>onChange(!on)}
+      role="switch" aria-checked={on} tabIndex={0}
+      onKeyDown={e=>{ if (e.key==="Enter"||e.key===" ") { e.preventDefault(); onChange(!on); } }}
+      style={{
+        width:44, height:24, borderRadius:T.radiusPill, cursor:"pointer",
+        background:on?C.navy:C.borderLight, transition:`background ${T.motionBase} ease`,
+        position:"relative", flexShrink:0,
+      }}>
       <div style={{
         width:18, height:18, borderRadius:"50%", background:C.white,
         position:"absolute", top:3, left:on?23:3,
-        transition:"left .2s", boxShadow:"0 1px 4px rgba(0,0,0,0.2)",
+        transition:`left ${T.motionBase} ease`, boxShadow:T.shadowSoft,
       }}/>
     </div>
   );
@@ -16146,11 +16113,11 @@ function SInput({ value, onChange, placeholder, type="text" }) {
       onFocus={()=>setFoc(true)} onBlur={()=>setFoc(false)}
       style={{
         width:"100%", padding:"9px 12px", boxSizing:"border-box",
-        border:`1px solid ${foc?C.gold:C.border}`, borderRadius:7,
+        border:`1px solid ${foc?C.gold:C.border}`, borderRadius:T.radiusSm,
         background:C.ivory, fontSize:13, color:C.text,
         fontFamily:"'Geist',sans-serif", outline:"none",
         boxShadow:foc?`0 0 0 3px ${C.gold}18`:"none",
-        transition:"border-color .15s, box-shadow .15s",
+        transition:`border-color ${T.motionFast} ease, box-shadow ${T.motionFast} ease`,
       }}/>
   );
 }
@@ -16158,7 +16125,7 @@ function SInput({ value, onChange, placeholder, type="text" }) {
 function SSelect({ value, onChange, options }) {
   return (
     <select value={value} onChange={e=>onChange(e.target.value)} style={{
-      padding:"9px 12px", border:`1px solid ${C.border}`, borderRadius:7,
+      padding:"9px 12px", border:`1px solid ${C.border}`, borderRadius:T.radiusSm,
       background:C.ivory, fontSize:13, color:C.text,
       fontFamily:"'Geist',sans-serif", outline:"none", cursor:"pointer",
     }}>
@@ -16199,7 +16166,7 @@ function SaveBtn({ saved, onClick }) {
       border:"none", background:saved?C.green:C.navy,
       cursor:"pointer", color:C.onDarkSolid,
       fontFamily:"'Geist',sans-serif", fontSize:13, fontWeight:600,
-      transition:"background .2s",
+      transition:`background ${T.motionBase} ease`,
     }}>
       <SIc d={saved?"M20 6L9 17l-5-5":"M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v14a2 2 0 01-2 2z M17 21v-8H7v8 M7 3v5h8"} size={14} sw={2} color="#fff"/>
       {saved?"Kaydedildi ✓":"Kaydet"}
@@ -17555,7 +17522,7 @@ function ReportsPage() {
                 {metrics.sources.map((s,i)=>{
                   return (
                     <tr key={i} className="dt-row"
-                      style={{background:C.white, transition:"background .1s"}}>
+                      style={{background:C.white, transition:`background ${T.motionFast} ease`}}>
                       <td style={{padding:"12px 10px", borderBottom:`1px solid ${C.borderLight}`, verticalAlign:"middle"}}>
                         <span style={{fontSize:13.5, fontWeight:500, color:C.text, fontFamily:"'Geist',sans-serif"}}>{s.source}</span>
                       </td>
@@ -17599,7 +17566,9 @@ function ReportsPage() {
               </thead>
               <tbody>
                 {metrics.guides.map((g,i)=>(
-                  <tr key={g.id} className="dt-row" style={{background:C.white, transition:"background .1s", cursor:"pointer"}}
+                  <tr key={g.id} className="dt-row" style={{background:C.white, transition:`background ${T.motionFast} ease`, cursor:"pointer"}}
+                    tabIndex={0}
+                    onKeyDown={e=>{ if (e.target===e.currentTarget && (e.key==="Enter"||e.key===" ") && NAV_REF.fn) { e.preventDefault(); NAV_REF.fn('/guides/'+g.id); } }}
                     onClick={()=>{ if(NAV_REF.fn) NAV_REF.fn('/guides/'+g.id); }}>
                     <td style={{padding:"12px 10px", borderBottom:`1px solid ${C.borderLight}`, verticalAlign:"middle"}}>
                       <span style={{fontSize:13.5, fontWeight:500, color:C.text, fontFamily:"'Geist',sans-serif"}}>{g.name}</span>
@@ -17697,7 +17666,7 @@ function ReportsPage() {
                   const isTop = i===0;
                   return (
                     <tr key={i} className="dt-row"
-                      style={{background:C.white, transition:"background .1s"}}>
+                      style={{background:C.white, transition:`background ${T.motionFast} ease`}}>
                       <td style={{padding:"11px 12px", borderBottom:`1px solid ${C.borderLight}`, verticalAlign:"middle"}}>
                         <div style={{display:"flex", alignItems:"center", gap:8}}>
                           <span style={{fontSize:18}}>{c.flag}</span>
@@ -17743,7 +17712,7 @@ function ReportsPage() {
               </thead>
               <tbody>
                 {Object.entries(metrics.payments.byCurrency).map(([cur,b],i)=>(
-                  <tr key={i} className="dt-row" style={{background:C.white, transition:"background .1s"}}>
+                  <tr key={i} className="dt-row" style={{background:C.white, transition:`background ${T.motionFast} ease`}}>
                     <td style={{padding:"12px 10px", borderBottom:`1px solid ${C.borderLight}`, verticalAlign:"middle"}}>
                       <span style={{fontSize:13.5, fontWeight:600, color:C.text, fontFamily:"'Geist',sans-serif"}}>{cur}</span>
                     </td>
@@ -18918,7 +18887,9 @@ function ConvItem({ conv, active, onClick }) {
   const cust = getCustomerById(conv.customerId);
   return (
     <div onMouseEnter={()=>setHov(true)} onMouseLeave={()=>setHov(false)} onClick={onClick}
-      style={{padding:"13px 16px",borderBottom:`1px solid ${C.borderLight}`,cursor:"pointer",background:active?`rgba(27,45,79,0.06)`:hov?C.ivory:C.white,borderLeft:`3px solid ${active?C.gold:"transparent"}`,transition:"background .1s",position:"relative"}}>
+      tabIndex={0}
+      onKeyDown={e=>{ if ((e.key==="Enter"||e.key===" ") && onClick) { e.preventDefault(); onClick(); } }}
+      style={{padding:"13px 16px",borderBottom:`1px solid ${C.borderLight}`,cursor:"pointer",background:active?`rgba(27,45,79,0.06)`:hov?C.ivory:C.white,borderLeft:`3px solid ${active?C.gold:"transparent"}`,transition:`background ${T.motionFast} ease`,position:"relative"}}>
       {conv.unread>0 && <div style={{position:"absolute",top:14,right:14,minWidth:18,height:18,borderRadius:99,padding:"0 5px",background:C.red,color:"#fff",fontSize:10,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Geist',sans-serif"}}>{conv.unread}</div>}
       <div style={{display:"flex",alignItems:"flex-start",gap:10,marginBottom:6}}>
         <div style={{width:36,height:36,borderRadius:"50%",flexShrink:0,background:active?"rgba(27,45,79,0.15)":"rgba(27,45,79,0.08)",display:"flex",alignItems:"center",justifyContent:"center",position:"relative"}}>
@@ -19068,10 +19039,8 @@ function MessagesPage() {
 
   if (conversations.length === 0) {
     return (
-      <div style={{background:C.white,border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden",height:isMobile?"calc(100vh - 52px)":"calc(100vh - 80px)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:14}}>
-        <div style={{width:64,height:64,borderRadius:"50%",background:"rgba(27,45,79,0.07)",display:"flex",alignItems:"center",justifyContent:"center"}}>
-          <MsgIc d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" size={28} sw={1.3} color={C.textMuted}/>
-        </div>
+      <div style={{background:C.white,border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden",height:isMobile?"calc(100vh - 52px)":"calc(100vh - 80px)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:10}}>
+        <MsgIc d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" size={30} sw={1.3} color={C.textFaint}/>
         <div style={{textAlign:"center",padding:"0 24px"}}>
           <div style={{fontSize:16,fontWeight:600,color:C.text,fontFamily:"'Geist',sans-serif",marginBottom:6}}>Henüz mesaj bulunmuyor.</div>
           <div style={{fontSize:13,color:C.textFaint,fontFamily:"'Geist',sans-serif",maxWidth:340}}>Gmail ve WhatsApp entegrasyonları etkinleştirildiğinde müşteri konuşmaları burada görüntülenecek.</div>
