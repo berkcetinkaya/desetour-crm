@@ -188,7 +188,9 @@ test('the sidebar renders the BUILD date (formatBuildTimestampTR of the baked-in
 });
 
 test('SidebarVersionInfo is wired into both the desktop sidebar and the mobile drawer', () => {
-  assert.match(SOURCE, /\{!collapsed && <SidebarVersionInfo\/>\}/);
+  // Desktop sidebar also passes `light` (the new light/dark sidebar
+  // surface prop) — the mobile drawer call site is untouched.
+  assert.match(SOURCE, /\{!collapsed && <SidebarVersionInfo light=\{light\}\/>\}/);
   assert.match(SOURCE, /<SidebarVersionInfo padded=\{false\}\/>/);
 });
 

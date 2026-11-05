@@ -153,6 +153,16 @@ function useHashRouter() {
 const C = {
   navy:"#1B2D4F", navyDeep:"#0F1D35", navyHover:"#243660",
   gold:"#B8973A", goldLight:"#C9A84C", goldPale:"var(--c-gold-pale)",
+  // Deeper, text-safe gold — C.gold/goldLight read ~2.3–2.8:1 against a
+  // white surface (fails WCAG AA for text and even the 3:1 UI-component
+  // floor), so the new light sidebar's gold nav-label text (hover/active)
+  // uses this ~4.9:1 darkened variant instead; icons/indicators there can
+  // still use the brighter C.gold since they're backed by extra redundant
+  // cues (label color, weight, position). Not theme-reactive — like the
+  // rest of this brand/decorative group, it's the same literal in both
+  // themes and is only ever used on the light sidebar surface.
+  goldDeep:"#8A6B1E",
+  goldPaleWash:"var(--c-gold-pale-wash)",
   // Fixed ink colors for text/icons placed ON the brand navy chrome above
   // (sidebar, mobile header, hero/panel gradients, navy buttons) — these
   // surfaces never theme-switch, so the ink sitting on them can't either,
@@ -2413,9 +2423,21 @@ function Card({ children, style }) {
   );
 }
 
-function NavItem({ item, currentBase }) {
+// `variant` — "dark" (navy chrome, the sidebar's original look) or "light"
+// (the new white/ivory sidebar surface). NavItem is desktop-sidebar-only
+// (the mobile drawer uses its own separate inline markup in SidebarInner),
+// so there's no legacy/mobile default to preserve here — every call site
+// passes one explicitly. Both variants share the same interaction
+// language (neutral default, gold hover, gold active, thin indicator);
+// only the literal gold tone differs per surface — dark keeps C.goldLight
+// exactly as before (already ~6:1 on navy), light uses the darker
+// C.goldDeep throughout (label, icon via inherited currentColor, and the
+// indicator bar) since plain C.gold/goldLight read only ~2.3–2.8:1 on
+// white — under both the 4.5:1 text floor and the 3:1 UI-component floor.
+function NavItem({ item, currentBase, variant = "dark" }) {
   const [hov, setHov] = useState(false);
   const on = currentBase === item.id;
+  const light = variant === "light";
   function handleClick(e) {
     e.preventDefault();
     e.stopPropagation();
@@ -2427,6 +2449,22 @@ function NavItem({ item, currentBase }) {
       try { window.location.hash = '#/' + item.id; } catch(_) {}
     }
   }
+  // Light surface needs the darker, text-safe gold (C.goldDeep) for label
+  // AND icon alike — unlike dark/navy, where C.goldLight has always read
+  // fine (~6:1) and is left exactly as it was. Light's hover/active share
+  // one gold tone throughout (no separate "brighter for icon" split) so
+  // the row doesn't mix two different golds against the same white
+  // surface.
+  const textColor = on
+    ? (light ? C.goldDeep : C.goldLight)
+    : hov
+      ? (light ? C.goldDeep : C.goldLight)
+      : (light ? C.textMid : "rgba(248,245,238,0.56)");
+  const rowBg = on
+    ? (light ? C.goldPale : "rgba(184,151,58,0.10)")
+    : hov
+      ? (light ? C.goldPaleWash : "rgba(184,151,58,0.06)")
+      : "transparent";
   return (
     <a href={"#/" + item.id} onClick={handleClick}
       onMouseEnter={()=>setHov(true)} onMouseLeave={()=>setHov(false)}
@@ -2437,14 +2475,13 @@ function NavItem({ item, currentBase }) {
         padding: item._collapsed ? "10px 0" : "9px 14px",
         justifyContent: item._collapsed ? "center" : "flex-start",
         border:"none", borderRadius:T.radiusSm,
-        background: on ? "rgba(184,151,58,0.10)" : hov ? "rgba(255,255,255,0.05)" : "transparent",
-        color: on ? C.goldLight : hov ? "rgba(248,245,238,0.9)" : "rgba(248,245,238,0.56)",
+        background: rowBg, color: textColor,
         cursor:"pointer", textAlign:"left", position:"relative",
         transition:`background ${T.motionFast}, color ${T.motionFast}`,
       }}>
       {on && <span style={{
         position:"absolute", left:0, top:"50%", transform:"translateY(-50%)",
-        width:2.5, height:16, borderRadius:2, background:C.goldLight,
+        width:2.5, height:16, borderRadius:2, background: light ? C.goldDeep : C.goldLight,
       }}/>}
       <span style={{flexShrink:0, opacity:on?1:0.85}}>
         <Ic d={item.icon} size={15} sw={on?2:1.6}/>
@@ -2458,7 +2495,8 @@ function NavItem({ item, currentBase }) {
           minWidth:18, height:18, borderRadius:99, padding:"0 5px",
           display:"inline-flex", alignItems:"center", justifyContent:"center",
           fontSize:10.5, fontWeight:600, lineHeight:1,
-          background:"rgba(184,151,58,0.18)", color:C.goldLight,
+          background: light ? C.goldPale : "rgba(184,151,58,0.18)",
+          color: light ? C.goldDeep : C.goldLight,
         }}>{item.badge}</span>
       )}
     </a>
@@ -2470,11 +2508,31 @@ function NavItem({ item, currentBase }) {
 // version subtitle and a "Yeni" indicator that no other nav item needs.
 // Shared by the desktop sidebar and the mobile drawer so both stay in
 // sync with zero duplicated markup.
-function ChangelogNavRow({ currentBase, onNavigate, collapsed }) {
+//
+// `variant` is left undefined by the mobile drawer (SidebarInner never
+// passes it) so mobile keeps today's exact navy/ivory/goldLight look with
+// zero change. The desktop sidebar passes "dark" or "light" explicitly —
+// "dark" only changes hover (now gold, like the new light surface,
+// instead of a plain near-white brighten) while keeping every existing
+// dark-mode color exactly as it was; "light" is the new white-sidebar
+// treatment, same accessible-gold reasoning as NavItem above.
+function ChangelogNavRow({ currentBase, onNavigate, collapsed, variant }) {
   const hasNewUpdate = useHasNewChangelogUpdate();
   const [hov, setHov] = useState(false);
   const buildVersion = (typeof window !== 'undefined' && window.__DESETOUR_BUILD__ && window.__DESETOUR_BUILD__.version) || (CRM_CHANGELOG[0] && CRM_CHANGELOG[0].version) || null;
   const on = currentBase === "changelog";
+  const light = variant === "light";
+  const activeGold = light ? C.goldDeep : C.goldLight;
+  const textColor = on
+    ? activeGold
+    : hov
+      ? (variant ? activeGold : "rgba(248,245,238,0.9)") // no variant (mobile): unchanged near-white hover
+      : (light ? C.textMid : "rgba(248,245,238,0.6)");
+  const rowBg = on
+    ? (light ? C.goldPale : "rgba(184,151,58,0.10)")
+    : hov
+      ? (light ? C.goldPaleWash : variant ? "rgba(184,151,58,0.06)" : "rgba(255,255,255,0.05)")
+      : "transparent";
   return (
     <button
       onClick={()=>{ markChangelogViewed(); onNavigate(); }}
@@ -2485,8 +2543,7 @@ function ChangelogNavRow({ currentBase, onNavigate, collapsed }) {
         padding: collapsed ? "9px 0" : "9px 14px",
         justifyContent: collapsed ? "center" : "flex-start",
         border:"none", borderRadius:T.radiusSm, marginBottom:2,
-        background: on ? "rgba(184,151,58,0.10)" : hov ? "rgba(255,255,255,0.05)" : "transparent",
-        color: on ? C.goldLight : hov ? "rgba(248,245,238,0.9)" : "rgba(248,245,238,0.6)",
+        background: rowBg, color: textColor,
         cursor:"pointer", textAlign:"left", position:"relative",
         // Same single active-indicator technique NavItem uses, for one
         // consistent visual language across the whole nav list — this
@@ -2495,7 +2552,7 @@ function ChangelogNavRow({ currentBase, onNavigate, collapsed }) {
       }}>
       {on && <span style={{
         position:"absolute", left:0, top:"50%", transform:"translateY(-50%)",
-        width:2.5, height:16, borderRadius:2, background:C.goldLight,
+        width:2.5, height:16, borderRadius:2, background:activeGold,
       }}/>}
       <span style={{flexShrink:0, position:"relative", display:"inline-flex"}}>
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
@@ -2504,14 +2561,14 @@ function ChangelogNavRow({ currentBase, onNavigate, collapsed }) {
           <path d={CHANGELOG_NAV_ICON}/>
         </svg>
         {hasNewUpdate && (
-          <span style={{position:"absolute", top:-3, right:-3, width:6, height:6, borderRadius:"50%", background:C.goldLight, border:"1.5px solid "+C.navyDeep}}/>
+          <span style={{position:"absolute", top:-3, right:-3, width:6, height:6, borderRadius:"50%", background:C.goldLight, border:`1.5px solid ${light ? C.white : C.navyDeep}`}}/>
         )}
       </span>
       {!collapsed && (
         <span style={{flex:1, minWidth:0}}>
           <span style={{display:"block", fontSize:13, fontWeight:on?500:400, fontFamily:"'Geist',sans-serif", whiteSpace:"nowrap"}}>CRM Güncellemeleri</span>
           {buildVersion && (
-            <span style={{display:"block", fontSize:9.5, color:"rgba(248,245,238,0.35)", fontFamily:"'Geist',sans-serif", marginTop:1}}>v{buildVersion}</span>
+            <span style={{display:"block", fontSize:9.5, color: light ? C.textFaint : "rgba(248,245,238,0.35)", fontFamily:"'Geist',sans-serif", marginTop:1}}>v{buildVersion}</span>
           )}
         </span>
       )}
@@ -2685,7 +2742,7 @@ function formatBuildTimestampTR(isoString) {
 // (never hand-edited, never computed at runtime) — see build-version.js.
 // Rendered by both the desktop sidebar and the mobile drawer (SidebarInner)
 // so it's visible wherever "the left sidebar" actually is for that viewport.
-function SidebarVersionInfo({ padded = true }) {
+function SidebarVersionInfo({ padded = true, light = false }) {
   const [open, setOpen] = useState(false);
   const containerRef = useRef(null);
   const meta = (typeof window !== 'undefined' && window.__DESETOUR_BUILD__) || {};
@@ -2707,11 +2764,11 @@ function SidebarVersionInfo({ padded = true }) {
         display:"block", width:"100%", textAlign:"left",
         border:"none", background:"transparent", cursor:"pointer", padding:0,
       }}>
-        <div style={{fontSize:10, color:"rgba(248,245,238,0.38)", fontFamily:"'Geist',sans-serif"}}>
+        <div style={{fontSize:10, color: light ? C.textFaint : "rgba(248,245,238,0.38)", fontFamily:"'Geist',sans-serif"}}>
           DeseTour CRM · {versionLabel}
         </div>
         {updatedLabel && (
-          <div style={{fontSize:9.5, color:"rgba(248,245,238,0.26)", fontFamily:"'Geist',sans-serif", marginTop:1}}>
+          <div style={{fontSize:9.5, color: light ? C.textFaint : "rgba(248,245,238,0.26)", fontFamily:"'Geist',sans-serif", marginTop:1}}>
             Son güncelleme: {updatedLabel}
           </div>
         )}
@@ -2737,8 +2794,30 @@ function SidebarVersionInfo({ padded = true }) {
   );
 }
 
-function Sidebar({ currentBase, collapsed, onToggle, mobileOpen, onMobileClose }) {
+// Quiet "Powered by" platform attribution — desktop sidebar footer only
+// (per the brief, the mobile BottomNav/drawer don't need it, and the
+// sidebar's own collapsed rail drops it rather than squeezing the full
+// logo into ~40px). The uploaded QITEOS asset (qiteos-logo.webp) is an
+// opaque black square tile, not a transparent cutout — fine as-is on the
+// dark sidebar's navy, but an unrounded black box reads as a broken image
+// on the new white surface. Rounding its own corners (not its artwork —
+// no pixel inside the image is touched) is the least invasive fix that
+// works identically on both surfaces, per the "non-destructive background
+// treatment" option in the brief rather than redrawing or recoloring it.
+function QiteosAttribution({ light }) {
+  return (
+    <div style={{ padding:"0 16px 10px", display:"flex", alignItems:"center", gap:6 }}>
+      <span style={{ fontSize:9, color: light ? C.textFaint : "rgba(248,245,238,0.3)", fontFamily:"'Geist',sans-serif" }}>
+        Powered by
+      </span>
+      <img src="/qiteos-logo.webp" alt="QITEOS" style={{ height:15, width:"auto", borderRadius:3, display:"block" }}/>
+    </div>
+  );
+}
+
+function Sidebar({ currentBase, collapsed, onToggle, mobileOpen, onMobileClose, theme }) {
   const auth = useAuthContext();
+  const light = theme === "light";
   const { isMobile } = useBreakpoint();
   const W = collapsed ? SIDEBAR_WIDTH_COLLAPSED : SIDEBAR_WIDTH_EXPANDED;
 
@@ -2804,9 +2883,9 @@ function Sidebar({ currentBase, collapsed, onToggle, mobileOpen, onMobileClose }
   return (
     <aside style={{
       position:"fixed", top:0, left:0, bottom:0, width:W,
-      background:`linear-gradient(180deg, ${C.navyDeep} 0%, ${C.navy} 100%)`,
+      background: light ? C.white : `linear-gradient(180deg, ${C.navyDeep} 0%, ${C.navy} 100%)`,
       display:"flex", flexDirection:"column", zIndex:50,
-      boxShadow:"3px 0 24px rgba(15,29,53,0.28)",
+      boxShadow: light ? T.shadowCard : "3px 0 24px rgba(15,29,53,0.28)",
       borderRight:"1px solid var(--sidebar-edge)",
       transition:`width ${T.motionBase} cubic-bezier(0.4,0,0.2,1)`,
       overflow:"hidden",
@@ -2819,59 +2898,76 @@ function Sidebar({ currentBase, collapsed, onToggle, mobileOpen, onMobileClose }
           position:"absolute", top:"50%", right:-16,
           transform:"translateY(-50%)",
           width:16, height:48, zIndex:10,
-          background:C.navy,
-          border:`1px solid rgba(201,168,76,0.35)`,
+          background: light ? C.white : C.navy,
+          border:`1px solid ${light ? C.border : "rgba(201,168,76,0.35)"}`,
           borderLeft:"none",
           borderRadius:"0 8px 8px 0",
           display:"flex", alignItems:"center", justifyContent:"center",
           cursor:"pointer",
-          boxShadow:"3px 0 8px rgba(15,29,53,0.25)",
+          boxShadow: light ? T.shadowSoft : "3px 0 8px rgba(15,29,53,0.25)",
         }}>
         {}
         <svg width="9" height="14" viewBox="0 0 9 14" fill="none"
-          stroke={C.goldLight} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          stroke={light ? C.goldDeep : C.goldLight} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
           {collapsed
             ? <path d="M2 2l5 5-5 5M2 2l5 5-5 5" transform="translate(0,-3)"/>
             : <path d="M7 2L2 7l5 5M7 2L2 7l5 5" transform="translate(0,-3)"/>
           }
         </svg>
       </button>
-      <div style={{padding:"22px 16px 16px", borderBottom:"1px solid rgba(255,255,255,0.08)"}}>
-        {}
+      <div style={{padding:"22px 16px 16px", borderBottom:`1px solid ${light ? C.borderLight : "rgba(255,255,255,0.08)"}`}}>
+        {/* dese-logo-mark.png is the properly re-extracted transparent
+            cutout (navy "Dese" + gold "TOUR", see its own definition
+            comment) — crisp on a light surface. seffafdeselogo.png is an
+            OPAQUE PNG (a black box behind the wordmark, not real
+            transparency); it only reads correctly on navy because of the
+            mixBlendMode:"screen" trick below, which would just wash out
+            to nothing against white. Both are existing, already-shipped
+            DeseTour assets — nothing here is generated or redrawn. */}
         <img
-          src="/seffafdeselogo.png"
+          src={light ? "/dese-logo-mark.png" : "/seffafdeselogo.png"}
           alt="Dese Tour"
           style={{
             width:"100%", maxWidth:collapsed?40:160,
             height:"auto", display:"block",
-            mixBlendMode:"screen",
-            opacity:0.95,
+            mixBlendMode: light ? "normal" : "screen",
+            opacity: light ? 1 : 0.95,
             transition:`max-width ${T.motionBase} cubic-bezier(0.4,0,0.2,1)`,
           }}
         />
         {!collapsed && <div style={{
           fontSize:9, letterSpacing:"0.16em", textTransform:"uppercase",
-          color:"rgba(201,168,76,0.75)", fontFamily:"'Geist',sans-serif", fontWeight:500,
+          color: light ? C.textFaint : "rgba(201,168,76,0.75)", fontFamily:"'Geist',sans-serif", fontWeight:500,
           marginTop:11, paddingLeft:2,
         }}>Operasyon Merkezi</div>}
       </div>
-      <nav style={{padding:"12px 10px 0", display:"flex", flexDirection:"column", gap:2}}>
-        {NAV_TOP.map(it=><NavItem key={it.id} item={{...withLiveBadge(it),_collapsed:collapsed}} currentBase={currentBase}/>)}
-      </nav>
-      <div style={{height:1, background:"rgba(255,255,255,0.07)", margin:"12px 18px"}}/>
-      <nav style={{padding:"0 10px", display:"flex", flexDirection:"column", gap:2}}>
-        {NAV_BOT.map(it=><NavItem key={it.id} item={{...withLiveBadge(it),_collapsed:collapsed}} currentBase={currentBase}/>)}
-      </nav>
-      <div style={{height:1, background:"rgba(255,255,255,0.07)", margin:"12px 18px"}}/>
-      <nav style={{padding:"0 10px", display:"flex", flexDirection:"column", gap:2}}>
-        {NAV_SETTINGS.map(it=><NavItem key={it.id} item={{...withLiveBadge(it),_collapsed:collapsed}} currentBase={currentBase}/>)}
-        {canAccess(auth.role, "changelog") && (
-          <ChangelogNavRow currentBase={currentBase} onNavigate={()=>{ if (typeof NAV_REF.fn === 'function') NAV_REF.fn('/changelog'); }} collapsed={collapsed}/>
-        )}
-      </nav>
-      <div style={{flex:1}}/>
+      {/* Scrollable nav region — the footer below (profile, logout,
+          version info, QITEOS attribution, tagline) must always stay
+          fully visible/reachable regardless of viewport height or how
+          many nav items a given role sees; it used to rely on a flex:1
+          spacer that only pushed the footer down when there was enough
+          room, silently clipping the tagline (and now would also clip
+          the new QITEOS row) under the aside's own overflow:hidden on
+          shorter viewports (confirmed at 1440×900). The nav list itself
+          scrolling is the standard, viewport-height-proof fix. */}
+      <div style={{flex:1, minHeight:0, overflowY:"auto", display:"flex", flexDirection:"column"}}>
+        <nav style={{padding:"12px 10px 0", display:"flex", flexDirection:"column", gap:2}}>
+          {NAV_TOP.map(it=><NavItem key={it.id} item={{...withLiveBadge(it),_collapsed:collapsed}} currentBase={currentBase} variant={light?"light":"dark"}/>)}
+        </nav>
+        <div style={{height:1, background: light ? C.borderLight : "rgba(255,255,255,0.07)", margin:"12px 18px"}}/>
+        <nav style={{padding:"0 10px", display:"flex", flexDirection:"column", gap:2}}>
+          {NAV_BOT.map(it=><NavItem key={it.id} item={{...withLiveBadge(it),_collapsed:collapsed}} currentBase={currentBase} variant={light?"light":"dark"}/>)}
+        </nav>
+        <div style={{height:1, background: light ? C.borderLight : "rgba(255,255,255,0.07)", margin:"12px 18px"}}/>
+        <nav style={{padding:"0 10px", display:"flex", flexDirection:"column", gap:2}}>
+          {NAV_SETTINGS.map(it=><NavItem key={it.id} item={{...withLiveBadge(it),_collapsed:collapsed}} currentBase={currentBase} variant={light?"light":"dark"}/>)}
+          {canAccess(auth.role, "changelog") && (
+            <ChangelogNavRow currentBase={currentBase} onNavigate={()=>{ if (typeof NAV_REF.fn === 'function') NAV_REF.fn('/changelog'); }} collapsed={collapsed} variant={light?"light":"dark"}/>
+          )}
+        </nav>
+      </div>
       <div style={{
-        padding:"12px 10px", borderTop:"1px solid rgba(255,255,255,0.08)",
+        padding:"12px 10px", borderTop:`1px solid ${light ? C.borderLight : "rgba(255,255,255,0.08)"}`,
         display:"flex", alignItems:"center",
         gap: collapsed ? 0 : 10,
         justifyContent: collapsed ? "center" : "flex-start",
@@ -2879,15 +2975,16 @@ function Sidebar({ currentBase, collapsed, onToggle, mobileOpen, onMobileClose }
       }}>
         <div style={{
           width:34, height:34, borderRadius:"50%", flexShrink:0,
-          background:"rgba(184,151,58,0.15)", border:"1.5px solid rgba(184,151,58,0.35)",
+          background: light ? C.goldPale : "rgba(184,151,58,0.15)",
+          border: `1.5px solid ${light ? "rgba(184,151,58,0.3)" : "rgba(184,151,58,0.35)"}`,
           display:"flex", alignItems:"center", justifyContent:"center",
         }}>
-          <span style={{fontSize:12, fontWeight:600, color:C.goldLight, fontFamily:"'Geist',sans-serif"}}>{auth.initials}</span>
+          <span style={{fontSize:12, fontWeight:600, color: light ? C.goldDeep : C.goldLight, fontFamily:"'Geist',sans-serif"}}>{auth.initials}</span>
         </div>
         {!collapsed && (
           <div style={{overflow:"hidden"}}>
-            <div style={{fontSize:12.5, fontWeight:500, color:C.onDark, fontFamily:"'Geist',sans-serif", lineHeight:1.3, whiteSpace:"nowrap"}}>{auth.displayName}</div>
-            <div style={{fontSize:11, color:"rgba(184,151,58,0.65)", fontFamily:"'Geist',sans-serif"}}>{auth.role}</div>
+            <div style={{fontSize:12.5, fontWeight:500, color: light ? C.text : C.onDark, fontFamily:"'Geist',sans-serif", lineHeight:1.3, whiteSpace:"nowrap"}}>{auth.displayName}</div>
+            <div style={{fontSize:11, color: light ? C.textMuted : "rgba(184,151,58,0.65)", fontFamily:"'Geist',sans-serif"}}>{auth.role}</div>
           </div>
         )}
       </div>
@@ -2897,18 +2994,19 @@ function Sidebar({ currentBase, collapsed, onToggle, mobileOpen, onMobileClose }
           padding: collapsed ? "9px 0" : "9px 14px",
           justifyContent: collapsed ? "center" : "flex-start",
           border:"none", borderRadius:T.radiusSm,
-          background:"transparent", color:"rgba(248,245,238,0.45)",
+          background:"transparent", color: light ? C.textMuted : "rgba(248,245,238,0.45)",
           cursor:"pointer", textAlign:"left", transition:`color ${T.motionFast}, background ${T.motionFast}`,
         }}
-          onMouseEnter={e=>{e.currentTarget.style.background="rgba(220,38,38,0.15)";e.currentTarget.style.color="#FCA5A5";}}
-          onMouseLeave={e=>{e.currentTarget.style.background="transparent";e.currentTarget.style.color="rgba(248,245,238,0.45)";}}>
+          onMouseEnter={e=>{e.currentTarget.style.background = light ? "rgba(220,38,38,0.08)" : "rgba(220,38,38,0.15)"; e.currentTarget.style.color = light ? "#B91C1C" : "#FCA5A5";}}
+          onMouseLeave={e=>{e.currentTarget.style.background="transparent"; e.currentTarget.style.color = light ? C.textMuted : "rgba(248,245,238,0.45)";}}>
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round">
             <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9"/>
           </svg>
           {!collapsed && <span style={{fontSize:13, fontFamily:"'Geist',sans-serif", whiteSpace:"nowrap"}}>Çıkış Yap</span>}
         </button>
       </div>
-      {!collapsed && <SidebarVersionInfo/>}
+      {!collapsed && <SidebarVersionInfo light={light}/>}
+      {!collapsed && <QiteosAttribution light={light}/>}
       {/* Phase 2: no longer its own separately-bordered block — the
           profile block above already opened the "account/meta" zone
           with ONE divider; stacking a second divider here right after
@@ -2918,7 +3016,7 @@ function Sidebar({ currentBase, collapsed, onToggle, mobileOpen, onMobileClose }
       {!collapsed && (
         <div style={{padding:"4px 16px 16px", textAlign:"center"}}>
           <div style={{
-            fontSize:9.5, letterSpacing:"0.14em", color:"rgba(201,168,76,0.4)",
+            fontSize:9.5, letterSpacing:"0.14em", color: light ? C.textFaint : "rgba(201,168,76,0.4)",
             fontFamily:"'Geist',sans-serif", fontStyle:"italic", lineHeight:1.7,
           }}>
             MORE THAN A TRIP<br/>A STORY
@@ -3144,9 +3242,22 @@ function Welcome() {
     [repoRes]
   );
 
+  // One shared panel instead of free-floating date/summary text next to an
+  // independently-boxed "Sıradaki Operasyon" card — the two used to read as
+  // unrelated elements with a growing empty gap between them on wide
+  // viewports (space-between has no upper bound on that gap). A single grid
+  // container with a divider gives both pieces the same boundary, surface
+  // and vertical rhythm while keeping every existing data point and
+  // behavior untouched. Stacks to one column at tablet width via
+  // .dash-overview-grid's own media rule below, same convention as
+  // .dash-kpi-grid/.dash-guide-kpi.
   return (
-    <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:24, flexWrap:"wrap" }}>
-      <div style={{ minWidth:0, flex:"1 1 320px" }}>
+    <div className="dash-overview-grid" style={{
+      display:"grid", gridTemplateColumns:"1fr minmax(260px, 340px)",
+      background:C.white, border:`1px solid ${C.border}`, borderRadius:T.radius,
+      boxShadow:T.shadowCard, overflow:"hidden",
+    }}>
+      <div style={{ minWidth:0, padding:"18px 22px" }}>
         <div style={{fontSize:10.5, letterSpacing:"0.14em", textTransform:"uppercase", color:C.textFaint, fontFamily:"'Geist',sans-serif"}}>
           {new Date().toLocaleDateString("tr-TR",{day:"2-digit",month:"long",year:"numeric",weekday:"long"})}
         </div>
@@ -3163,10 +3274,9 @@ function Welcome() {
           )}
         </p>
       </div>
-      <div style={{
-        flex:"0 1 360px", minWidth:280,
-        background:C.white, border:`1px solid ${C.border}`, borderRadius:T.radius,
-        padding:"14px 16px", boxShadow:T.shadowSoft,
+      <div className="dash-overview-next" style={{
+        minWidth:0, padding:"18px 22px",
+        borderLeft:`1px solid ${C.borderLight}`,
       }}>
         <NextOperationPanel operation={nextOperation}/>
       </div>
@@ -25740,7 +25850,11 @@ function App() {
           --focus-ring: 0 0 0 3px rgba(184,151,58,0.28);
           --scrollbar-thumb: #D4CEC4;
           --row-hover: #F7F3E9;
-          --sidebar-edge: transparent;
+          /* Was "transparent" — fine while the sidebar was always navy
+             against a light page (the shadow alone separated them). Now
+             that light mode's sidebar is C.white too, it needs an actual
+             hairline against the equally-light page canvas. */
+          --sidebar-edge: var(--c-border);
           --bottomnav-bg: rgba(255,255,255,0.96);
           /* Phase 1 foundation — semantic motion durations, theme-agnostic
              (identical in light/dark, so defined once here rather than
@@ -25825,6 +25939,8 @@ function App() {
         @media (min-width: 768px) and (max-width: 1023px) {
           .dash-kpi-grid  { grid-template-columns: repeat(2, minmax(0,1fr)) !important; }
           .dash-guide-kpi { grid-template-columns: repeat(2, minmax(0,1fr)) !important; }
+          .dash-overview-grid { grid-template-columns: 1fr !important; }
+          .dash-overview-next { border-left: none !important; border-top: 1px solid var(--c-border-light); }
         }
         @media (max-width: 767px) {
           .rsp-table { display: none !important; }
@@ -25891,6 +26007,7 @@ function App() {
           onToggle={()=>setSidebarCollapsed(c=>!c)}
           mobileOpen={mobileSidebarOpen}
           onMobileClose={()=>setMobileSidebarOpen(false)}
+          theme={theme}
         />
       )}
 
