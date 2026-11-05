@@ -2797,20 +2797,17 @@ function SidebarVersionInfo({ padded = true, light = false }) {
 // Quiet "Powered by" platform attribution — desktop sidebar footer only
 // (per the brief, the mobile BottomNav/drawer don't need it, and the
 // sidebar's own collapsed rail drops it rather than squeezing the full
-// logo into ~40px). The uploaded QITEOS asset (qiteos-logo.webp) is an
-// opaque black square tile, not a transparent cutout — fine as-is on the
-// dark sidebar's navy, but an unrounded black box reads as a broken image
-// on the new white surface. Rounding its own corners (not its artwork —
-// no pixel inside the image is touched) is the least invasive fix that
-// works identically on both surfaces, per the "non-destructive background
-// treatment" option in the brief rather than redrawing or recoloring it.
+// logo into ~40px). qiteos-logo.png is the official transparent wordmark
+// (confirmed via composite test against navy/white/ivory — no background
+// box, reads cleanly everywhere), used as uploaded with no recoloring or
+// redrawing.
 function QiteosAttribution({ light }) {
   return (
     <div style={{ padding:"0 16px 10px", display:"flex", alignItems:"center", gap:6 }}>
       <span style={{ fontSize:9, color: light ? C.textFaint : "rgba(248,245,238,0.3)", fontFamily:"'Geist',sans-serif" }}>
         Powered by
       </span>
-      <img src="/qiteos-logo.webp" alt="QITEOS" style={{ height:15, width:"auto", borderRadius:3, display:"block" }}/>
+      <img src="/qiteos-logo.png" alt="QITEOS" style={{ height:15, width:"auto", display:"block" }}/>
     </div>
   );
 }
@@ -3245,19 +3242,18 @@ function Welcome() {
   // One shared panel instead of free-floating date/summary text next to an
   // independently-boxed "Sıradaki Operasyon" card — the two used to read as
   // unrelated elements with a growing empty gap between them on wide
-  // viewports (space-between has no upper bound on that gap). A single grid
-  // container with a divider gives both pieces the same boundary, surface
-  // and vertical rhythm while keeping every existing data point and
-  // behavior untouched. Stacks to one column at tablet width via
-  // .dash-overview-grid's own media rule below, same convention as
-  // .dash-kpi-grid/.dash-guide-kpi.
+  // viewports (space-between has no upper bound on that gap). Stacked
+  // (date/summary, then Sıradaki Operasyon directly below, both full
+  // width) rather than side-by-side — a two-column layout still read as
+  // "the next operation lives in the top-right corner" even once both
+  // pieces shared one boundary; stacking removes that corner entirely.
+  // Same boundary/surface/vertical-rhythm fix, same untouched data.
   return (
-    <div className="dash-overview-grid" style={{
-      display:"grid", gridTemplateColumns:"1fr minmax(260px, 340px)",
+    <div style={{
       background:C.white, border:`1px solid ${C.border}`, borderRadius:T.radius,
       boxShadow:T.shadowCard, overflow:"hidden",
     }}>
-      <div style={{ minWidth:0, padding:"18px 22px" }}>
+      <div style={{ padding:"18px 22px" }}>
         <div style={{fontSize:10.5, letterSpacing:"0.14em", textTransform:"uppercase", color:C.textFaint, fontFamily:"'Geist',sans-serif"}}>
           {new Date().toLocaleDateString("tr-TR",{day:"2-digit",month:"long",year:"numeric",weekday:"long"})}
         </div>
@@ -3274,9 +3270,9 @@ function Welcome() {
           )}
         </p>
       </div>
-      <div className="dash-overview-next" style={{
-        minWidth:0, padding:"18px 22px",
-        borderLeft:`1px solid ${C.borderLight}`,
+      <div style={{
+        padding:"14px 22px 18px",
+        borderTop:`1px solid ${C.borderLight}`,
       }}>
         <NextOperationPanel operation={nextOperation}/>
       </div>
@@ -25939,8 +25935,6 @@ function App() {
         @media (min-width: 768px) and (max-width: 1023px) {
           .dash-kpi-grid  { grid-template-columns: repeat(2, minmax(0,1fr)) !important; }
           .dash-guide-kpi { grid-template-columns: repeat(2, minmax(0,1fr)) !important; }
-          .dash-overview-grid { grid-template-columns: 1fr !important; }
-          .dash-overview-next { border-left: none !important; border-top: 1px solid var(--c-border-light); }
         }
         @media (max-width: 767px) {
           .rsp-table { display: none !important; }

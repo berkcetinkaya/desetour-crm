@@ -1,1 +1,1 @@
-window.__DESETOUR_BUILD__ = {"version":"13.01","major":13,"minor":1,"buildTimestamp":"2026-11-05T11:12:19.969Z","commitSha":"39c495b312014cd934b5aaaa821a2bd258d3be17","commitShaShort":"39c495b","branch":"ui-sidebar-qiteos-revision"};
+window.__DESETOUR_BUILD__ = {"version":"13.01","major":13,"minor":1,"buildTimestamp":"2026-11-05T11:35:22.999Z","commitSha":"140cbd6d2f3233ceb63568aec96a60c98e296f12","commitShaShort":"140cbd6","branch":"ui-qiteos-logo-and-overview-fix"};
