@@ -197,7 +197,16 @@ const T = {
   motionFast:  "var(--motion-fast)",   // 180ms — buttons, small state changes
   motionBase:  "var(--motion-base)",   // 220ms — dropdowns, menus, popovers
   motionSlow:  "var(--motion-slow)",   // 240ms — mobile drawers/sheets
+  shadowPopover: "var(--shadow-popover)", // Phase 2 — dropdown/menu panels (search, notifications)
 };
+
+// Phase 2 UI foundation: the single source of truth for the desktop
+// sidebar's two widths — Sidebar's own `W` AND App()'s main/
+// DesktopTopBar left-offset calculations all read these, instead of
+// each repeating the literal 208/64 and risking silent drift between
+// the three.
+const SIDEBAR_WIDTH_EXPANDED = 208;
+const SIDEBAR_WIDTH_COLLAPSED = 64;
 
 // Regional-indicator flag emoji from a 2-letter ISO 3166-1 code — avoids
 // hand-typing 190+ flag glyphs alongside the country list below.
@@ -2431,7 +2440,7 @@ function NavItem({ item, currentBase }) {
         background: on ? "rgba(184,151,58,0.10)" : hov ? "rgba(255,255,255,0.05)" : "transparent",
         color: on ? C.goldLight : hov ? "rgba(248,245,238,0.9)" : "rgba(248,245,238,0.56)",
         cursor:"pointer", textAlign:"left", position:"relative",
-        transition:"background 0.12s, color 0.12s",
+        transition:`background ${T.motionFast}, color ${T.motionFast}`,
       }}>
       {on && <span style={{
         position:"absolute", left:0, top:"50%", transform:"translateY(-50%)",
@@ -2463,23 +2472,31 @@ function NavItem({ item, currentBase }) {
 // sync with zero duplicated markup.
 function ChangelogNavRow({ currentBase, onNavigate, collapsed }) {
   const hasNewUpdate = useHasNewChangelogUpdate();
+  const [hov, setHov] = useState(false);
   const buildVersion = (typeof window !== 'undefined' && window.__DESETOUR_BUILD__ && window.__DESETOUR_BUILD__.version) || (CRM_CHANGELOG[0] && CRM_CHANGELOG[0].version) || null;
   const on = currentBase === "changelog";
   return (
     <button
       onClick={()=>{ markChangelogViewed(); onNavigate(); }}
+      onMouseEnter={()=>setHov(true)} onMouseLeave={()=>setHov(false)}
       title={collapsed ? "CRM Güncellemeleri" : undefined}
       style={{
         display:"flex", alignItems:"center", gap:10, width:"100%",
         padding: collapsed ? "9px 0" : "9px 14px",
         justifyContent: collapsed ? "center" : "flex-start",
-        border:"none", borderRadius:7, marginBottom:2,
-        background: on ? "rgba(184,151,58,0.13)" : "transparent",
-        color: on ? C.goldLight : "rgba(248,245,238,0.6)",
-        cursor:"pointer", textAlign:"left",
-        borderLeft: collapsed ? "3px solid transparent" : (on ? "3px solid "+C.goldLight : "3px solid transparent"),
-        transition:"background 0.12s, color 0.12s",
+        border:"none", borderRadius:T.radiusSm, marginBottom:2,
+        background: on ? "rgba(184,151,58,0.10)" : hov ? "rgba(255,255,255,0.05)" : "transparent",
+        color: on ? C.goldLight : hov ? "rgba(248,245,238,0.9)" : "rgba(248,245,238,0.6)",
+        cursor:"pointer", textAlign:"left", position:"relative",
+        // Same single active-indicator technique NavItem uses, for one
+        // consistent visual language across the whole nav list — this
+        // row previously used a DIFFERENT border-left indicator.
+        transition:`background ${T.motionFast}, color ${T.motionFast}`,
       }}>
+      {on && <span style={{
+        position:"absolute", left:0, top:"50%", transform:"translateY(-50%)",
+        width:2.5, height:16, borderRadius:2, background:C.goldLight,
+      }}/>}
       <span style={{flexShrink:0, position:"relative", display:"inline-flex"}}>
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
           stroke="currentColor" strokeWidth={on ? 2 : 1.6}
@@ -2723,7 +2740,7 @@ function SidebarVersionInfo({ padded = true }) {
 function Sidebar({ currentBase, collapsed, onToggle, mobileOpen, onMobileClose }) {
   const auth = useAuthContext();
   const { isMobile } = useBreakpoint();
-  const W = collapsed ? 64 : 208;
+  const W = collapsed ? SIDEBAR_WIDTH_COLLAPSED : SIDEBAR_WIDTH_EXPANDED;
 
   // Real sidebar badge counts — computed from live repo data (real Supabase
   // rows in production, mock rows in demo mode via the same useRepo/mock
@@ -2774,7 +2791,7 @@ function Sidebar({ currentBase, collapsed, onToggle, mobileOpen, onMobileClose }
           background:`linear-gradient(180deg, ${C.navyDeep} 0%, ${C.navy} 100%)`,
           zIndex:300, display:"flex", flexDirection:"column",
           transform: mobileOpen ? "translateX(0)" : "translateX(-100%)",
-          transition:"transform 0.25s cubic-bezier(0.4,0,0.2,1)",
+          transition:`transform ${T.motionSlow} cubic-bezier(0.4,0,0.2,1)`,
           boxShadow:"4px 0 24px rgba(0,0,0,0.35)",
           visibility: mobileOpen ? "visible" : "hidden",
         }}>
@@ -2791,12 +2808,13 @@ function Sidebar({ currentBase, collapsed, onToggle, mobileOpen, onMobileClose }
       display:"flex", flexDirection:"column", zIndex:50,
       boxShadow:"3px 0 24px rgba(15,29,53,0.28)",
       borderRight:"1px solid var(--sidebar-edge)",
-      transition:"width 0.22s cubic-bezier(0.4,0,0.2,1)",
+      transition:`width ${T.motionBase} cubic-bezier(0.4,0,0.2,1)`,
       overflow:"hidden",
     }}>
       {}
       <button onClick={onToggle}
         title={collapsed?"Menüyü Genişlet":"Menüyü Kapat"}
+        aria-label={collapsed?"Menüyü Genişlet":"Menüyü Kapat"}
         style={{
           position:"absolute", top:"50%", right:-16,
           transform:"translateY(-50%)",
@@ -2828,7 +2846,7 @@ function Sidebar({ currentBase, collapsed, onToggle, mobileOpen, onMobileClose }
             height:"auto", display:"block",
             mixBlendMode:"screen",
             opacity:0.95,
-            transition:"max-width 0.22s cubic-bezier(0.4,0,0.2,1)",
+            transition:`max-width ${T.motionBase} cubic-bezier(0.4,0,0.2,1)`,
           }}
         />
         {!collapsed && <div style={{
@@ -2874,13 +2892,13 @@ function Sidebar({ currentBase, collapsed, onToggle, mobileOpen, onMobileClose }
         )}
       </div>
       <div style={{padding:"0 10px 8px"}}>
-        <button onClick={()=>auth.logout()} title={collapsed?"Çıkış Yap":undefined} style={{
+        <button onClick={()=>auth.logout()} title={collapsed?"Çıkış Yap":undefined} aria-label="Çıkış Yap" style={{
           display:"flex", alignItems:"center", gap:9, width:"100%",
-          padding: collapsed ? "9px 0" : "8px 14px",
+          padding: collapsed ? "9px 0" : "9px 14px",
           justifyContent: collapsed ? "center" : "flex-start",
           border:"none", borderRadius:T.radiusSm,
           background:"transparent", color:"rgba(248,245,238,0.45)",
-          cursor:"pointer", textAlign:"left", transition:"color .12s, background .12s",
+          cursor:"pointer", textAlign:"left", transition:`color ${T.motionFast}, background ${T.motionFast}`,
         }}
           onMouseEnter={e=>{e.currentTarget.style.background="rgba(220,38,38,0.15)";e.currentTarget.style.color="#FCA5A5";}}
           onMouseLeave={e=>{e.currentTarget.style.background="transparent";e.currentTarget.style.color="rgba(248,245,238,0.45)";}}>
@@ -2891,8 +2909,14 @@ function Sidebar({ currentBase, collapsed, onToggle, mobileOpen, onMobileClose }
         </button>
       </div>
       {!collapsed && <SidebarVersionInfo/>}
+      {/* Phase 2: no longer its own separately-bordered block — the
+          profile block above already opened the "account/meta" zone
+          with ONE divider; stacking a second divider here right after
+          SidebarVersionInfo (no divider) produced an uneven rhythm
+          (bordered / unbordered / unbordered / bordered). The tagline
+          now simply continues the same zone. */}
       {!collapsed && (
-        <div style={{padding:"10px 16px 16px", textAlign:"center", borderTop:"1px solid rgba(255,255,255,0.06)"}}>
+        <div style={{padding:"4px 16px 16px", textAlign:"center"}}>
           <div style={{
             fontSize:9.5, letterSpacing:"0.14em", color:"rgba(201,168,76,0.4)",
             fontFamily:"'Geist',sans-serif", fontStyle:"italic", lineHeight:1.7,
@@ -25096,13 +25120,15 @@ function GlobalSearch() {
         ref={inputRef}
         value={query}
         onChange={e=>{ setQuery(e.target.value); setOpen(true); }}
-        onFocus={()=>setOpen(true)}
+        onFocus={e=>{ setOpen(true); e.target.style.borderColor=C.navy; e.target.style.boxShadow=T.focusRing; }}
+        onBlur={e=>{ e.target.style.borderColor=C.border; e.target.style.boxShadow="none"; }}
         onKeyDown={e=>{ if (e.key === "Escape") { setOpen(false); inputRef.current?.blur(); } }}
         placeholder="Misafir, rezervasyon, tur, rehber ara…"
         style={{
           width:"100%", boxSizing:"border-box", padding:"9px 54px 9px 34px",
           border:`1px solid ${C.border}`, borderRadius:T.radiusSm, background:C.ivory,
           fontSize:13, color:C.text, fontFamily:"'Geist',sans-serif", outline:"none",
+          transition:`border-color ${T.motionFast}, box-shadow ${T.motionFast}`,
         }}
       />
       {!query && (
@@ -25118,7 +25144,7 @@ function GlobalSearch() {
         <div style={{
           position:"absolute", top:"calc(100% + 6px)", left:0, right:0,
           background:C.white, border:`1px solid ${C.border}`, borderRadius:T.radiusSm,
-          boxShadow:"0 12px 32px rgba(13,27,62,0.16)", maxHeight:420, overflowY:"auto",
+          boxShadow:T.shadowPopover, maxHeight:420, overflowY:"auto",
           zIndex:100, padding:"4px",
         }}>
           {allFailed ? (
@@ -25222,6 +25248,7 @@ function NotificationPanelBody({ notifications, loading, unreadCount, onSelect }
 function NotificationBell() {
   const auth = useAuthContext();
   const [open, setOpen] = useState(false);
+  const [hov, setHov] = useState(false);
   const containerRef = useRef(null);
   const { notifications, unread, loading, select } = useOperationalNotifications();
 
@@ -25236,7 +25263,7 @@ function NotificationBell() {
   const eligible = !!auth.role && auth.role !== "Rehber";
   if (!eligible) {
     return (
-      <button disabled title="Bildirimler bu rol için kullanılamıyor" style={{
+      <button disabled title="Bildirimler bu rol için kullanılamıyor" aria-label="Bildirimler bu rol için kullanılamıyor" style={{
         border:"none", background:"transparent", color:C.textMuted,
         cursor:"not-allowed", padding:6, display:"flex",
       }}>
@@ -25252,10 +25279,14 @@ function NotificationBell() {
 
   return (
     <div ref={containerRef} style={{position:"relative"}}>
-      <button onClick={()=>setOpen(o=>!o)} style={{
-        border:"none", background:"transparent",
+      <button onClick={()=>setOpen(o=>!o)} aria-label="Bildirimler"
+        onMouseEnter={()=>setHov(true)} onMouseLeave={()=>setHov(false)}
+        style={{
+        border:"none", borderRadius:T.radiusSm,
+        background: hov ? "rgba(128,128,128,0.12)" : "transparent",
         color: unread.length > 0 ? C.gold : C.textMuted,
         cursor:"pointer", padding:6, display:"flex", position:"relative",
+        transition:`background ${T.motionFast} ease`,
       }}>
         <Ic d={_BELL_ICON_D} size={18} sw={1.6}/>
         {unread.length > 0 && (
@@ -25271,7 +25302,7 @@ function NotificationBell() {
         <div style={{
           position:"absolute", top:"calc(100% + 10px)", right:0, width:340,
           background:C.white, border:`1px solid ${C.border}`, borderRadius:T.radiusSm,
-          boxShadow:"0 12px 32px rgba(13,27,62,0.16)", maxHeight:420, overflowY:"auto",
+          boxShadow:T.shadowPopover, maxHeight:420, overflowY:"auto",
           zIndex:100,
         }}>
           <NotificationPanelBody notifications={notifications} loading={loading} unreadCount={unread.length} onSelect={handleSelect}/>
@@ -25339,13 +25370,21 @@ function MobileNotificationBell() {
 // visual consistency (transparent, 6px padding, 18px glyph).
 function ThemeToggle({ theme, onToggle, size, color }) {
   const dark = theme === "dark";
+  const [hov, setHov] = useState(false);
   return (
     <button onClick={onToggle} title={dark ? "Açık temaya geç" : "Koyu temaya geç"}
       aria-label={dark ? "Açık temaya geç" : "Koyu temaya geç"}
+      onMouseEnter={()=>setHov(true)} onMouseLeave={()=>setHov(false)}
       style={{
-        border:"none", background:"transparent", color: color || C.textMuted,
+        border:"none", borderRadius:T.radiusSm,
+        // A neutral, currentColor-independent wash — this control renders
+        // on both the white desktop top bar and the dark mobile header, so
+        // a single hover tint that reads subtly on either background
+        // (rather than one tuned to just one of them) is used here.
+        background: hov ? "rgba(128,128,128,0.12)" : "transparent",
+        color: color || C.textMuted,
         cursor:"pointer", padding:6, display:"flex",
-        transition:"color 0.15s ease, transform 0.15s ease",
+        transition:`background ${T.motionFast} ease, color ${T.motionFast} ease`,
       }}>
       {dark ? (
         <svg width={size||18} height={size||18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
@@ -25370,7 +25409,7 @@ function DesktopTopBar({ leftOffset, theme, onToggleTheme }) {
       background:C.white, borderBottom:`1px solid ${C.border}`,
       display:"flex", alignItems:"center", justifyContent:"space-between",
       padding:"0 28px", gap:20,
-      transition:"left 0.22s cubic-bezier(0.4,0,0.2,1)",
+      transition:`left ${T.motionBase} cubic-bezier(0.4,0,0.2,1)`,
     }}>
       <GlobalSearch/>
       <div style={{display:"flex", alignItems:"center", gap:18, flexShrink:0}}>
@@ -25547,6 +25586,10 @@ function App() {
           --shadow-soft: 0 1px 2px rgba(15,29,53,0.05);
           --shadow-card: 0 1px 3px rgba(15,29,53,0.06);
           --shadow-modal: 0 16px 40px rgba(13,27,62,0.22);
+          /* Phase 2 — formalizes the dropdown/popover shadow already used
+             identically (hand-written) by GlobalSearch's results panel and
+             NotificationBell's panel — same value, now named. */
+          --shadow-popover: 0 12px 32px rgba(13,27,62,0.16);
           --focus-ring: 0 0 0 3px rgba(184,151,58,0.28);
           --scrollbar-thumb: #D4CEC4;
           --row-hover: #F7F3E9;
@@ -25580,6 +25623,7 @@ function App() {
           --shadow-soft: 0 1px 2px rgba(0,0,0,0.30);
           --shadow-card: 0 1px 4px rgba(0,0,0,0.40);
           --shadow-modal: 0 16px 40px rgba(0,0,0,0.55);
+          --shadow-popover: 0 12px 32px rgba(0,0,0,0.45);
           --focus-ring: 0 0 0 3px rgba(201,168,76,0.35);
           --scrollbar-thumb: #343C48;
           --row-hover: rgba(255,255,255,0.035);
@@ -25705,7 +25749,7 @@ function App() {
         />
       )}
 
-      {!isMobile && <DesktopTopBar leftOffset={sidebarCollapsed ? 64 : 208} theme={theme} onToggleTheme={toggleTheme}/>}
+      {!isMobile && <DesktopTopBar leftOffset={sidebarCollapsed ? SIDEBAR_WIDTH_COLLAPSED : SIDEBAR_WIDTH_EXPANDED} theme={theme} onToggleTheme={toggleTheme}/>}
 
       {isMobile && (
         <div style={{
@@ -25743,7 +25787,7 @@ function App() {
       {isMobile && <BottomNav active={base} navigate={navigate}/>}
 
       <main style={{
-        marginLeft: isMobile ? 0 : (sidebarCollapsed ? 64 : 208),
+        marginLeft: isMobile ? 0 : (sidebarCollapsed ? SIDEBAR_WIDTH_COLLAPSED : SIDEBAR_WIDTH_EXPANDED),
         marginTop: isMobile ? "calc(48px + env(safe-area-inset-top, 0px))" : 56,
         minHeight: isMobile ? "100dvh" : "calc(100vh - 56px)",
         padding: isMobile ? "14px 12px calc(68px + env(safe-area-inset-bottom, 0px))" : isTablet ? "20px 18px 40px" : "26px 28px 52px",
