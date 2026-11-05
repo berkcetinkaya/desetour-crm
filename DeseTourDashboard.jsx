@@ -187,6 +187,16 @@ const T = {
   controlH:    38,   // inputs, selects, filter buttons
   buttonH:     40,   // primary/secondary buttons
   rowH:        48,   // table row target height
+  // Phase 1 design-system foundation: semantic motion durations, mirrored
+  // by the --motion-* CSS custom properties defined alongside the theme
+  // tokens below. Not yet applied everywhere a transition exists (most
+  // of the app's ~30 scattered literal durations are left untouched in
+  // this phase) — available for later phases to adopt incrementally as
+  // each surface gets its own pass, per the QITEOS motion reference
+  // (buttons ~180ms, dropdowns/menus ~220ms, drawers/sheets ~240ms).
+  motionFast:  "var(--motion-fast)",   // 180ms — buttons, small state changes
+  motionBase:  "var(--motion-base)",   // 220ms — dropdowns, menus, popovers
+  motionSlow:  "var(--motion-slow)",   // 240ms — mobile drawers/sheets
 };
 
 // Regional-indicator flag emoji from a 2-letter ISO 3166-1 code — avoids
@@ -12892,7 +12902,7 @@ function GuideTourInfoModal({ tourId, onClose }) {
             </div>
           </div>
           <button onClick={onClose} style={{
-            width:32, height:32, borderRadius:7, border:`1px solid ${C.border}`,
+            width:32, height:32, borderRadius:T.radiusSm, border:`1px solid ${C.border}`,
             background:"transparent", cursor:"pointer", color:C.textFaint,
             display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0,
           }}>
@@ -22419,7 +22429,7 @@ function Modal({ title, onClose, onSubmit, submitLabel, children, wide, danger }
             {title}
           </div>
           <button onClick={onClose} style={{
-            width:32, height:32, borderRadius:7, border:`1px solid ${C.border}`,
+            width:32, height:32, borderRadius:T.radiusSm, border:`1px solid ${C.border}`,
             background:"transparent", cursor:"pointer", color:C.textFaint,
             display:"flex", alignItems:"center", justifyContent:"center",
           }}>
@@ -22514,9 +22524,9 @@ function FText({ value, onChange, placeholder, type, mono, error, disabled, maxL
         fontSize:13.5, color:C.text,
         fontFamily: mono ? "'DM Mono',monospace" : "'Geist',sans-serif",
         outline:"none", background: disabled ? C.ivory : C.white,
-        transition:"border-color .15s, box-shadow .15s",
+        transition:`border-color ${T.motionFast}, box-shadow ${T.motionFast}`,
       }}
-      onFocus={e=>{ if(!error){ e.target.style.borderColor=C.navy; e.target.style.boxShadow=`0 0 0 3px rgba(27,45,79,0.10)`; } }}
+      onFocus={e=>{ if(!error){ e.target.style.borderColor=C.navy; e.target.style.boxShadow=T.focusRing; } }}
       onBlur={e=>{ e.target.style.borderColor=error?C.red:C.border; e.target.style.boxShadow="none"; }}
     />
   );
@@ -22537,9 +22547,9 @@ function FSelect({ value, onChange, options, error, disabled }) {
         backgroundRepeat:"no-repeat",
         backgroundPosition:"right 10px center",
         paddingRight:30,
-        transition:"border-color .15s, box-shadow .15s",
+        transition:`border-color ${T.motionFast}, box-shadow ${T.motionFast}`,
       }}
-      onFocus={e=>{ if(!error){ e.target.style.borderColor=C.navy; e.target.style.boxShadow=`0 0 0 3px rgba(27,45,79,0.10)`; } }}
+      onFocus={e=>{ if(!error){ e.target.style.borderColor=C.navy; e.target.style.boxShadow=T.focusRing; } }}
       onBlur={e=>{ e.target.style.borderColor=error?C.red:C.border; e.target.style.boxShadow="none"; }}
     >
       {(options||[]).map(opt => {
@@ -22564,9 +22574,9 @@ function FTextArea({ value, onChange, placeholder, rows, error, disabled }) {
         fontSize:13.5, color:C.text, fontFamily:"'Geist',sans-serif",
         outline:"none", background: disabled ? C.ivory : C.white,
         resize:"vertical", lineHeight:1.55,
-        transition:"border-color .15s, box-shadow .15s",
+        transition:`border-color ${T.motionFast}, box-shadow ${T.motionFast}`,
       }}
-      onFocus={e=>{ if(!error){ e.target.style.borderColor=C.navy; e.target.style.boxShadow=`0 0 0 3px rgba(27,45,79,0.10)`; } }}
+      onFocus={e=>{ if(!error){ e.target.style.borderColor=C.navy; e.target.style.boxShadow=T.focusRing; } }}
       onBlur={e=>{ e.target.style.borderColor=error?C.red:C.border; e.target.style.boxShadow="none"; }}
     />
   );
@@ -25542,6 +25552,12 @@ function App() {
           --row-hover: #F7F3E9;
           --sidebar-edge: transparent;
           --bottomnav-bg: rgba(255,255,255,0.96);
+          /* Phase 1 foundation — semantic motion durations, theme-agnostic
+             (identical in light/dark, so defined once here rather than
+             repeated in the dark override below). See T.motionFast/Base/Slow. */
+          --motion-fast: 180ms;
+          --motion-base: 220ms;
+          --motion-slow: 240ms;
         }
         html[data-theme="dark"] {
           color-scheme: dark;
@@ -25581,7 +25597,7 @@ function App() {
         body {
           background: var(--c-ivory-dark); color: var(--c-text);
           font-family: 'Geist', sans-serif; -webkit-font-smoothing: antialiased;
-          transition: background 0.18s ease;
+          transition: background var(--motion-fast) ease;
         }
         ::selection { background: rgba(184,151,58,0.32); }
         ::-webkit-scrollbar { width: 5px; }
@@ -25603,7 +25619,7 @@ function App() {
         :focus-visible { outline: none; box-shadow: var(--focus-ring); }
         input:focus-visible, select:focus-visible, textarea:focus-visible {
           border-radius: inherit;
-          transition: box-shadow 0.15s ease, border-color 0.15s ease;
+          transition: box-shadow var(--motion-fast) ease, border-color var(--motion-fast) ease;
         }
 
         /* ── Shared desktop table/row hover — CSS-driven so a row never
@@ -25732,7 +25748,7 @@ function App() {
         minHeight: isMobile ? "100dvh" : "calc(100vh - 56px)",
         padding: isMobile ? "14px 12px calc(68px + env(safe-area-inset-bottom, 0px))" : isTablet ? "20px 18px 40px" : "26px 28px 52px",
         background: isMobile ? C.ivory : C.ivoryDark,
-        transition:"margin-left 0.22s cubic-bezier(0.4,0,0.2,1)",
+        transition:`margin-left ${T.motionBase} cubic-bezier(0.4,0,0.2,1)`,
         overflowX:"hidden",
         maxWidth:"100vw",
         boxSizing:"border-box",
