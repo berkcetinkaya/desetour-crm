@@ -101,6 +101,22 @@ const CRM_CHANGELOG_CATEGORIES = [
 // Newest first. See the release convention above before editing.
 const CRM_CHANGELOG = [
   {
+    version: '13.02',
+    date: '2026-11-05',
+    title: 'CRM Arayüz ve Kullanıcı Deneyimi Yenilendi',
+    summary: 'DeseTour CRM\'in masaüstü, tablet ve mobil arayüzleri kapsamlı olarak yenilendi. Operasyonel bilgi hiyerarşisi, rezervasyon ekranları, mobil kullanım, navigasyon, erişilebilirlik ve karanlık mod deneyimi daha hızlı ve daha tutarlı bir kullanım için yeniden düzenlendi.',
+    categories: ['Arayüz', 'İyileştirme'],
+    highlights: [
+      'Ana Sayfa operasyon önceliklerine göre yeniden düzenlendi; bugünkü turlar, yaklaşan operasyonlar ve dikkat gerektiren işler daha görünür hale getirildi.',
+      'Rezervasyon listesi ve rezervasyon detay ekranları sadeleştirildi; operasyon durumu, rehber, pickup, ödeme, hazırlıklar ve Civitatis mesajları daha hızlı taranabilir hale getirildi.',
+      'Sol navigasyon ve uygulama genelindeki görsel sistem yenilendi; açık tema daha hafif bir sidebar yapısına geçirildi ve aktif/hover durumları DeseTour marka renkleriyle standartlaştırıldı.',
+      'Mobil CRM deneyimi kapsamlı şekilde iyileştirildi; dokunma alanları, kartlar, navigasyon, raporlar, ayarlar ve operasyon ekranları küçük ekranlar için optimize edildi.',
+      'Dashboard ve uygulama genelindeki responsive yapı desktop, tablet ve mobil ekranlarda yeniden test edildi ve yatay taşma problemleri giderildi.',
+    ],
+    author: 'Berk',
+    technicalNote: 'Light ve Dark Mode genelinde renk, yüzey, kontrast, shadow, radius ve motion sistemi standartlaştırıldı. Klavye erişimi, focus durumları, aria etiketleri, switch ve accordion davranışları dahil olmak üzere erişilebilirlik iyileştirmeleri yapıldı. Tours, Guides, Payments, Agencies, Messages, Reminders, Reports ve Settings ekranları ortak UI sistemiyle uyumlu hale getirildi. CRM artık QITEOS platform imzasını uygulama footer\'ında gösteriyor.',
+  },
+  {
     version: '13.01',
     date: '2026-10-30',
     title: 'Civitatis Mesajları Rezervasyonlarda',
@@ -259,21 +275,6 @@ const CRM_CHANGELOG = [
       'E-posta gönderimi gerçek kullanıcı kimliği ve personel yetkisi doğrulanarak yapılıyor',
       'Pasif personel hesaplarının Acenteler araştırma servislerine erişimi engellendi',
       'Rehberlerin, rezervasyonlarda yetkileri dışında kalan finansal veya yönetimsel alanları değiştirmesi veritabanı seviyesinde engellendi',
-    ],
-    author: 'Berk',
-  },
-  {
-    version: '12.40',
-    date: '2026-10-20',
-    title: 'Acenteler Modülü Geliştirildi',
-    summary: 'Acenteler modülüne pazar araştırması, uygunluk değerlendirmesi ve kişiselleştirilmiş ilk temas taslağı altyapısı eklendi. Acenteler ülke ve dil bazında araştırılabilecek, uygun adaylar CRM\'e eklenebilecek ve her acente için araştırma bulguları ile kaynak bilgileri saklanabilecek. İngilizce, İspanyolca, Portekizce ve İtalyanca ilk temas taslakları hazırlanabilecek.',
-    categories: ['Yeni Özellik', 'Operasyon'],
-    highlights: [
-      'Ülke ve dil bazlı acente araştırması',
-      'Yüksek, Orta ve Düşük Uyum değerlendirmesi',
-      'Araştırma bulgusu ve kaynak kaydı',
-      'Seçilen adayları CRM\'e ekleme',
-      'Dört dilde kişiselleştirilmiş ilk temas taslağı',
     ],
     author: 'Berk',
   },

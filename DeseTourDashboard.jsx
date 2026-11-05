@@ -20887,29 +20887,37 @@ function DataSourceBadge({ isMobile }) {
   );
 }
 
-// "Powered by QITEOS" platform attribution — desktop app-shell only,
-// rendered once as a sibling AFTER the routed page content inside
-// <main> (not fixed/sticky, not per-page), so it's the last thing in
-// normal document flow: reached by scrolling to the actual end of a
-// page's content, never floating over cards/tables/forms regardless of
-// viewport height or scroll position. A previous fixed bottom-right
-// version was rejected for exactly that overlap risk (confirmed on the
-// Dashboard, where a tall right-column card or KPI row can reach the
-// viewport's bottom-right corner depending on height) — this version
-// has no position/z-index at all, so that risk doesn't exist here.
+// Shared application footer — desktop/tablet app-shell only, rendered once
+// as a sibling AFTER the routed page content inside <main> (same in-flow
+// placement the earlier QiteosGlobalAttribution used — not fixed/sticky,
+// not per-page), so it's the last thing in normal document flow: reached
+// by scrolling to the actual end of a page's content, never floating over
+// cards/tables/forms regardless of viewport height or scroll position.
 // Deliberately placed OUTSIDE the <div className="fade" key={path}>
 // wrapper so it doesn't re-trigger that per-navigation fade animation.
-// Mobile keeps no QITEOS attribution anywhere (not above/below
-// BottomNav); the sidebar footer went back to carrying only DeseTour
-// CRM/account/version info. qiteos-logo.png is the official transparent
-// asset, used unmodified — no shadow needed now that it never sits over
-// unpredictable content.
-function QiteosGlobalAttribution() {
+// Left side is plain text (DeseTour already has its own logo in the
+// sidebar nav — this isn't a second one); the version is read from the
+// same build-metadata source every other version label in the app uses,
+// never hardcoded, so it can never drift from the real release.
+// Right side keeps the "Powered by QITEOS" platform attribution that used
+// to live here on its own — qiteos-logo.png is the official transparent
+// asset, used unmodified. Mobile renders no footer at all (not above/
+// below BottomNav); the sidebar footer separately carries DeseTour CRM/
+// account/version info and is unaffected by this component.
+function AppFooter() {
+  const version = (typeof window !== 'undefined' && window.__DESETOUR_BUILD__ && window.__DESETOUR_BUILD__.version) || (CRM_CHANGELOG[0] && CRM_CHANGELOG[0].version) || null;
   return (
-    <div style={{ display:"flex", justifyContent:"flex-end", marginTop:28 }}>
-      <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:4 }}>
+    <div style={{
+      display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", gap:12,
+      borderTop:`1px solid ${C.border}`, marginTop:36, paddingTop:20, paddingBottom:12,
+    }}>
+      <div style={{ display:"flex", flexDirection:"column", gap:2 }}>
+        <span style={{ fontSize:12, fontWeight:500, color:C.textMid, fontFamily:"'Geist',sans-serif" }}>DeseTour CRM</span>
+        {version && <span style={{ fontSize:10, color:C.textFaint, fontFamily:"'Geist',sans-serif" }}>v{version}</span>}
+      </div>
+      <div style={{ display:"flex", alignItems:"center", gap:6 }}>
         <span style={{ fontSize:10, color:C.textFaint, fontFamily:"'Geist',sans-serif" }}>Powered by</span>
-        <img src="/qiteos-logo.png" alt="QITEOS" style={{ width:80, height:"auto", display:"block" }}/>
+        <img src="/qiteos-logo.png" alt="QITEOS" style={{ width:76, height:"auto", display:"block" }}/>
       </div>
     </div>
   );
@@ -26062,11 +26070,18 @@ function App() {
         overflowX:"hidden",
         maxWidth:"100vw",
         boxSizing:"border-box",
+        display:"flex",
+        flexDirection:"column",
       }}>
-        <div className="fade" key={path}>
+        {/* flex:1 so a short page's content fills the main shell before
+            AppFooter, instead of leaving a tall blank gap above it — the
+            footer still sits directly after real content on long pages,
+            since flex-grow has no extra space to give once content alone
+            exceeds the shell's minHeight. No route/page component changed. */}
+        <div className="fade" key={path} style={{flex:"1 0 auto"}}>
           <PageRouter base={base} param={param} isMobile={isMobile} navigate={navigate}/>
         </div>
-        {!isMobile && <QiteosGlobalAttribution/>}
+        {!isMobile && <AppFooter/>}
       </main>
       {toastMsg && <Toast msg={toastMsg} onDone={()=>setToastMsg(null)}/>}
       <DataSourceBadge isMobile={isMobile}/>

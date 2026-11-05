@@ -1,1 +1,1 @@
-window.__DESETOUR_BUILD__ = {"version":"13.01","major":13,"minor":1,"buildTimestamp":"2026-11-05T12:03:20.329Z","commitSha":"21a5c1fbb26f2da27d55480d1dcaee66fac8cc22","commitShaShort":"21a5c1f","branch":"ui-qiteos-global-attribution"};
+window.__DESETOUR_BUILD__ = {"version":"13.02","major":13,"minor":2,"buildTimestamp":"2026-11-05T12:49:42.531Z","commitSha":"e6051390c942b2c1f60a689da5481f367f3082a7","commitShaShort":"e605139","branch":"ui-app-footer-v1302"};
