@@ -3070,7 +3070,7 @@ function NextOperationPanel({ operation }) {
   const dayLabel = operation ? nextOperationDayLabel(operation.checkIn) : null;
   const statusMeta = operation && operation.guide ? (RES_STATUS[operation.opStatus] || null) : null;
   return (
-    <div style={{ paddingTop:13, borderTop:`1px solid ${C.borderLight}` }}>
+    <div>
       <div style={{
         fontSize:10.5, letterSpacing:"0.14em", textTransform:"uppercase",
         color:C.goldLight, fontFamily:"'Geist',sans-serif", fontWeight:600,
@@ -3119,12 +3119,10 @@ function NextOperationPanel({ operation }) {
   );
 }
 
+// Compact operational header — Ana Sayfa's top area. Deliberately no
+// greeting, name, or decorative copy: just the date, a real data-driven
+// operational summary, and the next thing that needs action.
 function Welcome() {
-  const auth = useAuthContext();
-  const firstName = auth.displayName.split(" ")[0] || "Hoş geldiniz";
-  const hour = new Date().getHours();
-  const greeting = hour < 12 ? "Günaydın" : hour < 18 ? "İyi günler" : "İyi akşamlar";
-
   // Real urgent-item count for the context line below — this used to be a
   // hardcoded "3 acil işlem" regardless of actual data.
   const { data:repoRes,   loading:l1 } = useRepo("reservation", "getAll");
@@ -3147,41 +3145,13 @@ function Welcome() {
   );
 
   return (
-    <div className="hero-shell" style={{
-      position:"relative", overflow:"hidden",
-      background:C.white, border:`1px solid ${C.border}`, borderRadius:T.radius,
-      boxShadow:T.shadowSoft,
-    }}>
-      {/* Photo layer — a real <img> confined to the hero's right portion
-          (not full-bleed) so object-fit:cover crops far less aggressively:
-          a narrower box whose aspect ratio sits close to the source
-          photo's own means most of its height shows, keeping the
-          panorama wide and the Galata Tower at its natural size instead
-          of an enlarged sliver. hero-fade above it hides the left edge so
-          the photo still reads as emerging from the ivory background. */}
-      <img src="/hero-crm.png" alt="" className="hero-photo" style={{
-        position:"absolute", top:0, right:0, bottom:0,
-        height:"100%", width:"72%",
-        objectFit:"cover",
-        backgroundColor:C.navyDeep,
-      }}/>
-      <div className="hero-fade" style={{ position:"absolute", inset:0 }}/>
-
-      {}
-      <div style={{position:"relative", maxWidth:460, padding:"28px 36px", display:"flex", flexDirection:"column", justifyContent:"center", gap:10, minWidth:0}}>
+    <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:24, flexWrap:"wrap" }}>
+      <div style={{ minWidth:0, flex:"1 1 320px" }}>
         <div style={{fontSize:10.5, letterSpacing:"0.14em", textTransform:"uppercase", color:C.textFaint, fontFamily:"'Geist',sans-serif"}}>
           {new Date().toLocaleDateString("tr-TR",{day:"2-digit",month:"long",year:"numeric",weekday:"long"})}
         </div>
-        <h1 style={{
-          margin:0, fontSize:32, fontWeight:700, color:C.text,
-          fontFamily:"'Instrument Serif',serif", lineHeight:1.15,
-          display:"flex", alignItems:"center", gap:10,
-        }}>
-          {greeting}, {firstName}
-          <span style={{fontSize:24}}>☀️</span>
-        </h1>
         <p style={{
-          margin:0, fontSize:14, color:C.textMid,
+          margin:"7px 0 0", fontSize:14.5, color:C.textMid,
           fontFamily:"'Geist',sans-serif", lineHeight:1.5,
         }}>
           {urgentLoading ? (
@@ -3192,15 +3162,12 @@ function Welcome() {
             "Bugünkü operasyon özetiniz — her şey kontrol altında."
           )}
         </p>
-        {/* Editorial quote — deliberately subordinated (smaller, lighter,
-            thinner accent) so it never competes with the operational
-            content above or the Sıradaki Operasyon block below. */}
-        <div style={{
-          fontSize:11, color:C.textFaint, fontFamily:"'Instrument Serif',serif", fontStyle:"italic",
-          borderLeft:`1.5px solid rgba(184,151,58,0.25)`, paddingLeft:10, lineHeight:1.4,
-        }}>
-          "Güzel yolculuklar, iyi insanlarla başlar."
-        </div>
+      </div>
+      <div style={{
+        flex:"0 1 360px", minWidth:280,
+        background:C.white, border:`1px solid ${C.border}`, borderRadius:T.radius,
+        padding:"14px 16px", boxShadow:T.shadowSoft,
+      }}>
         <NextOperationPanel operation={nextOperation}/>
       </div>
     </div>
@@ -3212,21 +3179,15 @@ function KpiCard({ kpi }) {
     <div style={{
       background: kpi.accent ? "var(--c-gold-pale-wash)" : C.white,
       border:`1px solid ${kpi.accent ? "rgba(184,151,58,0.25)" : C.border}`, borderRadius:T.radius,
-      padding:"15px 16px", display:"flex", flexDirection:"column", gap:10,
+      padding:"15px 16px", display:"flex", flexDirection:"column", gap:9,
       position:"relative", overflow:"hidden", boxShadow:T.shadowSoft,
     }}>
       {}
-      <div style={{display:"flex", alignItems:"center", justifyContent:"space-between", gap:10}}>
-        <div style={{
-          width:30, height:30, borderRadius:T.radiusSm, flexShrink:0,
-          background:C.goldPale,
-          display:"flex", alignItems:"center", justifyContent:"center",
-          color:C.gold,
-        }}>
-          <Ic d={kpi.icon} size={14} sw={1.6}/>
-        </div>
+      <div style={{display:"flex", alignItems:"center", gap:7}}>
+        <span style={{display:"flex", flexShrink:0, color: kpi.accent ? C.gold : C.textFaint}}>
+          <Ic d={kpi.icon} size={13} sw={1.6}/>
+        </span>
         <span style={{fontSize:11, color:C.textMuted, fontFamily:"'Geist',sans-serif"}}>{kpi.label}</span>
-        <span style={{color:C.textFaint, flexShrink:0}}><Ic d="M9 18l6-6-6-6" size={13} sw={1.8}/></span>
       </div>
 
       {}
@@ -3498,7 +3459,7 @@ function UrgentPanel() {
                 background:C.white,
                 display:"flex", alignItems:"center", justifyContent:"center",
                 color: item.level === "high" ? C.red : C.amber,
-                boxShadow:"0 1px 4px rgba(0,0,0,0.06)",
+                boxShadow:T.shadowSoft,
               }}>
                 <Ic d={item.icon} size={16} sw={1.7}/>
               </div>
@@ -3638,7 +3599,7 @@ function TodayTours() {
                 borderBottom: isLast ? "none" : `1px solid ${C.borderLight}`,
                 borderRadius:6,
                 background:"transparent",
-                transition:"background 0.1s",
+                transition:`background ${T.motionFast} ease`,
                 cursor:"pointer",
                 margin:"0 -4px", padding:"14px 4px",
               }}>
@@ -3697,7 +3658,7 @@ function UpcomingResRow({ r, isLast }) {
         gap:12, padding:"14px 0",
         borderBottom: isLast ? "none" : `1px solid ${C.borderLight}`,
         background:"transparent",
-        transition:"background 0.1s", cursor:"pointer",
+        transition:`background ${T.motionFast} ease`, cursor:"pointer",
         margin:"0 -4px", paddingLeft:4, paddingRight:4,
       }}>
       <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",background:"rgba(27,45,79,0.06)",borderRadius:8,padding:"6px 4px"}}>
@@ -4534,13 +4495,23 @@ const SON_BILDIRIMLER_MAX = 5;
 // Compact single row — same safe, short display content as
 // NotificationListItem (never a full email body), trimmed down for a
 // homepage card rather than a dropdown.
-function SonBildirimlerRow({ n, onSelect }) {
+function SonBildirimlerRow({ n, onSelect, isLast }) {
   const display = _operationalNotificationDisplay(n);
+  const [hover, setHover] = useState(false);
   return (
-    <div onClick={()=>onSelect(n)} style={{
-      display:"flex", gap:10, alignItems:"flex-start", cursor:"pointer",
-      padding:"10px 0", borderBottom:`1px solid ${C.borderLight}`,
-    }}>
+    <div
+      onClick={()=>onSelect(n)}
+      onMouseEnter={()=>setHover(true)}
+      onMouseLeave={()=>setHover(false)}
+      style={{
+        display:"flex", gap:10, alignItems:"flex-start", cursor:"pointer",
+        padding:"10px 8px", margin:"0 -8px",
+        borderBottom: isLast ? "none" : `1px solid ${C.borderLight}`,
+        borderRadius:T.radiusSm,
+        background: hover ? C.ivory : "transparent",
+        transition:`background ${T.motionFast} ease`,
+      }}
+    >
       {!n.isRead && <span style={{width:6, height:6, borderRadius:"50%", background:C.gold, marginTop:5, flexShrink:0}}/>}
       <div style={{flex:1, minWidth:0}}>
         <div style={{fontSize:12.5, fontWeight: n.isRead ? 500 : 600, color:C.text, fontFamily:"'Geist',sans-serif", lineHeight:1.4}}>
@@ -4580,7 +4551,7 @@ function SonBildirimlerPanel() {
     <Card>
       <SectionHeader title="Son Bildirimler"/>
       <div style={{display:"flex", flexDirection:"column"}}>
-        {visible.map(n => <SonBildirimlerRow key={n.id} n={n} onSelect={handleSelect}/>)}
+        {visible.map((n,i) => <SonBildirimlerRow key={n.id} n={n} onSelect={handleSelect} isLast={i===visible.length-1}/>)}
       </div>
     </Card>
   );
@@ -5710,6 +5681,23 @@ function TurHazirliklari() {
   );
 }
 
+// Lightweight, non-boxed section-group label — a small uppercase caption
+// plus a thin rule, never a bordered card. Used only to establish rhythm
+// between groups of Ana Sayfa panels that already have their own
+// SectionHeader/title; purely presentational, Dashboard-local.
+function _DashboardGroupLabel({ children }) {
+  return (
+    <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+      <span style={{
+        fontSize:11, fontWeight:600, color:C.textFaint,
+        textTransform:"uppercase", letterSpacing:"0.08em",
+        fontFamily:"'Geist',sans-serif", whiteSpace:"nowrap",
+      }}>{children}</span>
+      <span style={{flex:1, height:1, background:C.borderLight}}/>
+    </div>
+  );
+}
+
 function Dashboard() {
   return (
     <div style={{display:"flex", flexDirection:"column", gap:20}}>
@@ -5719,41 +5707,39 @@ function Dashboard() {
       {}
       <OnemliUyarilar/>
 
-      {}
-      <KpiRow/>
+      {/* Today & Upcoming — promoted above general metrics and secondary
+          modules so the operator sees what's happening today and what
+          needs a guide/preparation before anything else. */}
+      <_DashboardGroupLabel>Bugün & Yaklaşan</_DashboardGroupLabel>
 
-      {}
-      <SonBildirimlerPanel/>
-
-      {}
-      <AgencyCrmPlusSection/>
-
-      {}
-      <SonHareketlerPanel/>
-
-      {}
-      <CivitatisHakedisPanel/>
-
-      {}
-      <TurHazirliklari/>
-
-      {}
       <div className="dash-row-2" style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:16}}>
         <TodayTours/>
         <UrgentPanel/>
       </div>
 
-      {}
-      <div className="dash-row-3" style={{display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:16}}>
+      <TurHazirliklari/>
+
+      <div className="dash-row-2" style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:16}}>
         <UpcomingReservations/>
-        <PendingPaymentsWidget/>
-        <ActivityFeed/>
+        <GuideOpsPanel/>
       </div>
 
-      {}
-      <GuideOpsPanel/>
+      {/* General metrics — quieter than the operational group above, now
+          read as a summary strip rather than the page's opening content. */}
+      <_DashboardGroupLabel>Genel Durum</_DashboardGroupLabel>
+      <KpiRow/>
 
-      {}
+      {/* Secondary modules — commercial/historical content: notifications,
+          Agency CRM+, activity history, settlements, pending payments,
+          reviews. Same components, same data, same relative order as
+          before, just demoted below the operational group above. */}
+      <_DashboardGroupLabel>Diğer Modüller</_DashboardGroupLabel>
+      <SonBildirimlerPanel/>
+      <AgencyCrmPlusSection/>
+      <SonHareketlerPanel/>
+      <CivitatisHakedisPanel/>
+      <PendingPaymentsWidget/>
+      <ActivityFeed/>
       <RecentReviewsPanel/>
     </div>
   );
@@ -25678,7 +25664,6 @@ function App() {
            over there instead), so this only ever applies to tablet width. ── */
         @media (min-width: 768px) and (max-width: 1023px) {
           .dash-kpi-grid  { grid-template-columns: repeat(2, minmax(0,1fr)) !important; }
-          .dash-row-3     { grid-template-columns: repeat(2, minmax(0,1fr)) !important; }
           .dash-guide-kpi { grid-template-columns: repeat(2, minmax(0,1fr)) !important; }
         }
         @media (max-width: 767px) {

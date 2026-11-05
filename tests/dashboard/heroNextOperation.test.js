@@ -539,21 +539,16 @@ test('scope guard: Önemli Uyarılar (OnemliUyarilar) is completely untouched by
   assert.match(body, /<SectionHeader title="Önemli Uyarılar"\/>/);
 });
 
-test('scope guard: the ada18af dashboard grid classnames (dash-kpi-grid, dash-row-2, dash-row-3, dash-guide-kpi) are still present, unmodified', () => {
+test('scope guard: the dashboard grid classnames (dash-kpi-grid, dash-row-2, dash-guide-kpi) are still present, unmodified — dash-row-3 was retired in the Phase 3 Dashboard reorg (see dashboard/desktopGridLayout.test.js), unrelated to this hero-only change', () => {
   assert.match(SOURCE, /className="dash-kpi-grid"/);
   assert.match(SOURCE, /className="dash-row-2"/);
-  assert.match(SOURCE, /className="dash-row-3"/);
   assert.match(SOURCE, /className="dash-guide-kpi"/);
 });
 
-test('scope guard: Dashboard() still renders every section in the same order, untouched by this hero-only change', () => {
+test('scope guard: Dashboard() still renders every section exactly once, untouched by this hero-only change (order itself is covered by dashboard/desktopGridLayout.test.js, which owns the Phase 3 reorg)', () => {
   const body = fnBody('Dashboard', SOURCE);
-  const order = ['<Welcome/>', '<OnemliUyarilar/>', '<KpiRow/>', '<TodayTours/>', '<UrgentPanel/>', '<UpcomingReservations/>', '<PendingPaymentsWidget/>', '<ActivityFeed/>', '<GuideOpsPanel/>', '<RecentReviewsPanel/>'];
-  let cursor = -1;
-  for (const token of order) {
-    const idx = body.indexOf(token);
-    assert.ok(idx > cursor, `expected ${token} to appear in order`);
-    cursor = idx;
+  for (const token of ['<Welcome/>', '<OnemliUyarilar/>', '<KpiRow/>', '<TodayTours/>', '<UrgentPanel/>', '<UpcomingReservations/>', '<PendingPaymentsWidget/>', '<ActivityFeed/>', '<GuideOpsPanel/>', '<RecentReviewsPanel/>']) {
+    assert.ok(body.includes(token), `expected ${token} to still be rendered`);
   }
 });
 

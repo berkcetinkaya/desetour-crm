@@ -65,25 +65,36 @@ test('TodayTours and UrgentPanel both use the same unmodified Card padding — n
   assert.match(urgentBody, /<Card style=\{\{display:"flex", flexDirection:"column"\}\}>/);
 });
 
-// ── Section 4: Yaklaşan Rezervasyonlar / Bekleyen Ödemeler / Son Aktiviteler ─
+// ── Section 4 (Phase 3 Dashboard reorg): Yaklaşan Rezervasyonlar paired
+// with Rehber Operasyonu as the "upcoming operations" row, promoted above
+// KPI Row and the secondary modules. Bekleyen Ödemeler / Son Aktiviteler
+// are no longer grouped with Yaklaşan Rezervasyonlar — they moved to the
+// secondary-modules group below KpiRow (still full-width Cards, unchanged
+// internally) as part of Phase 3's "Today/Upcoming should outrank generic
+// metrics and commercial content" reorg. ─────────────────────────────────
 
-test('Section 4 is an exact 33.333% three-column grid with the dashboard-standard 16px gap', () => {
+test('Yaklaşan Rezervasyonlar and Rehber Operasyonu share a 50/50 dash-row-2 grid with the dashboard-standard 16px gap', () => {
   const dashBody = fnBody('Dashboard', SOURCE);
-  const idx = dashBody.indexOf('dash-row-3');
-  assert.ok(idx !== -1, 'expected the dash-row-3 section wrapper');
+  const idx = dashBody.lastIndexOf('dash-row-2');
+  assert.ok(idx !== -1, 'expected a dash-row-2 section wrapper');
   const section = dashBody.slice(idx, dashBody.indexOf('</div>', idx));
-  assert.match(section, /gridTemplateColumns:"1fr 1fr 1fr"/);
+  assert.match(section, /gridTemplateColumns:"1fr 1fr"/);
   assert.match(section, /gap:16/);
   assert.match(section, /<UpcomingReservations\/>/);
-  assert.match(section, /<PendingPaymentsWidget\/>/);
-  assert.match(section, /<ActivityFeed\/>/);
+  assert.match(section, /<GuideOpsPanel\/>/);
 });
 
-test('Section 4 does not force alignItems:"start" — all three cards stretch to equal height', () => {
+test('the Yaklaşan Rezervasyonlar/Rehber Operasyonu row does not force alignItems:"start" — both cards stretch to equal height', () => {
   const dashBody = fnBody('Dashboard', SOURCE);
-  const idx = dashBody.indexOf('dash-row-3');
+  const idx = dashBody.lastIndexOf('dash-row-2');
   const section = dashBody.slice(idx, dashBody.indexOf('</div>', idx));
   assert.doesNotMatch(section, /alignItems/);
+});
+
+test('PendingPaymentsWidget and ActivityFeed are still mounted in Dashboard(), as full-width secondary-module Cards (no longer grouped with UpcomingReservations)', () => {
+  const dashBody = fnBody('Dashboard', SOURCE);
+  assert.match(dashBody, /<PendingPaymentsWidget\/>/);
+  assert.match(dashBody, /<ActivityFeed\/>/);
 });
 
 for (const [fn, emptyMarker] of [
@@ -116,7 +127,7 @@ test('GuideOpsPanel\'s three KPI blocks (Aktif Rehber / Bugün Atanmış Rehber 
 
 // ── Card geometry consistency across the whole dashboard ───────────────
 
-test('every dashboard-only grid classname (dash-kpi-grid, dash-row-2, dash-row-3, dash-guide-kpi) appears exactly where expected and nowhere else in the file — no leftover use of the old shared rsp-split/rsp-stat-grid classnames inside Dashboard, TodayTours, UrgentPanel, UpcomingReservations, PendingPaymentsWidget, ActivityFeed, or GuideOpsPanel', () => {
+test('every dashboard-only grid classname (dash-kpi-grid, dash-row-2, dash-guide-kpi) appears exactly where expected and nowhere else in the file — no leftover use of the old shared rsp-split/rsp-stat-grid classnames inside Dashboard, TodayTours, UrgentPanel, UpcomingReservations, PendingPaymentsWidget, ActivityFeed, or GuideOpsPanel', () => {
   for (const fnName of ['Dashboard', 'KpiRow', 'GuideOpsPanel']) {
     const body = fnBody(fnName, SOURCE);
     assert.doesNotMatch(body, /rsp-split|rsp-stat-grid/);
@@ -126,9 +137,13 @@ test('every dashboard-only grid classname (dash-kpi-grid, dash-row-2, dash-row-3
 // ── Tablet: dashboard-scoped 2-column wrapping, isolated from every other page ─
 
 test('a tablet-only (768–1023px) media query gives the dashboard grids sensible 2-column wrapping', () => {
+  // dash-row-3 was removed in the Phase 3 Dashboard reorg (its trio was
+  // split up — see above); dash-kpi-grid and dash-guide-kpi are already
+  // 5-col/3-col grids that still need the tablet override. dash-row-2 is
+  // already a 2-column grid by default, so it needs no override.
   assert.match(SOURCE, /@media \(min-width: 768px\) and \(max-width: 1023px\) \{[\s\S]{0,400}\.dash-kpi-grid[\s\S]{0,80}repeat\(2, minmax\(0,1fr\)\)/);
-  assert.match(SOURCE, /\.dash-row-3[\s\S]{0,80}repeat\(2, minmax\(0,1fr\)\)/);
   assert.match(SOURCE, /\.dash-guide-kpi[\s\S]{0,80}repeat\(2, minmax\(0,1fr\)\)/);
+  assert.doesNotMatch(SOURCE, /\.dash-row-3/);
 });
 
 test('the tablet dashboard media query never touches .rsp-split or .rsp-stat-grid — every other page\'s tablet layout is untouched by this change', () => {
@@ -152,9 +167,14 @@ test('PageRouter still routes base==="dashboard" to MobileHomePage when isMobile
 
 // ── Scope guard: layout only, no data/business logic touched ───────────
 
-test('scope guard: Dashboard still renders the same components in the same order (Welcome, OnemliUyarilar, KpiRow, Section 3, Section 4, GuideOpsPanel, RecentReviewsPanel) — only their wrapping grid CSS changed', () => {
+test('scope guard (Phase 3 Dashboard reorg): Dashboard renders every section exactly once, in the new operational-hierarchy order — Today/Upcoming promoted above KpiRow and the secondary/historical modules', () => {
   const body = fnBody('Dashboard', SOURCE);
-  const order = ['<Welcome/>', '<OnemliUyarilar/>', '<KpiRow/>', '<TodayTours/>', '<UrgentPanel/>', '<UpcomingReservations/>', '<PendingPaymentsWidget/>', '<ActivityFeed/>', '<GuideOpsPanel/>', '<RecentReviewsPanel/>'];
+  const order = [
+    '<Welcome/>', '<OnemliUyarilar/>',
+    '<TodayTours/>', '<UrgentPanel/>', '<TurHazirliklari/>', '<UpcomingReservations/>', '<GuideOpsPanel/>',
+    '<KpiRow/>',
+    '<SonBildirimlerPanel/>', '<AgencyCrmPlusSection/>', '<SonHareketlerPanel/>', '<CivitatisHakedisPanel/>', '<PendingPaymentsWidget/>', '<ActivityFeed/>', '<RecentReviewsPanel/>',
+  ];
   let cursor = -1;
   for (const token of order) {
     const idx = body.indexOf(token);

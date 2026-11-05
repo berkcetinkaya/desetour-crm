@@ -382,9 +382,9 @@ test('light and dark mode compatibility: MobileSection\'s new `prominent` title 
 
 // ── Desktop safety ───────────────────────────────────────────────────────
 
-test('desktop homepage (Dashboard()) remains exactly as it is: Welcome, OnemliUyarilar, KpiRow, SonBildirimlerPanel, AgencyCrmPlusSection, SonHareketlerPanel, CivitatisHakedisPanel, TurHazirliklari all still mounted, unconditionally, in the same order', () => {
+test('desktop homepage (Dashboard()) is unaffected by this mobile-only redesign: Welcome, OnemliUyarilar, TurHazirliklari, KpiRow, SonBildirimlerPanel, AgencyCrmPlusSection, SonHareketlerPanel, CivitatisHakedisPanel all still mounted, unconditionally (order reflects the Phase 3 Dashboard reorg — see dashboard/desktopGridLayout.test.js, unrelated to mobile)', () => {
   const body = extractFunctionSource('Dashboard');
-  const order = ['<Welcome/>', '<OnemliUyarilar/>', '<KpiRow/>', '<SonBildirimlerPanel/>', '<AgencyCrmPlusSection/>', '<SonHareketlerPanel/>', '<CivitatisHakedisPanel/>', '<TurHazirliklari/>'].map(tag => {
+  const order = ['<Welcome/>', '<OnemliUyarilar/>', '<TurHazirliklari/>', '<KpiRow/>', '<SonBildirimlerPanel/>', '<AgencyCrmPlusSection/>', '<SonHareketlerPanel/>', '<CivitatisHakedisPanel/>'].map(tag => {
     const idx = body.indexOf(tag);
     assert.ok(idx > -1, `expected ${tag} to still be mounted in Dashboard()`);
     return idx;

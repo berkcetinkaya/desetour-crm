@@ -339,16 +339,18 @@ test('the data hook issues exactly two bounded useRepo calls, never one per row 
 // Dashboard placement, empty state, navigation
 // ═══════════════════════════════════════════════════════════════════════
 
-test('TurHazirliklari is placed immediately after KpiRow and before the TodayTours/UrgentPanel row inside Dashboard()', () => {
+test('TurHazirliklari is placed between the TodayTours/UrgentPanel row and the UpcomingReservations/GuideOpsPanel row, before KpiRow — Phase 3 Dashboard reorg promotes today/upcoming operational content above general metrics', () => {
   const start = SOURCE.indexOf('function Dashboard()');
   const end = SOURCE.indexOf('\nfunction ', start + 10);
   const body = SOURCE.slice(start, end);
-  const idxKpi = body.indexOf('<KpiRow/>');
+  const idxTodayRow = body.indexOf('<TodayTours/>');
   const idxPrep = body.indexOf('<TurHazirliklari/>');
-  const idxRow2 = body.indexOf('dash-row-2');
-  assert.ok(idxKpi !== -1 && idxPrep !== -1 && idxRow2 !== -1);
-  assert.ok(idxKpi < idxPrep, 'KpiRow must precede TurHazirliklari');
-  assert.ok(idxPrep < idxRow2, 'TurHazirliklari must precede the TodayTours/UrgentPanel row');
+  const idxUpcomingRow = body.indexOf('<UpcomingReservations/>');
+  const idxKpi = body.indexOf('<KpiRow/>');
+  assert.ok(idxTodayRow !== -1 && idxPrep !== -1 && idxUpcomingRow !== -1 && idxKpi !== -1);
+  assert.ok(idxTodayRow < idxPrep, 'the TodayTours/UrgentPanel row must precede TurHazirliklari');
+  assert.ok(idxPrep < idxUpcomingRow, 'TurHazirliklari must precede the UpcomingReservations/GuideOpsPanel row');
+  assert.ok(idxUpcomingRow < idxKpi, 'the promoted today/upcoming operational group must precede KpiRow');
 });
 
 test('the section is omitted entirely (returns null) when there are zero rows, loading, or an error — never an empty card', () => {
