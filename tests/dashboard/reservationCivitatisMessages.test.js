@@ -125,7 +125,7 @@ test('[9] ReservationMessagesCard renders nothing (null) while loading or when t
 });
 
 test('[10] ReservationMessagesCard renders the exact title "Civitatis Mesajları"', () => {
-  assert.match(RESERVATION_MESSAGES_CARD_BODY, /<RCardHead title="Civitatis Mesajları"\/>/);
+  assert.match(RESERVATION_MESSAGES_CARD_BODY, /<RCardHead title="Civitatis Mesajları"/);
 });
 
 test('[11] ReservationMessagesCard shows the Civitatis source label, a formatted received timestamp, and the clean message text for each message', () => {
@@ -152,7 +152,10 @@ test('[15] ReservationMessagesCard is wired into ReservationDetailPage, in its o
   const idx = SOURCE.indexOf('function ReservationDetailPage(');
   const end = SOURCE.indexOf('\nfunction RCard(', idx);
   const pageBody = SOURCE.slice(idx, end);
-  assert.match(pageBody, /<ReservationMessagesCard r={r}\/>/);
+  // Phase 4 passes hasUnread (the same unread-Civitatis-message signal
+  // the Reservations list and the operational summary strip use) so the
+  // card can show its own "Yeni" accent — same component, one extra prop.
+  assert.match(pageBody, /<ReservationMessagesCard r={r} hasUnread={hasUnreadCivitatisMessage}\/>/);
 });
 
 // ── 5. Mobile detail page ─────────────────────────────────────────────────
@@ -170,16 +173,22 @@ test('[17] mobile renders "Civitatis Mesajları" as its OWN MobileSection, condi
 });
 
 test('[18] mobile Civitatis Mesajları section is a visually separate block from the "Notlar" section — never merged, never reusing the opNotes card', () => {
-  const notlarIdx = MOBILE_DETAIL_BODY.indexOf('<MobileSection title="Notlar">');
+  const notlarIdx = MOBILE_DETAIL_BODY.indexOf('<MobileSection title="Notlar — Personel">');
   const civitatisIdx = MOBILE_DETAIL_BODY.indexOf('<MobileSection title="Civitatis Mesajları">');
   assert.ok(notlarIdx > -1 && civitatisIdx > -1);
-  assert.ok(notlarIdx < civitatisIdx, 'Civitatis Mesajları must be its own section, appearing after and separate from Notlar');
+  // Phase 4 moved Civitatis Mesajları up, right after guide/pickup (and
+  // now before Notlar), matching the brief's mobile priority order:
+  // identity, status, warnings, date/time, guide/pickup, Civitatis
+  // message, payment, preparations, then secondary info/history (Notlar
+  // is secondary). Still its own distinct section either way — never
+  // merged into the opNotes card.
+  assert.ok(civitatisIdx < notlarIdx, 'Civitatis Mesajları must be its own section, now appearing before the secondary Notlar section');
 });
 
 test('[19] mobile message cards use MobileEntityCard (the established compact card primitive), each showing the Civitatis label, a formatted timestamp, and the message text', () => {
   const sectionIdx = MOBILE_DETAIL_BODY.indexOf('<MobileSection title="Civitatis Mesajları">');
-  const sectionBody = MOBILE_DETAIL_BODY.slice(sectionIdx, sectionIdx + 900);
-  assert.match(sectionBody, /<MobileEntityCard key={m\.id}>/);
+  const sectionBody = MOBILE_DETAIL_BODY.slice(sectionIdx, sectionIdx + 1700);
+  assert.match(sectionBody, /<MobileEntityCard key={m\.id}/);
   assert.match(sectionBody, />Civitatis</);
   assert.match(sectionBody, /formatReservationMessageTimestamp\(m\.receivedAt\)/);
   assert.match(sectionBody, /\{m\.messageText\}/);

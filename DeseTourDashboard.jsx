@@ -8657,19 +8657,15 @@ function ReservationsPage({ onSelect }) {
         ].map((k,i) => (
           <div key={i} style={{
             background:C.white, border:`1px solid ${C.border}`, borderRadius:12,
-            padding:"18px 20px", display:"flex", alignItems:"center", gap:14,
+            padding:"16px 18px", display:"flex", flexDirection:"column", gap:8,
           }}>
-            <div style={{
-              width:42, height:42, borderRadius:10, flexShrink:0,
-              background:k.bg, display:"flex", alignItems:"center", justifyContent:"center",
-              color:k.color,
-            }}>
-              <RIc d={k.icon} size={18} sw={1.6}/>
+            <div style={{ display:"flex", alignItems:"center", gap:7 }}>
+              <span style={{ display:"flex", flexShrink:0, color:k.color }}>
+                <RIc d={k.icon} size={13} sw={1.6}/>
+              </span>
+              <span style={{ fontSize:11, color:C.textMuted, fontFamily:"'Geist',sans-serif" }}>{k.label}</span>
             </div>
-            <div>
-              <div style={{ fontSize:26, fontWeight:700, color:k.color, fontFamily:"'Geist',sans-serif", lineHeight:1 }}>{k.val}</div>
-              <div style={{ fontSize:12, color:C.textMuted, fontFamily:"'Geist',sans-serif", marginTop:4 }}>{k.label}</div>
-            </div>
+            <div style={{ fontSize:24, fontWeight:700, color:k.color, fontFamily:"'Geist',sans-serif", lineHeight:1 }}>{k.val}</div>
           </div>
         ))}
       </div>
@@ -8746,9 +8742,11 @@ function ReservationsPage({ onSelect }) {
                   return (
                     <tr key={r.id} className="dt-row"
                       onClick={()=>onSelect&&onSelect(r.id)}
+                      tabIndex={0}
+                      onKeyDown={e=>{ if (e.target===e.currentTarget && (e.key==="Enter"||e.key===" ") && onSelect) { e.preventDefault(); onSelect(r.id); } }}
                       style={{
                         background:C.white,
-                        cursor:"pointer", transition:"background .1s",
+                        cursor:"pointer", transition:`background ${T.motionFast} ease`,
                         opacity: r.opStatus === "İptal" ? 0.65 : 1,
                       }}
                     >
@@ -9027,19 +9025,25 @@ function formatReservationMessageTimestamp(isoString) {
 // React text child, never dangerouslySetInnerHTML, so no raw HTML can
 // ever reach the DOM from this table. Chronological, oldest first — a
 // conversation reads top-to-bottom, newest at the bottom.
-function ReservationMessagesCard({ r }) {
+function ReservationMessagesCard({ r, hasUnread }) {
   const { data: messages, loading } = useRepo("reservationMessage", "getByReservationId", r.id);
   const list = messages || [];
   if (loading || list.length === 0) return null;
+  const lastIdx = list.length - 1;
 
   return (
-    <RCard>
-      <RCardHead title="Civitatis Mesajları"/>
+    <RCard style={hasUnread ? { border:`1.5px solid ${C.gold}` } : undefined}>
+      <RCardHead title="Civitatis Mesajları" right={
+        hasUnread ? (
+          <span style={{ fontSize:10, fontWeight:600, color:C.gold, background:`${C.gold}1a`, padding:"2px 8px", borderRadius:99, fontFamily:"'Geist',sans-serif" }}>Yeni</span>
+        ) : null
+      }/>
       <div style={{ display:"flex", flexDirection:"column" }}>
         {list.map((m, i) => (
           <div key={m.id} style={{
             padding:"12px 18px",
-            borderBottom: i < list.length - 1 ? `1px solid ${C.borderLight}` : "none",
+            borderBottom: i < lastIdx ? `1px solid ${C.borderLight}` : "none",
+            background: hasUnread && i === lastIdx ? C.goldPale : "transparent",
           }}>
             <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:10, marginBottom:5 }}>
               <span style={{ fontSize:11.5, fontWeight:600, color:C.text, fontFamily:"'Geist',sans-serif" }}>Civitatis</span>
@@ -9077,17 +9081,46 @@ function _hasCivitatisMissingPassengerNamesWarning(activity) {
 }
 // TESTABLE:_hasCivitatisMissingPassengerNamesWarning:end
 
+// Phase 4 — the SAME unread-notification signal the Reservations list
+// already uses for its "Yeni Mesaj" row pill (useOperationalNotifications,
+// source==='civitatis_message'), reused here so Reservation Detail's
+// operational summary/attention area and the Civitatis Mesajları card
+// itself can show the identical "new message" signal without a second
+// query or a second notion of "unread".
+// TESTABLE:_reservationHasUnreadCivitatisMessage:start
+function _reservationHasUnreadCivitatisMessage(unreadNotifications, reservationId) {
+  return (unreadNotifications || []).some(n => n.source === 'civitatis_message' && n.reservationId === reservationId);
+}
+// TESTABLE:_reservationHasUnreadCivitatisMessage:end
+
+// Per-action-type icon/color for the Activity Timeline — RES_ACTIVITY_LABEL
+// already gives each logged reservation action a Turkish label; this gives
+// it a distinct marker too. An unrecognized action falls back to the same
+// navy, document-shaped icon every row used before this map existed.
+const RES_ACTIVITY_MARKER = {
+  created:        { color:C.navy,   icon:"M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z M14 2v6h6" },
+  updated:        { color:C.textMuted, icon:"M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" },
+  status_changed: { color:C.blue,   icon:"M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" },
+  payment:        { color:C.green,  icon:"M2 9a2 2 0 012-2h16a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V9zM2 13h20" },
+  deposit:        { color:C.green,  icon:"M2 9a2 2 0 012-2h16a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V9zM2 13h20" },
+  cancelled:      { color:C.red,    icon:"M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" },
+};
+const RES_ACTIVITY_MARKER_DEFAULT = { color:C.navy, icon:"M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z M14 2v6h6" };
+
 function ResTimeline({ r }) {
   // Real activity log for this reservation — the fixed 5-step template with
   // hardcoded dates/staff names below always showed the same fake sequence
   // for every reservation, regardless of what actually happened.
   const { data:activity, loading } = useRepo("activity", "getAll", { entityType:"reservation", entityId:r.id });
-  const events = (activity||[]).map(a => ({
-    icon: "M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z M14 2v6h6",
-    dot: C.navy,
-    date: a.date, time: a.time, who: a.who,
-    action: RES_ACTIVITY_LABEL[a.action] || a.description || a.action,
-  }));
+  const events = (activity||[]).map(a => {
+    const marker = RES_ACTIVITY_MARKER[a.action] || RES_ACTIVITY_MARKER_DEFAULT;
+    return {
+      icon: marker.icon,
+      dot: marker.color,
+      date: a.date, time: a.time, who: a.who,
+      action: RES_ACTIVITY_LABEL[a.action] || a.description || a.action,
+    };
+  });
 
   if (loading) return <div style={{ padding:"20px", fontSize:12.5, color:C.textFaint, fontFamily:"'Geist',sans-serif" }}>Yükleniyor…</div>;
   if (events.length === 0) return (
@@ -9515,6 +9548,115 @@ const PREPARATION_STATUS_BADGE_MAP = {
   'İptal':       { color:C.textMuted, bg:C.ivoryDark, dot:C.textMuted },
 };
 
+// Phase 4 Reservation Detail — the operational summary strip. One compact
+// row, never a wall of badges: the three baseline states (guide/pickup/
+// payment) always render, quiet when fine; the conditional ones
+// (preparations/passenger names/Civitatis message) render ONLY when
+// they're actually true, so a clean reservation shows exactly three
+// muted chips and nothing else. Every underlying boolean/count is one
+// already computed by ReservationDetailPage itself — no new query, no
+// new business logic, purely a presentational rollup of existing state.
+const _RES_SUMMARY_TONE = {
+  ok:   { color:C.textMuted, bg:C.ivory },
+  warn: { color:C.amber,     bg:C.amberBg },
+  bad:  { color:C.red,       bg:C.redBg },
+  new:  { color:C.gold,      bg:C.goldPale },
+};
+function _ResSummaryChip({ icon, label, tone }) {
+  const t = _RES_SUMMARY_TONE[tone] || _RES_SUMMARY_TONE.ok;
+  return (
+    <span style={{
+      display:"inline-flex", alignItems:"center", gap:6,
+      padding:"5px 10px", borderRadius:99,
+      background:t.bg, color:t.color,
+      fontSize:12, fontWeight: tone === "ok" ? 500 : 600,
+      fontFamily:"'Geist',sans-serif", whiteSpace:"nowrap",
+    }}>
+      <RIc d={icon} size={12.5} sw={1.8}/>
+      {label}
+    </span>
+  );
+}
+function _ResOperationalSummary({ r, hasMissingPassengerNames, hasUnreadCivitatisMessage, pendingPrepCount }) {
+  const hasGuide = !!(r.guideId || r.guide);
+  const hasPickup = !!r.pickup;
+  const paymentOk = (r.remaining || 0) <= 0;
+  return (
+    <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
+      <_ResSummaryChip
+        icon="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2 M23 21v-2a4 4 0 00-3-3.87 M16 3.13a4 4 0 010 7.75"
+        label={hasGuide ? "Rehber Atandı" : "Rehber Atanmadı"}
+        tone={hasGuide ? "ok" : "bad"}
+      />
+      <_ResSummaryChip
+        icon="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z M12 10a1 1 0 100-2 1 1 0 000 2z"
+        label={hasPickup ? "Pickup Ayarlandı" : "Pickup Eksik"}
+        tone={hasPickup ? "ok" : "warn"}
+      />
+      <_ResSummaryChip
+        icon="M2 9a2 2 0 012-2h16a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V9zM2 13h20"
+        label={paymentOk ? "Ödeme Tamam" : "Ödeme Bekliyor"}
+        tone={paymentOk ? "ok" : "warn"}
+      />
+      {pendingPrepCount > 0 && (
+        <_ResSummaryChip
+          icon="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z M14 2v6h6"
+          label={`${pendingPrepCount} Hazırlık Bekliyor`}
+          tone="warn"
+        />
+      )}
+      {hasMissingPassengerNames && (
+        <_ResSummaryChip
+          icon="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2 M23 21v-2a4 4 0 00-3-3.87 M16 3.13a4 4 0 010 7.75"
+          label="Yolcu İsimleri Eksik"
+          tone="warn"
+        />
+      )}
+      {hasUnreadCivitatisMessage && (
+        <_ResSummaryChip
+          icon="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"
+          label="Yeni Civitatis Mesajı"
+          tone="new"
+        />
+      )}
+    </div>
+  );
+}
+
+// Phase 4 Reservation Detail — a lighter "open section" for pure metadata
+// that gains nothing from a bordered/shadowed Card: a small uppercase
+// label and a thin rule, same typography as RCardHead's own title, no
+// box. Local to this page only (RCard/RCardHead stay untouched — they're
+// shared with Agencies/Dashboard, see the Phase 4 report).
+function _ResOpenSection({ title, right, children }) {
+  return (
+    <div>
+      <div style={{
+        display:"flex", alignItems:"center", justifyContent:"space-between",
+        paddingBottom:8, marginBottom:10, borderBottom:`1px solid ${C.borderLight}`,
+      }}>
+        <span style={{
+          fontSize:11, fontWeight:600, letterSpacing:"0.09em", textTransform:"uppercase",
+          color:C.textFaint, fontFamily:"'Geist',sans-serif",
+        }}>{title}</span>
+        {right}
+      </div>
+      <div style={{ display:"flex", flexDirection:"column", gap:10 }}>{children}</div>
+    </div>
+  );
+}
+function _ResMetaRow({ label, value, mono }) {
+  return (
+    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"baseline", gap:10 }}>
+      <span style={{ fontSize:12, color:C.textFaint, fontFamily:"'Geist',sans-serif", flexShrink:0 }}>{label}</span>
+      <span style={{
+        fontSize:13, color:C.text, textAlign:"right", wordBreak:"break-word",
+        fontFamily: mono ? "'DM Mono',monospace" : "'Geist',sans-serif",
+      }}>{value}</span>
+    </div>
+  );
+}
+
 function ReservationDetailPage({ resId, onBack }) {
   const _sp = safeParam(resId);
   if (_sp.invalid) return (
@@ -9586,6 +9728,14 @@ function ReservationDetailPage({ resId, onBack }) {
   // them, only a second path to the same page — out of scope here.
   const auth = useAuthContext();
   const isGuideViewer = auth.role === "Rehber";
+  // Phase 4 — the SAME unread-notification list the Reservations list page
+  // already reads for its "Yeni Mesaj" row pill (useOperationalNotifications
+  // is cached/shared, so this adds no new query); reused for both the
+  // operational summary strip and the Civitatis Mesajları card's "Yeni"
+  // accent, never a second notion of "unread".
+  const { unread: resUnreadNotifications } = useOperationalNotifications();
+  const hasUnreadCivitatisMessage = _reservationHasUnreadCivitatisMessage(resUnreadNotifications, resId);
+  const pendingPrepCount = (resPreparations || []).filter(p => p.status === 'pending').length;
   if (resDetLoading) return <LoadingState label="Rezervasyon yükleniyor…"/>;
   if (resDetError)   return <ErrorState message={resDetError} onRetry={()=>{}}/>;
   if (!_resRec)      return <NotFoundCard entityType="Rezervasyon" entityId={resId} onBack={onBack}/>;
@@ -9640,18 +9790,19 @@ function ReservationDetailPage({ resId, onBack }) {
           <RBadge label={r.payStatus} map={PAY_STATUS}/>
           <div style={{ width:1, height:20, background:C.borderLight }}/>
           <RBadge label={r.opStatus} map={RES_STATUS}/>
-          <button style={{
-            display:"flex", alignItems:"center", gap:6,
-            padding:"7px 14px", borderRadius:7,
-            border:`1.5px solid ${C.gold}`, background:C.goldPale,
-            cursor:"pointer", color:C.gold,
-            fontFamily:"'Geist',sans-serif", fontSize:12.5, fontWeight:500,
-          }}>
-            <RIc d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" size={13} sw={1.8}/>
-            Düzenle
-          </button>
         </div>
       </div>
+
+      {/* Phase 4 — operational summary strip: the genuinely actionable
+          states at a glance, directly under the header, before anything
+          else. Replaces the old lone "Rehber Atanmadı" card that used to
+          sit at the bottom of the right rail, easy to miss. */}
+      <_ResOperationalSummary
+        r={r}
+        hasMissingPassengerNames={_hasCivitatisMissingPassengerNamesWarning(resActivity)}
+        hasUnreadCivitatisMessage={hasUnreadCivitatisMessage}
+        pendingPrepCount={pendingPrepCount}
+      />
 
       {}
       <div className="rsp-split" style={{ display:"grid", gridTemplateColumns:"1fr 1fr 272px", gap:18, alignItems:"start" }}>
@@ -9660,16 +9811,12 @@ function ReservationDetailPage({ resId, onBack }) {
         <div style={{ display:"flex", flexDirection:"column", gap:18 }}>
 
           {}
-          <RCard>
-            <RCardHead title="Misafir Bilgileri"/>
-            <RInfoRow label="Ad Soyad" value={`${resCustomer?.flag||"🌍"} ${r.name}`} bold/>
-            <RInfoRow label="Telefon"  value={resCustomer?.phone||"—"} mono icon="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07A19.5 19.5 0 013.07 9.81a19.79 19.79 0 01-3.07-8.63A2 2 0 012 .18h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L6.09 7.91a16 16 0 006 6l1.09-1.09a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z"/>
-            <RInfoRow label="E-posta"  value={resCustomer?.email||"—"} mono icon="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z M22 6l-10 7L2 6"/>
-            <div style={{ padding:"10px 20px", display:"flex", gap:8, alignItems:"center" }}>
-              <span style={{ fontSize:12, color:C.textFaint, fontFamily:"'Geist',sans-serif", minWidth:130 }}>Ülke</span>
-              <span style={{ fontSize:13, color:C.textMid, fontFamily:"'Geist',sans-serif" }}>{resCustomer?.country||"—"}</span>
-            </div>
-          </RCard>
+          <_ResOpenSection title="Misafir Bilgileri">
+            <_ResMetaRow label="Ad Soyad" value={`${resCustomer?.flag||"🌍"} ${r.name}`}/>
+            <_ResMetaRow label="Telefon"  value={resCustomer?.phone||"—"} mono/>
+            <_ResMetaRow label="E-posta"  value={resCustomer?.email||"—"} mono/>
+            <_ResMetaRow label="Ülke"     value={resCustomer?.country||"—"}/>
+          </_ResOpenSection>
 
           {}
           <RCard>
@@ -9682,12 +9829,20 @@ function ReservationDetailPage({ resId, onBack }) {
             />
             {!resGuests || resGuests.length === 0 ? (
               _hasCivitatisMissingPassengerNamesWarning(resActivity) ? (
-                <div style={{ padding:"14px 20px", display:"flex", flexDirection:"column", gap:2 }}>
-                  <div style={{ fontSize:12.5, fontWeight:600, color:C.text, fontFamily:"'Geist',sans-serif" }}>
-                    Yolcu isimleri eksik
+                <div style={{ padding:"14px 20px", display:"flex", gap:10, alignItems:"flex-start" }}>
+                  <div style={{
+                    width:28, height:28, borderRadius:7, flexShrink:0,
+                    background:C.amberBg, display:"flex", alignItems:"center", justifyContent:"center", color:C.amber,
+                  }}>
+                    <RIc d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" size={14} sw={1.8}/>
                   </div>
-                  <div style={{ fontSize:12, color:C.textMuted, fontFamily:"'Geist',sans-serif" }}>
-                    Civitatis bu rezervasyon için yolcu isimlerini iletmedi.
+                  <div>
+                    <div style={{ fontSize:12.5, fontWeight:600, color:C.amber, fontFamily:"'Geist',sans-serif" }}>
+                      Yolcu isimleri eksik
+                    </div>
+                    <div style={{ fontSize:12, color:C.textMuted, fontFamily:"'Geist',sans-serif", marginTop:2 }}>
+                      Civitatis bu rezervasyon için yolcu isimlerini iletmedi.
+                    </div>
                   </div>
                 </div>
               ) : (
@@ -9728,16 +9883,11 @@ function ReservationDetailPage({ resId, onBack }) {
               ) : null
             }/>
             {}
-            <div style={{
-              margin:"16px 16px 0", padding:"14px 16px",
-              background:C.navy, borderRadius:10, marginBottom:0,
-            }}>
-              <div style={{ fontSize:15, fontWeight:700, color:C.onDark, fontFamily:"'Geist',sans-serif", lineHeight:1.3 }}>{formatReservationTourLabel(r.tour, r.tourLanguage)}</div>
-              <div style={{ fontSize:12, color:"rgba(248,245,238,0.55)", fontFamily:"'Geist',sans-serif", marginTop:4 }}>{r.date} · {fmtResTime(r.time)}</div>
+            <div style={{ padding:"14px 20px 2px" }}>
+              <div style={{ fontSize:15, fontWeight:700, color:C.text, fontFamily:"'Geist',sans-serif", lineHeight:1.3 }}>{formatReservationTourLabel(r.tour, r.tourLanguage)}</div>
+              <div style={{ fontSize:12, color:C.textFaint, fontFamily:"'Geist',sans-serif", marginTop:3 }}>{r.date} · {fmtResTime(r.time)}</div>
             </div>
-            <div style={{ height:10 }}/>
-            <RInfoRow label="Tarih"       value={r.date} icon="M8 2v4M16 2v4M3 10h18M21 8a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2h14a2 2 0 002-2V8z"/>
-            <RInfoRow label="Saat"        value={fmtResTime(r.time)} icon="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+            <div style={{ height:6 }}/>
             <div style={{ padding:"10px 20px", display:"flex", gap:8, alignItems:"center", borderBottom:`1px solid ${C.borderLight}` }}>
               <span style={{ fontSize:12, color:C.textFaint, fontFamily:"'Geist',sans-serif", minWidth:130, display:"flex", alignItems:"center", gap:5 }}>
                 <RIc d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2 M23 21v-2a4 4 0 00-3-3.87 M16 3.13a4 4 0 010 7.75" size={12} sw={1.5}/>
@@ -10000,7 +10150,10 @@ function ReservationDetailPage({ resId, onBack }) {
             {}
             {r.opNotes && (
               <div style={{ padding:"12px 20px" }}>
-                <div style={{ fontSize:10.5, color:C.textFaint, fontFamily:"'Geist',sans-serif", textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:6 }}>Operasyon Notları</div>
+                <div style={{ display:"flex", alignItems:"center", gap:5, marginBottom:6 }}>
+                  <RIc d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" size={10.5} sw={1.8} color={C.textFaint}/>
+                  <span style={{ fontSize:10.5, color:C.textFaint, fontFamily:"'Geist',sans-serif", textTransform:"uppercase", letterSpacing:"0.07em" }}>Operasyon Notları — Personel</span>
+                </div>
                 <div style={{
                   fontSize:13, color:C.textMid, fontFamily:"'Geist',sans-serif",
                   background:C.ivory, borderRadius:8, padding:"10px 12px",
@@ -10014,7 +10167,7 @@ function ReservationDetailPage({ resId, onBack }) {
           <ReviewCard r={r}/>
 
           {}
-          <ReservationMessagesCard r={r}/>
+          <ReservationMessagesCard r={r} hasUnread={hasUnreadCivitatisMessage}/>
 
           {}
           <RCard>
@@ -10027,49 +10180,24 @@ function ReservationDetailPage({ resId, onBack }) {
         <div style={{ display:"flex", flexDirection:"column", gap:18 }}>
           <ResQuickActions res={r} onAssignGuide={()=>setShowAssignGuide(true)}/>
 
-          {}
-          <RCard>
-            <RCardHead title="Rezervasyon Bilgileri"/>
-            <div style={{ padding:"4px 0" }}>
-              {[
-                { label:"Oluşturulma",    val:r.createdAt,          type:null },
-                { label:"Bağlı Talep",    val:r.leadId,             type:"lead" },
-                { label:"Bağlı Teklif",   val:r.quoteId || null,    type:"quote" },
-                { label:"Para Birimi",    val:r.currency,           type:null },
-              ].map((row,i) => (
-                <div key={i} style={{
-                  display:"flex", justifyContent:"space-between", alignItems:"center",
-                  padding:"10px 18px", borderBottom:`1px solid ${C.borderLight}`,
-                }}>
-                  <span style={{ fontSize:12, color:C.textFaint, fontFamily:"'Geist',sans-serif" }}>{row.label}</span>
-                  {row.type ? <IDLink id={row.val} type={row.type}/> : <span style={{ fontSize:12.5, color:C.text, fontFamily:"'DM Mono',monospace", fontWeight:500 }}>{row.val || "—"}</span>}
-                </div>
-              ))}
-            </div>
-          </RCard>
-
-          {}
-          {!r.guide && !r.guideId && r.opStatus !== "İptal" && (
-            <div style={{
-              background:C.redBg, border:`1px solid ${C.red}22`,
-              borderRadius:12, padding:"14px 16px",
-              display:"flex", gap:10, alignItems:"flex-start",
-            }}>
-              <div style={{
-                width:32, height:32, borderRadius:8, flexShrink:0,
-                background:"rgba(192,57,43,0.12)",
-                display:"flex", alignItems:"center", justifyContent:"center", color:C.red,
-              }}>
-                <RIc d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" size={16} sw={1.8}/>
+          {/* Phase 4 — de-boxed: pure reference metadata, no warning or
+              action of its own. The "Rehber Atanmadı" card that used to
+              sit below this one is now the operational summary strip at
+              the top of the page (same warning, same logic, surfaced
+              where it can't be missed). */}
+          <_ResOpenSection title="Rezervasyon Bilgileri">
+            {[
+              { label:"Oluşturulma",    val:r.createdAt,          type:null },
+              { label:"Bağlı Talep",    val:r.leadId,             type:"lead" },
+              { label:"Bağlı Teklif",   val:r.quoteId || null,    type:"quote" },
+              { label:"Para Birimi",    val:r.currency,           type:null },
+            ].map((row,i) => (
+              <div key={i} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:10 }}>
+                <span style={{ fontSize:12, color:C.textFaint, fontFamily:"'Geist',sans-serif" }}>{row.label}</span>
+                {row.type ? <IDLink id={row.val} type={row.type}/> : <span style={{ fontSize:12.5, color:C.text, fontFamily:"'DM Mono',monospace", fontWeight:500 }}>{row.val || "—"}</span>}
               </div>
-              <div>
-                <div style={{ fontSize:12.5, fontWeight:600, color:C.red, fontFamily:"'Geist',sans-serif", marginBottom:3 }}>Rehber Atanmadı</div>
-                <div style={{ fontSize:12, color:"#9B3A2F", fontFamily:"'Geist',sans-serif", lineHeight:1.5 }}>
-                  Bu tur için henüz rehber atanmadı. Tur tarihinden önce atama yapılmalı.
-                </div>
-              </div>
-            </div>
-          )}
+            ))}
+          </_ResOpenSection>
         </div>
       </div>
     </div>
@@ -27513,8 +27641,9 @@ function MobileReservationDetailPage({ resId, onBack }) {
   const { data:cust } = useRepo("customer", "getById", r?.customerId || null);
   // Civitatis client/reservation messages — same repo/entity the desktop
   // ReservationMessagesCard uses, rendered here as compact mobile cards
-  // (never the desktop's own layout) inside a dedicated MobileSection,
-  // visually separate from "Notlar" below.
+  // (never the desktop's own layout) inside its own dedicated
+  // MobileSection, visually separate from the internal-notes "Notlar —
+  // Personel" section further down the page.
   const { data:mobResMessages } = useRepo("reservationMessage", "getByReservationId", resId);
   // Drives the "Yolcu isimleri eksik" line inside the existing
   // "Operasyonel Uyarı" warning card below — see
@@ -27547,6 +27676,12 @@ function MobileReservationDetailPage({ resId, onBack }) {
     await _reopenPreparationWithFeedback(mutPreparationMobile, prepId);
     setReopeningPrepIdMobile(null);
   }
+  // Phase 4 — same unread-notification signal the desktop page and the
+  // Reservations list use; drives both the "Yeni Civitatis mesajı"
+  // warning line and the unread emphasis on the Civitatis Mesajları
+  // section below.
+  const { unread: mobUnreadNotifications } = useOperationalNotifications();
+  const mobHasUnreadCivitatisMessage = _reservationHasUnreadCivitatisMessage(mobUnreadNotifications, resId);
 
   if (loading) return <LoadingState label="Rezervasyon yükleniyor…"/>;
   if (error)   return <ErrorState message={error} onRetry={()=>{}}/>;
@@ -27561,6 +27696,7 @@ function MobileReservationDetailPage({ resId, onBack }) {
   if (!r.pickup) warnings.push("Pickup bilgisi eksik");
   if (r.payStatus==="Bekliyor" || r.payStatus==="Gecikmiş") warnings.push("Ödeme bekliyor");
   if (_hasCivitatisMissingPassengerNamesWarning(mobResActivity)) warnings.push("Yolcu isimleri eksik — Civitatis bu rezervasyon için yolcu isimlerini iletmedi");
+  if (mobHasUnreadCivitatisMessage) warnings.push("Yeni Civitatis mesajı");
   const waHref = cust?.phone ? `https://wa.me/${String(cust.phone).replace(/[^0-9]/g,'')}` : null;
 
   return (
@@ -27613,6 +27749,38 @@ function MobileReservationDetailPage({ resId, onBack }) {
           <MobileInfoLine label="Pickup Saati" value={r.pickupTime || "—"}/>
         </MobileEntityCard>
       </MobileSection>
+
+      {/* Phase 4 — Civitatis Mesajları moved up from the bottom of the
+          page (it used to sit after Notlar, last) to right after guide/
+          pickup, matching the brief's priority order: identity, status,
+          warnings, date/time, guide/pickup, Civitatis message, payment,
+          preparations, then secondary info/history. Same data, same
+          chronological-oldest-first order as desktop; unread emphasis is
+          the same signal the warning banner above already used. */}
+      {(mobResMessages||[]).length > 0 && (
+        <MobileSection title="Civitatis Mesajları">
+          <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+            {mobResMessages.map((m,i) => {
+              const isLatest = i === mobResMessages.length - 1;
+              const isNew = isLatest && mobHasUnreadCivitatisMessage;
+              return (
+                <MobileEntityCard key={m.id} style={isNew ? { borderLeft:`3px solid ${C.gold}`, background:C.goldPale } : undefined}>
+                  <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:8, marginBottom:5 }}>
+                    <span style={{ display:"flex", alignItems:"center", gap:6 }}>
+                      <span style={{ fontSize:12, fontWeight:700, color:C.text, fontFamily:"'Geist',sans-serif" }}>Civitatis</span>
+                      {isNew && (
+                        <span style={{ fontSize:9.5, fontWeight:600, color:C.gold, background:`${C.gold}1a`, padding:"1px 6px", borderRadius:99, fontFamily:"'Geist',sans-serif" }}>Yeni</span>
+                      )}
+                    </span>
+                    <span style={{ fontSize:11, color:C.textFaint, fontFamily:"'Geist',sans-serif" }}>{formatReservationMessageTimestamp(m.receivedAt)}</span>
+                  </div>
+                  <div style={{ fontSize:13, color:C.textMid, fontFamily:"'Geist',sans-serif", lineHeight:1.55, whiteSpace:"pre-wrap" }}>{m.messageText}</div>
+                </MobileEntityCard>
+              );
+            })}
+          </div>
+        </MobileSection>
+      )}
 
       {/* Tour Preparation Intelligence Phase C1 — same meal_status/
           purchased_activity_raw presentation as desktop's "Tur İçeriği"
@@ -27719,25 +27887,8 @@ function MobileReservationDetailPage({ resId, onBack }) {
       </MobileSection>
 
       {r.opNotes && (
-        <MobileSection title="Notlar">
+        <MobileSection title="Notlar — Personel">
           <MobileEntityCard><div style={{ fontSize:13, color:C.textMid, fontFamily:"'Geist',sans-serif", lineHeight:1.6 }}>{r.opNotes}</div></MobileEntityCard>
-        </MobileSection>
-      )}
-
-      {}
-      {(mobResMessages||[]).length > 0 && (
-        <MobileSection title="Civitatis Mesajları">
-          <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
-            {mobResMessages.map(m => (
-              <MobileEntityCard key={m.id}>
-                <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:8, marginBottom:5 }}>
-                  <span style={{ fontSize:12, fontWeight:700, color:C.text, fontFamily:"'Geist',sans-serif" }}>Civitatis</span>
-                  <span style={{ fontSize:11, color:C.textFaint, fontFamily:"'Geist',sans-serif" }}>{formatReservationMessageTimestamp(m.receivedAt)}</span>
-                </div>
-                <div style={{ fontSize:13, color:C.textMid, fontFamily:"'Geist',sans-serif", lineHeight:1.55, whiteSpace:"pre-wrap" }}>{m.messageText}</div>
-              </MobileEntityCard>
-            ))}
-          </div>
         </MobileSection>
       )}
     </div>

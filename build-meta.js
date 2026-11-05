@@ -1,1 +1,1 @@
-window.__DESETOUR_BUILD__ = {"version":"13.01","major":13,"minor":1,"buildTimestamp":"2026-11-05T07:55:56.234Z","commitSha":"0d134287db0dcb85e1fa945a9f2647efc50122d8","commitShaShort":"0d13428","branch":"ui-phase3-dashboard"};
+window.__DESETOUR_BUILD__ = {"version":"13.01","major":13,"minor":1,"buildTimestamp":"2026-11-05T08:19:33.620Z","commitSha":"f2d8bc69034fbb08bdddce716e545bb15de7defe","commitShaShort":"f2d8bc6","branch":"ui-phase4-reservations"};

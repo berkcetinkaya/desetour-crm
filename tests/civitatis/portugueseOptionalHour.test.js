@@ -286,7 +286,11 @@ test('Reservation Detail: both the header breadcrumb and the "Tur Bilgileri" car
   const idx = SOURCE.indexOf('function ReservationDetailPage(');
   const body = SOURCE.slice(idx, SOURCE.indexOf('\nfunction ', idx + 10));
   const calls = body.match(/fmtResTime\(r\.time\)/g) || [];
-  assert.ok(calls.length >= 3, `expected at least 3 fmtResTime(r.time) call sites (breadcrumb, tour card, Saat row), found ${calls.length}`);
+  // Phase 4 Dashboard reorg merged the Tur Bilgileri card's separate
+  // "Tarih"/"Saat" rows into the single date/time line already shown
+  // under the tour name, removing one (now-redundant) fmtResTime call
+  // site — breadcrumb + tour-card date/time line remain, at least 2.
+  assert.ok(calls.length >= 2, `expected at least 2 fmtResTime(r.time) call sites (breadcrumb, tour card date/time line), found ${calls.length}`);
   // No remaining bare, unguarded reservation time render.
   assert.doesNotMatch(body, /\{r\.time\}/);
 });
