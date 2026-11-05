@@ -2908,22 +2908,23 @@ function Sidebar({ currentBase, collapsed, onToggle, mobileOpen, onMobileClose, 
         </svg>
       </button>
       <div style={{padding:"22px 16px 16px", borderBottom:`1px solid ${C.borderLight}`}}>
-        {/* dese-logo-mark.png is the properly re-extracted transparent
-            cutout (navy "Dese" + gold "TOUR", see its own definition
-            comment) — crisp on a light surface. seffafdeselogo.png is an
-            OPAQUE PNG (a black box behind the wordmark, not real
-            transparency); it only reads correctly on navy because of the
-            mixBlendMode:"screen" trick below, which would just wash out
-            to nothing against white. Both are existing, already-shipped
-            DeseTour assets — nothing here is generated or redrawn. */}
+        {/* Same asset, same colors, in both themes — dese-logo-mark.png is
+            the properly re-extracted transparent cutout (navy "Dese" +
+            gold "TOUR"). Dark used to swap in seffafdeselogo.png (an
+            OPAQUE, differently-drawn asset) via a mixBlendMode:"screen"
+            trick, which read as a washed-out, visually different logo
+            system rather than the same DeseTour mark — exactly the "does
+            not match light theme" complaint. A brightness/saturate lift
+            (dark only) keeps this literal navy+gold file legible against
+            the dark sidebar surface without changing a single pixel of
+            the PNG or touching light mode's rendering at all. */}
         <img
-          src={light ? "/dese-logo-mark.png" : "/seffafdeselogo.png"}
+          src="/dese-logo-mark.png"
           alt="Dese Tour"
           style={{
             width:"100%", maxWidth:collapsed?40:160,
             height:"auto", display:"block",
-            mixBlendMode: light ? "normal" : "screen",
-            opacity: light ? 1 : 0.95,
+            filter: light ? "none" : "brightness(1.6) saturate(1.05)",
             transition:`max-width ${T.motionBase} cubic-bezier(0.4,0,0.2,1)`,
           }}
         />
@@ -25891,15 +25892,27 @@ function App() {
         }
         html[data-theme="dark"] {
           color-scheme: dark;
-          --c-white: #1B222C;
-          --c-ivory: #161C25;
-          --c-ivory-dark: #10151D;
-          --c-border: #2A313D;
-          --c-border-light: #232A35;
-          --c-text: #EDEFF3;
-          --c-text-mid: #AEB4C0;
-          --c-text-muted: #7D8494;
-          --c-text-faint: #5B6170;
+          /* Phase (dark-mode readability pass): the whole surface/border/
+             text ramp was lifted — the previous values (#10151D canvas …
+             #2A313D border) measured real WCAG contrast of only ~1.1-1.2:1
+             between adjacent surface levels (card vs canvas, border vs
+             card) and ~2.6:1 for --c-text-faint against a card — close to
+             invisible dividers and genuinely hard-to-read metadata/empty-
+             state text. These new values keep the same navy-charcoal hue
+             family (never pure black, never blue-SaaS-gray) but widen
+             every gap: card/canvas now ~1.3:1, border/card ~1.9:1,
+             --c-text-faint ~4:1 against a card (was 2.6:1). Verified with
+             a WCAG relative-luminance calculator before/after, not just by
+             eye. Light (:root) is untouched. */
+          --c-white: #262E3E;
+          --c-ivory: #171D29;
+          --c-ivory-dark: #121722;
+          --c-border: #4A5770;
+          --c-border-light: #343F52;
+          --c-text: #F2F3F6;
+          --c-text-mid: #C3C9D4;
+          --c-text-muted: #99A0B2;
+          --c-text-faint: #848CA0;
           --c-gold-pale: rgba(201,168,76,0.16);
           --c-gold-pale-wash: rgba(201,168,76,0.09);
           /* Phase (dark-mode modernization): *-bg wash opacity brought down
@@ -25927,15 +25940,17 @@ function App() {
           --shadow-modal: 0 16px 40px rgba(0,0,0,0.42);
           --shadow-popover: 0 12px 32px rgba(0,0,0,0.34);
           --focus-ring: 0 0 0 3px rgba(201,168,76,0.35);
-          --scrollbar-thumb: #343C48;
-          --row-hover: rgba(255,255,255,0.035);
+          --scrollbar-thumb: #4A5770;
+          /* Bumped from 0.035 — on the lifted card surface a hover tint
+             that faint read as no feedback at all. */
+          --row-hover: rgba(255,255,255,0.05);
           /* The sidebar's own cast shadow (rgba(15,29,53,...)) all but
              disappears once the page canvas is this dark too, so the
              fixed-navy sidebar visually merges into it — a hairline
              takes over the separation job here that the shadow alone
              still handles fine in light mode. */
-          --sidebar-edge: rgba(255,255,255,0.07);
-          --bottomnav-bg: rgba(22,28,37,0.92);
+          --sidebar-edge: rgba(255,255,255,0.10);
+          --bottomnav-bg: rgba(23,29,41,0.92);
         }
 
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
