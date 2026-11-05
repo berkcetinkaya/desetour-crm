@@ -11926,7 +11926,7 @@ function _DogrudanOdemelerView() {
                   const cust = getCustomerById(p.customerId);
                   const sym = p.currency==="TRY"?"₺":"€";
                   return (
-                    <MobileCard onClick={()=>setOpenPayment(p)} accent={p.status==="Bekliyor"?C.red:undefined}>
+                    <MobileCard onClick={()=>setOpenPayment(p)} style={p.status==="Bekliyor"?{borderLeft:`3px solid ${C.red}`}:undefined}>
                       <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
                         <div style={{fontSize:15,fontWeight:700,color:C.gold,fontFamily:"'Geist',sans-serif"}}>{sym}{p.amount.toLocaleString("tr-TR")}</div>
                         <span style={{fontSize:11,padding:"2px 7px",borderRadius:99,color:psm.color,background:psm.bg,fontFamily:"'Geist',sans-serif",fontWeight:500}}>{p.status}</span>
@@ -16094,9 +16094,17 @@ function SToggle({ on, onChange }) {
 }
 
 function SField({ label, hint, children }) {
+  // Phase 6 — stacked label-above-control on mobile instead of a fixed
+  // 200px label column squeezing the control into the remaining ~120px
+  // at 390px width. Desktop's side-by-side row is completely unchanged.
+  const { isMobile } = useBreakpoint();
   return (
-    <div style={{padding:"14px 0", borderBottom:`1px solid ${C.borderLight}`, display:"flex", alignItems:"flex-start", gap:24}}>
-      <div style={{minWidth:200, flexShrink:0, paddingTop:1}}>
+    <div style={{
+      padding:"14px 0", borderBottom:`1px solid ${C.borderLight}`,
+      display:"flex", flexDirection: isMobile ? "column" : "row",
+      alignItems: isMobile ? "stretch" : "flex-start", gap: isMobile ? 8 : 24,
+    }}>
+      <div style={{minWidth: isMobile ? 0 : 200, flexShrink:0, paddingTop: isMobile ? 0 : 1}}>
         <div style={{fontSize:13.5, fontWeight:500, color:C.text, fontFamily:"'Geist',sans-serif", marginBottom:2}}>{label}</div>
         {hint && <div style={{fontSize:12, color:C.textFaint, fontFamily:"'Geist',sans-serif", lineHeight:1.4}}>{hint}</div>}
       </div>
@@ -16135,10 +16143,12 @@ function SSelect({ value, onChange, options }) {
 }
 
 function SSection({ id, title, desc, icon, children }) {
+  const { isMobile } = useBreakpoint();
+  const sidePad = isMobile ? 14 : 24;
   return (
     <div id={id} style={{background:C.white, border:`1px solid ${C.border}`, borderRadius:T.radius, overflow:"hidden", boxShadow:T.shadowSoft}}>
       <div style={{
-        padding: desc ? "15px 24px" : "16px 24px",
+        padding: `${desc ? 15 : 16}px ${sidePad}px`,
         background:C.ivory, borderBottom:`1px solid ${C.border}`,
         display:"flex", alignItems:"center", gap:10,
       }}>
@@ -16153,7 +16163,7 @@ function SSection({ id, title, desc, icon, children }) {
           {desc && <div style={{fontSize:12, color:C.textMuted, fontFamily:"'Geist',sans-serif", marginTop:2}}>{desc}</div>}
         </div>
       </div>
-      <div style={{padding:"4px 24px 16px"}}>{children}</div>
+      <div style={{padding:`4px ${sidePad}px 16px`}}>{children}</div>
     </div>
   );
 }
@@ -16177,6 +16187,13 @@ function SaveBtn({ saved, onClick }) {
 function SettingsPage() {
   const [hov, setHov] = useState(false);
   const [activeSection, setActiveSection] = useState("sirket");
+  // Phase 6 — the 220px vertical section sidebar used to simply stack
+  // full-width above the content on mobile (via .rsp-split's existing
+  // 1fr collapse), forcing a long scroll past ~7 nav rows before
+  // reaching any actual setting. A horizontal scrollable pill row
+  // (same pattern MobileMessagesPage's filters already use) replaces it
+  // below 768px; desktop's sidebar is completely unchanged.
+  const { isMobile } = useBreakpoint();
 
   const { data:staffData, loading:staffLoading } = useRepo("staff", "getAll");
   const users = staffData ?? [];
@@ -16239,11 +16256,12 @@ function SettingsPage() {
       {}
       <div style={{
         background:C.white, border:`1px solid ${C.border}`, borderRadius:12,
-        padding:"20px 24px", marginBottom:20,
+        padding: isMobile ? "16px 16px" : "20px 24px", marginBottom:20,
         display:"flex", alignItems:"center", justifyContent:"space-between",
+        flexWrap:"wrap", gap:10,
       }}>
         <div>
-          <h1 style={{margin:0, fontSize:24, fontWeight:700, color:C.text, fontFamily:"'Instrument Serif',serif", marginBottom:4}}>Ayarlar</h1>
+          <h1 style={{margin:0, fontSize: isMobile ? 20 : 24, fontWeight:700, color:C.text, fontFamily:"'Instrument Serif',serif", marginBottom:4}}>Ayarlar</h1>
           <p style={{margin:0, fontSize:13.5, color:C.textMuted, fontFamily:"'Geist',sans-serif"}}>
             Dese Tour Operasyon Merkezi sistem ayarlarını yönetin.
           </p>
@@ -16257,10 +16275,31 @@ function SettingsPage() {
         </div>
       </div>
 
-      {}
-      <div className="rsp-split" style={{display:"grid", gridTemplateColumns:"220px 1fr", gap:20, alignItems:"start"}}>
+      {isMobile ? (
+        <div className="rsp-scroll-x" style={{ display:"flex", gap:8, marginBottom:16 }}>
+          {NAV_SECTIONS.map(s=>{
+            const on = activeSection===s.id;
+            return (
+              <button key={s.id} onClick={()=>setActiveSection(s.id)} style={{
+                flexShrink:0, display:"flex", alignItems:"center", gap:7,
+                padding:"8px 14px", borderRadius:T.radiusPill, cursor:"pointer",
+                border: on ? "none" : `1px solid ${C.border}`,
+                background: on ? C.navy : C.white,
+                color: on ? C.white : C.textMid,
+                fontSize:12.5, fontWeight: on?600:500, fontFamily:"'Geist',sans-serif",
+              }}>
+                <SIc d={s.icon} size={13} sw={1.7} color={on?C.white:C.textFaint}/>
+                {s.label}
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
 
-        {}
+      {}
+      <div className="rsp-split" style={{display:"grid", gridTemplateColumns: isMobile ? "1fr" : "220px 1fr", gap:20, alignItems:"start"}}>
+
+        {!isMobile && (
         <div style={{
           background:C.white, border:`1px solid ${C.border}`, borderRadius:12,
           padding:"10px 10px", position:"sticky", top:20,
@@ -16278,7 +16317,7 @@ function SettingsPage() {
                   background: on?"rgba(27,45,79,0.07)":hov?"rgba(27,45,79,0.03)":"transparent",
                   color: on?C.navy:hov?C.textMid:C.textMuted,
                   cursor:"pointer", textAlign:"left", marginBottom:2,
-                  transition:"background .1s, color .1s",
+                  transition:`background ${T.motionFast} ease, color ${T.motionFast} ease`,
                   borderLeft: on?`3px solid ${C.gold}`:"3px solid transparent",
                 }}>
                 <SIc d={s.icon} size={15} sw={on?2:1.5} color={on?C.navy:C.textFaint}/>
@@ -16290,6 +16329,7 @@ function SettingsPage() {
             );
           })}
         </div>
+        )}
 
         {}
         <div style={{display:"flex", flexDirection:"column", gap:20}}>
@@ -17505,7 +17545,7 @@ function ReportsPage() {
             {metrics.sources.length === 0 ? (
               <EmptyState icon="📊" title="Bu dönem için veri yok" subtitle="Seçilen tarih aralığında kaynak bazlı rezervasyon bulunmuyor."/>
             ) : (
-            <table className="rsp-table" style={{width:"100%", borderCollapse:"collapse"}}>
+            <div style={{overflowX:"auto"}}><table style={{width:"100%", borderCollapse:"collapse", minWidth:480}}>
               <thead>
                 <tr style={{borderBottom:`1px solid ${C.border}`}}>
                   {["Kaynak","Rezervasyon","Operasyonel Tutar","Dağılım"].map((h,i)=>(
@@ -17539,7 +17579,7 @@ function ReportsPage() {
                   );
                 })}
               </tbody>
-            </table>
+            </table></div>
             )}
             {metrics.sources.some(s=>(s.originalByCurrency.EUR||0)>0) && (
               <div style={{fontSize:10.5, color:C.textFaint, fontFamily:"'Geist',sans-serif", marginTop:10}}>Sabit kur: €1 = ₺55 (operasyonel gösterim)</div>
@@ -17551,7 +17591,7 @@ function ReportsPage() {
             {metrics.guides.length === 0 ? (
               <EmptyState icon="🧭" title="Bu dönem için veri yok" subtitle="Seçilen tarih aralığında rehbere atanmış rezervasyon bulunmuyor."/>
             ) : (
-            <table className="rsp-table" style={{width:"100%", borderCollapse:"collapse"}}>
+            <div style={{overflowX:"auto"}}><table style={{width:"100%", borderCollapse:"collapse", minWidth:480}}>
               <thead>
                 <tr style={{borderBottom:`1px solid ${C.border}`}}>
                   {["Rehber","Tur","Misafir","Dağılım"].map((h,i)=>(
@@ -17585,7 +17625,7 @@ function ReportsPage() {
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </table></div>
             )}
           </RpSection>
 
@@ -17697,7 +17737,7 @@ function ReportsPage() {
             {Object.keys(metrics.payments.byCurrency).length === 0 ? (
               <EmptyState icon="💳" title="Bu dönem için veri yok" subtitle="Seçilen tarih aralığında doğrudan ödeme bulunmuyor."/>
             ) : (
-            <table className="rsp-table" style={{width:"100%", borderCollapse:"collapse"}}>
+            <div style={{overflowX:"auto"}}><table style={{width:"100%", borderCollapse:"collapse", minWidth:540}}>
               <thead>
                 <tr style={{borderBottom:`1px solid ${C.border}`}}>
                   {["Para Birimi","Tahsil Edilen","Bekleyen","Kısmi Ödenen","İade"].map((h,i)=>(
@@ -17731,7 +17771,7 @@ function ReportsPage() {
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </table></div>
             )}
           </RpSection>
 
@@ -18239,18 +18279,7 @@ function GuestDetailPage({ guestId, onBack, onNavigate }) {
           { label:"Toplam Harcama",    val: g.totalSpend>0?`${g.currency==="TRY"?"₺":"€"}${g.totalSpend.toLocaleString("tr-TR")}`:"—", icon:"M12 2v20M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6", color:C.gold, bg:C.goldPale },
           { label:"Açık Görev",        val:g.openTasks,    icon:"M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11", color:g.openTasks>0?C.red:C.green, bg:g.openTasks>0?C.redBg:C.greenBg },
         ].map((k,i)=>(
-          <div key={i} style={{
-            background:C.white, border:`1px solid ${C.border}`, borderRadius:12,
-            padding:"14px 16px", display:"flex", alignItems:"center", gap:12,
-          }}>
-            <div style={{width:36, height:36, borderRadius:9, flexShrink:0, background:k.bg, display:"flex", alignItems:"center", justifyContent:"center"}}>
-              <GIc d={k.icon} size={16} sw={1.6} color={k.color}/>
-            </div>
-            <div>
-              <div style={{fontSize:20, fontWeight:700, color:k.color, fontFamily:"'Geist',sans-serif", lineHeight:1}}>{k.val}</div>
-              <div style={{fontSize:11, color:C.textFaint, fontFamily:"'Geist',sans-serif", marginTop:3}}>{k.label}</div>
-            </div>
-          </div>
+          <StatCard key={i} icon={<GIc d={k.icon} size={13} sw={1.6}/>} color={k.color} value={k.val} label={k.label}/>
         ))}
       </div>
 
@@ -20733,10 +20762,16 @@ function EmptyState({ icon, title, subtitle, action }) {
     </div>
   );
 }
-function DataSourceBadge() {
+function DataSourceBadge({ isMobile }) {
   const emailLabel = AppConfig.useResend ? '✉ Resend' : '✉ Mock';
+  // Phase 6 — on mobile this fixed bottom-left badge used to sit directly
+  // on top of BottomNav's first two tabs (both position:fixed at/near
+  // bottom:0). Floating it above the nav bar (same safe-area-aware offset
+  // BottomNav itself uses) keeps the data-source indicator visible
+  // without blocking any tap target. Desktop (no bottom nav) is unchanged.
+  const bottom = isMobile ? "calc(60px + env(safe-area-inset-bottom, 0px))" : 10;
   return (
-    <div style={{position:"fixed",bottom:10,left:10,zIndex:9000,fontSize:10,fontWeight:600,letterSpacing:"0.06em",color:AppConfig.useSupabase?"#128C7E":C.textFaint,background:AppConfig.useSupabase?"#E7F5F3":C.ivoryDark,border:`1px solid ${AppConfig.useSupabase?"#128C7E44":C.border}`,padding:"2px 10px",borderRadius:99,fontFamily:"'DM Mono',monospace",pointerEvents:"none",userSelect:"none",display:"flex",gap:8}}>
+    <div style={{position:"fixed",bottom,left:10,zIndex:9000,fontSize:10,fontWeight:600,letterSpacing:"0.06em",color:AppConfig.useSupabase?"#128C7E":C.textFaint,background:AppConfig.useSupabase?"#E7F5F3":C.ivoryDark,border:`1px solid ${AppConfig.useSupabase?"#128C7E44":C.border}`,padding:"2px 10px",borderRadius:99,fontFamily:"'DM Mono',monospace",pointerEvents:"none",userSelect:"none",display:"flex",gap:8}}>
       <span>{AppConfig.dataSource}</span>
       <span style={{opacity:0.5}}>·</span>
       <span style={{color:AppConfig.useResend?"#7C3AED":C.textFaint}}>{emailLabel}</span>
@@ -25418,7 +25453,8 @@ function MobileNotificationBell() {
       <button onClick={()=>setOpen(o=>!o)} aria-label="Bildirimler" style={{
         border:"none", background:"transparent",
         color: unread.length > 0 ? C.gold : C.ivory,
-        cursor:"pointer", padding:6, display:"flex", position:"relative",
+        cursor:"pointer", padding:12, display:"flex", alignItems:"center", justifyContent:"center",
+        position:"relative", minWidth:44, minHeight:44, boxSizing:"border-box",
       }}>
         <Ic d={_BELL_ICON_D} size={19} sw={1.6}/>
         {unread.length > 0 && (
@@ -25451,9 +25487,10 @@ function MobileNotificationBell() {
 
 // Light/dark switch — same icon-button chrome as NotificationBell for
 // visual consistency (transparent, 6px padding, 18px glyph).
-function ThemeToggle({ theme, onToggle, size, color }) {
+function ThemeToggle({ theme, onToggle, size, color, touch }) {
   const dark = theme === "dark";
   const [hov, setHov] = useState(false);
+  const iconSize = size || 18;
   return (
     <button onClick={onToggle} title={dark ? "Açık temaya geç" : "Koyu temaya geç"}
       aria-label={dark ? "Açık temaya geç" : "Koyu temaya geç"}
@@ -25466,7 +25503,13 @@ function ThemeToggle({ theme, onToggle, size, color }) {
         // (rather than one tuned to just one of them) is used here.
         background: hov ? "rgba(128,128,128,0.12)" : "transparent",
         color: color || C.textMuted,
-        cursor:"pointer", padding:6, display:"flex",
+        cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center",
+        // `touch` (mobile header only) expands the tappable box to the
+        // ~44px touch-target floor without enlarging the glyph itself or
+        // touching the desktop top bar's own (unrelated) call site.
+        padding: touch ? Math.max(6, Math.round((44 - iconSize) / 2)) : 6,
+        minWidth: touch ? 44 : undefined, minHeight: touch ? 44 : undefined,
+        boxSizing:"border-box",
         transition:`background ${T.motionFast} ease, color ${T.motionFast} ease`,
       }}>
       {dark ? (
@@ -25850,7 +25893,8 @@ function App() {
               behavior or a reopened drawer. */}
           <button onClick={()=>navigate('/more')} aria-label="Menü" style={{
             border:"none", background:"transparent", color:C.onDark,
-            cursor:"pointer", padding:8, display:"flex", flexShrink:0,
+            cursor:"pointer", padding:12, display:"flex", alignItems:"center", justifyContent:"center",
+            flexShrink:0, minWidth:44, minHeight:44, boxSizing:"border-box", marginLeft:-4,
           }}>
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M3 6h18M3 12h18M3 18h18"/>
@@ -25860,7 +25904,7 @@ function App() {
             {MOBILE_PAGE_TITLES[base] || "Dese Tour"}
           </div>
           <div style={{display:"flex", alignItems:"center", gap:2, flexShrink:0}}>
-            <ThemeToggle theme={theme} onToggle={toggleTheme} size={17} color="rgba(248,245,238,0.75)"/>
+            <ThemeToggle theme={theme} onToggle={toggleTheme} size={17} color="rgba(248,245,238,0.75)" touch/>
             <MobileNotificationBell/>
           </div>
         </div>
@@ -25884,7 +25928,7 @@ function App() {
         </div>
       </main>
       {toastMsg && <Toast msg={toastMsg} onDone={()=>setToastMsg(null)}/>}
-      <DataSourceBadge/>
+      <DataSourceBadge isMobile={isMobile}/>
     </>
     </AuthGuard>
   );
@@ -25914,11 +25958,14 @@ function safeParam(param) {
 
 function MobileCard({ onClick, children, style }) {
   return (
-    <div onClick={onClick} style={{
-      padding:'12px 16px', borderBottom:`1px solid ${C.border}`,
-      cursor: onClick ? 'pointer' : 'default', background:C.white,
-      transition:'background 0.1s', ...style,
-    }}
+    <div onClick={onClick}
+      tabIndex={onClick ? 0 : undefined}
+      onKeyDown={onClick ? (e=>{ if (e.target===e.currentTarget && (e.key==="Enter"||e.key===" ")) { e.preventDefault(); onClick(); } }) : undefined}
+      style={{
+        padding:'12px 16px', borderBottom:`1px solid ${C.border}`,
+        cursor: onClick ? 'pointer' : 'default', background:C.white,
+        transition:`background ${T.motionFast} ease`, ...style,
+      }}
       onMouseEnter={e=>onClick&&(e.currentTarget.style.background=C.ivory)}
       onMouseLeave={e=>onClick&&(e.currentTarget.style.background=C.white)}
     >{children}</div>
@@ -25970,14 +26017,17 @@ function MobileStatusChip({ label, tone = "neutral" }) {
    of the shadow. */
 function MobileEntityCard({ children, onClick, style }) {
   return (
-    <div onClick={onClick} style={{
-      background:C.white, borderRadius:14,
-      padding:"14px 16px",
-      boxShadow:"0 1px 2px rgba(15,29,53,0.05), 0 1px 8px rgba(15,29,53,0.05)",
-      cursor: onClick ? "pointer" : "default",
-      WebkitTapHighlightColor:"transparent",
-      ...style,
-    }}>{children}</div>
+    <div onClick={onClick}
+      tabIndex={onClick ? 0 : undefined}
+      onKeyDown={onClick ? (e=>{ if (e.target===e.currentTarget && (e.key==="Enter"||e.key===" ")) { e.preventDefault(); onClick(); } }) : undefined}
+      style={{
+        background:C.white, borderRadius:14,
+        padding:"14px 16px",
+        boxShadow:T.shadowSoft,
+        cursor: onClick ? "pointer" : "default",
+        WebkitTapHighlightColor:"transparent",
+        ...style,
+      }}>{children}</div>
   );
 }
 
@@ -26029,7 +26079,7 @@ function _MobileAccordionSection({ title, count, countLabel, children, emptyLabe
   return (
     <div style={{
       background:C.white, borderRadius:14,
-      boxShadow:"0 1px 2px rgba(15,29,53,0.05), 0 1px 8px rgba(15,29,53,0.05)",
+      boxShadow:T.shadowSoft,
       overflow:"hidden",
     }}>
       <button
@@ -26046,14 +26096,14 @@ function _MobileAccordionSection({ title, count, countLabel, children, emptyLabe
           <MobileStatusChip label={hasItems ? `${count} ${countLabel}` : emptyLabel} tone={hasItems ? "warn" : "good"}/>
           {hasItems && (
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={C.textFaint} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
-              style={{ transform: open ? "rotate(180deg)" : "rotate(0deg)", transition:"transform 0.2s ease" }}>
+              style={{ transform: open ? "rotate(180deg)" : "rotate(0deg)", transition:`transform ${T.motionBase} ease` }}>
               <path d="M6 9l6 6 6-6"/>
             </svg>
           )}
         </span>
       </button>
       {hasItems && (
-        <div style={{ display:"grid", gridTemplateRows: open ? "1fr" : "0fr", transition:"grid-template-rows 0.25s cubic-bezier(0.4,0,0.2,1)" }}>
+        <div style={{ display:"grid", gridTemplateRows: open ? "1fr" : "0fr", transition:`grid-template-rows ${T.motionSlow} cubic-bezier(0.4,0,0.2,1)` }}>
           <div style={{ overflow:"hidden" }}>
             <div style={{ padding:"0 16px 14px", display:"flex", flexDirection:"column", gap:8 }}>
               {children}
@@ -26402,6 +26452,8 @@ function MobileHomePage({ navigate }) {
             {upcoming.map((r,i)=>(
               <div key={r.id||i}
                 onClick={()=>navigate('/reservations/'+r.id)}
+                tabIndex={0}
+                onKeyDown={e=>{ if (e.key==="Enter"||e.key===" ") { e.preventDefault(); navigate('/reservations/'+r.id); } }}
                 style={{
                   display:"flex", alignItems:"center", gap:10, padding:"12px 14px", cursor:"pointer",
                   borderBottom: i<upcoming.length-1 ? `1px solid ${C.borderLight}` : "none",
@@ -26670,10 +26722,13 @@ function MobileGuestsPage({ onSelectGuest }) {
       ) : (
         <MobileEntityCard style={{ padding:0, overflow:"hidden" }}>
           {filtered.map((g,i)=>(
-            <div key={g.id} onClick={()=>onSelectGuest(g.id)} style={{
-              display:"flex", alignItems:"center", gap:12, padding:"13px 14px", cursor:"pointer",
-              borderBottom: i<filtered.length-1 ? `1px solid ${C.borderLight}` : "none",
-            }}>
+            <div key={g.id} onClick={()=>onSelectGuest(g.id)}
+              tabIndex={0}
+              onKeyDown={e=>{ if (e.key==="Enter"||e.key===" ") { e.preventDefault(); onSelectGuest(g.id); } }}
+              style={{
+                display:"flex", alignItems:"center", gap:12, padding:"13px 14px", cursor:"pointer",
+                borderBottom: i<filtered.length-1 ? `1px solid ${C.borderLight}` : "none",
+              }}>
               <div style={{
                 width:40, height:40, borderRadius:"50%", flexShrink:0,
                 background:"rgba(27,45,79,0.08)", display:"flex", alignItems:"center", justifyContent:"center",
@@ -26973,9 +27028,17 @@ function MobileTasksQueuePage() {
           <MobileEntityCard key={item.kind+item.id} style={{ borderLeft: tone ? `3px solid ${C.red}` : undefined }}>
             <div style={{ display:"flex", alignItems:"flex-start", gap:10 }}>
               <button onClick={()=>complete(item)} disabled={busyKey===item.kind+item.id} style={{
-                width:24, height:24, borderRadius:"50%", flexShrink:0, marginTop:1,
-                border:`1.5px solid ${C.border}`, background:C.white, cursor:"pointer", padding:0,
-              }} aria-label="Tamamla"/>
+                width:40, height:40, flexShrink:0, marginTop:-8, marginLeft:-8, marginRight:-8,
+                border:"none", background:"transparent", cursor:"pointer",
+                display:"flex", alignItems:"center", justifyContent:"center",
+                // Phase 6 — the visible checkbox stays a 24px circle (matches
+                // the row's text scale); this button is a larger transparent
+                // hit area around it, close to the ~44px touch-target floor,
+                // with negative margins so surrounding layout spacing is
+                // unchanged.
+              }} aria-label="Tamamla">
+                <span style={{ width:24, height:24, borderRadius:"50%", border:`1.5px solid ${C.border}`, background:C.white, display:"block" }}/>
+              </button>
               <div style={{ minWidth:0, flex:1 }}>
                 <div style={{ fontSize:13.5, fontWeight:500, color:C.text, fontFamily:"'Geist',sans-serif", lineHeight:1.35 }}>{item.title}</div>
                 <div style={{ display:"flex", alignItems:"center", gap:6, marginTop:6, flexWrap:"wrap" }}>
@@ -27021,7 +27084,8 @@ function MobileDetailHeader({ onBack, chip }) {
     <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:10 }}>
       <button onClick={onBack} style={{
         display:"flex", alignItems:"center", gap:5, flexShrink:0,
-        border:"none", background:"transparent", cursor:"pointer", padding:"6px 6px 6px 0",
+        border:"none", background:"transparent", cursor:"pointer", padding:"12px 10px 12px 0",
+        minHeight:44, boxSizing:"border-box", marginTop:-12, marginBottom:-12,
         color:C.text, fontSize:14, fontWeight:500, fontFamily:"'Geist',sans-serif",
       }}>
         <GIc d="M15 18l-6-6 6-6" size={16} sw={2.2}/>
@@ -27277,7 +27341,7 @@ function MobileGuestDetailPage({ guestId, onBack }) {
   const contactBtn = (href, label, disabled) => (
     <a href={disabled?undefined:href} target={href&&href.startsWith('http')?"_blank":undefined} rel="noreferrer" style={{
       display:"flex", alignItems:"center", justifyContent:"center", padding:"10px 0", borderRadius:10,
-      border:`1px solid ${C.border}`, background:C.white, color: disabled?C.textFaint:C.navy,
+      border:`1px solid ${C.border}`, background:C.white, color: disabled?C.textFaint:C.text,
       fontSize:12.5, fontWeight:600, fontFamily:"'Geist',sans-serif", textDecoration:"none",
       opacity: disabled?0.5:1, cursor: disabled?"default":"pointer",
     }}>{label}</a>
@@ -27930,7 +27994,7 @@ function MobileMessagesPage() {
           paddingTop:"env(safe-area-inset-top, 0px)",
           display:"flex", alignItems:"center", gap:10, padding:"calc(10px + env(safe-area-inset-top, 0px)) 12px 10px",
         }}>
-          <button onClick={()=>setView("list")} style={{ border:"none", background:"transparent", cursor:"pointer", padding:6, color:C.text, flexShrink:0 }}>
+          <button onClick={()=>setView("list")} aria-label="Geri" style={{ border:"none", background:"transparent", cursor:"pointer", padding:12, color:C.text, flexShrink:0, display:"flex", alignItems:"center", justifyContent:"center", minWidth:44, minHeight:44, boxSizing:"border-box", marginLeft:-6 }}>
             <GIc d="M15 18l-6-6 6-6" size={18} sw={2.3}/>
           </button>
           <div style={{ width:36, height:36, borderRadius:"50%", flexShrink:0, background:"rgba(27,45,79,0.09)", display:"flex", alignItems:"center", justifyContent:"center" }}>
@@ -27997,10 +28061,13 @@ function MobileMessagesPage() {
           {filtered.map((c,i)=>{
             const cust = getCustomerById(c.customerId);
             return (
-              <div key={c.id} onClick={()=>open(c.id)} style={{
-                display:"flex", alignItems:"flex-start", gap:10, padding:"13px 14px", cursor:"pointer",
-                borderBottom: i<filtered.length-1 ? `1px solid ${C.borderLight}` : "none",
-              }}>
+              <div key={c.id} onClick={()=>open(c.id)}
+                tabIndex={0}
+                onKeyDown={e=>{ if (e.key==="Enter"||e.key===" ") { e.preventDefault(); open(c.id); } }}
+                style={{
+                  display:"flex", alignItems:"flex-start", gap:10, padding:"13px 14px", cursor:"pointer",
+                  borderBottom: i<filtered.length-1 ? `1px solid ${C.borderLight}` : "none",
+                }}>
                 <div style={{ position:"relative", flexShrink:0 }}>
                   <div style={{ width:40, height:40, borderRadius:"50%", background:"rgba(27,45,79,0.08)", display:"flex", alignItems:"center", justifyContent:"center" }}>
                     <span style={{ fontSize:13, fontWeight:700, color:C.text, fontFamily:"'Geist',sans-serif" }}>{cust?.name?.split(" ").map(w=>w[0]).join("").slice(0,2)||"?"}</span>

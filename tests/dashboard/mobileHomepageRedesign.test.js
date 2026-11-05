@@ -242,7 +242,9 @@ test('_MobileAccordionSection: collapsed by default, shows the pending count wit
 test('_MobileAccordionSection: large touch target, smooth-but-restrained expand/collapse, no excessive border boxes, good light/dark support', () => {
   const body = extractFunctionSource('_MobileAccordionSection');
   assert.match(body, /minHeight:52/, 'the header button must be a large enough touch target');
-  assert.match(body, /transition:"grid-template-rows 0\.25s cubic-bezier\(0\.4,0,0\.2,1\)"/, 'expand/collapse must be a smooth but restrained CSS transition');
+  // Phase 6: tokenized to the shared 240ms motion-slow token (same
+  // cubic-bezier easing as before) instead of a literal "0.25s".
+  assert.match(body, /transition:`grid-template-rows \$\{T\.motionSlow\} cubic-bezier\(0\.4,0,0\.2,1\)`/, 'expand/collapse must be a smooth but restrained CSS transition');
   assert.match(body, /gridTemplateRows: open \? "1fr" : "0fr"/);
   // Theme-reactive tokens only — no hardcoded light-only hex that would
   // break dark mode (see the C object's own design-polish-phase contract).
