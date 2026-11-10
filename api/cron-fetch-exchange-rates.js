@@ -2,9 +2,11 @@
  * api/cron-fetch-exchange-rates.js — Vercel Serverless Function
  * ─────────────────────────────────────────────────────────────────────────
  * Dese Tour Operations Center — Civitatis Settlement Engine, Phase 1.
- * Scheduled (daily) fetch of the ECB reference-rate feed, computing the
- * EUR->TRY/USD->TRY/GBP->TRY cross rates this project needs and caching
- * them in public.exchange_rates. Invoked by a GitHub Actions workflow
+ * Scheduled (business-day) fetch of the ECB reference-rate feed,
+ * computing the EUR->TRY/USD->TRY/GBP->TRY cross rates this project needs
+ * and caching them in public.exchange_rates (1 base = rate TRY). Read by
+ * the Dashboard's "Bu Ay Beklenen Ciro" normalization; this endpoint is
+ * the table's only writer. Invoked by a GitHub Actions workflow
  * (see .github/workflows/exchange-rates-scheduled-fetch.yml) on the
  * exact same shared-secret-header pattern
  * api/cron-ingest-civitatis-write.js already established — this file

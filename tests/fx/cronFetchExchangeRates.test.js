@@ -104,3 +104,72 @@ test('no API secret of any kind is referenced for the ECB feed itself — it is 
   const source = fs.readFileSync(require.resolve('../../api/_fx/ecbClient'), 'utf8');
   assert.doesNotMatch(source, /process\.env/);
 });
+
+// ── fetched_at refresh + idempotent upsert ──────────────────────────────
+
+test('withFetchedAt stamps every row with the same fresh timestamp and never mutates its input', () => {
+  const rows = [{ rate_date: '2026-11-09', base_currency: 'EUR', quote_currency: 'TRY', rate: 1, source: 'ECB' }];
+  const out = fxAdmin.withFetchedAt(rows, '2026-11-10T15:30:00.000Z');
+  assert.deepEqual(out, [{ ...rows[0], fetched_at: '2026-11-10T15:30:00.000Z' }]);
+  assert.equal('fetched_at' in rows[0], false);
+});
+
+test('upsertExchangeRates sends fetched_at on every upsert and keys on (rate_date, base_currency, quote_currency)', async () => {
+  const calls = [];
+  const fakeClient = {
+    from(table) {
+      return {
+        upsert(payload, opts) {
+          calls.push({ table, payload, opts });
+          return { select: async () => ({ data: payload, error: null }) };
+        },
+      };
+    },
+  };
+  const rows = [
+    { rate_date: '2026-11-09', base_currency: 'EUR', quote_currency: 'TRY', rate: 2, source: 'ECB' },
+    { rate_date: '2026-11-09', base_currency: 'USD', quote_currency: 'TRY', rate: 3, source: 'ECB' },
+  ];
+  // Two runs for the same ECB publication date: same conflict key, new fetched_at each time.
+  await fxAdmin.upsertExchangeRates(rows, { client: fakeClient, now: '2026-11-10T15:30:00.000Z' });
+  await fxAdmin.upsertExchangeRates(rows, { client: fakeClient, now: '2026-11-11T15:30:00.000Z' });
+  assert.equal(calls.length, 2);
+  for (const c of calls) {
+    assert.equal(c.table, 'exchange_rates');
+    assert.deepEqual(c.opts, { onConflict: 'rate_date,base_currency,quote_currency' });
+  }
+  assert.ok(calls[0].payload.every(r => r.fetched_at === '2026-11-10T15:30:00.000Z'));
+  assert.ok(calls[1].payload.every(r => r.fetched_at === '2026-11-11T15:30:00.000Z'));
+});
+
+test('upsertExchangeRates surfaces a Supabase error instead of reporting success', async () => {
+  const fakeClient = { from: () => ({ upsert: () => ({ select: async () => ({ data: null, error: { message: 'boom' } }) }) }) };
+  await assert.rejects(
+    fxAdmin.upsertExchangeRates([{ rate_date: '2026-11-09', base_currency: 'EUR', quote_currency: 'TRY', rate: 2, source: 'ECB' }], { client: fakeClient }),
+    /boom/
+  );
+});
+
+// ── Workflow: automatic business-day schedule, manual dispatch kept ──────
+
+test('the FX workflow runs on business days after the ECB publication window and keeps workflow_dispatch', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const yml = fs.readFileSync(path.join(__dirname, '..', '..', '.github', 'workflows', 'exchange-rates-scheduled-fetch.yml'), 'utf8');
+  assert.match(yml, /\n  schedule:\n    - cron: '30 15 \* \* 1-5'\n/);
+  assert.match(yml, /\n  workflow_dispatch: \{\}\n/);
+  assert.match(yml, /SCHEDULER_SECRET: \$\{\{ secrets\.FX_SCHEDULER_SECRET \}\}/);
+  assert.match(yml, /FETCH_URL: \$\{\{ vars\.FX_CRON_URL \}\}/);
+  assert.match(yml, /if \[ -z "\$\{SCHEDULER_SECRET\}" \]; then/, 'fails loudly when the secret is missing');
+  assert.doesNotMatch(yml, /no active CRM module depends on\s+#?\s*live exchange rates/);
+});
+
+test('rate direction: buildTryCrossRates stores 1 base = rate TRY (EUR direct, USD/GBP as EUR→TRY ÷ EUR→X)', () => {
+  const { buildTryCrossRates } = require('../../api/_fx/ecbClient');
+  const rows = buildTryCrossRates({ rateDate: '2026-11-09', eurRates: { TRY: 50, USD: 1.25, GBP: 0.8 } });
+  const byBase = Object.fromEntries(rows.map(r => [r.base_currency, r]));
+  assert.equal(byBase.EUR.rate, 50);
+  assert.equal(byBase.USD.rate, 40);
+  assert.equal(byBase.GBP.rate, 62.5);
+  assert.ok(rows.every(r => r.quote_currency === 'TRY' && r.rate_date === '2026-11-09' && r.source === 'ECB'));
+});

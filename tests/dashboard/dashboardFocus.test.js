@@ -79,16 +79,16 @@ test('celebration fires only for a step above 0 that is higher than the last one
   assert.equal(shouldCelebrate(200000, '300000'), false, 'a revenue drop never re-triggers a lower step');
 });
 
-test('RevenueGoalCard uses the same TRY-only summary as the KPI (never payments, never a conversion)', () => {
+test('RevenueGoalCard uses the same normalized summary as the KPI (never payments, never a fixed rate)', () => {
   const b = body('RevenueGoalCard');
-  assert.match(b, /summarizeMonthlyTRYRevenue\(repoRes \|\| \[\], _TODAY_ISO\)/);
-  assert.match(b, /const revenue = summary\.tryTotal;/);
-  assert.doesNotMatch(b, /useRepo\("payment"/);
-  assert.doesNotMatch(b, /_civitatisConvertToTry|exchange|\b[Rr]ate\b|EUR_TO_TRY/);
+  assert.match(b, /const \{ summary, loading \} = useMonthlyRevenueSummary\(\);/);
+  assert.match(b, /const revenue = summary\.total;/);
+  assert.doesNotMatch(b, /useRepo\(/, 'no separate data read — only the shared hook');
+  assert.doesNotMatch(b, /_civitatisConvertToTry|_CIVITATIS_FIXED_EUR_TO_TRY_RATE|EUR_TO_TRY/);
   assert.match(b, /_revenueMilestoneProgress\(revenue, REVENUE_MILESTONE_STEP\)/);
   assert.match(SOURCE, /const REVENUE_MILESTONE_STEP = 100000;/);
-  // computeMonthlyReservationRevenue (the KPI) is literally the same summary's tryTotal.
-  assert.match(SOURCE, /return summarizeMonthlyTRYRevenue\(reservations, todayISO\)\.tryTotal;/);
+  // The KPI card reads the exact same hook.
+  assert.match(body('KpiRow'), /useMonthlyRevenueSummary\(\)/);
 });
 
 test('RevenueGoalCard copy: next target, remaining amount and remaining % in plain words', () => {
@@ -97,19 +97,42 @@ test('RevenueGoalCard copy: next target, remaining amount and remaining % in pla
   assert.match(b, /`\$\{_fmtTRY\(prog\.remaining\)\} kaldı · %\$\{prog\.remainingPct\}`/);
 });
 
-test('the exclusion note appears only when some reservation was actually left out, and names the reason neutrally (currency, not "foreign")', () => {
+test('the exclusion note appears only when some reservation could not be normalized, and names the reason as rate data', () => {
   const b = body('RevenueGoalCard');
-  assert.match(b, /\{!loading && summary\.excludedCount > 0 && \(/);
-  assert.match(b, /\{summary\.excludedCount\} rezervasyon para birimi nedeniyle bu toplama dahil değil\./);
+  assert.match(b, /const otherExcludedCount = summary\.excludedCount - summary\.excludedByReason\.rate_source_error;/);
+  assert.match(b, /\{!loading && otherExcludedCount > 0 && \(/);
+  assert.match(b, /\{otherExcludedCount\} rezervasyon kur verisi nedeniyle bu toplama dahil değil\./);
+  assert.match(b, /summary\.staleRateCurrencies\.length > 0 && <span>Son ECB kuru \{FX_MAX_RATE_AGE_DAYS\} günden eski/);
+  assert.match(b, /summary\.missingRateCurrencies\.length > 0 && <span>ECB kuru bulunamadı/);
   assert.doesNotMatch(b, /Döviz cinsinden/);
 });
 
-test('milestones and the celebration use only the trusted TRY total shown to the user (never excluded amounts, never a fixed EUR rate)', () => {
+test('converted foreign reservations get their own subtle note with the ECB rate date — never called "excluded"', () => {
   const b = body('RevenueGoalCard');
-  assert.match(b, /const revenue = summary\.tryTotal;/);
+  assert.match(b, /\{!loading && summary\.convertedCount > 0 && \(/);
+  assert.match(b, /\{summary\.convertedCount\} dövizli rezervasyon ECB kuru ile TL’ye çevrildi\./);
+  assert.match(b, /ECB kuru · \{fxRateDates\.map\(_fmtFxRateDate\)\.join\(", "\)\}/);
+  assert.match(b, /const fxRateDates = \[\.\.\.new Set\(Object\.values\(summary\.rateDatesUsed\)\)\]/, 'the date shown is the stored rate_date actually used');
+  const convertedNote = b.slice(b.indexOf('summary.convertedCount > 0 && ('), b.indexOf('summary.fxUnresolved && ('));
+  assert.ok(convertedNote.length > 0);
+  assert.doesNotMatch(convertedNote, /dahil değil|hariç/);
+});
+
+test('rate-date disclosure formats the stored ECB date as "9 Kas 2026"', () => {
+  const fmt = extractCombined(['_fmtFxRateDate']);
+  assert.equal(fmt('2026-11-09'), '9 Kas 2026');
+  assert.equal(fmt(''), '');
+});
+
+test('milestones and the celebration use only the normalized total shown to the user (never excluded amounts, never a fixed EUR rate)', () => {
+  const b = body('RevenueGoalCard');
+  assert.match(b, /const revenue = summary\.total;/);
   assert.match(b, /const prog = _revenueMilestoneProgress\(revenue, REVENUE_MILESTONE_STEP\);/);
   assert.match(b, /const shown = useCountUp\(loading \? 0 : revenue\);/, 'the displayed number is the same value');
   assert.match(b, /_shouldCelebrateMilestone\(prog\.milestone, last\)/);
+  assert.match(b, /const canCelebrate = _canCelebrateRevenue\(loading, summary\);/);
+  assert.match(b, /if \(!canCelebrate\) return;/);
+  assert.match(b, /\}, \[canCelebrate, prog\.milestone, monthKey\]\);/);
   assert.doesNotMatch(b, /_CIVITATIS_FIXED_EUR_TO_TRY_RATE|excludedByCurrency\[[^\]]*\]\s*\*/);
 });
 
@@ -314,4 +337,41 @@ test('Tur Hazırlıkları segmented tabs: dark-mode readable via tokens, light m
   // hover feedback is dark-only
   assert.match(SOURCE, /html\[data-theme="dark"\] \.dt-seg-tab\[aria-pressed="false"\]:hover \{/);
   assert.doesNotMatch(SOURCE, /\n\s*\.dt-seg-tab[:\[]/, 'no unscoped (light-affecting) .dt-seg-tab rule');
+});
+
+// ── FX rate-source failure is its own, visible state ─────────────────────
+
+test('a failed rate read shows its own warning — never "ECB kuru bulunamadı" — and no technical error text', () => {
+  const b = body('RevenueGoalCard');
+  const i = b.indexOf('{!loading && summary.fxUnresolved && (');
+  assert.ok(i !== -1, 'warning is gated on fxUnresolved');
+  const warning = b.slice(i, b.indexOf('{!loading && otherExcludedCount > 0', i));
+  assert.match(warning, /Kur verisine erişilemiyor\. Dövizli rezervasyonlar geçici olarak toplam dışında\./);
+  assert.match(warning, /role="status"/);
+  assert.doesNotMatch(warning, /ECB kuru bulunamadı|error|message/i);
+});
+
+test('an incomplete total is visibly marked, and the ring is not shown as authoritative during an FX source failure', () => {
+  const b = body('RevenueGoalCard');
+  assert.match(b, /\{!loading && !summary\.isComplete && \(/);
+  assert.match(b, />\s*Eksik toplam\s*</);
+  assert.match(b, /stroke=\{summary\.fxUnresolved \? C\.textMuted : C\.gold\}/);
+  assert.match(b, /\{summary\.fxUnresolved \? "kesinleşmedi" : "tamamlandı"\}/);
+});
+
+test('the shared hook passes a failed exchange_rates read on as rateSourceError (distinct from "no rates")', () => {
+  const h = body('useMonthlyRevenueSummary');
+  assert.match(h, /const \{ data:fxRows, loading:fxLoading, error:fxError \} = useRepo\("exchangeRate", "getLatestToTry"\);/);
+  assert.match(h, /const rateSourceError = !!fxError;/);
+  assert.match(h, /summarizeMonthlyExpectedRevenue\(repoRes \|\| \[\], _TODAY_ISO, fxRows \|\| \[\], \{ rateSourceError \}\)/);
+  assert.match(h, /return \{ summary, loading: resLoading \|\| fxLoading \};/);
+  assert.match(body('KpiRow'), /rev\.fxUnresolved \? "Bu ay · kur verisine erişilemiyor"/);
+});
+
+test('an unexpected (non-array) exchange_rates response is a source error, not an empty rate list', () => {
+  const a = SOURCE.indexOf('const SupabaseExchangeRateRepo = {');
+  const repo = SOURCE.slice(a, SOURCE.indexOf('\n};', a));
+  assert.match(repo, /if \(error\) throw new Error\(error\.message\);/);
+  assert.match(repo, /if \(!Array\.isArray\(data\)\) throw new Error\('exchange_rates: unexpected response'\);/);
+  assert.doesNotMatch(repo, /data \|\| \[\]/);
 });

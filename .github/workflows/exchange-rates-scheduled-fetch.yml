@@ -1,14 +1,22 @@
 # Exchange Rates Scheduled Fetch
 # ─────────────────────────────────────────────────────────────────────────
 # Calls the already-protected api/cron-fetch-exchange-rates.js endpoint
-# once a day, so the Civitatis settlement engine always has a reasonably
-# fresh EUR->TRY/USD->TRY/GBP->TRY cache to read from. No FX logic lives
+# every business day, so the Dashboard's "Bu Ay Beklenen Ciro" (which
+# converts EUR/USD/GBP reservations with the newest ECB rate and refuses
+# rates older than 7 days) always has a fresh EUR->TRY/USD->TRY/GBP->TRY
+# cache to read from. The endpoint is the ONLY writer of exchange_rates. No FX logic lives
 # in this file — its entire job is one authenticated HTTP request; the
 # ECB feed fetch, parsing, cross-rate computation, and the write to
 # exchange_rates all live in the endpoint itself.
 #
-# IMPORTANT — INERT until merged to the repository's default branch,
+# IMPORTANT — the schedule below is INERT until merged to the
+# repository's default branch (GitHub only runs `schedule:` from there),
 # same caveat as civitatis-scheduled-ingestion.yml.
+#
+# IDEMPOTENT: the endpoint upserts on UNIQUE(rate_date, base_currency,
+# quote_currency). A re-run, or a run on an ECB holiday when the feed
+# still carries the previous publication, rewrites the same rows (only
+# fetched_at changes) — never a duplicate row.
 #
 # SECRETS: FX_SCHEDULER_SECRET (below) is a GitHub Actions encrypted
 # secret. The same value must separately be set as the
@@ -21,14 +29,15 @@
 name: Exchange Rates Scheduled Fetch
 
 on:
-  # Automatic daily schedule disabled — no active CRM module depends on
-  # live exchange rates (Civitatis settlement and Reports both use the
-  # fixed _CIVITATIS_FIXED_EUR_TO_TRY_RATE=55 operational rate instead;
-  # see DeseTourDashboard.jsx). Running this daily against an unset
-  # FX_CRON_URL/FX_SCHEDULER_SECRET only produced a recurring failure.
-  # Left manually runnable via workflow_dispatch for a possible future
-  # live-rate phase — re-add a `schedule:` trigger here if one is ever
-  # activated.
+  # Live FX is used by the Dashboard's monthly revenue (Civitatis
+  # settlement still uses its own fixed operational rate and does not
+  # read this table). The ECB publishes around 16:00 CET (14:00–15:00
+  # UTC depending on DST); 15:30 UTC Mon–Fri is after that window all
+  # year round. FX_CRON_URL and FX_SCHEDULER_SECRET MUST be configured
+  # before this is merged to the default branch, or every scheduled run
+  # fails at the guard step below.
+  schedule:
+    - cron: '30 15 * * 1-5'
   workflow_dispatch: {}
 
 permissions: {}
@@ -51,6 +60,10 @@ jobs:
 
           if [ -z "${FETCH_URL}" ]; then
             echo "::error::FX_CRON_URL repository variable is not set — see the activation instructions."
+            exit 1
+          fi
+          if [ -z "${SCHEDULER_SECRET}" ]; then
+            echo "::error::FX_SCHEDULER_SECRET repository secret is not set — see the activation instructions."
             exit 1
           fi
 

@@ -48,18 +48,32 @@ function getServiceRoleClient() {
 }
 
 /**
+ * Stamps every row with the same fresh fetched_at. The column's DEFAULT
+ * NOW() only applies on INSERT — an upsert that hits the existing
+ * UNIQUE(rate_date, base_currency, quote_currency) row would otherwise
+ * keep the FIRST fetch's timestamp forever, so "when did we last
+ * successfully fetch" could never be read from the table. Pure.
+ */
+function withFetchedAt(rows, nowIso) {
+  return rows.map(r => ({ ...r, fetched_at: nowIso }));
+}
+
+/**
  * Upserts a batch of { rate_date, base_currency, quote_currency, rate,
  * source } rows, keyed on the table's own UNIQUE(rate_date,
- * base_currency, quote_currency) constraint — re-fetching the same day's
- * rate twice (e.g. a retried cron run) overwrites that day's row with
- * the same values rather than erroring or duplicating. Returns the
- * upserted rows.
+ * base_currency, quote_currency) constraint — re-fetching the same ECB
+ * publication twice (a retried run, or a weekend/holiday run when the
+ * feed still carries the last business day) overwrites that day's row
+ * with the same rate rather than erroring or duplicating, and refreshes
+ * fetched_at. Returns the upserted rows. `options.client` / `options.now`
+ * exist only so tests can inject a fake client and a fixed clock.
  */
-async function upsertExchangeRates(rows) {
+async function upsertExchangeRates(rows, options = {}) {
   if (!Array.isArray(rows) || rows.length === 0) return [];
-  const sb = getServiceRoleClient();
+  const sb = options.client || getServiceRoleClient();
+  const nowIso = options.now || new Date().toISOString();
   const { data, error } = await sb.from('exchange_rates')
-    .upsert(rows, { onConflict: 'rate_date,base_currency,quote_currency' })
+    .upsert(withFetchedAt(rows, nowIso), { onConflict: 'rate_date,base_currency,quote_currency' })
     .select();
   if (error) throw new Error(`Supabase error upserting exchange_rates: ${error.message}`);
   return data || [];
@@ -68,5 +82,6 @@ async function upsertExchangeRates(rows) {
 module.exports = {
   ConfigurationError,
   getServiceRoleClient,
+  withFetchedAt,
   upsertExchangeRates,
 };

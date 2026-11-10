@@ -940,7 +940,7 @@ function computeUrgent(reservations, payments, reminders) {
 // "Agency CRM+" homepage section — aggregates existing agencies/
 // agency_emails rows into the 4 KPI counts plus the two action panels'
 // rows. Pure and dependency-free (only its own parameters and the
-// built-in Date), same testability pattern as computeMonthlyReservationRevenue
+// built-in Date), same testability pattern as summarizeMonthlyExpectedRevenue
 // above — see tests/dashboard/agencyCrmPlusSummary.test.js.
 //
 // METRIC DEFINITIONS (chosen from the EXISTING schema only — no new
@@ -3322,6 +3322,8 @@ function KpiRow() {
   const { data:repoGuides, loading:kpiLoadG } = useRepo("guide",       "getAll");
   const kpiLoading = kpiLoadR || kpiLoadP;
   const m = calculateDashboardMetrics(null, repoRes, repoPays, null, null);
+  // Same normalized total as RevenueGoalCard — one shared hook, no parallel calculation.
+  const { summary:rev, loading:revLoading } = useMonthlyRevenueSummary();
   const activeGuideCount = (repoGuides||[]).filter(g=>g.status==="Aktif").length;
   const kpis = [
     {
@@ -3352,8 +3354,11 @@ function KpiRow() {
     },
     {
       label:"Bu Ay Beklenen Ciro",
-      value:`₺${m.monthRevTRY.toLocaleString("tr-TR",{maximumFractionDigits:0})}`,
-      sub: m.monthRevExcludedCount > 0 ? `Bu ay · ${m.monthRevExcludedCount} rezervasyon hariç` : "Bu ay",
+      value: revLoading ? '…' : `₺${rev.total.toLocaleString("tr-TR",{maximumFractionDigits:0})}`,
+      sub: rev.fxUnresolved ? "Bu ay · kur verisine erişilemiyor"
+         : rev.excludedCount > 0 ? `Bu ay · ${rev.excludedCount} rezervasyon hariç`
+         : rev.convertedCount > 0 ? `Bu ay · ${rev.convertedCount} dövizli, ECB kuru ile`
+         : "Bu ay",
       icon:"M12 2v20M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6",
       accent:true,
     },
@@ -5359,9 +5364,10 @@ const _CIVITATIS_TRY_EQUIVALENT_CURRENCIES = new Set(['TRY', 'TL']);
 // civitatis_settlement_items.original_amount/original_currency or
 // reservations.total_amount/currency, which remain the untouched source
 // of truth. The exchange_rates table and the ECB fetch infrastructure
-// (api/_fx/*, api/cron-fetch-exchange-rates.js) are deliberately left in
-// place for a possible future live-rate phase — this phase only stops
-// requiring them for the EUR conversion below.
+// (api/_fx/*, api/cron-fetch-exchange-rates.js) are not used for this
+// settlement conversion. They ARE live for the Dashboard's "Bu Ay
+// Beklenen Ciro" (summarizeMonthlyExpectedRevenue), which converts with
+// the newest ECB rate and never uses this fixed settlement rate.
 const _CIVITATIS_FIXED_EUR_TO_TRY_RATE = 55;
 
 // TESTABLE:_civitatisEffectiveSettlementStatus:start
@@ -5415,8 +5421,8 @@ function _civitatisConvertToTry(amount, currency) {
 // Phase 1.3: no longer called by the settlement summary path below
 // (EUR now uses the fixed operational rate, not a live lookup) — kept,
 // unused for now, because the exchange_rates table and ECB fetch
-// infrastructure are being retained for a possible future live-rate
-// phase, and this is the one place that already turns its rows into a
+// infrastructure are retained (the Dashboard's monthly revenue uses them
+// via _selectLatestFxRatesToTry instead), and this is the one place that already turns its rows into a
 // lookup map.
 function _latestCivitatisRatesByCurrency(rateRows) {
   const latest = {};
@@ -6075,35 +6081,80 @@ function DashboardPulse() {
 const _RING_R = 48;
 const _RING_C = 2 * Math.PI * _RING_R; // 301.59 — mirrored in @keyframes dashRingIn
 
-// "Bu Ay Beklenen Ciro" as the page's centerpiece: the same TRY-only figure
-// as the KPI card (summarizeMonthlyTRYRevenue — this month's non-cancelled
-// reservations by tour date, never payments, never a mixed-currency sum),
-// progress to the next 100.000 ₺ step, and a one-time celebration when a
-// step is crossed. Reservations whose only amount is in another currency
-// are left out and, only when there are any, called out in a quiet note.
+// The ONE source of "Bu Ay Beklenen Ciro" for both the KPI card and the
+// RevenueGoalCard: this month's reservations + the newest ECB →TRY rates,
+// through summarizeMonthlyExpectedRevenue. `loading` stays true until BOTH
+// reads settle, so no number (and no milestone celebration) is ever
+// produced from a half-loaded, pre-conversion total. A FAILED rate read is
+// passed on as rateSourceError — a distinct state from "the read worked
+// but no usable rate exists" — so the UI can say which one it is.
+function useMonthlyRevenueSummary() {
+  const { data:repoRes, loading:resLoading } = useRepo("reservation", "getAll");
+  const { data:fxRows, loading:fxLoading, error:fxError } = useRepo("exchangeRate", "getLatestToTry");
+  const rateSourceError = !!fxError;
+  const summary = useMemo(
+    () => summarizeMonthlyExpectedRevenue(repoRes || [], _TODAY_ISO, fxRows || [], { rateSourceError }),
+    [repoRes, fxRows, rateSourceError]
+  );
+  return { summary, loading: resLoading || fxLoading };
+}
+
+// TESTABLE:_canCelebrateRevenue:start
+// A milestone may only be celebrated from a fully resolved number: never
+// while reservations or FX are still loading (so a TRY-only subtotal can
+// never flash a celebration before rates arrive), and never while the FX
+// source failed for reservations that need it (an unresolved total must
+// not look authoritative). A pure-TRY month is never blocked by FX.
+function _canCelebrateRevenue(loading, summary) {
+  return !loading && !!summary && !summary.fxUnresolved;
+}
+// TESTABLE:_canCelebrateRevenue:end
+
+// "d MMM yyyy" in Turkish (e.g. "9 Kas 2026") for an ECB rate_date; noon
+// anchor so no viewer timezone can shift the calendar day.
+// TESTABLE:_fmtFxRateDate:start
+function _fmtFxRateDate(iso) {
+  if (!iso) return "";
+  return new Date(String(iso).slice(0, 10) + "T12:00:00").toLocaleDateString("tr-TR", { day:"numeric", month:"short", year:"numeric" });
+}
+// TESTABLE:_fmtFxRateDate:end
+
+// "Bu Ay Beklenen Ciro" as the page's centerpiece: exactly the same
+// normalized total as the KPI card (useMonthlyRevenueSummary — TRY as-is,
+// EUR/USD/GBP at the newest fresh ECB rate, never payments, never a fixed
+// rate), progress to the next 100.000 ₺ step, and a one-time celebration
+// when a step is crossed — all from that one displayed number. Quiet notes
+// say how many foreign reservations were converted (with the ECB rate
+// date) and, separately, how many could not be included.
 function RevenueGoalCard() {
-  const { data:repoRes, loading } = useRepo("reservation", "getAll");
-  const summary = useMemo(() => summarizeMonthlyTRYRevenue(repoRes || [], _TODAY_ISO), [repoRes]);
-  const revenue = summary.tryTotal;
+  const { summary, loading } = useMonthlyRevenueSummary();
+  const revenue = summary.total;
   const prog = _revenueMilestoneProgress(revenue, REVENUE_MILESTONE_STEP);
   const shown = useCountUp(loading ? 0 : revenue);
   const monthKey = _TODAY_ISO.slice(0, 7);
   const monthLabel = new Date(_TODAY_ISO + "T12:00:00").toLocaleDateString("tr-TR", { month:"long", year:"numeric" });
   const [celebrating, setCelebrating] = useState(null);
 
+  const canCelebrate = _canCelebrateRevenue(loading, summary);
   useEffect(() => {
-    if (loading) return;
+    if (!canCelebrate) return;
     let last = 0;
     try { last = Number(localStorage.getItem(REVENUE_MILESTONE_STORAGE_PREFIX + monthKey)) || 0; } catch (_) {}
     if (!_shouldCelebrateMilestone(prog.milestone, last)) return;
     setCelebrating(prog.milestone);
     try { localStorage.setItem(REVENUE_MILESTONE_STORAGE_PREFIX + monthKey, String(prog.milestone)); } catch (_) {}
-  }, [loading, prog.milestone, monthKey]);
+  }, [canCelebrate, prog.milestone, monthKey]);
 
   const passedSteps = [];
   for (let v = prog.milestone; v > 0 && passedSteps.length < 3; v -= REVENUE_MILESTONE_STEP) passedSteps.unshift(v);
   const shortTRY = (v) => `${Math.round(v / 1000).toLocaleString("tr-TR")}K`;
   const excludedDetail = Object.entries(summary.excludedByCurrency).map(([cur, n]) => `${cur}: ${n}`).join(" · ");
+  const fxRateDates = [...new Set(Object.values(summary.rateDatesUsed))].sort().reverse();
+  // Reservations left out for a reason OTHER than an unreadable rate source
+  // (unsupported currency, missing/stale rate) — the source failure gets its
+  // own, distinct warning below and is never described as "no ECB rate".
+  const otherExcludedCount = summary.excludedCount - summary.excludedByReason.rate_source_error;
+  const convertedDetail = Object.entries(summary.convertedByCurrency).map(([cur, n]) => `${cur}: ${n} · kur tarihi ${_fmtFxRateDate(summary.rateDatesUsed[cur])}`).join(" · ");
   const pctShown = loading ? 0 : prog.pct;
 
   return (
@@ -6163,6 +6214,11 @@ function RevenueGoalCard() {
             <span style={{fontSize:11, color:C.textMuted, fontFamily:"'Geist',sans-serif", padding:"2px 8px", borderRadius:T.radiusPill, background:C.ivory, border:`1px solid ${C.borderLight}`}}>
               {monthLabel}
             </span>
+            {!loading && !summary.isComplete && (
+              <span title="Bazı rezervasyonlar bu toplama dahil edilemedi" style={{fontSize:11, fontWeight:600, color:C.amber, fontFamily:"'Geist',sans-serif", padding:"2px 8px", borderRadius:T.radiusPill, background:C.amberBg, border:`1px solid ${C.amberBorder}`}}>
+                Eksik toplam
+              </span>
+            )}
           </div>
           <div style={{
             fontSize:44, fontWeight:600, color:C.text, fontFamily:"'Geist',sans-serif",
@@ -6191,10 +6247,27 @@ function RevenueGoalCard() {
             </span>
           </div>
 
-          {!loading && summary.excludedCount > 0 && (
-            <div title={excludedDetail} style={{display:"flex", alignItems:"center", gap:6, marginTop:12, fontSize:11.5, color:C.textMuted, fontFamily:"'Geist',sans-serif"}}>
+          {!loading && summary.convertedCount > 0 && (
+            <div title={convertedDetail} style={{display:"flex", alignItems:"center", gap:6, flexWrap:"wrap", marginTop:12, fontSize:11.5, color:C.textMuted, fontFamily:"'Geist',sans-serif"}}>
+              <Ic d="M7 16V4m0 0L3 8m4-4l4 4M17 8v12m0 0l4-4m-4 4l-4-4" size={13} sw={1.8}/>
+              <span>{summary.convertedCount} dövizli rezervasyon ECB kuru ile TL’ye çevrildi.</span>
+              <span style={{color:C.textMuted, opacity:0.85}}>ECB kuru · {fxRateDates.map(_fmtFxRateDate).join(", ")}</span>
+            </div>
+          )}
+
+          {!loading && summary.fxUnresolved && (
+            <div role="status" style={{display:"flex", alignItems:"flex-start", gap:8, marginTop:12, padding:"8px 10px", borderRadius:T.radiusSm, fontSize:12, lineHeight:1.45, color:C.text, background:C.amberBg, border:`1px solid ${C.amberBorder}`, fontFamily:"'Geist',sans-serif"}}>
+              <span style={{color:C.amber, flexShrink:0, marginTop:1}}><Ic d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" size={14} sw={1.9}/></span>
+              <span>Kur verisine erişilemiyor. Dövizli rezervasyonlar geçici olarak toplam dışında.</span>
+            </div>
+          )}
+
+          {!loading && otherExcludedCount > 0 && (
+            <div title={excludedDetail} style={{display:"flex", alignItems:"center", gap:6, flexWrap:"wrap", marginTop:(summary.convertedCount > 0 || summary.fxUnresolved) ? 6 : 12, fontSize:11.5, color:C.textMuted, fontFamily:"'Geist',sans-serif"}}>
               <Ic d="M12 16v-4m0-4h.01M22 12a10 10 0 11-20 0 10 10 0 0120 0z" size={13} sw={1.8}/>
-              {summary.excludedCount} rezervasyon para birimi nedeniyle bu toplama dahil değil.
+              <span>{otherExcludedCount} rezervasyon kur verisi nedeniyle bu toplama dahil değil.</span>
+              {summary.staleRateCurrencies.length > 0 && <span>Son ECB kuru {FX_MAX_RATE_AGE_DAYS} günden eski ({summary.staleRateCurrencies.join(", ")}).</span>}
+              {summary.missingRateCurrencies.length > 0 && <span>ECB kuru bulunamadı ({summary.missingRateCurrencies.join(", ")}).</span>}
             </div>
           )}
         </div>
@@ -6204,14 +6277,14 @@ function RevenueGoalCard() {
           <svg width="112" height="112" viewBox="0 0 112 112" style={{transform:"rotate(-90deg)"}}>
             <circle cx="56" cy="56" r={_RING_R} fill="none" stroke={C.borderLight} strokeWidth="7"/>
             <circle className="dash-ring-progress" cx="56" cy="56" r={_RING_R} fill="none"
-              stroke={C.gold} strokeWidth="7" strokeLinecap="round"
+              stroke={summary.fxUnresolved ? C.textMuted : C.gold} strokeWidth="7" strokeLinecap="round"
               strokeDasharray={_RING_C} strokeDashoffset={_RING_C * (1 - pctShown / 100)}/>
           </svg>
           <div style={{position:"absolute", inset:0, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center"}}>
             <span style={{fontSize:22, fontWeight:600, color:C.text, fontFamily:"'Geist',sans-serif", fontVariantNumeric:"tabular-nums", lineHeight:1}}>
               %{pctShown}
             </span>
-            <span style={{fontSize:10.5, color:C.textMuted, fontFamily:"'Geist',sans-serif", marginTop:4}}>tamamlandı</span>
+            <span style={{fontSize:10.5, color:C.textMuted, fontFamily:"'Geist',sans-serif", marginTop:4}}>{summary.fxUnresolved ? "kesinleşmedi" : "tamamlandı"}</span>
           </div>
         </div>
       </div>
@@ -17724,7 +17797,7 @@ function _filterReportReservationsByTourPeriod(reservations, period, todayISO) {
   const pad2 = (n) => String(n).padStart(2, '0');
   const toISO = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
   // Last day of the (1-based) month `moNum` of year `y` — day 0 of the
-  // following month, the same idiom computeMonthlyReservationRevenue
+  // following month, the same idiom summarizeMonthlyExpectedRevenue
   // already uses for "Bu Ay Beklenen Ciro" on the Dashboard.
   const lastDayOfMonthISO = (year, moNum1) => toISO(new Date(year, moNum1, 0));
 
@@ -17787,64 +17860,129 @@ const EMPTY_REPORT_METRICS = {
   guides: [], guidePayments: { byCurrency: {} },
 };
 
-// TESTABLE:computeMonthlyReservationRevenue:start
-// TESTABLE:summarizeMonthlyTRYRevenue:start
-// "Bu Ay Beklenen Ciro" — the customer-facing SALES value of every
-// reservation whose TOUR takes place in the current calendar month.
-// Deliberately reservation-based, never payment-based: payments reflect
-// collection/payment state, reservations reflect booked sales, and this KPI
-// is the latter. Filtered by tour date (checkIn = reservations.check_in),
-// never by payment/created/due date, so a tour booked (and even paid) in an
-// earlier month still counts toward the month it actually runs in.
-// Cancelled reservations ("İptal") are excluded — they won't take place —
-// but already-completed tours earlier this month still count, since the
-// sale happened.
+// TESTABLE:summarizeMonthlyExpectedRevenue:start
+// TESTABLE:_selectLatestFxRatesToTry:start
+// Live FX for "Bu Ay Beklenen Ciro" — read from public.exchange_rates,
+// which only the server-side ECB fetcher (api/cron-fetch-exchange-rates.js)
+// ever writes. Stored meaning, never changed here: 1 base_currency =
+// `rate` TRY (e.g. EUR/TRY/47.25 → €1 = ₺47.25). This is EXPECTED revenue,
+// so the newest published rate is used, not a booking-date rate. There is
+// deliberately NO hardcoded/fallback rate of any kind: a pair whose
+// newest rate is missing or older than FX_MAX_RATE_AGE_DAYS is reported
+// as unusable, and reservations needing it are left out of the total.
+const FX_SUPPORTED_FOREIGN_CURRENCIES = ['EUR', 'USD', 'GBP'];
+const FX_MAX_RATE_AGE_DAYS = 7;
+// Reduces exchange_rates rows ({ baseCurrency, quoteCurrency, rate,
+// rateDate }) to the newest rate_date per supported →TRY pair. The ECB
+// does not publish on weekends/holidays, so the date need not be today —
+// only within FX_MAX_RATE_AGE_DAYS calendar days of it.
+function _selectLatestFxRatesToTry(rateRows, todayISO) {
+  const latest = {};
+  for (const row of (rateRows || [])) {
+    if (!row || !row.rateDate) continue;
+    const base = String(row.baseCurrency || '').trim().toUpperCase();
+    const quote = String(row.quoteCurrency || '').trim().toUpperCase();
+    const rate = Number(row.rate);
+    if (quote !== 'TRY' || !FX_SUPPORTED_FOREIGN_CURRENCIES.includes(base)) continue;
+    if (!Number.isFinite(rate) || rate <= 0) continue;
+    const rateDate = String(row.rateDate).slice(0, 10);
+    if (!latest[base] || rateDate > latest[base].rateDate) latest[base] = { rate, rateDate };
+  }
+  const dayNum = (iso) => { const [y, m, d] = iso.split('-').map(Number); return Date.UTC(y, m - 1, d) / 86400000; };
+  const today = dayNum(todayISO);
+  const out = {};
+  for (const code of Object.keys(latest)) {
+    const ageDays = today - dayNum(latest[code].rateDate);
+    out[code] = { ...latest[code], ageDays, stale: ageDays > FX_MAX_RATE_AGE_DAYS };
+  }
+  return out;
+}
+// TESTABLE:_selectLatestFxRatesToTry:end
+
+// "Bu Ay Beklenen Ciro" — THE one revenue calculation behind both the KPI
+// card and the RevenueGoalCard centerpiece (and therefore the milestones
+// and the celebration). The customer-facing SALES value of every
+// non-cancelled reservation whose TOUR (checkIn = reservations.check_in)
+// is in the current calendar month — reservation-based, never payments.
 //
-// Which amount: Civitatis reservations carry the customer-facing price
-// separately as retail_amount/retail_currency (total_amount there is
-// DeseTour's own net proceeds, not the sale price); every other booking
-// has no such split, so total_amount/currency IS the customer-facing price.
+// Amount/currency: Civitatis reservations carry the customer-facing price
+// as retail_amount/retail_currency (their total_amount is DeseTour's net
+// proceeds); every other booking uses total_amount/currency. Currency is
+// only trimmed and uppercased — never inferred.
 //
-// Currency — TRY only, never mixed: reservations store no TRY equivalent
-// and no per-record exchange rate (the only conversion rule in the CRM,
-// _civitatisConvertToTry, is scoped to Civitatis settlement figures). So
-// an amount counts toward the total ONLY when it is genuinely stored as
-// TRY/TL. A foreign-currency or unknown-currency amount is never
-// converted, never assumed to be TRY and never added; it's counted in
-// excludedCount/excludedByCurrency so the UI can say so honestly.
-// Pure and dependency-free (only its parameters and the built-in Date) —
-// see tests/dashboard/monthlyRevenue.test.js.
-function summarizeMonthlyTRYRevenue(reservations, todayISO) {
+// Three distinct outcomes per reservation, kept separate in the result:
+//   1. native   — TRY/TL, added as-is;
+//   2. converted — EUR/USD/GBP × the newest fresh ECB →TRY rate;
+//   3. excluded — unsupported/blank currency, or the needed rate is
+//      missing or stale, or the rate source itself could not be read.
+//      Never guessed, never treated as TRY, never a fixed rate.
+//
+// Rate-source state is NOT the same as "no rate": `options.rateSourceError`
+// means the exchange_rates read itself failed (network, RLS, Supabase
+// error, malformed response). Then no rate is trusted at all, affected
+// reservations are excluded under reason "rate_source_error" (never
+// "missing_rate"), and `fxUnresolved` is true when at least one
+// reservation actually needed FX — the total is then incomplete and must
+// not be celebrated. A pure-TRY month is unaffected by a source error.
+// Pure: only its parameters and Date — see tests/dashboard/monthlyRevenue.test.js.
+function summarizeMonthlyExpectedRevenue(reservations, todayISO, rateRows, options) {
+  const rateSourceError = !!(options && options.rateSourceError);
   const [y, moNum] = todayISO.split("-").map(Number);
-  const monthIdx = moNum - 1;
-  const startISO = `${y}-${String(monthIdx + 1).padStart(2, "0")}-01`;
-  const endDateObj = new Date(y, monthIdx + 1, 0);
+  const startISO = `${y}-${String(moNum).padStart(2, "0")}-01`;
+  const endDateObj = new Date(y, moNum, 0);
   const endISO = `${endDateObj.getFullYear()}-${String(endDateObj.getMonth() + 1).padStart(2, "0")}-${String(endDateObj.getDate()).padStart(2, "0")}`;
-  let tryTotal = 0, includedCount = 0, excludedCount = 0;
-  const excludedByCurrency = {};
+  const rates = rateSourceError ? {} : _selectLatestFxRatesToTry(rateRows, todayISO);
+  let nativeTryTotal = 0, convertedTryTotal = 0, nativeCount = 0, convertedCount = 0, excludedCount = 0;
+  const convertedByCurrency = {}, excludedByCurrency = {}, rateDatesUsed = {};
+  const excludedByReason = { unsupported_currency: 0, missing_rate: 0, stale_rate: 0, rate_source_error: 0 };
+  const missingRateCurrencies = new Set(), staleRateCurrencies = new Set();
   for (const r of (reservations || [])) {
     if (!r || !r.checkIn || r.opStatus === "İptal") continue;
     const iso = r.checkIn.slice(0, 10);
     if (iso < startISO || iso > endISO) continue;
     const useRetail = r.retailAmount != null;
-    const amount = useRetail ? r.retailAmount : r.total;
+    const amount = Number(useRetail ? r.retailAmount : r.total) || 0;
     const currency = String((useRetail ? r.retailCurrency : r.currency) || "").trim().toUpperCase();
     if (currency === "TRY" || currency === "TL") {
-      tryTotal += Number(amount) || 0;
-      includedCount += 1;
-    } else {
+      nativeTryTotal += amount;
+      nativeCount += 1;
+      continue;
+    }
+    let reason = null;
+    if (!FX_SUPPORTED_FOREIGN_CURRENCIES.includes(currency)) reason = "unsupported_currency";
+    else if (rateSourceError) reason = "rate_source_error";
+    else if (!rates[currency]) { reason = "missing_rate"; missingRateCurrencies.add(currency); }
+    else if (rates[currency].stale) { reason = "stale_rate"; staleRateCurrencies.add(currency); }
+    if (reason) {
       excludedCount += 1;
+      excludedByReason[reason] += 1;
       const key = currency || "BELİRSİZ";
       excludedByCurrency[key] = (excludedByCurrency[key] || 0) + 1;
+      continue;
     }
+    convertedTryTotal += amount * rates[currency].rate;
+    convertedCount += 1;
+    convertedByCurrency[currency] = (convertedByCurrency[currency] || 0) + 1;
+    rateDatesUsed[currency] = rates[currency].rateDate;
   }
-  return { tryTotal, includedCount, excludedCount, excludedByCurrency };
+  const round2 = (v) => Math.round(v * 100) / 100;
+  nativeTryTotal = round2(nativeTryTotal);
+  convertedTryTotal = round2(convertedTryTotal);
+  return {
+    total: round2(nativeTryTotal + convertedTryTotal),
+    nativeTryTotal, convertedTryTotal,
+    nativeCount, convertedCount, convertedByCurrency,
+    excludedCount, excludedByCurrency, excludedByReason,
+    rateDatesUsed,
+    missingRateCurrencies: [...missingRateCurrencies].sort(),
+    staleRateCurrencies: [...staleRateCurrencies].sort(),
+    hasMissingOrStaleRate: missingRateCurrencies.size > 0 || staleRateCurrencies.size > 0,
+    rateSourceError,
+    fxUnresolved: excludedByReason.rate_source_error > 0,
+    isComplete: excludedCount === 0,
+  };
 }
-// TESTABLE:summarizeMonthlyTRYRevenue:end
-function computeMonthlyReservationRevenue(reservations, todayISO) {
-  return summarizeMonthlyTRYRevenue(reservations, todayISO).tryTotal;
-}
-// TESTABLE:computeMonthlyReservationRevenue:end
+// TESTABLE:summarizeMonthlyExpectedRevenue:end
 
 // TESTABLE:computeUnassignedGuideUpcomingCount:start
 // "Rehber Ataması Bekleyen" — the number of upcoming, active reservations
@@ -17877,10 +18015,9 @@ function calculateDashboardMetrics(leads, reservations, payments, tasks, reminde
   const todayTours    = _res.filter(r => r.date===today || r.checkIn===todayISO);
   const upcomingRes   = _res.filter(r => !["Tamamlandı","İptal"].includes(r.opStatus));
 
-  // "Bu Ay Beklenen Ciro" — booked sales value of this month's tours, never
-  // derived from payments. See computeMonthlyReservationRevenue above.
-  const monthRevTRY = computeMonthlyReservationRevenue(_res, todayISO);
-  const monthRevExcludedCount = summarizeMonthlyTRYRevenue(_res, todayISO).excludedCount;
+  // "Bu Ay Beklenen Ciro" is NOT computed here: it needs the exchange_rates
+  // read too, so KpiRow and RevenueGoalCard both take it from the one shared
+  // useMonthlyRevenueSummary() hook (summarizeMonthlyExpectedRevenue).
 
   // "Rehber Ataması Bekleyen" — see computeUnassignedGuideUpcomingCount above.
   const unassignedGuideCount = computeUnassignedGuideUpcomingCount(_res, todayISO);
@@ -17890,13 +18027,11 @@ function calculateDashboardMetrics(leads, reservations, payments, tasks, reminde
 
   return {
     todayTours,
-    monthRevExcludedCount,
     todayTourCount: todayTours.length,
     todayTourPax:   todayTours.reduce((s,r)=>s+parseInt(r.pax||1),0),
     unassignedGuideCount,
     upcomingRes:    upcomingRes.slice(0,5),
     upcomingCount:  upcomingRes.length,
-    monthRevTRY,
     urgentItems,
     recentActivities,
   };
@@ -21235,9 +21370,38 @@ const SupabaseReservationPreparationRepo = {
 // Phase 1.3: no longer reads exchange_rates at all — EUR now converts
 // at the fixed operational rate inside _civitatisConvertToTry, so this
 // method has one fewer query and one fewer possible failure point. The
-// exchange_rates table itself is untouched and still exists for a
-// possible future live-rate phase; this repo method simply stops
-// depending on it.
+// exchange_rates table itself is untouched (it is read, separately, by
+// SupabaseExchangeRateRepo for the Dashboard's monthly revenue); this
+// repo method simply stops depending on it.
+// "Bu Ay Beklenen Ciro" FX — READ-ONLY. Uses the normal authenticated CRM
+// client (getSB()), so the existing exchange_rates RLS policy applies
+// unchanged (SELECT for authenticated AAL2 staff; no write policy at all).
+// The browser never writes this table — the server-side ECB fetcher
+// (api/cron-fetch-exchange-rates.js) is its only writer. Returns only the
+// newest rows (3 pairs per ECB publication day); picking the newest valid
+// rate per pair and the staleness check are done by the pure
+// _selectLatestFxRatesToTry, never here.
+// Mock/demo mode: there is no official rate source, so no rate is ever
+// invented — foreign reservations are honestly excluded.
+const ExchangeRateRepository = { getLatestToTry: async () => [] };
+
+const SupabaseExchangeRateRepo = {
+  async getLatestToTry() {
+    const sb = getSB();
+    if (!sb) return [];
+    const { data, error } = await sb.from('exchange_rates')
+      .select('base_currency,quote_currency,rate,rate_date')
+      .eq('quote_currency', 'TRY')
+      .in('base_currency', ['EUR', 'USD', 'GBP'])
+      .order('rate_date', { ascending: false })
+      .limit(30);
+    if (error) throw new Error(error.message);
+    // A malformed response is a rate-SOURCE failure, never "no rates".
+    if (!Array.isArray(data)) throw new Error('exchange_rates: unexpected response');
+    return data.map(r => ({ baseCurrency: r.base_currency, quoteCurrency: r.quote_currency, rate: r.rate, rateDate: r.rate_date }));
+  },
+};
+
 const SupabaseCivitatisSettlementRepo = {
   async getSummary() {
     const sb = getSB();
@@ -21332,6 +21496,7 @@ function getActiveRepo(entity) {
   if(entity==='review')     return useReal ? SupabaseReviewRepo       : ReviewRepository;
   if(entity==='staff')      return useReal ? SupabaseStaffRepo       : { getAll: async () => DB.staff };
   if(entity==='reservationPreparation') return useReal ? SupabaseReservationPreparationRepo : { getByReservation: async () => [], getUpcomingPending: async () => [], getRecentCompleted: async () => [], complete: async () => ({ ok:false, reason:'invalid' }), reopen: async () => ({ ok:false, reason:'invalid' }) };
+  if(entity==='exchangeRate') return useReal ? SupabaseExchangeRateRepo : ExchangeRateRepository;
   if(entity==='civitatisSettlement') return useReal ? SupabaseCivitatisSettlementRepo : {
     getSummary: async () => _buildCivitatisSettlementSummary([], _TODAY_ISO),
     getDetailed: async () => ({ summary: _buildCivitatisSettlementSummary([], _TODAY_ISO), periods: [] }),
