@@ -101,6 +101,22 @@ const CRM_CHANGELOG_CATEGORIES = [
 // Newest first. See the release convention above before editing.
 const CRM_CHANGELOG = [
   {
+    version: '13.03',
+    date: '2026-11-11',
+    title: 'Operasyon Odaklı Ana Sayfa ve Aylık Ciro Takibi',
+    summary: 'Ana Sayfa operasyon önceliklerine göre yeniden tasarlandı. Bu ayın beklenen cirosu artık dövizli rezervasyonları da güncel ECB kuruyla TL\'ye çevirerek gösteriyor ve 100.000 TL\'lik hedeflerle takip ediliyor.',
+    categories: ['Yeni Özellik', 'Arayüz', 'Otomasyon'],
+    highlights: [
+      'Yeni operasyon odaklı Ana Sayfa; bilgi yoğunluğunu azaltan açılır/kapanır bölümlerle.',
+      'Aylık beklenen ciro ve 100.000 TL hedef takibi; her yeni hedef aşıldığında kutlama.',
+      'Dövizli (EUR, USD, GBP) rezervasyonlar güncel ECB kuruyla otomatik olarak TL\'ye çevrilir; kullanılan kur tarihi kartta gösterilir.',
+      'Yeni rezervasyon, mesaj ve iptaller için canlı sinyaller.',
+      'Kur verisi eksik, eski veya erişilemez olduğunda toplam "Eksik toplam" olarak işaretlenir; hiçbir zaman tahmini kur kullanılmaz.',
+    ],
+    author: 'Berk',
+    technicalNote: 'Döviz kurları her iş günü Avrupa Merkez Bankası (ECB) yayınından otomatik olarak güncellenir. 7 günden eski kurlar kullanılmaz; kur kaynağına erişilemediğinde dövizli rezervasyonlar toplam dışında bırakılır ve hedef kutlaması bekletilir.',
+  },
+  {
     version: '13.02',
     date: '2026-11-05',
     title: 'CRM Arayüz ve Kullanıcı Deneyimi Yenilendi',
@@ -261,20 +277,6 @@ const CRM_CHANGELOG = [
       'Firma adı, web sitesi, şehir, iletişim bilgileri ve kaynak adresleri orijinal haliyle korunuyor',
       'İngilizce, İspanyolca, Portekizce ve İtalyanca ilk temas taslakları seçilen hedef dilde hazırlanıyor',
       'Yüksek Uyum değerlendirmesinde kaynak ve somut kanıt zorunluluğu korunuyor',
-    ],
-    author: 'Berk',
-  },
-  {
-    version: '12.41',
-    date: '2026-10-20',
-    title: 'Güvenlik ve İşlem Geçmişi Güçlendirildi',
-    summary: 'CRM\'in işlem geçmişi ve kimlik doğrulama altyapısı güçlendirildi. İşlemi yapan personelin bilgisi artık kalıcı olarak saklanıyor, e-posta gönderimi ve acente araştırma servisleri yalnızca yetkili ve aktif personel tarafından kullanılabiliyor.',
-    categories: ['Altyapı', 'İyileştirme'],
-    highlights: [
-      'İşlem geçmişinde işlemi yapan personelin adı ve rolü artık kalıcı olarak saklanıyor',
-      'E-posta gönderimi gerçek kullanıcı kimliği ve personel yetkisi doğrulanarak yapılıyor',
-      'Pasif personel hesaplarının Acenteler araştırma servislerine erişimi engellendi',
-      'Rehberlerin, rezervasyonlarda yetkileri dışında kalan finansal veya yönetimsel alanları değiştirmesi veritabanı seviyesinde engellendi',
     ],
     author: 'Berk',
   },
