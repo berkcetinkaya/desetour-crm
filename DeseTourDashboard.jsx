@@ -10960,6 +10960,7 @@ function isToday(d) { return isSameDay(d, CAL_TODAY); }
 
 function EventCard({ ev, compact }) {
   const [hov, setHov] = useState(false);
+  const openQuickView = useContext(CalendarQuickViewContext);
   const col = CAL_OP_COLOR[ev.opStatus] || CAL_OP_COLOR["Hazırlanıyor"];
   const noGuide  = !ev.guideOk;
   const noPay    = ev.payStatus === "Ödeme Bekliyor";
@@ -10967,6 +10968,8 @@ function EventCard({ ev, compact }) {
 
   return (
     <div
+      {..._quickViewTriggerProps(openQuickView, ev.id, `${ev.guest} rezervasyonunu görüntüle`)}
+      className="cal-event"
       onMouseEnter={()=>setHov(true)}
       onMouseLeave={()=>setHov(false)}
       style={{
@@ -11059,6 +11062,7 @@ function EventCard({ ev, compact }) {
 }
 
 function CalSidebar({ todayEvents, weekEvents }) {
+  const openQuickView = useContext(CalendarQuickViewContext);
   const noGuide   = weekEvents.filter(e => !e.guideOk && e.opStatus !== "Tamamlandı");
   const noPay     = weekEvents.filter(e => e.payStatus === "Ödeme Bekliyor");
   const noPickup  = weekEvents.filter(e => !e.pickup && e.opStatus !== "Tamamlandı");
@@ -11090,7 +11094,7 @@ function CalSidebar({ todayEvents, weekEvents }) {
         ) : (
           <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
             {items.map((ev,i) => (
-              <div key={i} style={{
+              <div key={i} className="cal-event" {..._quickViewTriggerProps(openQuickView, ev.id, `${ev.guest} rezervasyonunu görüntüle`)} style={{
                 padding:"9px 12px", borderRadius:8,
                 background:C.ivory, border:`1px solid ${C.borderLight}`,
                 cursor:"pointer",
@@ -11151,10 +11155,10 @@ function CalSidebar({ todayEvents, weekEvents }) {
         ) : (
           <div style={{ display:"flex", flexDirection:"column", gap:6, marginBottom:14 }}>
             {todayEvents.map((ev,i) => (
-              <div key={i} style={{
+              <div key={i} className="cal-event" {..._quickViewTriggerProps(openQuickView, ev.id, `${ev.guest} rezervasyonunu görüntüle`)} style={{
                 padding:"9px 12px", borderRadius:8,
                 background:C.ivory, border:`1px solid ${C.borderLight}`,
-                display:"flex", alignItems:"center", gap:10,
+                display:"flex", alignItems:"center", gap:10, cursor:"pointer",
               }}>
                 <div style={{
                   width:36, height:36, borderRadius:8, flexShrink:0,
@@ -11372,6 +11376,7 @@ function DailyView({ date, events }) {
 }
 
 function MonthlyView({ monthStart, events, onSelectDay, isMobile }) {
+  const openQuickView = useContext(CalendarQuickViewContext);
   const firstDay = new Date(monthStart.getFullYear(), monthStart.getMonth(), 1);
   const startOffset = (firstDay.getDay() + 6) % 7; // Mon=0
   const gridStart = new Date(firstDay);
@@ -11450,7 +11455,7 @@ function MonthlyView({ monthStart, events, onSelectDay, isMobile }) {
                   {cellEvents.slice(0,2).map((ev,ei) => {
                     const col = CAL_OP_COLOR[ev.opStatus] || CAL_OP_COLOR["Hazırlanıyor"];
                     return (
-                      <div key={ei} style={{
+                      <div key={ei} className="cal-event" {..._quickViewTriggerProps(openQuickView, ev.id, `${ev.guest} rezervasyonunu görüntüle`)} style={{
                         padding:"2px 5px", borderRadius:4, marginBottom:2,
                         background:col.bg, borderLeft:`3px solid ${col.border}`,
                         fontSize:10.5, color:col.text,
@@ -11509,6 +11514,326 @@ function MobileAgendaView({ date, events }) {
       ))}
     </div>
   );
+}
+
+// ── Calendar Reservation Quick View ─────────────────────────────────────
+// Clicking a reservation in the Calendar opens this overlay ON the
+// Calendar page (right drawer on desktop, bottom sheet on mobile) instead
+// of navigating away, so the selected day/week/month, the view mode and
+// the scroll position all stay exactly as they were. Deliberately NOT a
+// second reservation-detail data model: it reads the same repositories
+// ReservationDetailPage reads (reservation.getById, customer.getById,
+// reservationPreparation.getByReservation, operational notifications,
+// sources) and reuses the same helpers/labels (RES_STATUS, PAY_STATUS,
+// _ResOperationalSummary, getMealStatusDisplay, _preparationViewModel,
+// _canCompletePreparation, formatReservationTourLabel). "Rezervasyonu Aç"
+// hands off to the existing full detail page.
+
+// TESTABLE:_reservationQuickViewModel:start
+// Pure presentational rollup for the Quick View — no I/O. `customer` is
+// whatever customer.getById returned under the viewer's own RLS: a phone
+// is shown only when that read actually returned one, never inferred.
+// Ticket state looks only at ACTIVE entrance_ticket preparations
+// (superseded/cancelled rows are history, not work).
+function _reservationQuickViewModel({ r, customer, preparations, sourceName }) {
+  if (!r) return null;
+  const n = (v) => { const x = parseInt(v, 10); return Number.isFinite(x) && x > 0 ? x : 0; };
+  const paxAdult = n(r.pax);
+  const paxChild = n(r.paxChild);
+  const active = (preparations || []).filter(p => p && p.status !== 'superseded' && p.status !== 'cancelled');
+  const tickets = active.filter(p => p.preparationType === 'entrance_ticket');
+  const others = active.filter(p => p.preparationType !== 'entrance_ticket');
+  const ticketState = tickets.length === 0 ? 'none'
+    : tickets.some(p => p.status === 'pending') ? 'pending' : 'completed';
+  const pickupTime = r.pickupTime && r.pickupTime !== '—' ? r.pickupTime : null;
+  const notes = typeof r.opNotes === 'string' && r.opNotes.trim() ? r.opNotes.trim() : null;
+  return {
+    id: r.id,
+    ref: r.resNumber || r.id,
+    isCancelled: r.opStatus === 'İptal',
+    opStatus: r.opStatus || null,
+    payStatus: r.payStatus || null,
+    sourceLabel: sourceName || null,
+    tour: r.tour || '—',
+    tourLanguage: r.tourLanguage || null,
+    dateLabel: r.date || '—',
+    time: r.time || null,
+    paxAdult, paxChild, paxTotal: paxAdult + paxChild,
+    guestName: r.name || '—',
+    phone: (customer && customer.phone) ? customer.phone : null,
+    pickup: r.pickup || null,
+    pickupTime,
+    guideName: r.assignedGuideName || r.guide || null,
+    guideAssigned: !!(r.guideId || r.guide),
+    ticketState,
+    ticketPreparations: tickets,
+    otherPreparations: others,
+    pendingPrepCount: active.filter(p => p.status === 'pending').length,
+    notes,
+  };
+}
+// TESTABLE:_reservationQuickViewModel:end
+
+// Dialog accessibility for overlays that are not the shared Modal: moves
+// focus into the panel on open, keeps Tab/Shift+Tab inside it, closes on
+// Escape, and returns focus to whatever opened it (the calendar event)
+// on close — so keyboard users land back where they were in the grid.
+function _useDialogFocus(panelRef, onClose) {
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  // Layout effect: capture the scroll position and lock the page in the
+  // same commit the overlay mounts in, before the browser can paint or
+  // move the document underneath it.
+  React.useLayoutEffect(() => {
+    const opener = document.activeElement;
+    // Remember where the page was scrolled — locking body overflow (and
+    // moving focus) must never leave the calendar somewhere else.
+    const scrollX = window.scrollX, scrollY = window.scrollY;
+    const panel = panelRef.current;
+    const focusables = () => panel ? Array.from(panel.querySelectorAll(
+      'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    )).filter(el => el.offsetParent !== null) : [];
+    const first = focusables()[0];
+    (first || panel)?.focus({ preventScroll:true });
+    function onKey(e) {
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onCloseRef.current(); return; }
+      if (e.key !== 'Tab' || !panel) return;
+      const list = focusables();
+      if (list.length === 0) { e.preventDefault(); panel.focus(); return; }
+      const firstEl = list[0], lastEl = list[list.length - 1];
+      if (e.shiftKey && (document.activeElement === firstEl || !panel.contains(document.activeElement))) { e.preventDefault(); lastEl.focus(); }
+      else if (!e.shiftKey && document.activeElement === lastEl) { e.preventDefault(); firstEl.focus(); }
+    }
+    document.addEventListener('keydown', onKey, true);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.removeEventListener('keydown', onKey, true);
+      document.body.style.overflow = prevOverflow;
+      if (opener && typeof opener.focus === 'function' && document.contains(opener)) opener.focus({ preventScroll:true });
+      window.scrollTo(scrollX, scrollY);
+    };
+  }, []);
+}
+
+// Calendar → Quick View wiring. CalendarPage / MobileCalendarPage provide
+// `open(reservationId)`; every event surface (EventCard, month-cell chips,
+// the side list) calls it. Null outside the Calendar → events stay inert.
+const CalendarQuickViewContext = createContext(null);
+
+// Keyboard + pointer activation for a non-<button> event surface.
+function _quickViewTriggerProps(open, id, label) {
+  if (!open || !id) return {};
+  return {
+    role: "button",
+    tabIndex: 0,
+    "aria-haspopup": "dialog",
+    "aria-label": label,
+    onClick: (e) => { e.stopPropagation(); open(id); },
+    onKeyDown: (e) => {
+      if (e.target !== e.currentTarget) return;
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); open(id); }
+    },
+  };
+}
+
+function _QvRow({ label, children, muted }) {
+  return (
+    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"baseline", gap:12, padding:"7px 0" }}>
+      <span style={{ fontSize:12, color:C.textFaint, fontFamily:"'Geist',sans-serif", flexShrink:0 }}>{label}</span>
+      <span style={{ fontSize:13, color: muted ? C.textFaint : C.text, fontStyle: muted ? "italic" : "normal", textAlign:"right", wordBreak:"break-word", fontFamily:"'Geist',sans-serif" }}>{children}</span>
+    </div>
+  );
+}
+function _QvSection({ title, children }) {
+  return (
+    <section style={{ padding:"14px 0", borderTop:`1px solid ${C.borderLight}` }}>
+      <h3 style={{ margin:"0 0 4px", fontSize:10.5, fontWeight:600, letterSpacing:"0.09em", textTransform:"uppercase", color:C.textFaint, fontFamily:"'Geist',sans-serif" }}>{title}</h3>
+      {children}
+    </section>
+  );
+}
+
+function ReservationQuickView({ resId, onClose }) {
+  const { isMobile } = useBreakpoint();
+  const panelRef = useRef(null);
+  _useDialogFocus(panelRef, onClose);
+  const auth = useAuthContext();
+  const { data:r, loading, error } = useRepo("reservation", "getById", resId);
+  const { data:customer } = useRepo("customer", "getById", r?.customerId || null);
+  const { data:preparations } = useRepo("reservationPreparation", "getByReservation", resId);
+  const { unread } = useOperationalNotifications();
+  const { sources } = useSources();
+  const { mutate:mutPreparation } = useRepoMutation("reservationPreparation");
+  const [completingPrepId, setCompletingPrepId] = useState(null);
+  async function completePreparation(prepId) {
+    setCompletingPrepId(prepId);
+    await _completePreparationWithFeedback(mutPreparation, prepId);
+    setCompletingPrepId(null);
+  }
+
+  const source = customer && customer.sourceId
+    ? (sources || []).find(s => s.id === customer.sourceId)
+    : null;
+  const vm = _reservationQuickViewModel({ r, customer, preparations, sourceName: source ? (source.name || source.label || source.slug) : null });
+  const hasUnreadCivitatisMessage = r ? _reservationHasUnreadCivitatisMessage(unread, r.id) : false;
+  const meal = r ? getMealStatusDisplay(r.mealStatus) : null;
+  const titleId = "qv-title-" + resId;
+
+  function openFull() {
+    onClose();
+    if (NAV_REF.fn) NAV_REF.fn('/reservations/' + resId);
+  }
+
+  const panelStyle = isMobile ? {
+    position:"absolute", left:0, right:0, bottom:0, maxHeight:"92vh",
+    borderRadius:`${T.radiusLg}px ${T.radiusLg}px 0 0`,
+  } : {
+    position:"absolute", top:0, right:0, bottom:0, width:"min(460px, 100vw)",
+    borderLeft:`1px solid ${C.border}`,
+  };
+
+  return ReactDOM.createPortal((
+    // Above the fixed DataSourceBadge (zIndex 9000) so the bottom sheet's
+    // content is never covered on mobile.
+    <div className="qv-root" style={{ position:"fixed", inset:0, zIndex:9100 }}>
+      <div className="qv-backdrop" aria-hidden="true" onClick={onClose}
+        style={{ position:"absolute", inset:0, background:"rgba(13,27,62,0.45)" }}/>
+      <div ref={panelRef} role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1}
+        className={isMobile ? "qv-panel qv-panel--sheet" : "qv-panel qv-panel--drawer"}
+        style={{
+          ...panelStyle,
+          background:C.white, boxShadow:T.shadowModal, outline:"none",
+          display:"flex", flexDirection:"column", minHeight:0,
+        }}>
+        {isMobile && <span aria-hidden="true" style={{ alignSelf:"center", width:36, height:4, borderRadius:2, background:C.border, marginTop:8 }}/>}
+
+        <header style={{ padding: isMobile ? "12px 18px 14px" : "20px 24px 16px", borderBottom:`1px solid ${C.borderLight}`, flexShrink:0 }}>
+          <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:12 }}>
+            <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap", minWidth:0 }}>
+              <span style={{ fontSize:11.5, color:C.textMuted, fontFamily:"'DM Mono',monospace", background:C.ivory, border:`1px solid ${C.borderLight}`, padding:"2px 7px", borderRadius:5 }}>
+                {vm ? vm.ref : "…"}
+              </span>
+              {vm && vm.opStatus && <RBadge label={vm.opStatus} map={RES_STATUS} small/>}
+              {vm && vm.sourceLabel && (
+                <span style={{ fontSize:11, color:C.textMid, fontFamily:"'Geist',sans-serif", padding:"2px 8px", borderRadius:99, border:`1px solid ${C.borderLight}` }}>{vm.sourceLabel}</span>
+              )}
+            </div>
+            <button type="button" onClick={onClose} aria-label="Kapat" className="dash-icon-btn" style={{
+              flexShrink:0, width:32, height:32, borderRadius:T.radiusSm, border:`1px solid ${C.border}`,
+              background:"transparent", cursor:"pointer", color:C.textMuted,
+              display:"flex", alignItems:"center", justifyContent:"center",
+            }}>
+              <RIc d="M18 6L6 18M6 6l12 12" size={14} sw={2}/>
+            </button>
+          </div>
+          <h2 id={titleId} style={{ margin:"12px 0 0", fontSize:19, fontWeight:700, color:C.text, fontFamily:"'Geist',sans-serif", lineHeight:1.25, textDecoration: vm && vm.isCancelled ? "line-through" : "none" }}>
+            {vm ? formatReservationTourLabel(vm.tour, vm.tourLanguage) : "Rezervasyon"}
+          </h2>
+          {vm && (
+            <div style={{ fontSize:12.5, color:C.textMuted, fontFamily:"'Geist',sans-serif", marginTop:4 }}>
+              {vm.dateLabel} · {fmtResTime(vm.time)} · {vm.guestName}
+            </div>
+          )}
+        </header>
+
+        <div style={{ flex:1, minHeight:0, overflowY:"auto", padding: isMobile ? "4px 18px 12px" : "6px 24px 16px" }}>
+          {loading && !r && <LoadingState label="Rezervasyon yükleniyor…"/>}
+          {!loading && error && <ErrorState message="Rezervasyon bilgileri yüklenemedi."/>}
+          {!loading && !error && !r && (
+            <div style={{ padding:"36px 0", textAlign:"center", fontSize:13, color:C.textMuted, fontFamily:"'Geist',sans-serif" }}>Rezervasyon bulunamadı.</div>
+          )}
+          {vm && (
+            <>
+              {vm.isCancelled && (
+                <div role="status" style={{ display:"flex", alignItems:"center", gap:8, margin:"12px 0 4px", padding:"9px 12px", borderRadius:T.radiusSm, background:C.redBg, color:C.red, border:`1px solid ${C.redBorder}`, fontSize:12.5, fontWeight:600, fontFamily:"'Geist',sans-serif" }}>
+                  <RIc d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" size={14} sw={1.9}/>
+                  Bu rezervasyon iptal edildi.
+                </div>
+              )}
+
+              <div style={{ padding:"12px 0 14px" }}>
+                <_ResOperationalSummary r={r} hasMissingPassengerNames={false}
+                  hasUnreadCivitatisMessage={hasUnreadCivitatisMessage} pendingPrepCount={vm.pendingPrepCount}/>
+              </div>
+
+              <_QvSection title="Tur">
+                <_QvRow label="Tarih">{vm.dateLabel}</_QvRow>
+                <_QvRow label="Başlangıç saati" muted={!vm.time}>{fmtResTime(vm.time)}</_QvRow>
+                <_QvRow label="Tur dili" muted={!vm.tourLanguage}>{vm.tourLanguage || "Belirtilmemiş"}</_QvRow>
+                <_QvRow label="Kişi">
+                  <b style={{ fontWeight:600 }}>{vm.paxTotal}</b>
+                  <span style={{ color:C.textMuted }}> · {vm.paxAdult} yetişkin{vm.paxChild > 0 ? ` · ${vm.paxChild} çocuk` : ""}</span>
+                </_QvRow>
+              </_QvSection>
+
+              <_QvSection title="Misafir">
+                <_QvRow label="Ad Soyad">{vm.guestName}</_QvRow>
+                {vm.phone && <_QvRow label="Telefon"><span style={{ fontFamily:"'DM Mono',monospace" }}>{vm.phone}</span></_QvRow>}
+                <_QvRow label="Buluşma / Pickup" muted={!vm.pickup}>
+                  {vm.pickup || "Belirtilmemiş"}{vm.pickup && vm.pickupTime ? ` · ${vm.pickupTime}` : ""}
+                </_QvRow>
+              </_QvSection>
+
+              <_QvSection title="Operasyon">
+                <_QvRow label="Rehber" muted={!vm.guideAssigned}>
+                  {vm.guideAssigned ? (vm.guideName || "Atandı") : "Rehber atanmadı"}
+                </_QvRow>
+                <_QvRow label="Yemek">{meal.title}</_QvRow>
+                <_QvRow label="Bilet hazırlığı" muted={vm.ticketState === 'none'}>
+                  {vm.ticketState === 'none' ? "Bilet gerekmiyor" : vm.ticketState === 'pending' ? "Bekliyor" : "Tamamlandı"}
+                </_QvRow>
+                {[...vm.ticketPreparations, ...vm.otherPreparations].length > 0 && (
+                  <ul style={{ listStyle:"none", margin:"6px 0 0", padding:0, display:"flex", flexDirection:"column", gap:6 }}>
+                    {_sortPreparations([...vm.ticketPreparations, ...vm.otherPreparations]).map(p => {
+                      const pv = _preparationViewModel(p);
+                      const canComplete = !vm.isCancelled && _canCompletePreparation(auth.role, p);
+                      return (
+                        <li key={pv.id} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:10, padding:"8px 10px", borderRadius:T.radiusSm, background:C.ivory, border:`1px solid ${C.borderLight}` }}>
+                          <div style={{ minWidth:0 }}>
+                            <div style={{ fontSize:12.5, fontWeight:600, color:C.text, fontFamily:"'Geist',sans-serif" }}>{pv.label}</div>
+                            <div style={{ fontSize:11.5, color:C.textMuted, fontFamily:"'Geist',sans-serif" }}>{pv.typeLabel} · {pv.quantityDisplay}</div>
+                          </div>
+                          <div style={{ display:"flex", alignItems:"center", gap:6, flexShrink:0 }}>
+                            <RBadge label={pv.statusLabel} map={PREPARATION_STATUS_BADGE_MAP} small/>
+                            {canComplete && (
+                              <button type="button" onClick={() => completePreparation(p.id)} disabled={completingPrepId === p.id} style={{
+                                padding:"4px 10px", borderRadius:T.radiusSm, border:`1px solid ${C.greenBorder}`, background:C.greenBg, color:C.green,
+                                cursor: completingPrepId === p.id ? "default" : "pointer", opacity: completingPrepId === p.id ? 0.6 : 1,
+                                fontSize:11.5, fontWeight:600, fontFamily:"'Geist',sans-serif", whiteSpace:"nowrap",
+                              }}>{completingPrepId === p.id ? "…" : "Tamamlandı"}</button>
+                            )}
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </_QvSection>
+
+              {vm.notes && (
+                <_QvSection title="Notlar">
+                  <p style={{ margin:"4px 0 0", fontSize:12.5, color:C.textMid, lineHeight:1.55, whiteSpace:"pre-wrap", fontFamily:"'Geist',sans-serif" }}>{vm.notes}</p>
+                </_QvSection>
+              )}
+            </>
+          )}
+        </div>
+
+        <footer style={{ flexShrink:0, display:"flex", gap:10, justifyContent:"flex-end", padding: isMobile ? "12px 18px calc(12px + env(safe-area-inset-bottom))" : "14px 24px", borderTop:`1px solid ${C.borderLight}` }}>
+          <button type="button" onClick={onClose} style={{
+            padding:"9px 16px", borderRadius:T.radiusSm, border:`1px solid ${C.border}`, background:"transparent",
+            color:C.textMid, cursor:"pointer", fontSize:13, fontFamily:"'Geist',sans-serif",
+          }}>Kapat</button>
+          <button type="button" onClick={openFull} disabled={!r} style={{
+            padding:"9px 16px", borderRadius:T.radiusSm, border:"none", background:C.navy, color:"#fff",
+            cursor: r ? "pointer" : "default", opacity: r ? 1 : 0.6, fontSize:13, fontWeight:600, fontFamily:"'Geist',sans-serif",
+            flex: isMobile ? 1 : "none",
+          }}>Rezervasyonu Aç</button>
+        </footer>
+      </div>
+    </div>
+  ), document.body);
 }
 
 /* Shared by CalendarPage (desktop) and MobileCalendarPage (mobile agenda):
@@ -11588,6 +11913,10 @@ function CalendarPage() {
   const [dayOffset, setDayOffset]   = useState(0);
   const [monthOffset, setMonthOffset] = useState(0);
   const CAL_EVENTS_LIVE = useCalendarEvents();
+  // Quick View lives in THIS page's state, so opening/closing it never
+  // touches view/weekOffset/dayOffset/monthOffset or the scroll position.
+  const [quickViewResId, setQuickViewResId] = useState(null);
+  const openQuickView = useCallback((id) => setQuickViewResId(id), []);
 
   const currentDay = new Date(CAL_TODAY);
   currentDay.setDate(currentDay.getDate() + dayOffset);
@@ -11645,6 +11974,7 @@ function CalendarPage() {
   }
 
   return (
+    <CalendarQuickViewContext.Provider value={openQuickView}>
     <div style={{ display:"flex", flexDirection:"column", gap:20 }}>
 
       {}
@@ -11775,6 +12105,8 @@ function CalendarPage() {
         <CalSidebar todayEvents={todayEvents} weekEvents={visibleEvents}/>
       </div>
     </div>
+    {quickViewResId && <ReservationQuickView resId={quickViewResId} onClose={()=>setQuickViewResId(null)}/>}
+    </CalendarQuickViewContext.Provider>
   );
 }
 
@@ -28170,6 +28502,7 @@ function MobileAgendaCard({ ev, onClick }) {
 function MobileCalendarPage({ navigate }) {
   const [dayOffset, setDayOffset] = useState(0);
   const [showMonth, setShowMonth] = useState(false);
+  const [quickViewResId, setQuickViewResId] = useState(null);
   const events = useCalendarEvents();
 
   const currentDay = new Date(CAL_TODAY);
@@ -28281,12 +28614,16 @@ function MobileCalendarPage({ navigate }) {
         <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
           {dayEvents.map(ev => (
             <MobileAgendaCard key={ev.id} ev={ev} onClick={()=>{
+              // Quick View bottom sheet on the same page — the selected day
+              // and week strip stay exactly as they were; "Rezervasyonu Aç"
+              // inside the sheet hands off to the full detail page.
               const target = ev.resId || ev.id;
-              if (target && navigate) navigate('/reservations/'+target);
+              if (target) setQuickViewResId(target);
             }}/>
           ))}
         </div>
       )}
+      {quickViewResId && <ReservationQuickView resId={quickViewResId} onClose={()=>setQuickViewResId(null)}/>}
     </div>
   );
 }
