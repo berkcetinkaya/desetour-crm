@@ -1,1 +1,1 @@
-window.__DESETOUR_BUILD__ = {"version":"13.02","major":13,"minor":2,"buildTimestamp":"2026-11-05T15:01:05.337Z","commitSha":"628f3825c6bfac489ce3cc81b7da9c658bbabe91","commitShaShort":"628f382","branch":"ui-dark-logo-white-fix"};
+window.__DESETOUR_BUILD__ = {"version":"13.02","major":13,"minor":2,"buildTimestamp":"2026-11-10T19:32:17.069Z","commitSha":"ad7e482a620f65654a0bdba78647952d76d4a669","commitShaShort":"ad7e482","branch":"ui-brand-loader"};

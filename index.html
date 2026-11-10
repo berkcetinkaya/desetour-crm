@@ -64,22 +64,79 @@
     body { font-family: 'Geist', -apple-system, Helvetica, Arial, sans-serif; }
     #root { height: 100%; }
 
-    /* Loading screen shown while scripts download */
-    #boot-screen {
+    /* ── Branded loader (.dt-loader) ─────────────────────────────────
+       ONE definition shared by the static #boot-screen below (shown
+       while scripts download) and React's <BrandLoader/> in
+       DeseTourDashboard.jsx (shown while AuthGuard resolves the session
+       / MFA state). It has to live here rather than in App's own <style>
+       because AuthGuard renders it before that style tag mounts — and
+       before the --c-* theme variables exist — so colors are literals
+       keyed off html[data-theme], which the bootstrap script above sets
+       before first paint. Same transparent dese-logo-mark.png as the
+       sidebar: true colors in light, the white silhouette in dark. */
+    .dt-loader {
       position: fixed; inset: 0;
-      background: linear-gradient(135deg, #0D1B3E 0%, #1B2D4F 60%, #2C3E6B 100%);
       display: flex; align-items: center; justify-content: center;
-      flex-direction: column; gap: 16px; z-index: 9999;
-      transition: opacity .4s ease;
+      background: #F5F4F0;
+      font-family: 'Geist', -apple-system, Helvetica, Arial, sans-serif;
     }
+    .dt-loader__inner {
+      display: flex; flex-direction: column; align-items: center;
+      animation: dtLoaderIn .7s cubic-bezier(.2,.7,.2,1) both;
+    }
+    .dt-loader__inner--static { animation: none; }
+    .dt-loader__mark { position: relative; width: min(220px, 60vw); }
+    .dt-loader__logo { display: block; width: 100%; height: auto; }
+    /* A narrow gold glint that sweeps across the wordmark only — the logo
+       itself is the mask, so it never paints outside the letterforms. Gold
+       (not white) in both themes: a white band over the navy letters read
+       as the logo fading, not shining. */
+    .dt-loader__sheen {
+      position: absolute; inset: 0; pointer-events: none;
+      -webkit-mask: url("/dese-logo-mark.png") center / 100% 100% no-repeat;
+              mask: url("/dese-logo-mark.png") center / 100% 100% no-repeat;
+      background: linear-gradient(105deg, transparent 44%, rgba(201,168,76,0.95) 50%, transparent 56%);
+      background-size: 250% 100%;
+      animation: dtLoaderSheen 2.6s ease-in-out infinite;
+      animation-delay: var(--dt-sync, 0ms);
+    }
+    .dt-loader__track {
+      position: relative; overflow: hidden;
+      width: 132px; height: 2px; border-radius: 2px; margin-top: 30px;
+      background: rgba(184,151,58,0.18);
+    }
+    .dt-loader__bar {
+      position: absolute; top: 0; bottom: 0; left: 0; width: 40%;
+      border-radius: 2px; background: #B8973A;
+      animation: dtLoaderBar 1.6s ease-in-out infinite;
+      animation-delay: var(--dt-sync, 0ms);
+    }
+    .dt-loader__caption {
+      margin-top: 14px; font-size: 10px; font-weight: 500;
+      letter-spacing: .18em; text-transform: uppercase; color: #8A8070;
+    }
+    html[data-theme="dark"] .dt-loader { background: #121722; }
+    html[data-theme="dark"] .dt-loader__logo { filter: brightness(0) invert(1); }
+    html[data-theme="dark"] .dt-loader__track { background: rgba(201,168,76,0.18); }
+    html[data-theme="dark"] .dt-loader__bar { background: #C9A84C; }
+    html[data-theme="dark"] .dt-loader__caption { color: #99A0B2; }
+    @keyframes dtLoaderIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+    @keyframes dtLoaderSheen { from { background-position: 150% 0; } to { background-position: -50% 0; } }
+    @keyframes dtLoaderBar { from { transform: translateX(-100%); } to { transform: translateX(250%); } }
+    @media (prefers-reduced-motion: reduce) {
+      .dt-loader__inner, .dt-loader__sheen, .dt-loader__bar { animation: none; }
+      .dt-loader__sheen { display: none; }
+      .dt-loader__bar { left: 30%; }
+    }
+
+    /* Static boot screen = the same loader, pinned above everything until
+       React has rendered something into #root (see the script at the end
+       of <body>). */
+    #boot-screen { z-index: 9999; transition: opacity .4s ease; }
     #boot-screen.hidden { opacity: 0; pointer-events: none; }
-    .boot-spinner {
-      width: 40px; height: 40px; border-radius: 50%;
-      border: 3px solid rgba(201,168,76,0.25); border-top-color: #C9A84C;
-      animation: spin .8s linear infinite;
-    }
-    @keyframes spin { to { transform: rotate(360deg); } }
-    .boot-text { color: rgba(248,245,238,0.6); font-size: 13px; font-family: 'Geist', sans-serif; }
+    /* window.onerror below swaps the loader for a white-on-navy error
+       message — keep that readable regardless of theme. */
+    #boot-screen.boot-error { background: linear-gradient(135deg, #0D1B3E 0%, #1B2D4F 60%, #2C3E6B 100%); }
   </style>
 
   <style>
@@ -112,11 +169,22 @@
 </head>
 <body>
 
-  <!-- Boot loading screen -->
-  <div id="boot-screen">
-    <div class="boot-spinner"></div>
-    <div class="boot-text">Dese Tour Operasyon Merkezi yükleniyor…</div>
+  <!-- Boot loading screen — same markup as React's <BrandLoader/> -->
+  <div id="boot-screen" class="dt-loader" role="status" aria-live="polite" aria-label="Yükleniyor">
+    <div class="dt-loader__inner">
+      <div class="dt-loader__mark">
+        <img class="dt-loader__logo" src="/dese-logo-mark.png" alt="Dese Tour"/>
+        <span class="dt-loader__sheen" aria-hidden="true"></span>
+      </div>
+      <div class="dt-loader__track" aria-hidden="true"><span class="dt-loader__bar"></span></div>
+      <div class="dt-loader__caption">Operasyon Merkezi yükleniyor</div>
+    </div>
   </div>
+  <script>
+    // Lets <BrandLoader/> phase-sync its animations with this screen so
+    // the cross-fade between the two is invisible.
+    window.__DT_BOOT_T0 = (window.performance && performance.now()) || 0;
+  </script>
 
   <!-- React root -->
   <div id="root"></div>
@@ -137,6 +205,7 @@
     window.onerror = function(msg, src, line, col, err) {
       var boot = document.getElementById('boot-screen');
       if (boot) {
+        boot.classList.add('boot-error');
         boot.innerHTML = '<div style="padding:40px;color:#fff;font-family:monospace;font-size:13px;max-width:800px;margin:0 auto">' +
           '<div style="color:#C9A84C;font-size:16px;margin-bottom:16px">Dese Tour — Yükleme Hatası</div>' +
           '<div style="color:#f87171;margin-bottom:8px">' + msg + '</div>' +
@@ -189,7 +258,7 @@
        every build (see build-version.js). Never hand-edited; loaded before
        app.js so window.__DESETOUR_BUILD__ is available when the sidebar
        renders. -->
-  <script src="build-meta.js?v=fa11a9e434"></script>
+  <script src="build-meta.js?v=6906928b03"></script>
 
   <!-- CRM product changelog data ("CRM Güncellemeleri") — see
        crmChangelog.js. Loaded before app.js so window.CRM_CHANGELOG is
@@ -197,7 +266,7 @@
   <script src="crmChangelog.js?v=d4aa3068de"></script>
 
   <!-- App (pre-transpiled JSX — no Babel needed in browser) -->
-  <script src="app.js?v=2ddeb03054"></script>
+  <script src="app.js?v=2893d30771"></script>
 
   <!-- Hide boot screen once React renders -->
   <script>

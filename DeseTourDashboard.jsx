@@ -22378,24 +22378,7 @@ function AuthGuard({ children }) {
   AuthGuard._current = auth;
 
   if (auth.authLoading) {
-    return (
-      <div style={{
-        minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center",
-        background:`linear-gradient(135deg, ${C.navyDeep} 0%, ${C.navy} 100%)`,
-      }}>
-        <div style={{textAlign:"center"}}>
-          <div style={{
-            width:44, height:44, borderRadius:"50%",
-            border:"3px solid rgba(201,168,76,0.3)", borderTopColor:C.gold,
-            animation:"spin .8s linear infinite", margin:"0 auto 16px",
-          }}/>
-          <div style={{fontSize:14, color:"rgba(248,245,238,0.7)", fontFamily:"'Geist',sans-serif"}}>
-            Yükleniyor…
-          </div>
-          <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
-        </div>
-      </div>
-    );
+    return <BrandLoader/>;
   }
 
   if (!auth.isLoggedIn) {
@@ -22543,26 +22526,11 @@ function AuthGuard({ children }) {
   // (every branch above this one already returned otherwise). Still
   // resolving the MFA/AAL lookup itself — a fresh network round-trip via
   // the official Supabase MFA API, not a cached flag — so children must
-  // not render yet; same "Yükleniyor…" treatment as auth.authLoading.
+  // not render yet; same <BrandLoader/> as auth.authLoading (and the same
+  // element type at the same position, so React keeps the one instance —
+  // no restart — when authLoading hands straight over to mfaLoading).
   if (auth.mfaLoading) {
-    return (
-      <div style={{
-        minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center",
-        background:`linear-gradient(135deg, ${C.navyDeep} 0%, ${C.navy} 100%)`,
-      }}>
-        <div style={{textAlign:"center"}}>
-          <div style={{
-            width:44, height:44, borderRadius:"50%",
-            border:"3px solid rgba(201,168,76,0.3)", borderTopColor:C.gold,
-            animation:"spin .8s linear infinite", margin:"0 auto 16px",
-          }}/>
-          <div style={{fontSize:14, color:"rgba(248,245,238,0.7)", fontFamily:"'Geist',sans-serif"}}>
-            Yükleniyor…
-          </div>
-          <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
-        </div>
-      </div>
-    );
+    return <BrandLoader/>;
   }
 
   // The MFA/AAL lookup itself failed (listFactors/getAuthenticatorAssuranceLevel
@@ -22645,6 +22613,37 @@ function getAuthContext() {
     isLoggedIn:  false,
     logout:      ()=>{},
   };
+}
+
+// Full-screen DeseTour logo loader for CRM entry (session + MFA checks).
+// Same markup/classes as index.html's static #boot-screen — its CSS lives
+// there, not in App's <style>, since AuthGuard renders this before App's
+// own style tag (and the --c-* theme variables) ever mount. On first load
+// the boot screen fades out on top of this one, so animation phases are
+// synced to the boot screen's start and the entrance animation is left
+// off while it's still covering this; after a fresh sign-in (no boot
+// screen) the entrance plays normally.
+function BrandLoader() {
+  const [syncDelay] = useState(() => {
+    const now = (window.performance && performance.now()) || 0;
+    return `-${Math.max(0, Math.round(now - (window.__DT_BOOT_T0 || 0)))}ms`;
+  });
+  const [bootCovering] = useState(() => {
+    const boot = document.getElementById('boot-screen');
+    return !!boot && boot.style.display !== 'none' && !boot.classList.contains('hidden');
+  });
+  return (
+    <div className="dt-loader" role="status" aria-live="polite" aria-label="Yükleniyor" style={{"--dt-sync": syncDelay}}>
+      <div className={"dt-loader__inner" + (bootCovering ? " dt-loader__inner--static" : "")}>
+        <div className="dt-loader__mark">
+          <img className="dt-loader__logo" src="/dese-logo-mark.png" alt="Dese Tour"/>
+          <span className="dt-loader__sheen" aria-hidden="true"/>
+        </div>
+        <div className="dt-loader__track" aria-hidden="true"><span className="dt-loader__bar"/></div>
+        <div className="dt-loader__caption">Operasyon Merkezi yükleniyor</div>
+      </div>
+    </div>
+  );
 }
 
 function validate(rules, values) {
