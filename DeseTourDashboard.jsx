@@ -163,6 +163,14 @@ const C = {
   // themes and is only ever used on the light sidebar surface.
   goldDeep:"#8A6B1E",
   goldPaleWash:"var(--c-gold-pale-wash)",
+  // Theme-reactive gold for TEXT on regular surfaces: the same #8A6B1E as
+  // goldDeep on light (AA on white), C.goldLight's #C9A84C on dark — so a
+  // gold label never needs a per-component light/dark branch.
+  goldText:"var(--c-gold-text)",
+  // Active segment of a small segmented tab control (Tur Hazırlıkları
+  // Bekleyenler/Tamamlananlar). Light = the original navy pill exactly;
+  // dark = the app's gold active treatment (navy-on-dark was unreadable).
+  segActiveBg:"var(--c-seg-active-bg)", segActiveText:"var(--c-seg-active-text)",
   // Fixed ink colors for text/icons placed ON the brand navy chrome above
   // (sidebar, mobile header, hero/panel gradients, navy buttons) — these
   // surfaces never theme-switch, so the ink sitting on them can't either,
@@ -3345,7 +3353,7 @@ function KpiRow() {
     {
       label:"Bu Ay Beklenen Ciro",
       value:`₺${m.monthRevTRY.toLocaleString("tr-TR",{maximumFractionDigits:0})}`,
-      sub:"Bu ay",
+      sub: m.monthRevExcludedCount > 0 ? `Bu ay · ${m.monthRevExcludedCount} rezervasyon hariç` : "Bu ay",
       icon:"M12 2v20M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6",
       accent:true,
     },
@@ -4673,8 +4681,14 @@ function SonBildirimlerPanel() {
 function OnemliUyarilar() {
   const { alerts, loading, error, markRead } = useUnreadImportantAlerts();
   if (loading || error || alerts.length === 0) return null;
+  // Anything a Live Signal tile already shows (today: every cancellation,
+  // with the same details and both actions in the "İptal" drawer) is not
+  // repeated here — this panel keeps only important alerts no live signal
+  // represents. Same read state either way; nothing is hidden, only shown once.
+  const unsignaled = alerts.filter(a => !_classifyLiveSignal(a));
+  if (unsignaled.length === 0) return null;
 
-  const { visible, remaining } = _paginateImportantAlerts(alerts, MAX_VISIBLE_IMPORTANT_ALERTS);
+  const { visible, remaining } = _paginateImportantAlerts(unsignaled, MAX_VISIBLE_IMPORTANT_ALERTS);
 
   return (
     <Card>
@@ -5178,11 +5192,14 @@ function useBiletHazirliklariTabs(pendingTickets) {
 function _TicketTabButton({ active, onClick, children }) {
   return (
     <button
+      type="button"
+      className="dt-seg-tab"
+      aria-pressed={active}
       onClick={onClick}
       style={{
         padding:"4px 10px", borderRadius:T.radiusSm, border:"none",
-        background: active ? C.navy : "transparent",
-        color: active ? C.ivory : C.textMuted,
+        background: active ? C.segActiveBg : "transparent",
+        color: active ? C.segActiveText : C.textMuted,
         cursor:"pointer", fontSize:11.5, fontWeight:600,
         fontFamily:"'Geist',sans-serif", whiteSpace:"nowrap",
       }}
@@ -5806,49 +5823,536 @@ function _DashboardGroupLabel({ children }) {
   );
 }
 
+// Ana Sayfa is organized by urgency: what must be seen is always open
+// (overview, this month's revenue goal, live new-reservation/message/
+// cancellation signals, today's tours + urgent work); everything else
+// sits in DashboardSection groups that open/close and remember that per
+// browser. Every component is still mounted unconditionally and in the
+// same relative order as before — a collapsed group only hides its body.
 function Dashboard() {
   return (
-    <div style={{display:"flex", flexDirection:"column", gap:20}}>
-      {}
+    <div className="dash-stack" style={{display:"flex", flexDirection:"column", gap:20}}>
       <Welcome/>
 
-      {}
+      <DashboardPulse/>
+
       <OnemliUyarilar/>
 
-      {/* Today & Upcoming — promoted above general metrics and secondary
-          modules so the operator sees what's happening today and what
-          needs a guide/preparation before anything else. */}
-      <_DashboardGroupLabel>Bugün & Yaklaşan</_DashboardGroupLabel>
-
-      <div className="dash-row-2" style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:16}}>
+      <_DashboardGroupLabel>Bugün</_DashboardGroupLabel>
+      <div className="dash-row-2 dash-row-today" style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:16}}>
         <TodayTours/>
         <UrgentPanel/>
       </div>
 
-      <TurHazirliklari/>
+      <DashboardSection id="operations" title="Hazırlıklar & Yaklaşan Operasyonlar" summary={<_OperationsSectionSummary/>} defaultOpen={true}>
+        <TurHazirliklari/>
+        <div className="dash-row-2" style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:16}}>
+          <UpcomingReservations/>
+          <GuideOpsPanel/>
+        </div>
+      </DashboardSection>
 
-      <div className="dash-row-2" style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:16}}>
-        <UpcomingReservations/>
-        <GuideOpsPanel/>
+      <DashboardSection id="general" title="Genel Durum" summary={<_GeneralSectionSummary/>}>
+        <KpiRow/>
+      </DashboardSection>
+
+      <DashboardSection id="modules" title="Diğer Modüller" summary={<_ModulesSectionSummary/>}>
+        <SonBildirimlerPanel/>
+        <AgencyCrmPlusSection/>
+        <SonHareketlerPanel/>
+        <CivitatisHakedisPanel/>
+        <PendingPaymentsWidget/>
+        <ActivityFeed/>
+        <RecentReviewsPanel/>
+      </DashboardSection>
+    </div>
+  );
+}
+
+// ── Ana Sayfa focus layout ───────────────────────────────────────────────
+const REVENUE_MILESTONE_STEP = 100000;
+const REVENUE_MILESTONE_STORAGE_PREFIX = 'desetour_rev_milestone_';
+const DASH_SECTION_STORAGE_PREFIX = 'desetour_dash_section_';
+const LIVE_SIGNAL_MAX_ITEMS = 5;
+
+// Where this month's expected revenue sits between 100.000 ₺ steps:
+// the last step already passed, the next one, and how far along it is.
+// TESTABLE:_revenueMilestoneProgress:start
+function _revenueMilestoneProgress(amount, step) {
+  const size = step > 0 ? step : 100000;
+  const value = Math.max(0, Number(amount) || 0);
+  const milestone = Math.floor(value / size) * size;
+  const next = milestone + size;
+  // pct floors, so it never reports a step as reached early; remainingPct
+  // is its exact complement, so the two always add up to 100.
+  const pct = Math.min(100, Math.max(0, Math.floor(((value - milestone) / size) * 100)));
+  return { value, milestone, next, pct, remainingPct: 100 - pct, remaining: next - value };
+}
+// TESTABLE:_revenueMilestoneProgress:end
+
+// A step is celebrated once per month per browser: only when it's higher
+// than the last one already celebrated (stored per YYYY-MM).
+// TESTABLE:_shouldCelebrateMilestone:start
+function _shouldCelebrateMilestone(milestone, lastCelebrated) {
+  return milestone > 0 && milestone > (Number(lastCelebrated) || 0);
+}
+// TESTABLE:_shouldCelebrateMilestone:end
+
+// Maps an operational notification (useOperationalNotifications) onto the
+// three live signals. Same markers the rest of the app already relies on:
+// action 'created' = auto-ingested new booking, action 'cancelled' = the
+// cancellation alert (_filterImportantAlerts), source 'civitatis_message'
+// = guest message, entity 'agency_email' = agency reply. Anything else
+// (e.g. the missing-passenger-names note) is not a live signal.
+// TESTABLE:_classifyLiveSignal:start
+function _classifyLiveSignal(n) {
+  if (!n) return null;
+  if (n.entityType === 'agency_email') return 'message';
+  if (n.source === 'civitatis_message') return 'message';
+  if (n.action === 'cancelled') return 'cancellation';
+  if (n.action === 'created') return 'reservation';
+  return null;
+}
+// TESTABLE:_classifyLiveSignal:end
+
+// TESTABLE:_groupLiveSignals:start
+function _groupLiveSignals(notifications) {
+  const groups = { reservation: [], message: [], cancellation: [] };
+  (notifications || []).forEach(n => {
+    if (!n || n.isRead) return;
+    const kind = _classifyLiveSignal(n);
+    if (kind) groups[kind].push(n);
+  });
+  return groups;
+}
+// TESTABLE:_groupLiveSignals:end
+
+function _fmtTRY(v) {
+  return `₺${Math.round(Number(v) || 0).toLocaleString("tr-TR")}`;
+}
+
+function _prefersReducedMotion() {
+  try { return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches); }
+  catch (_) { return false; }
+}
+
+// Animates a number from its previous value to `target` (ease-out).
+function useCountUp(target, duration = 900) {
+  const to = Number(target) || 0;
+  const [display, setDisplay] = useState(() => (_prefersReducedMotion() ? to : 0));
+  const fromRef = useRef(0);
+  useEffect(() => {
+    if (_prefersReducedMotion()) { fromRef.current = to; setDisplay(to); return; }
+    const from = fromRef.current;
+    const start = performance.now();
+    let raf = 0;
+    const tick = (now) => {
+      const t = Math.min(1, (now - start) / duration);
+      setDisplay(from + (to - from) * (1 - Math.pow(1 - t, 3)));
+      if (t < 1) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => { cancelAnimationFrame(raf); fromRef.current = to; };
+  }, [to, duration]);
+  return display;
+}
+
+// A group header that opens/closes its body with a height animation. The
+// body stays mounted (its data hooks keep running, so the header summary
+// and the content never disagree); while closed it's inert/aria-hidden so
+// keyboard focus can't land inside it. Open/closed is remembered per
+// browser under DASH_SECTION_STORAGE_PREFIX + id.
+function DashboardSection({ id, title, summary, defaultOpen = false, children }) {
+  const storageKey = DASH_SECTION_STORAGE_PREFIX + id;
+  const [open, setOpen] = useState(() => {
+    try {
+      const v = localStorage.getItem(storageKey);
+      if (v === '1') return true;
+      if (v === '0') return false;
+    } catch (_) {}
+    return defaultOpen;
+  });
+  // overflow is released only once fully open, so the height animation
+  // stays clipped but dropdowns/shadows inside an open section never are.
+  const [settled, setSettled] = useState(open);
+  const bodyRef = useRef(null);
+  useEffect(() => {
+    if (bodyRef.current) bodyRef.current.inert = !open;
+    if (!open) { setSettled(false); return; }
+    const t = setTimeout(() => setSettled(true), 320);
+    return () => clearTimeout(t);
+  }, [open]);
+
+  function toggle() {
+    setOpen(prev => {
+      const next = !prev;
+      try { localStorage.setItem(storageKey, next ? '1' : '0'); } catch (_) {}
+      return next;
+    });
+  }
+
+  const bodyId = 'dash-section-' + id;
+  return (
+    <section className="dash-section">
+      <button type="button" className="dash-section__head" onClick={toggle} aria-expanded={open} aria-controls={bodyId}>
+        <span className="dash-section__title">{title}</span>
+        {summary && <span className="dash-section__summary">{summary}</span>}
+        <span className="dash-section__rule" aria-hidden="true"/>
+        <span className="dash-section__toggle">
+          {open ? "Gizle" : "Göster"}
+          <span className="dash-section__chev" aria-hidden="true"><Ic d="M6 9l6 6 6-6" size={14} sw={2}/></span>
+        </span>
+      </button>
+      <div id={bodyId} ref={bodyRef} className="dash-section__body" aria-hidden={!open}
+        style={{gridTemplateRows: open ? "1fr" : "0fr", opacity: open ? 1 : 0}}>
+        <div style={{minHeight:0, overflow: open && settled ? "visible" : "hidden"}}>
+          <div style={{display:"flex", flexDirection:"column", gap:16, paddingTop:14}}>
+            {children}
+          </div>
+        </div>
       </div>
+    </section>
+  );
+}
 
-      {/* General metrics — quieter than the operational group above, now
-          read as a summary strip rather than the page's opening content. */}
-      <_DashboardGroupLabel>Genel Durum</_DashboardGroupLabel>
-      <KpiRow/>
+// Header chips: "alert" = something waiting for action (stays visible even
+// while the group is collapsed), "unread" = unread items, default = info.
+function _SectionChip({ tone, children }) {
+  return <span className={"dash-chip" + (tone ? " dash-chip--" + tone : "")}>{children}</span>;
+}
 
-      {/* Secondary modules — commercial/historical content: notifications,
-          Agency CRM+, activity history, settlements, pending payments,
-          reviews. Same components, same data, same relative order as
-          before, just demoted below the operational group above. */}
-      <_DashboardGroupLabel>Diğer Modüller</_DashboardGroupLabel>
-      <SonBildirimlerPanel/>
-      <AgencyCrmPlusSection/>
-      <SonHareketlerPanel/>
-      <CivitatisHakedisPanel/>
-      <PendingPaymentsWidget/>
-      <ActivityFeed/>
-      <RecentReviewsPanel/>
+function _OperationsSectionSummary() {
+  const { data:repoRes } = useRepo("reservation", "getAll");
+  const { rows } = useTurHazirliklariRows();
+  const m = calculateDashboardMetrics(null, repoRes, null, null, null);
+  const pendingPrep = _groupTourPreparationRows(rows).tickets.length;
+  return (
+    <>
+      {pendingPrep > 0 && <_SectionChip tone="alert">{pendingPrep} hazırlık bekliyor</_SectionChip>}
+      {m.unassignedGuideCount > 0 && <_SectionChip tone="alert">{m.unassignedGuideCount} rehber ataması bekliyor</_SectionChip>}
+      <_SectionChip>{m.upcomingCount} aktif rezervasyon</_SectionChip>
+    </>
+  );
+}
+
+function _GeneralSectionSummary() {
+  const { data:repoRes } = useRepo("reservation", "getAll");
+  const { data:repoGuides } = useRepo("guide", "getAll");
+  const m = calculateDashboardMetrics(null, repoRes, null, null, null);
+  const activeGuides = (repoGuides||[]).filter(g=>g.status==="Aktif").length;
+  return (
+    <>
+      <_SectionChip>Bugün {m.todayTourCount} tur · {m.todayTourPax} misafir</_SectionChip>
+      <_SectionChip>{activeGuides} aktif rehber</_SectionChip>
+    </>
+  );
+}
+
+function _ModulesSectionSummary() {
+  const { unread } = useOperationalNotifications();
+  const { data:repoPays } = useRepo("payment", "getAll");
+  const pending = (repoPays||[]).filter(p => ["Bekliyor","Kısmi Ödendi"].includes(p.status)).length;
+  return (
+    <>
+      {unread.length > 0
+        ? <_SectionChip tone="unread">{unread.length} okunmamış bildirim</_SectionChip>
+        : <_SectionChip>Okunmamış bildirim yok</_SectionChip>}
+      <_SectionChip>{pending} bekleyen ödeme</_SectionChip>
+    </>
+  );
+}
+
+// Revenue goal + live signals, side by side (stacked when narrow).
+function DashboardPulse() {
+  return (
+    <div className="dash-pulse">
+      <RevenueGoalCard/>
+      <LiveSignalsPanel/>
+    </div>
+  );
+}
+
+const _RING_R = 48;
+const _RING_C = 2 * Math.PI * _RING_R; // 301.59 — mirrored in @keyframes dashRingIn
+
+// "Bu Ay Beklenen Ciro" as the page's centerpiece: the same TRY-only figure
+// as the KPI card (summarizeMonthlyTRYRevenue — this month's non-cancelled
+// reservations by tour date, never payments, never a mixed-currency sum),
+// progress to the next 100.000 ₺ step, and a one-time celebration when a
+// step is crossed. Reservations whose only amount is in another currency
+// are left out and, only when there are any, called out in a quiet note.
+function RevenueGoalCard() {
+  const { data:repoRes, loading } = useRepo("reservation", "getAll");
+  const summary = useMemo(() => summarizeMonthlyTRYRevenue(repoRes || [], _TODAY_ISO), [repoRes]);
+  const revenue = summary.tryTotal;
+  const prog = _revenueMilestoneProgress(revenue, REVENUE_MILESTONE_STEP);
+  const shown = useCountUp(loading ? 0 : revenue);
+  const monthKey = _TODAY_ISO.slice(0, 7);
+  const monthLabel = new Date(_TODAY_ISO + "T12:00:00").toLocaleDateString("tr-TR", { month:"long", year:"numeric" });
+  const [celebrating, setCelebrating] = useState(null);
+
+  useEffect(() => {
+    if (loading) return;
+    let last = 0;
+    try { last = Number(localStorage.getItem(REVENUE_MILESTONE_STORAGE_PREFIX + monthKey)) || 0; } catch (_) {}
+    if (!_shouldCelebrateMilestone(prog.milestone, last)) return;
+    setCelebrating(prog.milestone);
+    try { localStorage.setItem(REVENUE_MILESTONE_STORAGE_PREFIX + monthKey, String(prog.milestone)); } catch (_) {}
+  }, [loading, prog.milestone, monthKey]);
+
+  const passedSteps = [];
+  for (let v = prog.milestone; v > 0 && passedSteps.length < 3; v -= REVENUE_MILESTONE_STEP) passedSteps.unshift(v);
+  const shortTRY = (v) => `${Math.round(v / 1000).toLocaleString("tr-TR")}K`;
+  const excludedDetail = Object.entries(summary.excludedByCurrency).map(([cur, n]) => `${cur}: ${n}`).join(" · ");
+  const pctShown = loading ? 0 : prog.pct;
+
+  return (
+    <div className="dash-revenue" style={{
+      position:"relative", overflow:"hidden",
+      background:C.white, border:`1px solid ${C.border}`, borderRadius:T.radius,
+      boxShadow:T.shadowCard, padding:"22px 24px",
+    }}>
+      <span aria-hidden="true" style={{position:"absolute", top:0, left:24, right:24, height:2, borderRadius:2, background:C.gold, opacity:0.55}}/>
+
+      {celebrating && (
+        <div className="dash-celebrate" role="status" style={{
+          position:"relative", display:"flex", alignItems:"center", gap:12, marginBottom:16,
+          padding:"12px 14px", borderRadius:T.radiusSm,
+          background:C.goldPaleWash, border:`1px solid ${C.gold}55`,
+        }}>
+          <span className="dash-confetti" aria-hidden="true">
+            {Array.from({ length: 14 }).map((_, i) => {
+              const angle = (i / 14) * Math.PI * 2 + (i % 3) * 0.21;
+              const dist = 46 + (i % 4) * 14;
+              const colors = ["#B8973A", "#C9A84C", "#E8D9A8", "#8A6B1E"];
+              return <i key={i} style={{
+                "--dx": `${Math.round(Math.cos(angle) * dist)}px`,
+                "--dy": `${Math.round(Math.sin(angle) * dist * 0.6 - 14)}px`,
+                "--r": `${(i * 47) % 360}deg`,
+                "--d": `${(i % 5) * 40}ms`,
+                background: colors[i % colors.length],
+              }}/>;
+            })}
+          </span>
+          <span style={{flexShrink:0, width:32, height:32, borderRadius:"50%", display:"flex", alignItems:"center", justifyContent:"center", background:C.white, color:C.goldText, border:`1px solid ${C.gold}40`}}>
+            <Ic d="M12 15a7 7 0 100-14 7 7 0 000 14zM8.21 13.89L7 23l5-3 5 3-1.21-9.12" size={16} sw={1.8}/>
+          </span>
+          <div style={{flex:1, minWidth:0}}>
+            <div style={{fontSize:13.5, fontWeight:600, color:C.text, fontFamily:"'Geist',sans-serif"}}>
+              Tebrikler! Bu ay {_fmtTRY(celebrating)} barajı aşıldı.
+            </div>
+            <div style={{fontSize:12, color:C.textMid, fontFamily:"'Geist',sans-serif", marginTop:2}}>
+              Sıradaki hedef {_fmtTRY(prog.next)} · {_fmtTRY(prog.remaining)} kaldı (%{prog.remainingPct})
+            </div>
+          </div>
+          <button type="button" onClick={()=>setCelebrating(null)} aria-label="Tebrik mesajını kapat" className="dash-icon-btn" style={{
+            flexShrink:0, width:28, height:28, borderRadius:T.radiusSm, border:"none", cursor:"pointer",
+            background:"transparent", color:C.textMuted, display:"flex", alignItems:"center", justifyContent:"center",
+          }}>
+            <Ic d="M18 6L6 18M6 6l12 12" size={14} sw={2}/>
+          </button>
+        </div>
+      )}
+
+      <div style={{position:"relative", display:"flex", alignItems:"center", gap:24, flexWrap:"wrap"}}>
+        <div style={{flex:"1 1 280px", minWidth:0}}>
+          <div style={{display:"flex", alignItems:"center", gap:8, flexWrap:"wrap"}}>
+            <span style={{fontSize:11, fontWeight:600, letterSpacing:"0.12em", textTransform:"uppercase", color:C.goldText, fontFamily:"'Geist',sans-serif"}}>
+              Bu Ay Beklenen Ciro
+            </span>
+            <span style={{fontSize:11, color:C.textMuted, fontFamily:"'Geist',sans-serif", padding:"2px 8px", borderRadius:T.radiusPill, background:C.ivory, border:`1px solid ${C.borderLight}`}}>
+              {monthLabel}
+            </span>
+          </div>
+          <div style={{
+            fontSize:44, fontWeight:600, color:C.text, fontFamily:"'Geist',sans-serif",
+            letterSpacing:"-0.025em", lineHeight:1.05, marginTop:10, fontVariantNumeric:"tabular-nums",
+          }}>
+            {loading ? "…" : _fmtTRY(shown)}
+          </div>
+
+          <div style={{display:"flex", alignItems:"baseline", gap:10, flexWrap:"wrap", marginTop:12, fontFamily:"'Geist',sans-serif"}}>
+            <span style={{fontSize:13, color:C.textMid}}>
+              {prog.milestone > 0 ? "Sıradaki hedef" : "İlk hedef"} <b style={{color:C.text, fontWeight:600}}>{_fmtTRY(prog.next)}</b>
+            </span>
+            <span style={{fontSize:13, color:C.text, fontWeight:600, fontVariantNumeric:"tabular-nums"}}>
+              {loading ? "…" : `${_fmtTRY(prog.remaining)} kaldı · %${prog.remainingPct}`}
+            </span>
+          </div>
+
+          <div style={{display:"flex", alignItems:"center", gap:6, flexWrap:"wrap", marginTop:12}}>
+            {passedSteps.map(v => (
+              <span key={v} style={{display:"inline-flex", alignItems:"center", gap:4, fontSize:11, fontWeight:600, color:C.goldText, background:C.goldPaleWash, border:`1px solid ${C.gold}40`, borderRadius:T.radiusPill, padding:"2px 8px", fontFamily:"'Geist',sans-serif"}}>
+                <Ic d="M20 6L9 17l-5-5" size={11} sw={2.4}/>{shortTRY(v)}
+              </span>
+            ))}
+            <span style={{fontSize:11, fontWeight:600, color:C.textMuted, border:`1px dashed ${C.border}`, borderRadius:T.radiusPill, padding:"2px 8px", fontFamily:"'Geist',sans-serif"}}>
+              Hedef {shortTRY(prog.next)}
+            </span>
+          </div>
+
+          {!loading && summary.excludedCount > 0 && (
+            <div title={excludedDetail} style={{display:"flex", alignItems:"center", gap:6, marginTop:12, fontSize:11.5, color:C.textMuted, fontFamily:"'Geist',sans-serif"}}>
+              <Ic d="M12 16v-4m0-4h.01M22 12a10 10 0 11-20 0 10 10 0 0120 0z" size={13} sw={1.8}/>
+              {summary.excludedCount} rezervasyon para birimi nedeniyle bu toplama dahil değil.
+            </div>
+          )}
+        </div>
+
+        <div style={{position:"relative", width:112, height:112, flexShrink:0, margin:"0 auto"}}
+          role="img" aria-label={`Sıradaki hedefin %${pctShown}'i tamamlandı, %${loading ? 100 : prog.remainingPct} kaldı`}>
+          <svg width="112" height="112" viewBox="0 0 112 112" style={{transform:"rotate(-90deg)"}}>
+            <circle cx="56" cy="56" r={_RING_R} fill="none" stroke={C.borderLight} strokeWidth="7"/>
+            <circle className="dash-ring-progress" cx="56" cy="56" r={_RING_R} fill="none"
+              stroke={C.gold} strokeWidth="7" strokeLinecap="round"
+              strokeDasharray={_RING_C} strokeDashoffset={_RING_C * (1 - pctShown / 100)}/>
+          </svg>
+          <div style={{position:"absolute", inset:0, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center"}}>
+            <span style={{fontSize:22, fontWeight:600, color:C.text, fontFamily:"'Geist',sans-serif", fontVariantNumeric:"tabular-nums", lineHeight:1}}>
+              %{pctShown}
+            </span>
+            <span style={{fontSize:10.5, color:C.textMuted, fontFamily:"'Geist',sans-serif", marginTop:4}}>tamamlandı</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const LIVE_SIGNAL_DEFS = [
+  { kind:"reservation",  label:"Yeni Rezervasyon", empty:"Okunmamış yeni rezervasyon yok", tone:"green",
+    icon:"M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" },
+  { kind:"message",      label:"Yeni Mesaj",       empty:"Okunmamış mesaj yok",            tone:"blue",
+    icon:"M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" },
+  { kind:"cancellation", label:"İptal",            empty:"Okunmamış iptal yok",            tone:"red",
+    icon:"M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" },
+];
+
+const _LIVE_TONES = {
+  green: { color:C.green, bg:C.greenBg, border:C.greenBorder },
+  blue:  { color:C.blue,  bg:C.blueBg,  border:C.blueBorder },
+  red:   { color:C.red,   bg:C.redBg,   border:C.redBorder },
+};
+
+// Unread new reservations / messages / cancellations, each as a tile with
+// a small live dot while it has something unread. Same role-filtered
+// notifications and the SAME read state as the bell
+// (useOperationalNotifications → markReservationNotificationRead); the
+// locallyRead Set only hides a just-handled item immediately, exactly like
+// useUnreadImportantAlerts' optimistic bridge, until the refetch lands.
+// Hidden for roles the bell is hidden for. Cancellations live ONLY here on
+// Ana Sayfa (with the old alert card's details and both of its actions) —
+// Önemli Uyarılar skips anything a live signal already shows.
+function LiveSignalsPanel() {
+  const auth = useAuthContext();
+  const { notifications, loading, select, markRead } = useOperationalNotifications();
+  const [locallyRead, setLocallyRead] = useState(() => new Set());
+  const groups = useMemo(
+    () => _groupLiveSignals((notifications || []).filter(n => !locallyRead.has(n.id))),
+    [notifications, locallyRead]
+  );
+  const [openKind, setOpenKind] = useState(null);
+  const eligible = !!auth.role && auth.role !== "Rehber";
+  if (!eligible) return null;
+
+  function hideLocally(id) {
+    setLocallyRead(prev => { if (prev.has(id)) return prev; const next = new Set(prev); next.add(id); return next; });
+  }
+  async function handleOpen(n) { hideLocally(n.id); await select(n); }
+  async function handleMarkRead(n) { hideLocally(n.id); await markRead(n.id); }
+
+  return (
+    <div className="dash-signals" style={{display:"flex", flexDirection:"column", gap:10}}>
+      {LIVE_SIGNAL_DEFS.map(def => (
+        <LiveSignalTile key={def.kind} def={def} items={groups[def.kind]} loading={loading}
+          open={openKind === def.kind}
+          onToggle={() => setOpenKind(k => (k === def.kind ? null : def.kind))}
+          onOpenItem={handleOpen} onMarkRead={handleMarkRead}/>
+      ))}
+    </div>
+  );
+}
+
+function _LiveSignalItemTime({ n }) {
+  return (
+    <span style={{display:"block", fontSize:10.5, color:C.textFaint, fontFamily:"'Geist',sans-serif", marginTop:2}}>
+      {new Date(n.createdAt).toLocaleString("tr-TR", {day:"2-digit", month:"short", hour:"2-digit", minute:"2-digit"})}
+    </span>
+  );
+}
+
+const _liveActionBtn = {
+  padding:"6px 11px", borderRadius:T.radiusSm, cursor:"pointer",
+  fontSize:12, fontWeight:500, fontFamily:"'Geist',sans-serif",
+  border:`1px solid ${C.border}`, background:C.white, color:C.textMid,
+};
+
+function LiveSignalTile({ def, items, loading, open, onToggle, onOpenItem, onMarkRead }) {
+  const tone = _LIVE_TONES[def.tone];
+  const count = items.length;
+  const live = count > 0;
+  const latest = live ? _operationalNotificationDisplay(items[0]) : null;
+  const expanded = open && live;
+  const tab = expanded ? 0 : -1;
+  return (
+    <div className={"dash-signal" + (live ? " is-live" : "")} style={{
+      "--tone": tone.color, "--tone-soft": tone.bg,
+      background:C.white, borderRadius:T.radius, boxShadow:T.shadowSoft,
+      border:`1px solid ${live ? tone.border : C.border}`, overflow:"hidden",
+    }}>
+      <button type="button" onClick={onToggle} disabled={!live} aria-expanded={expanded}
+        aria-label={`${def.label}: ${loading ? "yükleniyor" : count + " okunmamış"}`}
+        className="dash-signal__head" style={{
+          width:"100%", display:"flex", alignItems:"center", gap:12, padding:"12px 14px",
+          border:"none", background:"transparent", textAlign:"left", cursor: live ? "pointer" : "default",
+        }}>
+        <span style={{position:"relative", flexShrink:0, width:36, height:36, borderRadius:10, display:"flex", alignItems:"center", justifyContent:"center",
+          background: live ? tone.bg : C.ivory, color: live ? tone.color : C.textFaint}}>
+          <Ic d={def.icon} size={17} sw={1.7}/>
+          {live && <span className="dash-ping" aria-hidden="true"/>}
+        </span>
+        <span style={{flex:1, minWidth:0}}>
+          <span style={{display:"block", fontSize:12, fontWeight:600, color: live ? tone.color : C.textMuted, fontFamily:"'Geist',sans-serif", letterSpacing:"0.02em"}}>
+            {def.label}
+          </span>
+          <span style={{display:"block", fontSize:12.5, color: live ? C.text : C.textFaint, fontFamily:"'Geist',sans-serif", marginTop:2, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>
+            {loading ? "Yükleniyor…" : live ? [latest.title, latest.subtitle].filter(Boolean).join(" · ") : def.empty}
+          </span>
+        </span>
+        <span style={{fontSize:24, fontWeight:600, color: live ? C.text : C.textFaint, fontFamily:"'Geist',sans-serif", fontVariantNumeric:"tabular-nums", lineHeight:1}}>
+          {loading ? "…" : count}
+        </span>
+        {live && <span className="dash-section__chev" style={{color:C.textMuted, display:"flex", transform: expanded ? "rotate(180deg)" : "none"}} aria-hidden="true"><Ic d="M6 9l6 6 6-6" size={14} sw={2}/></span>}
+      </button>
+      <div className="dash-section__body" style={{gridTemplateRows: expanded ? "1fr" : "0fr", opacity: expanded ? 1 : 0}} aria-hidden={!expanded}>
+        <div style={{minHeight:0, overflow:"hidden"}}>
+          <div style={{borderTop:`1px solid ${C.borderLight}`, padding:"6px 10px 10px", display:"flex", flexDirection:"column", gap:6}}>
+            {items.slice(0, LIVE_SIGNAL_MAX_ITEMS).map(n => def.kind === "cancellation" ? (
+              <div key={n.id} style={{padding:"10px 10px 12px", borderRadius:T.radiusSm, background:C.redBg, border:`1px solid ${C.redBorder}`}}>
+                <CancellationAlertBody alert={n} compact/>
+                <div style={{display:"flex", gap:8, flexWrap:"wrap", marginTop:10}}>
+                  <button type="button" tabIndex={tab} onClick={() => onOpenItem(n)} style={{..._liveActionBtn, border:"none", background:C.navy, color:C.onDarkSolid}}>Rezervasyonu Gör</button>
+                  <button type="button" tabIndex={tab} onClick={() => onMarkRead(n)} style={_liveActionBtn}>Okundu Olarak İşaretle</button>
+                </div>
+              </div>
+            ) : (
+              <div key={n.id} className="dt-row" style={{display:"flex", alignItems:"flex-start", gap:8, padding:"8px 8px", borderRadius:T.radiusSm}}>
+                <button type="button" tabIndex={tab} onClick={() => onOpenItem(n)} style={{flex:1, minWidth:0, textAlign:"left", border:"none", background:"transparent", cursor:"pointer", padding:0}}>
+                  <span style={{display:"block", fontSize:12.5, fontWeight:600, color:C.text, fontFamily:"'Geist',sans-serif"}}>{_operationalNotificationDisplay(n).title}</span>
+                  {_operationalNotificationDisplay(n).subtitle && <span style={{display:"block", fontSize:11.5, color:C.textMuted, fontFamily:"'Geist',sans-serif", marginTop:1}}>{_operationalNotificationDisplay(n).subtitle}</span>}
+                  <_LiveSignalItemTime n={n}/>
+                </button>
+                <button type="button" tabIndex={tab} onClick={() => onMarkRead(n)} aria-label="Okundu olarak işaretle" style={{..._liveActionBtn, padding:"4px 9px", fontSize:11.5, flexShrink:0}}>Okundu</button>
+              </div>
+            ))}
+            {count > LIVE_SIGNAL_MAX_ITEMS && (
+              <div style={{fontSize:11.5, color:C.textMuted, fontFamily:"'Geist',sans-serif", padding:"2px 8px"}}>
+                + {count - LIVE_SIGNAL_MAX_ITEMS} daha — bildirim zilinden görüntüleyebilirsiniz
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -17284,6 +17788,7 @@ const EMPTY_REPORT_METRICS = {
 };
 
 // TESTABLE:computeMonthlyReservationRevenue:start
+// TESTABLE:summarizeMonthlyTRYRevenue:start
 // "Bu Ay Beklenen Ciro" — the customer-facing SALES value of every
 // reservation whose TOUR takes place in the current calendar month.
 // Deliberately reservation-based, never payment-based: payments reflect
@@ -17293,29 +17798,51 @@ const EMPTY_REPORT_METRICS = {
 // earlier month still counts toward the month it actually runs in.
 // Cancelled reservations ("İptal") are excluded — they won't take place —
 // but already-completed tours earlier this month still count, since the
-// sale happened. Pure and dependency-free by design (only its parameters
-// and the built-in Date) so it can be extracted and unit-tested in
-// isolation from the rest of this browser-only, module-less file — see
-// tests/dashboard/monthlyRevenue.test.js.
-function computeMonthlyReservationRevenue(reservations, todayISO) {
+// sale happened.
+//
+// Which amount: Civitatis reservations carry the customer-facing price
+// separately as retail_amount/retail_currency (total_amount there is
+// DeseTour's own net proceeds, not the sale price); every other booking
+// has no such split, so total_amount/currency IS the customer-facing price.
+//
+// Currency — TRY only, never mixed: reservations store no TRY equivalent
+// and no per-record exchange rate (the only conversion rule in the CRM,
+// _civitatisConvertToTry, is scoped to Civitatis settlement figures). So
+// an amount counts toward the total ONLY when it is genuinely stored as
+// TRY/TL. A foreign-currency or unknown-currency amount is never
+// converted, never assumed to be TRY and never added; it's counted in
+// excludedCount/excludedByCurrency so the UI can say so honestly.
+// Pure and dependency-free (only its parameters and the built-in Date) —
+// see tests/dashboard/monthlyRevenue.test.js.
+function summarizeMonthlyTRYRevenue(reservations, todayISO) {
   const [y, moNum] = todayISO.split("-").map(Number);
   const monthIdx = moNum - 1;
   const startISO = `${y}-${String(monthIdx + 1).padStart(2, "0")}-01`;
   const endDateObj = new Date(y, monthIdx + 1, 0);
   const endISO = `${endDateObj.getFullYear()}-${String(endDateObj.getMonth() + 1).padStart(2, "0")}-${String(endDateObj.getDate()).padStart(2, "0")}`;
-  return (reservations || [])
-    .filter(r => {
-      if (!r.checkIn || r.opStatus === "İptal") return false;
-      const iso = r.checkIn.slice(0, 10);
-      return iso >= startISO && iso <= endISO;
-    })
-    // Customer-facing sales value: Civitatis reservations carry that
-    // separately as retail_amount (total_amount there is DeseTour's own net
-    // proceeds from Civitatis, not the sale price). Reservations without a
-    // retail_amount (every manual/non-Civitatis booking) have no such
-    // split — total_amount IS the customer-facing price there — so it's
-    // the safe fallback, not a blind default.
-    .reduce((s, r) => s + (r.retailAmount != null ? r.retailAmount : r.total), 0);
+  let tryTotal = 0, includedCount = 0, excludedCount = 0;
+  const excludedByCurrency = {};
+  for (const r of (reservations || [])) {
+    if (!r || !r.checkIn || r.opStatus === "İptal") continue;
+    const iso = r.checkIn.slice(0, 10);
+    if (iso < startISO || iso > endISO) continue;
+    const useRetail = r.retailAmount != null;
+    const amount = useRetail ? r.retailAmount : r.total;
+    const currency = String((useRetail ? r.retailCurrency : r.currency) || "").trim().toUpperCase();
+    if (currency === "TRY" || currency === "TL") {
+      tryTotal += Number(amount) || 0;
+      includedCount += 1;
+    } else {
+      excludedCount += 1;
+      const key = currency || "BELİRSİZ";
+      excludedByCurrency[key] = (excludedByCurrency[key] || 0) + 1;
+    }
+  }
+  return { tryTotal, includedCount, excludedCount, excludedByCurrency };
+}
+// TESTABLE:summarizeMonthlyTRYRevenue:end
+function computeMonthlyReservationRevenue(reservations, todayISO) {
+  return summarizeMonthlyTRYRevenue(reservations, todayISO).tryTotal;
 }
 // TESTABLE:computeMonthlyReservationRevenue:end
 
@@ -17353,6 +17880,7 @@ function calculateDashboardMetrics(leads, reservations, payments, tasks, reminde
   // "Bu Ay Beklenen Ciro" — booked sales value of this month's tours, never
   // derived from payments. See computeMonthlyReservationRevenue above.
   const monthRevTRY = computeMonthlyReservationRevenue(_res, todayISO);
+  const monthRevExcludedCount = summarizeMonthlyTRYRevenue(_res, todayISO).excludedCount;
 
   // "Rehber Ataması Bekleyen" — see computeUnassignedGuideUpcomingCount above.
   const unassignedGuideCount = computeUnassignedGuideUpcomingCount(_res, todayISO);
@@ -17362,6 +17890,7 @@ function calculateDashboardMetrics(leads, reservations, payments, tasks, reminde
 
   return {
     todayTours,
+    monthRevExcludedCount,
     todayTourCount: todayTours.length,
     todayTourPax:   todayTours.reduce((s,r)=>s+parseInt(r.pax||1),0),
     unassignedGuideCount,
@@ -25865,6 +26394,9 @@ function App() {
           --c-text-faint: #B0A898;
           --c-gold-pale: #F5EDD4;
           --c-gold-pale-wash: #FBF7EC;
+          --c-gold-text: #8A6B1E;
+          --c-seg-active-bg: #1B2D4F;
+          --c-seg-active-text: #FAF9F6;
           --c-green: #2E7D52;  --c-green-bg: #EBF5EF;  --c-green-border: rgba(46,125,82,0.18);
           --c-red: #C0392B;    --c-red-bg: #FDECEC;    --c-red-border: rgba(192,57,43,0.15);
           --c-amber: #B45309;  --c-amber-bg: #FEF3E2;  --c-amber-border: rgba(180,83,9,0.15);
@@ -25918,6 +26450,9 @@ function App() {
           --c-text-faint: #848CA0;
           --c-gold-pale: rgba(201,168,76,0.16);
           --c-gold-pale-wash: rgba(201,168,76,0.09);
+          --c-gold-text: #C9A84C;
+          --c-seg-active-bg: rgba(201,168,76,0.18);
+          --c-seg-active-text: #D9BC67;
           /* Phase (dark-mode modernization): *-bg wash opacity brought down
              from 0.14 to 0.10 — at 0.14 a semantic tint composited over a
              dark card surface reads as a muddy brown/red block rather than
@@ -25988,6 +26523,10 @@ function App() {
         /* ── Shared desktop table/row hover — CSS-driven so a row never
            needs its own hover state just to tint on mouseover. ── */
         .dt-row { transition: background 0.12s ease; }
+        /* Segmented tabs (Tur Hazırlıkları): hover feedback in dark only —
+           light mode keeps its original look exactly. */
+        html[data-theme="dark"] .dt-seg-tab { transition: background var(--motion-fast) ease, color var(--motion-fast) ease; }
+        html[data-theme="dark"] .dt-seg-tab[aria-pressed="false"]:hover { background: var(--row-hover) !important; color: var(--c-text) !important; }
         .dt-row:hover { background: var(--row-hover) !important; }
 
         /* ── Ana Sayfa (Dashboard) grid — scoped to these dashboard-only
@@ -25998,6 +26537,81 @@ function App() {
         @media (min-width: 768px) and (max-width: 1023px) {
           .dash-kpi-grid  { grid-template-columns: repeat(2, minmax(0,1fr)) !important; }
           .dash-guide-kpi { grid-template-columns: repeat(2, minmax(0,1fr)) !important; }
+        }
+
+        /* ── Ana Sayfa focus layout: staggered entrance, revenue goal +
+           live signals row, open/close groups, pulsing live indicators. ── */
+        .dash-stack > * { animation: dashEnter .5s cubic-bezier(.2,.7,.2,1) both; }
+        .dash-stack > *:nth-child(2) { animation-delay: 60ms; }
+        .dash-stack > *:nth-child(3) { animation-delay: 120ms; }
+        .dash-stack > *:nth-child(4) { animation-delay: 160ms; }
+        .dash-stack > *:nth-child(5) { animation-delay: 200ms; }
+        .dash-stack > *:nth-child(n+6) { animation-delay: 240ms; }
+        @keyframes dashEnter { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+
+        .dash-pulse { display: flex; flex-wrap: wrap; gap: 16px; align-items: stretch; }
+        /* Bugün row: the Bugünkü Turlar table needs ~810px, so below ~1400px
+           the two cards stack instead of pushing Acil İşler out of view. */
+        @media (max-width: 1399px) { .dash-row-today { grid-template-columns: minmax(0, 1fr) !important; } }
+        /* The card keeps its own height; an opened signal drawer grows only
+           the signals column instead of padding the card with empty space. */
+        .dash-pulse > .dash-revenue { flex: 1.35 1 480px; min-width: 0; align-self: flex-start; }
+        .dash-pulse > .dash-signals { flex: 1 1 340px; min-width: 0; }
+        /* Tiles share the row height with the revenue card at rest. */
+        .dash-signals > .dash-signal { flex: 1 1 auto; display: flex; flex-direction: column; }
+        .dash-signals .dash-signal__head { flex: 1 1 auto; }
+
+        .dash-ring-progress {
+          animation: dashRingIn 1.2s cubic-bezier(.2,.7,.2,1) both;
+          transition: stroke-dashoffset .8s cubic-bezier(.2,.7,.2,1);
+        }
+        @keyframes dashRingIn { from { stroke-dashoffset: 301.59; } }
+
+        /* Live signals: calm attention only — a small pulsing dot and a very
+           faint, slow border breathe. Never blinks the card or its text. */
+        .dash-signal { transition: border-color 200ms ease, box-shadow 200ms ease; }
+        .dash-signal.is-live { animation: dashSignalBreathe 3.6s ease-in-out infinite; }
+        @keyframes dashSignalBreathe { 0%, 100% { box-shadow: 0 0 0 0 var(--tone-soft); } 50% { box-shadow: 0 0 0 3px var(--tone-soft); } }
+        .dash-signal__head { transition: background 200ms ease; }
+        .dash-signal__head:not(:disabled):hover { background: var(--row-hover) !important; }
+        .dash-ping { position: absolute; top: -3px; right: -3px; width: 9px; height: 9px; border-radius: 50%; background: var(--tone); border: 2px solid var(--c-white); }
+        .dash-ping::after { content: ""; position: absolute; inset: -2px; border-radius: 50%; background: var(--tone); opacity: .55; animation: dashPing 2.2s cubic-bezier(0,0,.2,1) infinite; }
+        @keyframes dashPing { 0% { transform: scale(1); opacity: .55; } 70%, 100% { transform: scale(2.2); opacity: 0; } }
+        .dash-icon-btn { transition: background 200ms ease, color 200ms ease; }
+        .dash-icon-btn:hover { background: var(--row-hover) !important; color: var(--c-text) !important; }
+
+        .dash-section__head {
+          width: 100%; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+          padding: 4px 0; border: none; background: transparent; cursor: pointer; text-align: left;
+          font-family: 'Geist', sans-serif;
+        }
+        .dash-section__title { font-size: 11px; font-weight: 600; color: var(--c-text-faint); text-transform: uppercase; letter-spacing: .08em; white-space: nowrap; }
+        .dash-section__summary { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+        .dash-chip { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; line-height: 1.5; color: var(--c-text-muted); white-space: nowrap; padding: 1px 8px; border-radius: 99px; border: 1px solid var(--c-border-light); }
+        .dash-chip--alert { color: var(--c-amber); background: var(--c-amber-bg); border-color: var(--c-amber-border); font-weight: 500; }
+        .dash-chip--unread { color: var(--c-gold-text); background: var(--c-gold-pale-wash); border-color: rgba(184,151,58,0.35); font-weight: 500; }
+        .dash-chip--unread::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: #B8973A; }
+        .dash-section__rule { flex: 1; min-width: 24px; height: 1px; background: var(--c-border-light); }
+        .dash-section__toggle { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 500; color: var(--c-gold-text); white-space: nowrap; }
+        .dash-section__head:hover .dash-section__title { color: var(--c-text-muted); }
+        .dash-section__chev { display: inline-flex; transition: transform 220ms ease; }
+        .dash-section__head[aria-expanded="true"] .dash-section__chev { transform: rotate(180deg); }
+        .dash-section__body { display: grid; transition: grid-template-rows 240ms cubic-bezier(.2,.7,.2,1), opacity 200ms ease; }
+
+        .dash-confetti { position: absolute; left: 31px; top: 50%; width: 0; height: 0; pointer-events: none; }
+        .dash-confetti i { position: absolute; left: 0; top: 0; width: 6px; height: 10px; border-radius: 2px; opacity: 0; animation: dashConfetti 1.6s cubic-bezier(.15,.6,.3,1) var(--d) both; }
+        @keyframes dashConfetti {
+          0%   { transform: translate(0,0) rotate(0); opacity: 1; }
+          100% { transform: translate(var(--dx), var(--dy)) rotate(var(--r)); opacity: 0; }
+        }
+        .dash-celebrate { animation: dashCelebrateIn .6s cubic-bezier(.2,.9,.3,1.2) both; }
+        @keyframes dashCelebrateIn { from { opacity: 0; transform: translateY(-6px) scale(.97); } to { opacity: 1; transform: none; } }
+
+        @media (prefers-reduced-motion: reduce) {
+          .dash-stack > *, .dash-ring-progress, .dash-signal.is-live, .dash-ping::after, .dash-celebrate { animation: none !important; }
+          .dash-ping::after { display: none; }
+          .dash-section__body, .dash-section__chev, .dash-ring-progress, .dash-signal, .dash-signal__head, .dash-icon-btn { transition: none !important; }
+          .dash-confetti { display: none; }
         }
         @media (max-width: 767px) {
           .rsp-table { display: none !important; }
