@@ -300,9 +300,10 @@ test('no fixed EUR = 55 (or any hardcoded rate) fallback in the revenue normaliz
 
 test('KPI and RevenueGoalCard both read the one useMonthlyRevenueSummary hook — no parallel calculation', () => {
   assert.match(SOURCE, /function useMonthlyRevenueSummary\(\) \{/);
-  assert.match(SOURCE, /summarizeMonthlyExpectedRevenue\(repoRes \|\| \[\], _TODAY_ISO, fxRows \|\| \[\], \{ rateSourceError \}\)/);
+  assert.match(SOURCE, /summarizeMonthlyExpectedRevenue\(repoRes \|\| \[\], _TODAY_ISO, fxRows \|\| \[\], \{ rateSourceError, extraSales \}\)/);
   assert.match(SOURCE, /useRepo\("exchangeRate", "getLatestToTry"\)/);
-  assert.match(SOURCE, /return \{ summary, loading: resLoading \|\| fxLoading \};/, 'loading until BOTH reads settle');
+  assert.match(SOURCE, /return \{ summary, loading: resLoading \|\| fxLoading \|\| \(financeRole && xsLoading\), extraSalesUnavailable: !!\(xs && xs\.unavailable\) \};/, 'loading until every read settles');
+  assert.match(SOURCE, /useRepo\("finance", "getExtraSalesForMonth", financeRole \? _TODAY_ISO\.slice\(0, 7\) : null\)/, 'extra sales only for finance roles');
   const calls = SOURCE.match(/summarizeMonthlyExpectedRevenue\(/g) || [];
   assert.equal(calls.length, 2, 'one definition + one call site (inside the shared hook)');
   assert.doesNotMatch(SOURCE, /summarizeMonthlyTRYRevenue|computeMonthlyReservationRevenue\(/);
@@ -434,4 +435,23 @@ test('a missing (not failed) rate still allows celebrating the trusted lower-bou
   const s = summarize([res({ total: 130000 }), res({ total: 100, currency: 'EUR' })], TODAY_ISO, []);
   assert.equal(s.fxUnresolved, false);
   assert.equal(canCelebrate(false, s), true);
+});
+
+// ── Extra sales (ek satış) in the home net income ────────────────────────
+
+test('extra sales are added to the net income (TRY as-is, foreign at the fresh ECB rate), reported separately', () => {
+  const s = summarize([res({ total: 5000, currency: 'TRY' }), res({ total: 100, currency: 'EUR' })], TODAY_ISO, FRESH_RATES,
+    { extraSales: [{ amount: 450, currency: 'TRY' }, { amount: 20, currency: 'EUR' }, { amount: 5, currency: 'CHF' }] });
+  assert.equal(s.tourTotal, 5000 + 100 * 40);
+  assert.equal(s.extraSalesTryTotal, 450 + 20 * 40);
+  assert.equal(s.extraSalesCount, 2);
+  assert.equal(s.extraSalesExcludedCount, 1, 'an unconvertible sale is left out and counted, never guessed');
+  assert.equal(s.total, 5000 + 4000 + 450 + 800);
+});
+
+test('without extra sales (or for roles that cannot see them) the total is the tour net only', () => {
+  const s = summarize([res({ total: 5000, currency: 'TRY' })], TODAY_ISO, FRESH_RATES);
+  assert.equal(s.total, 5000);
+  assert.equal(s.tourTotal, 5000);
+  assert.equal(s.extraSalesTryTotal, 0);
 });

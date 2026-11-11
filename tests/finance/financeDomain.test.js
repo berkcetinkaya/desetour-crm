@@ -1113,3 +1113,48 @@ test('tour profitability exposes TL equivalents that explain the profit (net −
   assert.equal(g.projectedProfit, 3600 - 150 * 50);
   assert.equal(s.tours[0].totalPlannedTry, 150 * 50);
 });
+
+// ── Ek satışlar (extra sales) ───────────────────────────────────────────
+
+const XS = (o) => ({ id: 'XS' + Math.random(), reservationId: 'A', description: 'Lokum', amount: 450, currency: 'TRY', saleDate: '2026-11-12', ...o });
+
+test('extra sales are added to the reservation, group, tour and month net income and to the projected profit; also reported on their own', () => {
+  const resv = [res({ id: 'A', checkIn: '2026-11-12', total: 3000, currency: 'TRY' }), res({ id: 'B', checkIn: '2026-11-12', total: 2000, currency: 'TRY' })];
+  const base = summary({ reservations: resv });
+  const s = summary({ reservations: resv, extraSales: [XS({ id: 'X1' }), XS({ id: 'X2', reservationId: 'B', amount: 20, currency: 'EUR' })] });
+  assert.deepEqual(s.totals.extraSales, { TRY: 450, EUR: 20 });
+  assert.deepEqual(s.totals.tourNet, { TRY: 5000 });
+  assert.deepEqual(s.totals.expectedNet, { TRY: 5450, EUR: 20 });
+  assert.equal(s.kpis.extraSales.tryTotal, 450 + 20 * 50);
+  assert.equal(s.kpis.expectedNet.tryTotal, 5000 + 450 + 1000);
+  assert.equal(s.kpis.projectedProfit - base.kpis.projectedProfit, 450 + 1000, 'profit rises by exactly the extra sales');
+  const a = s.reservations.find(x => x.id === 'A');
+  assert.deepEqual(a.extraSales, { TRY: 450 }); assert.equal(a.extraSaleCount, 1);
+  assert.deepEqual(a.netIncome, { TRY: 3450 });
+  assert.equal(s.groups[0].expectedNetTry, 5000 + 450 + 1000);
+  assert.deepEqual(s.tours[0].expectedNet, { TRY: 5450, EUR: 20 });
+  assert.equal(guideEur(s), 150, 'costs unchanged');
+  assert.equal(s.extraSales.items.length, 2);
+  for (const it of s.extraSales.items) {
+    const r = resv.find(x => x.id === it.reservationId);
+    assert.equal(it.reservationRef, r.resNumber);
+    assert.equal(it.tourLabel, 'Topkapı');
+    assert.equal(it.tourDate, '2026-11-12');
+  }
+});
+
+test('extra sales: each id once; a sale on a cancelled reservation is not income but is flagged; other months ignored', () => {
+  const resv = [res({ id: 'A', checkIn: '2026-11-12', total: 1000, currency: 'TRY' }), res({ id: 'C', checkIn: '2026-11-12', opStatus: 'İptal', statusRaw: 'cancelled' })];
+  const x = XS({ id: 'SAME' });
+  const s = summary({ reservations: resv, extraSales: [x, { ...x }, XS({ id: 'ONC', reservationId: 'C' }), XS({ id: 'OTHER', reservationId: 'Z' })] });
+  assert.deepEqual(s.totals.extraSales, { TRY: 450 });
+  assert.equal(s.extraSales.items.length, 1);
+  assert.equal(s.extraSales.onCancelledReservations, 1);
+});
+
+test('extra sales unavailable (migration not applied yet) is passed through, nothing breaks', () => {
+  const s = summary({ reservations: [res({ id: 'A' })], extraSalesUnavailable: true });
+  assert.equal(s.extraSales.unavailable, true);
+  assert.deepEqual(s.totals.extraSales, {});
+  assert.deepEqual(s.extraSales.items, []);
+});

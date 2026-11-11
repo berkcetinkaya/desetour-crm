@@ -81,9 +81,10 @@ test('celebration fires only for a step above 0 that is higher than the last one
 
 test('RevenueGoalCard uses the same normalized summary as the KPI (never payments, never a fixed rate)', () => {
   const b = body('RevenueGoalCard');
-  assert.match(b, /const \{ summary, loading \} = useMonthlyRevenueSummary\(\);/);
+  assert.match(b, /const \{ summary, loading, extraSalesUnavailable \} = useMonthlyRevenueSummary\(\);/);
   assert.match(b, /const revenue = summary\.total;/);
   assert.doesNotMatch(b, /useRepo\(/, 'no separate data read — only the shared hook');
+  assert.doesNotMatch(body('_HomeNetAndProfit'), /useRepo\(|summarizeMonthlyExpectedRevenue|buildFinanceMonthSummary/);
   assert.doesNotMatch(b, /_civitatisConvertToTry|_CIVITATIS_FIXED_EUR_TO_TRY_RATE|EUR_TO_TRY/);
   assert.match(b, /_revenueMilestoneProgress\(revenue, REVENUE_MILESTONE_STEP\)/);
   assert.match(SOURCE, /const REVENUE_MILESTONE_STEP = 100000;/);
@@ -363,8 +364,8 @@ test('the shared hook passes a failed exchange_rates read on as rateSourceError 
   const h = body('useMonthlyRevenueSummary');
   assert.match(h, /const \{ data:fxRows, loading:fxLoading, error:fxError \} = useRepo\("exchangeRate", "getLatestToTry"\);/);
   assert.match(h, /const rateSourceError = !!fxError;/);
-  assert.match(h, /summarizeMonthlyExpectedRevenue\(repoRes \|\| \[\], _TODAY_ISO, fxRows \|\| \[\], \{ rateSourceError \}\)/);
-  assert.match(h, /return \{ summary, loading: resLoading \|\| fxLoading \};/);
+  assert.match(h, /summarizeMonthlyExpectedRevenue\(repoRes \|\| \[\], _TODAY_ISO, fxRows \|\| \[\], \{ rateSourceError, extraSales \}\)/);
+  assert.match(h, /return \{ summary, loading: resLoading \|\| fxLoading \|\| \(financeRole && xsLoading\), extraSalesUnavailable: !!\(xs && xs\.unavailable\) \};/);
   assert.match(body('KpiRow'), /rev\.fxUnresolved \? "Bu ay · kur verisine erişilemiyor"/);
 });
 

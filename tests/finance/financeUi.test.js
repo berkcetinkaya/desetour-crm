@@ -43,7 +43,7 @@ test('Finance UI components never compute money themselves', () => {
 });
 
 test('approved tabs, in order; Genel Bakış shows only the cash to prepare (7 / 15 / 30 days) — no realized or remaining-budget KPIs', () => {
-  assert.match(SOURCE, /\{ key: "genel",\s+label: "Genel Bakış" \},\s+\{ key: "butce",\s+label: "Bütçe & Tahmin" \},\s+\{ key: "turlar",\s+label: "Tur Karlılığı" \},\s+\{ key: "tahsilatlar", label: "Tahsilatlar" \},\s+\{ key: "katalog",\s+label: "Maliyet Kataloğu" \},/);
+  assert.match(SOURCE, /\{ key: "genel",\s+label: "Genel Bakış" \},\s+\{ key: "butce",\s+label: "Bütçe & Tahmin" \},\s+\{ key: "turlar",\s+label: "Tur Karlılığı" \},\s+\{ key: "ek-satislar", label: "Ek Satışlar" \},\s+\{ key: "tahsilatlar", label: "Tahsilatlar" \},\s+\{ key: "katalog",\s+label: "Maliyet Kataloğu" \},/);
   const o = body('_FinOverview');
   assert.match(o, /useFinanceCashNeeds\(\)/);
   assert.match(o, /Hazırlanması Gereken Para · bugünden itibaren/);
@@ -237,6 +237,54 @@ test('home: Tahmini Net Kâr next to the net income — finance roles only, pick
   assert.match(h, /Net gelir \$\{_fmtFinanceTry\(s\.kpis\.expectedNet\)\} − tahmini gider \$\{_fmtFinanceTry\(s\.kpis\.projectedCost\)\}/);
   assert.match(h, /TL karşılığı için kur verisi eksik/, 'no made-up number when FX is incomplete');
   assert.doesNotMatch(h, /buildFinanceMonthSummary|buildGuideServices|_financeToTry|\b150\b/);
-  assert.match(body('RevenueGoalCard'), /canAccess\(getAuthContext\(\)\.role, "finance"\) \? <_HomeNetAndProfit net=\{net\}\/> : net/);
-  assert.match(body('_HomeNetAndProfit'), /Tahmini Net Kâr/);
+  assert.match(body('RevenueGoalCard'), /canAccess\(getAuthContext\(\)\.role, "finance"\) \? <_HomeNetAndProfit net=\{net\} revenue=\{\{ summary, loading, extraSalesUnavailable \}\}\/> : net/);
+  const h2 = body('_HomeNetAndProfit');
+  assert.match(h2, /Tahmini Net Kâr/);
+  assert.match(h2, /Ek Satış/);
+  assert.match(h2, /Net gelir = tur geliri \{_fmtTRY\(revenue\.summary\.tourTotal \|\| 0\)\} \+ ek satış \{_fmtTRY\(revenue\.summary\.extraSalesTryTotal \|\| 0\)\}/);
+});
+
+// ── Ek satışlar (extra sales) ───────────────────────────────────────────
+
+test('Ek Satışlar tab: totals from the summary, entry form, month list with delete, "not yet enabled" state', () => {
+  const x = body('_FinExtraSales');
+  assert.match(x, /const xs = s\.extraSales;/);
+  assert.match(x, /_finValue\(s\.kpis\.extraSales, s\.totals\.extraSales\)/);
+  assert.match(x, /_finValue\(s\.kpis\.expectedNet, s\.totals\.expectedNet\)/);
+  assert.match(x, /_finProfit\(s\.kpis\.projectedProfit/);
+  assert.match(x, /<_ExtraSaleForm reservations=\{s\.reservations\}/);
+  assert.match(x, /mutate\("deleteExtraSale", x\.id\)/);
+  assert.match(x, /window\.confirm\(/);
+  assert.match(x, /xs\.unavailable \?/);
+  assert.match(body('FinancePage'), /current === "ek-satislar" \? \(\s*<_FinExtraSales s=\{s\}\/>/);
+});
+
+test('extra-sale form: pick tour date → reservation, free-text product, amount, currency, sale date; goes through the finance repo', () => {
+  const f = body('_ExtraSaleForm');
+  for (const l of ['Tur tarihi', 'Tur / rezervasyon', 'Satılan ürün / hizmet', 'Tutar', 'Para birimi', 'Satış tarihi']) assert.ok(f.includes(l), l);
+  assert.match(f, /useRepoMutation\("finance"\)/);
+  assert.match(f, /mutate\("createExtraSale", \{ reservationId: reservationId \|\| f\.reservationId,/);
+});
+
+test('reservation Finance card lists and records extra sales for that reservation (desktop + mobile share the card)', () => {
+  const c = body('ReservationFinanceCard');
+  assert.match(c, /\{r\.opStatus !== "İptal" && <_ReservationExtraSales r=\{r\} summary=\{summary\}\/>\}/);
+  assert.match(c, /Ek satışlar \(\$\{row\.extraSaleCount\}\)/);
+  const e = body('_ReservationExtraSales');
+  assert.match(e, /summary\.extraSales\.items\.filter\(x => x\.reservationId === r\.id\)/);
+  assert.match(e, /<_ExtraSaleForm reservationId=\{r\.id\}/);
+  assert.match(body('ReservationFinanceSummary'), /_fmtFinanceMap\(row\.netIncome\)/);
+});
+
+test('repos: extra sales validated by one payload, logged, and Finance keeps working before the migration is applied', () => {
+  const a = SOURCE.indexOf('const SupabaseFinanceRepo = {');
+  const repo = SOURCE.slice(a, SOURCE.indexOf('\n};', a));
+  assert.match(repo, /const row = \{ \.\.\._financeExtraSalePayload\(d\), created_by:/);
+  assert.match(repo, /_sbLog\('reservation_extra_sale', data\.id, 'created'/);
+  assert.match(repo, /_sbLog\('reservation_extra_sale', id, 'deleted'/);
+  assert.match(repo, /if \(error\) return \{ sales: \[\], unavailable: true \};/, 'missing table → unavailable, never a broken Finance page');
+  assert.match(repo, /extraSales: xs\.sales, extraSalesUnavailable: xs\.unavailable/);
+  assert.match(repo, /if \(!monthISO \|\| !canAccess\(getAuthContext\(\)\.role, 'finance'\)\) return \{ sales: \[\], unavailable: false \};/);
+  const m = SOURCE.indexOf('const FinanceRepository = {');
+  assert.match(SOURCE.slice(m, SOURCE.indexOf('\n};', m)), /const row = _financeExtraSalePayload\(d\);/);
 });

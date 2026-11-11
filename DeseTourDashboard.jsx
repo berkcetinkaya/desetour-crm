@@ -3359,6 +3359,7 @@ function KpiRow() {
       sub: rev.fxUnresolved ? "Bu ay · kur verisine erişilemiyor"
          : rev.excludedCount > 0 ? `Bu ay · ${rev.excludedCount} rezervasyon hariç`
          : rev.convertedCount > 0 ? `Bu ay · ${rev.convertedCount} dövizli, ECB kuru ile`
+         : rev.extraSalesTryTotal > 0 ? `Bu ay · tur ₺${Math.round(rev.tourTotal).toLocaleString("tr-TR")} + ek satış ₺${Math.round(rev.extraSalesTryTotal).toLocaleString("tr-TR")}`
          : "Bu ay · Civitatis komisyonu düşülmüş",
       icon:"M12 2v20M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6",
       accent:true,
@@ -6094,11 +6095,16 @@ function useMonthlyRevenueSummary() {
   const { data:repoRes, loading:resLoading } = useRepo("reservation", "getAll");
   const { data:fxRows, loading:fxLoading, error:fxError } = useRepo("exchangeRate", "getLatestToTry");
   const rateSourceError = !!fxError;
+  // Extra sales are added to the expected net income for finance roles only
+  // (the only roles RLS lets read them); other roles ask for nothing.
+  const financeRole = canAccess(getAuthContext().role, "finance");
+  const { data:xs, loading:xsLoading } = useRepo("finance", "getExtraSalesForMonth", financeRole ? _TODAY_ISO.slice(0, 7) : null);
+  const extraSales = (xs && xs.sales) || [];
   const summary = useMemo(
-    () => summarizeMonthlyExpectedRevenue(repoRes || [], _TODAY_ISO, fxRows || [], { rateSourceError }),
-    [repoRes, fxRows, rateSourceError]
+    () => summarizeMonthlyExpectedRevenue(repoRes || [], _TODAY_ISO, fxRows || [], { rateSourceError, extraSales }),
+    [repoRes, fxRows, rateSourceError, extraSales]
   );
-  return { summary, loading: resLoading || fxLoading };
+  return { summary, loading: resLoading || fxLoading || (financeRole && xsLoading), extraSalesUnavailable: !!(xs && xs.unavailable) };
 }
 
 // TESTABLE:_canCelebrateRevenue:start
@@ -6141,22 +6147,29 @@ function useHomeProjectedProfit() {
 }
 // Net income (passed in, unchanged) and the projected profit side by side;
 // the profit explanation sits underneath at full width.
-function _HomeNetAndProfit({ net }) {
+function _HomeNetAndProfit({ net, revenue }) {
   const p = useHomeProjectedProfit();
   const label = { fontSize: 11, fontWeight: 600, letterSpacing: "0.12em", textTransform: "uppercase", color: C.textMuted, fontFamily: "'Geist',sans-serif" };
+  const cell = { paddingLeft: 22, borderLeft: `1px solid ${C.borderLight}`, minWidth: 0 };
+  const big = { fontSize: 32, fontWeight: 600, fontFamily: "'Geist',sans-serif", letterSpacing: "-0.02em", lineHeight: 1.05, marginTop: 6, fontVariantNumeric: "tabular-nums" };
   return (
     <>
       <div style={{ display: "flex", alignItems: "flex-end", gap: 22, flexWrap: "wrap" }}>
         {net}
-        <div data-testid="home-projected-profit" style={{ paddingLeft: 22, borderLeft: `1px solid ${C.borderLight}`, minWidth: 0 }}>
+        <div data-testid="home-projected-profit" style={cell}>
           <div style={label}>Tahmini Net Kâr</div>
-          <div style={{ fontSize: 32, fontWeight: 600, color: p.negative ? C.red : C.text, fontFamily: "'Geist',sans-serif", letterSpacing: "-0.02em", lineHeight: 1.05, marginTop: 6, fontVariantNumeric: "tabular-nums" }}>
-            {p.loading ? "…" : p.value}
-          </div>
+          <div style={{ ...big, color: p.negative ? C.red : C.text }}>{p.loading ? "…" : p.value}</div>
+        </div>
+        <div data-testid="home-extra-sales" style={cell}>
+          <div style={label}>Ek Satış</div>
+          <div style={{ ...big, color: C.text }}>{revenue.loading ? "…" : _fmtTRY(revenue.summary.extraSalesTryTotal || 0)}</div>
         </div>
       </div>
-      {!p.loading && <div data-testid="home-projected-profit-note" style={{ fontSize: 11.5, color: C.textMuted, fontFamily: "'Geist',sans-serif", marginTop: 8, lineHeight: 1.45 }}>
-        Tahmini net kâr: {p.sub} (rehber, giriş biletleri, yemek ve diğer giderler)
+      {!p.loading && !revenue.loading && <div data-testid="home-projected-profit-note" style={{ fontSize: 11.5, color: C.textMuted, fontFamily: "'Geist',sans-serif", marginTop: 8, lineHeight: 1.45 }}>
+        Net gelir = tur geliri {_fmtTRY(revenue.summary.tourTotal || 0)} + ek satış {_fmtTRY(revenue.summary.extraSalesTryTotal || 0)}
+        {revenue.summary.extraSalesCount > 0 ? ` (${revenue.summary.extraSalesCount} satış)` : ""}.
+        {" "}Tahmini net kâr: {p.sub} (rehber, giriş biletleri, yemek ve diğer giderler).
+        {revenue.extraSalesUnavailable && <span style={{ color: C.amber }}> Ek satış kaydı henüz etkin değil.</span>}
       </div>}
     </>
   );
@@ -6175,7 +6188,7 @@ function _HomeProfitKpi() {
 // say how many foreign reservations were converted (with the ECB rate
 // date) and, separately, how many could not be included.
 function RevenueGoalCard() {
-  const { summary, loading } = useMonthlyRevenueSummary();
+  const { summary, loading, extraSalesUnavailable } = useMonthlyRevenueSummary();
   const revenue = summary.total;
   const prog = _revenueMilestoneProgress(revenue, REVENUE_MILESTONE_STEP);
   const shown = useCountUp(loading ? 0 : revenue);
@@ -6277,7 +6290,7 @@ function RevenueGoalCard() {
                 {loading ? "…" : _fmtTRY(shown)}
               </div>
             );
-            return canAccess(getAuthContext().role, "finance") ? <_HomeNetAndProfit net={net}/> : net;
+            return canAccess(getAuthContext().role, "finance") ? <_HomeNetAndProfit net={net} revenue={{ summary, loading, extraSalesUnavailable }}/> : net;
           })()}
 
           <div style={{display:"flex", alignItems:"baseline", gap:10, flexWrap:"wrap", marginTop:12, fontFamily:"'Geist',sans-serif"}}>
@@ -12562,6 +12575,7 @@ const FINANCE_TABS = [
   { key: "genel",       label: "Genel Bakış" },
   { key: "butce",       label: "Bütçe & Tahmin" },
   { key: "turlar",      label: "Tur Karlılığı" },
+  { key: "ek-satislar", label: "Ek Satışlar" },
   { key: "tahsilatlar", label: "Tahsilatlar" },
   { key: "katalog",     label: "Maliyet Kataloğu" },
 ];
@@ -12866,6 +12880,118 @@ function _FinTourTable({ s, mode }) {
   );
 }
 
+// ── Ek satış (extra sales) ───────────────────────────────────────────────
+// One shared form: with `reservationId` it records a sale for that
+// reservation; otherwise the user picks the tour date and the reservation
+// from `reservations` (the month summary's active reservation rows).
+function _ExtraSaleForm({ reservationId, defaultDate, reservations, onDone }) {
+  const { mutate, mutating } = useRepoMutation("finance");
+  const dates = reservations ? [...new Set(reservations.map(x => x.date))].sort() : [];
+  const firstDate = defaultDate || dates[0] || _istanbulISODate();
+  const [f, setF] = useState({ tourDate: firstDate, reservationId: reservationId || "", description: "", amount: "", currency: "TRY", saleDate: firstDate });
+  const options = reservations ? reservations.filter(x => x.date === f.tourDate) : [];
+  const input = { width: "100%", boxSizing: "border-box", padding: "7px 9px", borderRadius: T.radiusSm, border: `1px solid ${C.border}`, background: C.white, color: C.text, fontSize: 12.5, fontFamily: "'Geist',sans-serif" };
+  const lbl = { fontSize: 11, color: C.textMuted, fontFamily: "'Geist',sans-serif", display: "flex", flexDirection: "column", gap: 4 };
+  async function save(e) {
+    e.preventDefault();
+    const { error } = await mutate("createExtraSale", { reservationId: reservationId || f.reservationId, description: f.description,
+      amount: Number(String(f.amount).replace(",", ".")), currency: f.currency, saleDate: f.saleDate });
+    if (error) { showToast("Hata: " + error); return; }
+    showToast("Ek satış kaydedildi.");
+    onDone && onDone();
+  }
+  return (
+    <form onSubmit={save} data-testid="extra-sale-form" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 10, marginTop: 8 }}>
+      {!reservationId && (<>
+        <label style={lbl}>Tur tarihi
+          <select value={f.tourDate} onChange={e => setF({ ...f, tourDate: e.target.value, reservationId: "", saleDate: e.target.value })} style={input}>
+            {dates.map(d => <option key={d} value={d}>{_finShortDate(d)}</option>)}
+          </select></label>
+        <label style={{ ...lbl, gridColumn: "span 2" }}>Tur / rezervasyon
+          <select value={f.reservationId} onChange={e => setF({ ...f, reservationId: e.target.value })} required style={input}>
+            <option value="">Seçin…</option>
+            {options.map(x => <option key={x.id} value={x.id}>{x.tourLabel} · {x.language || "—"} · {x.ref}{x.customerName ? ` · ${x.customerName}` : ""} · {x.pax.total} kişi</option>)}
+          </select></label>
+      </>)}
+      <label style={{ ...lbl, gridColumn: "1 / -1" }}>Satılan ürün / hizmet
+        <input value={f.description} onChange={e => setF({ ...f, description: e.target.value })} required placeholder="ör. Türk lokumu kutusu, fotoğraf paketi" style={input}/></label>
+      <label style={lbl}>Tutar
+        <input inputMode="decimal" value={f.amount} onChange={e => setF({ ...f, amount: e.target.value })} required style={input}/></label>
+      <label style={lbl}>Para birimi
+        <select value={f.currency} onChange={e => setF({ ...f, currency: e.target.value })} style={input}>
+          {_FINANCE_EXTRA_SALE_CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
+        </select></label>
+      <label style={lbl}>Satış tarihi
+        <input type="date" value={f.saleDate} onChange={e => setF({ ...f, saleDate: e.target.value })} required style={input}/></label>
+      <div style={{ gridColumn: "1 / -1", display: "flex", justifyContent: "flex-end", gap: 8 }}>
+        <button type="button" onClick={() => onDone && onDone()} style={{ padding: "7px 12px", borderRadius: T.radiusSm, border: `1px solid ${C.border}`, background: "transparent", color: C.textMid, cursor: "pointer", fontSize: 12.5, fontFamily: "'Geist',sans-serif" }}>Vazgeç</button>
+        <button type="submit" disabled={mutating} style={{ padding: "7px 12px", borderRadius: T.radiusSm, border: "none", background: C.navy, color: "#fff", cursor: "pointer", fontSize: 12.5, fontWeight: 600, fontFamily: "'Geist',sans-serif" }}>{mutating ? "…" : "Kaydet"}</button>
+      </div>
+    </form>
+  );
+}
+
+const _FIN_EXTRA_UNAVAILABLE = "Ek satış kaydı henüz etkin değil — veritabanı güncellemesi uygulandığında açılacak.";
+
+function _FinExtraSales({ s }) {
+  const { mutate, mutating } = useRepoMutation("finance");
+  const [open, setOpen] = useState(false);
+  const xs = s.extraSales;
+  const th = { textAlign: "left", padding: "9px 12px", fontWeight: 600, color: C.textMuted, whiteSpace: "nowrap" };
+  const td = { padding: "9px 12px", color: C.text, verticalAlign: "top" };
+  async function remove(x) {
+    if (!window.confirm(`${x.description} (${_fmtFinanceMap({ [x.currency]: x.amount })}) silinsin mi?`)) return;
+    const { error } = await mutate("deleteExtraSale", x.id);
+    showToast(error ? "Hata: " + error : "Ek satış silindi.");
+  }
+  const total = _finValue(s.kpis.extraSales, s.totals.extraSales);
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+      <_FinGrid min={220}>
+        <_FinKpi testId="kpi-extra-sales" label="Bu ay ek satış" value={Object.keys(s.totals.extraSales).length ? total.value : "₺0"} sub={`${xs.items.length} satış · ${Object.keys(s.totals.extraSales).length ? total.sub : "—"}`}/>
+        <_FinKpi testId="kpi-net-with-extra" label="Beklenen net gelir (ek satış dahil)" {..._finValue(s.kpis.expectedNet, s.totals.expectedNet)}/>
+        <_FinKpi testId="kpi-profit-with-extra" label="Tahmini net kâr" {..._finProfit(s.kpis.projectedProfit, "Kur verisi eksik")}/>
+      </_FinGrid>
+      {xs.unavailable ? (
+        <div data-testid="extra-sales-unavailable" style={{ padding: "10px 12px", borderRadius: T.radiusSm, background: C.amberBg, border: `1px solid ${C.borderLight}`, fontSize: 12.5, color: C.text, fontFamily: "'Geist',sans-serif" }}>{_FIN_EXTRA_UNAVAILABLE}</div>
+      ) : (
+        <_FinSection title="Yeni Ek Satış" right={!open && <button type="button" onClick={() => setOpen(true)} disabled={!s.reservations.length}
+          style={{ padding: "5px 12px", borderRadius: T.radiusSm, border: `1px solid ${C.border}`, background: C.white, color: C.text, cursor: "pointer", fontSize: 12, fontFamily: "'Geist',sans-serif" }}>Ek Satış Ekle</button>}>
+          {open ? <_ExtraSaleForm reservations={s.reservations} onDone={() => setOpen(false)}/>
+            : <div style={{ fontSize: 12, color: C.textMuted, fontFamily: "'Geist',sans-serif" }}>{s.reservations.length ? "Turdaki müşterilere yapılan satışları buradan ya da rezervasyon detayındaki Finans kartından girin." : "Bu ay aktif rezervasyon yok."}</div>}
+        </_FinSection>
+      )}
+      <_FinSection title="Bu Ayın Ek Satışları">
+        <div style={{ overflowX: "auto", border: `1px solid ${C.border}`, borderRadius: T.radius, background: C.white }}>
+          <table data-testid="finance-extra-sales" style={{ width: "100%", borderCollapse: "collapse", fontFamily: "'Geist',sans-serif", fontSize: 12.5 }}>
+            <thead><tr style={{ background: C.ivory }}>
+              <th style={th}>Satış tarihi</th><th style={th}>Tur</th><th style={th}>Rezervasyon</th><th style={th}>Ürün / hizmet</th><th style={{ ...th, textAlign: "right" }}>Tutar</th><th style={th}></th>
+            </tr></thead>
+            <tbody>
+              {xs.items.length === 0 && <tr><td colSpan={6} style={{ ...td, color: C.textMuted }}>Bu ay ek satış kaydı yok.</td></tr>}
+              {xs.items.map(x => (
+                <tr key={x.id} style={{ borderTop: `1px solid ${C.borderLight}` }}>
+                  <td style={{ ...td, whiteSpace: "nowrap" }}>{_finShortDate(x.saleDate)}</td>
+                  <td style={td}>{_finShortDate(x.tourDate)} · {x.tourLabel}{x.language ? ` · ${x.language}` : ""}</td>
+                  <td style={td}>{x.reservationRef}</td>
+                  <td style={td}>{x.description}</td>
+                  <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap", fontWeight: 600 }}>{_fmtFinanceMap({ [x.currency]: x.amount })}</td>
+                  <td style={{ ...td, textAlign: "right" }}>
+                    <button type="button" aria-label="Ek satışı sil" onClick={() => remove(x)} disabled={mutating} style={{ border: "none", background: "transparent", color: C.textFaint, cursor: "pointer", padding: 2 }}>
+                      <RIc d="M18 6L6 18M6 6l12 12" size={12} sw={2}/>
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {xs.onCancelledReservations > 0 && <div style={{ marginTop: 6, fontSize: 11.5, color: C.amber, fontFamily: "'Geist',sans-serif" }}>{xs.onCancelledReservations} ek satış iptal edilen bir rezervasyona bağlı — gelire sayılmadı, kontrol edin.</div>}
+      </_FinSection>
+    </div>
+  );
+}
+
 const _FIN_GUIDE_PAY_LABEL = { unpaid: "ödenmedi", pending: "ödeme bekliyor", partially_paid: "kısmen ödendi", paid: "ödendi", overpaid: "fazla ödeme", review: "inceleme gerekli" };
 const _FIN_GUIDE_DISC_LABEL = { currency_mismatch: "para birimi farklı", amount_differs: "tutar sabit maliyetle uyuşmuyor", multiple_payments: "birden fazla ödeme", prior_operation_payment: "önceki iptal operasyonun ödemesi" };
 
@@ -13027,6 +13153,8 @@ function FinancePage({ tab, navigate }) {
         <ErrorState message="Finans verileri yüklenemedi." onRetry={reload}/>
       ) : !s ? null : current === "butce" ? (
         <_FinBudget s={s} isCurrentMonth={isCurrentMonth}/>
+      ) : current === "ek-satislar" ? (
+        <_FinExtraSales s={s}/>
       ) : current === "turlar" ? (
         <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
           <_FinSection title="Turlara Göre Tahmini Karlılık"><_FinTourTable s={s} mode="profit"/></_FinSection>
@@ -13075,7 +13203,7 @@ function _finSignedMap(m) {
 }
 
 function ReservationFinanceCard({ r }) {
-  const { row, group, loading, error } = useReservationFinance(r.id, r.checkIn);
+  const { summary, row, group, loading, error } = useReservationFinance(r.id, r.checkIn);
   const { data: expenses } = useRepo("finance", "getExpenses", { reservationId: r.id });
   const { mutate, mutating } = useRepoMutation("finance");
   const [form, setForm] = useState(null);
@@ -13147,6 +13275,7 @@ function ReservationFinanceCard({ r }) {
               {row.revenue.isCivitatis && _finMoneyLine("Civitatis komisyonu", row.revenue.commission == null ? "kur nedeniyle hesaplanamadı" : _fmtFinanceMap({ [row.revenue.commissionCurrency]: row.revenue.commission }))}
               {_finMoneyLine(row.revenue.receivable.source === "settlement" ? `DeseTour net alacağı · hakediş (${({ accrued: "biriken", claimable: "talep edilebilir", requested: "talep edildi", paid: "ödeme alındı" })[row.revenue.receivable.settlementStatus] || row.revenue.receivable.settlementStatus})` : "DeseTour net alacağı",
                 _fmtFinanceMap({ [row.revenue.receivable.currency]: row.revenue.receivable.amount }), { strong: true })}
+              {row.extraSaleCount > 0 && _finMoneyLine(`Ek satışlar (${row.extraSaleCount})`, _fmtFinanceMap(row.extraSales))}
               {_finMoneyLine("Tahsil edilen", _fmtFinanceMap(row.received))}
               {_finMoneyLine("Tahmini kâr", _finSigned(row.tryView.projectedProfit) + (row.tryView.projectedMargin != null ? ` · ${_finPct(row.tryView.projectedMargin)}` : ""), { strong: true, tone: row.tryView.projectedProfit < 0 ? "bad" : null })}
             </div>
@@ -13196,8 +13325,46 @@ function ReservationFinanceCard({ r }) {
             </form>
           )}
         </div>
+        {r.opStatus !== "İptal" && <_ReservationExtraSales r={r} summary={summary}/>}
       </div>
     </RCard>
+  );
+}
+
+// Ek satışlar of one reservation (from the same month summary) + entry form.
+function _ReservationExtraSales({ r, summary }) {
+  const { mutate, mutating } = useRepoMutation("finance");
+  const [open, setOpen] = useState(false);
+  if (!summary) return null;
+  const items = summary.extraSales.items.filter(x => x.reservationId === r.id);
+  async function remove(x) {
+    if (!window.confirm(`${x.description} (${_fmtFinanceMap({ [x.currency]: x.amount })}) silinsin mi?`)) return;
+    const { error } = await mutate("deleteExtraSale", x.id);
+    showToast(error ? "Hata: " + error : "Ek satış silindi.");
+  }
+  return (
+    <div data-testid="reservation-extra-sales" style={{ marginTop: 12, borderTop: `1px solid ${C.borderLight}`, paddingTop: 10 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+        <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: C.textFaint, fontFamily: "'Geist',sans-serif" }}>Ek Satışlar</span>
+        {!open && !summary.extraSales.unavailable && (
+          <button type="button" onClick={() => setOpen(true)} style={{ padding: "4px 10px", borderRadius: T.radiusSm, border: `1px solid ${C.border}`, background: C.white, color: C.text, cursor: "pointer", fontSize: 11.5, fontFamily: "'Geist',sans-serif" }}>Ek Satış Ekle</button>
+        )}
+      </div>
+      {summary.extraSales.unavailable && <div style={{ fontSize: 12, color: C.textFaint, marginTop: 6, fontFamily: "'Geist',sans-serif" }}>{_FIN_EXTRA_UNAVAILABLE}</div>}
+      {!summary.extraSales.unavailable && items.length === 0 && !open && <div style={{ fontSize: 12, color: C.textFaint, marginTop: 6, fontFamily: "'Geist',sans-serif" }}>Turda bu müşterilere yapılan satış yok.</div>}
+      {items.map(x => (
+        <div key={x.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "6px 0", borderBottom: `1px solid ${C.borderLight}`, fontSize: 12.5, fontFamily: "'Geist',sans-serif" }}>
+          <span style={{ color: C.text, minWidth: 0 }}>{x.description}<span style={{ color: C.textFaint }}> · {x.saleDate}</span></span>
+          <span style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+            <b style={{ fontVariantNumeric: "tabular-nums" }}>{_fmtFinanceMap({ [x.currency]: x.amount })}</b>
+            <button type="button" aria-label="Ek satışı sil" onClick={() => remove(x)} disabled={mutating} style={{ border: "none", background: "transparent", color: C.textFaint, cursor: "pointer", padding: 2 }}>
+              <RIc d="M18 6L6 18M6 6l12 12" size={12} sw={2}/>
+            </button>
+          </span>
+        </div>
+      ))}
+      {open && <_ExtraSaleForm reservationId={r.id} defaultDate={String(r.checkIn || "").slice(0, 10) || undefined} onDone={() => setOpen(false)}/>}
+    </div>
   );
 }
 
@@ -13210,7 +13377,7 @@ function ReservationFinanceSummary({ resId, checkIn }) {
   if (!row) return null;
   return (
     <div data-testid="quickview-finance" style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-      {_finMoneyLine("Beklenen net gelir", _fmtFinanceMap({ [row.revenue.receivable.currency]: row.revenue.receivable.amount }))}
+      {_finMoneyLine("Beklenen net gelir", _fmtFinanceMap(row.netIncome))}
       {_finMoneyLine("Planlanan maliyet", _fmtFinanceMap(row.plannedCost))}
       {_finMoneyLine("Tahmini kâr", _finSigned(row.tryView.projectedProfit), { strong: true, tone: row.tryView.projectedProfit < 0 ? "bad" : null })}
       {group && <div style={{ fontSize: 11.5, color: C.textMuted, fontFamily: "'Geist',sans-serif", marginTop: 2 }}>Rehber operasyonu: {_fmtFinanceMap(group.guide.planned)} toplam · {group.reservations > 1 ? `${group.reservations} rezervasyon paylaşıyor` : "yalnızca bu rezervasyon"}</div>}
@@ -19055,7 +19222,22 @@ function summarizeMonthlyExpectedRevenue(reservations, todayISO, rateRows, optio
   nativeTryTotal = round2(nativeTryTotal);
   convertedTryTotal = round2(convertedTryTotal);
   return {
-    total: round2(nativeTryTotal + convertedTryTotal),
+    // Tour net + extra sales (ek satış, finance roles only — callers without
+    // access pass none). Extra sales use the same TRY / fresh-ECB rule; one
+    // that cannot be converted is left out and counted separately.
+    ...(() => {
+      let xsTry = 0, xsCount = 0, xsExcluded = 0;
+      for (const x of ((options && options.extraSales) || [])) {
+        const cur = String(x.currency || "").trim().toUpperCase();
+        const amt = Number(x.amount) || 0;
+        if (cur === "TRY" || cur === "TL") { xsTry += amt; xsCount += 1; continue; }
+        const rr = rates[cur];
+        if (!FX_SUPPORTED_FOREIGN_CURRENCIES.includes(cur) || !rr || rr.stale) { xsExcluded += 1; continue; }
+        xsTry += amt * rr.rate; xsCount += 1;
+      }
+      const tourTotal = round2(nativeTryTotal + convertedTryTotal);
+      return { total: round2(tourTotal + xsTry), tourTotal, extraSalesTryTotal: round2(xsTry), extraSalesCount: xsCount, extraSalesExcludedCount: xsExcluded };
+    })(),
     nativeTryTotal, convertedTryTotal,
     nativeCount, convertedCount, convertedByCurrency,
     excludedCount, excludedByCurrency, excludedByReason,
@@ -19368,6 +19550,7 @@ function _financeEarnedNetRevenue(r, settlement, payments) {
 function buildFinanceMonthSummary(input) {
   const { reservations = [], preparations = [], rules = [], costItems = [], expenses = [],
     guidePayments = [], payments = [], settlementItems = [], rateRows = [], rateSourceError = false,
+    extraSales = [], extraSalesUnavailable = false,
     monthISO, todayISO, languageNames = [] } = input || {};
   const { startISO, endISO } = _financeMonthRange(monthISO);
   const fx = { rateSourceError: !!rateSourceError, rates: rateSourceError ? {} : _selectLatestFxRatesToTry(rateRows, todayISO) };
@@ -19375,6 +19558,20 @@ function buildFinanceMonthSummary(input) {
   const monthRes = reservations.filter(inMonth);
   const active = monthRes.filter(r => !_financeIsCancelled(r));
   const byResId = new Map(active.map(r => [r.id, r]));
+  // Extra sales (ek satış): income from products / services sold to a
+  // reservation's guests. Added to that reservation's expected net income
+  // (and therefore to every group / tour / month total and the projected
+  // profit), and also reported on their own. Each sale id counts once.
+  const extraSalesByRes = new Map();
+  const extraSeen = new Set();
+  let extraSalesOnCancelled = 0;
+  for (const x of (extraSales || [])) {
+    if (!x || extraSeen.has(x.id)) continue;
+    extraSeen.add(x.id);
+    if (!byResId.has(x.reservationId)) { if (monthRes.some(r => r.id === x.reservationId)) extraSalesOnCancelled += 1; continue; }
+    if (!extraSalesByRes.has(x.reservationId)) extraSalesByRes.set(x.reservationId, []);
+    extraSalesByRes.get(x.reservationId).push(x);
+  }
 
   const services = buildGuideServices(active, { languageNames });
   const cancelledKeys = new Map(monthRes.filter(r => _financeIsCancelled(r) && r.checkIn)
@@ -19609,11 +19806,16 @@ function buildFinanceMonthSummary(input) {
       const pv = t(_financeSumMaps(...varPairs.map(v => v[0]))), av = t(_financeSumMaps(...varPairs.map(v => v[1])));
       varianceTry = pv.complete && av.complete ? Math.round((av.tryTotal - pv.tryTotal) * 100) / 100 : null;
     }
-    const recvT = t(_financeAdd({}, rev.receivable.currency, rev.receivable.amount));
+    const resExtra = extraSalesByRes.get(r.id) || [];
+    const extraSaleMap = {}; resExtra.forEach(x => _financeAdd(extraSaleMap, x.currency, x.amount));
+    // Expected net income = tour receivable + extra sales (original currencies).
+    const netIncome = _financeSumMaps(_financeAdd({}, rev.receivable.currency, rev.receivable.amount), extraSaleMap);
+    const recvT = t(netIncome);
     const projT = t(projectedCost), planT = t(plannedCost), actT = t(actualCost), recdT = t(received);
     return {
-      id: r.id, ref: r.resNumber || r.id, date, tourId: r.tourId, tourLabel: r.tour || '—', language: svc ? svc.language : null,
+      id: r.id, ref: r.resNumber || r.id, customerName: r.name || '', date, tourId: r.tourId, tourLabel: r.tour || '—', language: svc ? svc.language : null,
       pax, future, opStatus: r.opStatus, planned, actual, best, remaining, costGaps, guideAllocation, revenue: rev, received,
+      extraSales: extraSaleMap, extraSaleCount: resExtra.length, netIncome,
       earned, outstanding, incurredCost, actualCoverageComplete, missingActualCategories, varianceMap,
       plannedCost, projectedCost, actualCost,
       tryView: {
@@ -19632,7 +19834,7 @@ function buildFinanceMonthSummary(input) {
   const T2 = (m) => _financeToTry(m, fx);
   const groupRows = guideRows.map(g => {
     const rows = reservationRows.filter(x => x.guideAllocation && x.guideAllocation.serviceKey === g.key);
-    const expectedNetMap = _financeSumMaps(...rows.map(x => _financeAdd({}, x.revenue.receivable.currency, x.revenue.receivable.amount)));
+    const expectedNetMap = _financeSumMaps(...rows.map(x => x.netIncome));
     const plannedCost = _financeSumMaps(...rows.map(x => nonGuide(x, 'planned')), g.planned);
     const projectedCost = _financeSumMaps(...rows.map(x => nonGuide(x, 'best')), g.best);
     const actualCost = _financeSumMaps(...rows.map(x => nonGuide(x, 'actual')), g.incurred);
@@ -19735,13 +19937,16 @@ function buildFinanceMonthSummary(input) {
   const plannedOperatingCost = _financeSumMaps(...['ticket', 'meal', 'transport', 'other', 'guide'].map(c => categories[c].planned));
   const projectedOperatingCost = _financeSumMaps(...reservationRows.map(x => _financeSumMaps(x.best.ticket, x.best.meal, x.best.transport, x.best.other)), guideBest);
   const actualSpend = _financeSumMaps(...['ticket', 'meal', 'transport', 'other', 'guide'].map(c => categories[c].actual));
-  const expectedNet = _financeSumMaps(...reservationRows.map(x => _financeAdd({}, x.revenue.receivable.currency, x.revenue.receivable.amount)));
+  const tourNet = _financeSumMaps(...reservationRows.map(x => _financeAdd({}, x.revenue.receivable.currency, x.revenue.receivable.amount)));
+  const extraSalesTotal = _financeSumMaps(...reservationRows.map(x => x.extraSales));
+  const expectedNet = _financeSumMaps(tourNet, extraSalesTotal);
   const gross = _financeSumMaps(...reservationRows.map(x => _financeAdd({}, x.revenue.grossCurrency, x.revenue.gross)));
   const received = _financeSumMaps(...reservationRows.map(x => x.received));
   cashFlow.inflow = received;
   const unattributedAmount = {}; unattributed.forEach(p => _financeAdd(unattributedAmount, p.currency, p.amount));
   const T = (m) => _financeToTry(m, fx);
-  const kp = { remainingBudget: T(remainingBudget), expectedNet: T(expectedNet), projectedCost: T(projectedOperatingCost), actualSpend: T(actualSpend), received: T(received), gross: T(gross), plannedCost: T(plannedOperatingCost) };
+  const kp = { remainingBudget: T(remainingBudget), expectedNet: T(expectedNet), projectedCost: T(projectedOperatingCost), actualSpend: T(actualSpend), received: T(received), gross: T(gross), plannedCost: T(plannedOperatingCost),
+    tourNet: T(tourNet), extraSales: T(extraSalesTotal) };
   const diff = (a, b) => a.complete && b.complete ? Math.round((a.tryTotal - b.tryTotal) * 100) / 100 : null;
   // ── Realized ("Gerçekleşen") view — tours that already took place
   // (check_in before today, Istanbul):
@@ -19793,7 +19998,7 @@ function buildFinanceMonthSummary(input) {
     const other = _financeSumMaps(...t.rows.map(x => _financeSumMaps(x.planned.transport, x.planned.other)));
     const guide = _financeSumMaps(...svcs.map(g => g.planned));
     const totalPlanned = _financeSumMaps(ticket, meal, other, guide);
-    const net = _financeSumMaps(...t.rows.map(x => _financeAdd({}, x.revenue.receivable.currency, x.revenue.receivable.amount)));
+    const net = _financeSumMaps(...t.rows.map(x => x.netIncome));
     const netT = T(net), costT = T(totalPlanned);
     return { tourId: t.tourId, tourLabel: t.tourLabel, reservations: t.reservations, pax: t.pax, guideServices: svcs.length,
       ticket, guide, meal, other, totalPlanned, expectedNet: net, totalPlannedTry: costT.complete ? costT.tryTotal : null,
@@ -19806,9 +20011,17 @@ function buildFinanceMonthSummary(input) {
     counts: { reservations: active.length, cancelledExcluded: monthRes.length - active.length, guideServices: guideRows.length,
       unresolvedGuideServices: guideRows.filter(g => g.unresolvedReason).length },
     guideServices: guideRows, groups: groupRows, cancelledGroups, cashFlow, reservations: reservationRows, tours: tourRows, categories,
-    totals: { remainingBudget, plannedOperatingCost, projectedOperatingCost, actualSpend, expectedNet, gross, received, unattributedGuidePayments: unattributedAmount },
+    totals: { remainingBudget, plannedOperatingCost, projectedOperatingCost, actualSpend, expectedNet, tourNet, extraSales: extraSalesTotal, gross, received, unattributedGuidePayments: unattributedAmount },
+    // Ek satışlar of the month's active reservations (newest first), with the
+    // reservation context the UI needs; `unavailable` = table not migrated yet.
+    extraSales: {
+      items: [...extraSalesByRes.entries()].flatMap(([rid, list]) => { const r = byResId.get(rid); const row = reservationRows.find(x => x.id === rid);
+        return list.map(x => ({ ...x, reservationRef: r.resNumber || r.id, tourLabel: r.tour || '—', tourDate: String(r.checkIn).slice(0, 10), language: row ? row.language : null })); })
+        .sort((a, b) => String(b.saleDate).localeCompare(String(a.saleDate)) || String(b.createdAt || '').localeCompare(String(a.createdAt || ''))),
+      unavailable: !!extraSalesUnavailable, onCancelledReservations: extraSalesOnCancelled,
+    },
     kpis: {
-      remainingBudget: kp.remainingBudget, expectedNet: kp.expectedNet, gross: kp.gross,
+      remainingBudget: kp.remainingBudget, expectedNet: kp.expectedNet, gross: kp.gross, tourNet: kp.tourNet, extraSales: kp.extraSales,
       projectedProfit: diff(kp.expectedNet, kp.projectedCost), actualSpend: kp.actualSpend,
       plannedCost: kp.plannedCost, projectedCost: kp.projectedCost,
       // Realized KPIs (see `realized`): earned ≠ cash; profit = earned − actual cost.
@@ -22277,6 +22490,14 @@ function mapReservationExpenseFromDB(r) {
     notes: r.notes || '', createdBy: r.created_by || null, createdAt: r.created_at || null, updatedAt: r.updated_at || null, _fromDB: true,
   };
 }
+function mapExtraSaleFromDB(r) {
+  if (!r) return null;
+  return {
+    id: r.id, reservationId: r.reservation_id || null, description: r.description || '',
+    amount: r.amount != null ? parseFloat(r.amount) : 0, currency: r.currency || 'EUR', saleDate: r.sale_date || null,
+    notes: r.notes || '', createdBy: r.created_by || null, createdAt: r.created_at || null, updatedAt: r.updated_at || null, _fromDB: true,
+  };
+}
 function mapPreparationRuleFromDB(r) {
   if (!r) return null;
   return { id: r.id, tourId: r.tour_id || null, preparationType: r.preparation_type || null, label: r.label || '',
@@ -23396,6 +23617,27 @@ function _financeExpensePayload(d) {
   return out; // exchange_rate_used / exchange_rate_date / try_amount intentionally absent
 }
 // TESTABLE:_financeExpensePayload:end
+// TESTABLE:_financeExtraSalePayload:start
+// Ek satış (product / service sold to a reservation's guests during the
+// tour): one reservation, a free-text description, a positive amount in its
+// original currency and the sale date. Validated identically by the mock
+// and the Supabase repo; the database enforces the same rules.
+const _FINANCE_EXTRA_SALE_CURRENCIES = ['TRY', 'EUR', 'USD', 'GBP'];
+function _financeExtraSalePayload(d) {
+  const reservationId = d && d.reservationId;
+  if (!reservationId) throw new Error('Rezervasyon seçin.');
+  const description = String((d && d.description) || '').trim();
+  if (!description) throw new Error('Satılan ürünü / hizmeti yazın.');
+  const amount = Math.round(Number(d.amount) * 100) / 100;
+  if (!Number.isFinite(amount) || amount <= 0) throw new Error('Tutar sıfırdan büyük olmalı.');
+  const currency = String(d.currency || '').trim().toUpperCase();
+  if (!_FINANCE_EXTRA_SALE_CURRENCIES.includes(currency)) throw new Error('Geçersiz para birimi.');
+  const saleDate = String(d.saleDate || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(saleDate)) throw new Error('Satış tarihini girin.');
+  return { reservation_id: reservationId, description, amount, currency, sale_date: saleDate, notes: String(d.notes || '').trim() };
+}
+// TESTABLE:_financeExtraSalePayload:end
+const _mockFinanceExtraSales = [];
 // Mock/demo mode: expenses live in memory only (validated by the SAME
 // _financeExpensePayload as the Supabase repo — a guide expense is refused
 // here too); no FX is frozen without a database.
@@ -23406,7 +23648,26 @@ const FinanceRepository = {
     const reservations = (DB.reservations || []).filter(r => r.checkIn && r.checkIn >= startISO && r.checkIn < endISO);
     const ids = new Set(reservations.map(r => r.id));
     return { reservations, preparations: [], rules: [], costItems: [], expenses: _mockFinanceExpenses.filter(e => ids.has(e.reservationId)),
+      extraSales: _mockFinanceExtraSales.filter(x => ids.has(x.reservationId)), extraSalesUnavailable: false,
       guidePayments: [], payments: [], settlementItems: [], rateRows: [], rateSourceError: false };
+  },
+  async getExtraSalesForMonth(monthISO) {
+    if (!monthISO) return { sales: [], unavailable: false };
+    const { startISO, endISO } = _financeMonthRange(monthISO);
+    const ids = new Set((DB.reservations || []).filter(r => r.checkIn && r.checkIn >= startISO && r.checkIn < endISO && r.opStatus !== 'İptal').map(r => r.id));
+    return { sales: _mockFinanceExtraSales.filter(x => ids.has(x.reservationId)), unavailable: false };
+  },
+  async getExtraSales({ reservationId } = {}) { return _mockFinanceExtraSales.filter(x => !reservationId || x.reservationId === reservationId); },
+  async createExtraSale(d) {
+    const row = _financeExtraSalePayload(d);
+    const x = mapExtraSaleFromDB({ ...row, id: 'XS-' + (_mockFinanceExtraSales.length + 1) + '-' + Date.now() });
+    _mockFinanceExtraSales.push(x);
+    return x;
+  },
+  async deleteExtraSale(id) {
+    const i = _mockFinanceExtraSales.findIndex(x => x.id === id);
+    if (i >= 0) _mockFinanceExtraSales.splice(i, 1);
+    return true;
   },
   async getCostItems() { return []; },
   async getExpenses({ reservationId } = {}) { return _mockFinanceExpenses.filter(e => !reservationId || e.reservationId === reservationId); },
@@ -23445,8 +23706,9 @@ const SupabaseFinanceRepo = {
     ]);
     let rateRows = [], rateSourceError = false;
     try { rateRows = await SupabaseExchangeRateRepo.getLatestToTry(); } catch (_) { rateSourceError = true; }
+    const xs = await SupabaseFinanceRepo._extraSalesByIds(sb, ids);
     return {
-      reservations,
+      reservations, extraSales: xs.sales, extraSalesUnavailable: xs.unavailable,
       preparations: must(preps).map(mapPreparationFromDB),
       rules: must(rules).map(mapPreparationRuleFromDB),
       costItems: must(items).map(mapFinanceCostItemFromDB),
@@ -23456,6 +23718,49 @@ const SupabaseFinanceRepo = {
       settlementItems: must(settle).map(mapCivitatisSettlementItemFromDB),
       rateRows, rateSourceError,
     };
+  },
+  // Extra sales of the given reservations. Until the extra-sales migration is
+  // applied the table does not exist: Finance keeps working and the UI says
+  // "Ek satış kaydı henüz etkin değil" instead of failing.
+  async _extraSalesByIds(sb, ids) {
+    if (!ids.length) return { sales: [], unavailable: false };
+    const { data, error } = await sb.from('reservation_extra_sales').select('*').in('reservation_id', ids);
+    if (error) return { sales: [], unavailable: true };
+    return { sales: (data || []).map(mapExtraSaleFromDB), unavailable: false };
+  },
+  // Home page: this month's extra sales (finance roles only — RLS gives
+  // other roles nothing anyway, so they never even ask).
+  async getExtraSalesForMonth(monthISO) {
+    const sb = getSB(); if (!sb) return FinanceRepository.getExtraSalesForMonth(monthISO);
+    if (!monthISO || !canAccess(getAuthContext().role, 'finance')) return { sales: [], unavailable: false };
+    const { startISO, endISO } = _financeMonthRange(monthISO);
+    const { data, error } = await sb.from('reservations').select('id,status').gte('check_in', startISO).lt('check_in', endISO);
+    if (error) throw new Error(error.message);
+    const ids = (data || []).filter(r => r.status !== 'cancelled').map(r => r.id);
+    return SupabaseFinanceRepo._extraSalesByIds(sb, ids);
+  },
+  async getExtraSales({ reservationId } = {}) {
+    const sb = getSB(); if (!sb) return FinanceRepository.getExtraSales({ reservationId });
+    let q = sb.from('reservation_extra_sales').select('*').order('sale_date', { ascending: false });
+    if (reservationId) q = q.eq('reservation_id', reservationId);
+    const { data, error } = await q;
+    if (error) throw new Error(error.message);
+    return (data || []).map(mapExtraSaleFromDB);
+  },
+  async createExtraSale(d) {
+    const sb = getSB(); if (!sb) throw new Error('Supabase bağlantısı yok.');
+    const row = { ..._financeExtraSalePayload(d), created_by: _authCache?.session?.user?.id || null };
+    const { data, error } = await sb.from('reservation_extra_sales').insert(row).select().single();
+    if (error) throw new Error(error.message);
+    await _sbLog('reservation_extra_sale', data.id, 'created', `Ek satış: ${row.description} · ${row.amount} ${row.currency}`, { reservation_id: row.reservation_id, amount: row.amount, currency: row.currency, sale_date: row.sale_date });
+    return mapExtraSaleFromDB(data);
+  },
+  async deleteExtraSale(id) {
+    const sb = getSB(); if (!sb) throw new Error('Supabase bağlantısı yok.');
+    const { data, error } = await sb.from('reservation_extra_sales').delete().eq('id', id).select().single();
+    if (error) throw new Error(error.message);
+    await _sbLog('reservation_extra_sale', id, 'deleted', `Ek satış silindi: ${data.description} · ${data.amount} ${data.currency}`, { reservation_id: data.reservation_id });
+    return true;
   },
   async getCostItems() {
     const sb = getSB(); if (!sb) return [];
