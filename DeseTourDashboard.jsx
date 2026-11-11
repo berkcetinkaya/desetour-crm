@@ -30660,6 +30660,10 @@ function MobileReservationDetailPage({ resId, onBack }) {
         </MobileEntityCard>
       </MobileSection>
 
+      {/* Finance Center — the same reservation Finance card as desktop
+          (same canonical month summary, same expense entry), finance roles only. */}
+      {canAccess(mobAuth.role, "finance") && <ReservationFinanceCard r={r}/>}
+
       {r.opNotes && (
         <MobileSection title="Notlar — Personel">
           <MobileEntityCard><div style={{ fontSize:13, color:C.textMid, fontFamily:"'Geist',sans-serif", lineHeight:1.6 }}>{r.opNotes}</div></MobileEntityCard>
