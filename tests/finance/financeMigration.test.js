@@ -212,3 +212,28 @@ test('reference migration never modifies or deletes a pre-existing internal row'
   assert.match(REF, /an unexpected internal cost row was created/);
   assert.match(REF_RB, /label = 'Bosphorus Cruise \(Şehir Hatları short tour\)'/);
 });
+
+// ── Spanish Topkapı product ─────────────────────────────────────────────
+const ES = read('supabase_migration_finance_topkapi_es_rule.sql');
+const ES_RB = read('supabase_migration_finance_topkapi_es_rule_ROLLBACK.sql');
+const ES_BF = read('finance_topkapi_es_backfill.sql');
+
+test('Spanish Topkapı: one per_guest stop-less rule on the explicit tour id, €40 internal + ₺2,750 reference, duplicate guard', () => {
+  assert.match(ES, /v_tour  CONSTANT UUID := '3d3a335a-1320-4277-977d-62a19fa7090a';/);
+  assert.match(ES, /VALUES \(v_tour, NULL, 'entrance_ticket', v_label, 'per_guest', NULL, TRUE\)/);
+  assert.match(ES, /v_label CONSTANT TEXT := 'Topkapı Sarayı \+ Harem Bileti';/);
+  assert.match(ES, /VALUES \('Topkapı Combined Entry', 'ticket', 'preparation_rule', 40, 'EUR', v_tour, v_rule, DATE '2026-01-01', 'internal'/);
+  assert.match(ES, /2750, 'TRY', v_tour, v_rule,\s+DATE '2026-11-11', 'public_reference'/);
+  assert.match(ES, /already has a different active Topkapı ticket rule/);
+  const code = sqlCode(ES);
+  assert.doesNotMatch(code, /reservation_preparations|UPDATE public\.tours/);
+  assert.equal((code.match(/INSERT INTO public\.tour_preparation_rules/g) || []).length, 1);
+});
+
+test('Spanish Topkapı backfill: separate file, existing engine, upcoming non-cancelled reservations of that tour only', () => {
+  assert.match(ES_BF, /public\.materialize_reservation_preparations\(r\.id\)/);
+  assert.match(ES_BF, /r\.tour_id = '3d3a335a-1320-4277-977d-62a19fa7090a'/);
+  assert.match(ES_BF, /r\.status <> 'cancelled'/);
+  assert.match(ES_BF, /r\.check_in >= \(now\(\) AT TIME ZONE 'Europe\/Istanbul'\)::date/);
+  assert.match(ES_RB, /UPDATE public\.tour_preparation_rules SET is_active = FALSE WHERE id = v_rule\.id;/);
+});
