@@ -1332,3 +1332,39 @@ test('break-even beyond a realistic group (30) is "impractical", still with the 
   assert.equal(e.status, 'impractical'); assert.equal(e.breakEvenPax, 76);
   assert.equal(s.tours[0].subgroups[0].breakEvenReached, false);
 });
+
+// ── Tour profitability grouped by tour name, with language sub-rows ─────
+
+test('same tour sold as separate products per language = ONE tour row with one sub-row per language', () => {
+  const s = summary({ reservations: [
+    res({ id: 'P1', tourId: 'T-BOS-PT', tour: 'Bosforo y Barrio Sultanahmet', tourLanguage: 'Portekizce', checkIn: '2026-11-03', pax: 2, total: 9900, currency: 'TRY' }),
+    res({ id: 'I1', tourId: 'T-BOS-IT', tour: 'Bosforo y Barrio Sultanahmet ', tourLanguage: 'İtalyanca', checkIn: '2026-11-14', pax: 1, total: 4508, currency: 'TRY' }),
+    res({ id: 'I2', tourId: 'T-BOS-IT', tour: 'Bosforo y Barrio Sultanahmet', tourLanguage: 'İtalyanca', checkIn: '2026-11-21', pax: 2, total: 9016, currency: 'TRY' }),
+    res({ id: 'G1', tourId: 'T-GB', tour: 'Grand Bazaar', checkIn: '2026-11-05', pax: 4 }),
+  ] });
+  assert.equal(s.tours.length, 2);
+  const b = s.tours.find(t => /Bosforo/.test(t.tourLabel));
+  assert.deepEqual(b.tourIds.slice().sort(), ['T-BOS-IT', 'T-BOS-PT']);
+  assert.deepEqual([b.reservations, b.pax, b.guideServices], [3, 5, 3]);
+  assert.deepEqual(b.languages.map(l => [l.language, l.reservations, l.pax, l.guideServices]), [['İtalyanca', 2, 3, 2], ['Portekizce', 1, 2, 1]]);
+  const it = b.languages[0], pt = b.languages[1];
+  assert.equal(it.economics.netPerPaxTry, 4508); assert.equal(pt.economics.netPerPaxTry, 4950);
+  assert.deepEqual(it.subgroups.map(g => g.date), ['2026-11-14', '2026-11-21'], 'operations under their language, by date');
+  assert.equal(pt.subgroups[0].date, '2026-11-03');
+  assert.equal(eur(b.guide), 450);
+  assert.equal(b.projectedProfit, Math.round((9900 + 4508 + 9016 - 450 * 50) * 100) / 100);
+});
+
+test('identical costs on both language products → identical break-even (PT and IT Bosforo after the migration)', () => {
+  const AY = { id: 'R-AY', tourId: null, preparationType: 'entrance_ticket', label: 'Ayasofya Giriş Bileti', isActive: true };
+  const rules = [{ ...AY, id: 'R-PT', tourId: 'T-PT' }, { ...AY, id: 'R-IT', tourId: 'T-IT' }];
+  const ci = (tourId, rule) => [{ id: 'A' + tourId, kind: 'internal', isActive: true, category: 'ticket', basis: 'preparation_rule', amount: 25, currency: 'EUR', tourId, preparationRuleId: rule, validFrom: '2026-01-01', validTo: null, isProvisional: true },
+    { id: 'B' + tourId, kind: 'internal', isActive: true, category: 'transport', basis: 'per_guest', amount: 340, currency: 'TRY', tourId, preparationRuleId: null, validFrom: '2026-01-01', validTo: null, isProvisional: true }];
+  const rs = [res({ id: 'P', tourId: 'T-PT', tour: 'Bosforo', tourLanguage: 'Portekizce', pax: 2, total: 9000, currency: 'TRY' }),
+              res({ id: 'I', tourId: 'T-IT', tour: 'Bosforo', tourLanguage: 'İtalyanca', pax: 2, total: 9000, currency: 'TRY' })];
+  const preps = [{ id: 'pp', reservationId: 'P', preparationRuleId: 'R-PT', requiredQuantity: 2, status: 'pending' }, { id: 'pi', reservationId: 'I', preparationRuleId: 'R-IT', requiredQuantity: 2, status: 'pending' }];
+  const s = buildFinanceMonthSummary({ monthISO: MONTH, todayISO: TODAY, languageNames: LANGS, rateRows: RATES, costItems: [GUIDE, ...ci('T-PT', 'R-PT'), ...ci('T-IT', 'R-IT')], rules, preparations: preps, reservations: rs });
+  const [a, b] = s.tours[0].languages;
+  assert.equal(a.economics.variablePerPaxTry, 25 * 50 + 340);
+  assert.deepEqual([a.economics.breakEvenPax, a.economics.contributionPerPaxTry], [b.economics.breakEvenPax, b.economics.contributionPerPaxTry]);
+});

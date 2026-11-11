@@ -304,3 +304,24 @@ test('Tur Karlılığı shows break-even guests per tour and per operation; no F
   assert.match(tt, /kâra geçmek için/);
   assert.doesNotMatch(SOURCE, /key: "fikirler"|function _FinIdeas\(|_FIN_IDEAS|buildProfitIdeas/);
 });
+
+test('Tur Karlılığı: one row per tour; expanding shows a row per language (all columns, own break-even) and its operations', () => {
+  const tt = body('_FinTourTable');
+  assert.match(tt, /isOpen && t\.languages\.map\(l => \(/);
+  assert.match(tt, /data-testid="tour-language-row"/);
+  assert.match(tt, /\{cols\.map\(\(\[lb, f\]\) => <td key=\{lb\} style=\{td\}>\{f\(l\)\}<\/td>\)\}/);
+  assert.match(tt, /\{l\.subgroups\.map\(g => \(/);
+});
+
+test('Italian Bosforo migration mirrors the PT product: Ayasofya €25 rule + ₺340 cruise, guarded; backfill covers both products from November', () => {
+  const M = fs.readFileSync(path.join(__dirname, '..', '..', 'supabase_migration_finance_bosforo_it_costs.sql'), 'utf8');
+  const BF = fs.readFileSync(path.join(__dirname, '..', '..', 'finance_bosforo_backfill.sql'), 'utf8');
+  assert.match(M, /v_it    CONSTANT UUID := '2ea5551f-f59f-4ba4-976c-0b5c916094a8';/);
+  assert.match(M, /VALUES \(v_it, NULL, 'entrance_ticket', v_label, 'per_guest', NULL, TRUE\)/);
+  assert.match(M, /'Hagia Sophia Visitor Gallery', 'ticket', 'preparation_rule', 25, 'EUR', v_it, v_rule,\s+DATE '2026-01-01', 'internal', TRUE/);
+  assert.match(M, /'Bosphorus Cruise \(Şehir Hatları short tour\)', 'transport', 'per_guest', 340, 'TRY', v_it,\s+DATE '2026-01-01', 'internal', TRUE/);
+  assert.match(M, /already has a different active Ayasofya rule/);
+  assert.match(BF, /public\.materialize_reservation_preparations\(r\.id\)/);
+  assert.match(BF, /r\.tour_id IN \('2ea5551f-f59f-4ba4-976c-0b5c916094a8', '8f308669-2bb6-42ac-9b2f-a07f77e231d4'\)/);
+  assert.match(BF, /r\.check_in >= DATE '2026-11-01'/);
+});

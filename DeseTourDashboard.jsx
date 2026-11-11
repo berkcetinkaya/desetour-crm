@@ -12822,14 +12822,21 @@ function _FinTourTable({ s, mode }) {
                   <td style={td}>{t.reservations}</td><td style={td}>{t.pax}</td><td style={td}>{t.guideServices}</td>
                   {cols.map(([l, f]) => <td key={l} style={td}>{f(t)}</td>)}
                 </tr>
-                {isOpen && t.subgroups.map(g => (
+                {isOpen && t.languages.map(l => (
+                <React.Fragment key={l.language}>
+                  <tr data-testid="tour-language-row" style={{ background: C.ivory, borderTop: `1px solid ${C.borderLight}` }}>
+                    <td style={{ ...td, textAlign: "left", paddingLeft: 26, fontWeight: 600, color: C.text }}>{l.language}</td>
+                    <td style={td}>{l.reservations}</td><td style={td}>{l.pax}</td><td style={td}>{l.guideServices}</td>
+                    {cols.map(([lb, f]) => <td key={lb} style={td}>{f(l)}</td>)}
+                  </tr>
+                {l.subgroups.map(g => (
                   <tr key={g.key} style={{ background: C.ivory, borderTop: `1px solid ${C.borderLight}` }}>
-                    <td style={{ ...td, textAlign: "left", paddingLeft: 30, color: C.textMid }}>
-                      {new Date(g.date + "T12:00:00").toLocaleDateString("tr-TR", { day: "numeric", month: "short" })} · {g.language || "—"}
+                    <td style={{ ...td, textAlign: "left", paddingLeft: 46, color: C.textMid }}>
+                      {new Date(g.date + "T12:00:00").toLocaleDateString("tr-TR", { day: "numeric", month: "short" })}
                       {g.unresolvedReason && <span style={{ marginLeft: 6, fontSize: 11, color: C.amber }}>{g.unresolvedReason === "tour_missing" ? "Tur bilgisi eksik" : g.unresolvedReason === "language_unrecognized" ? "Dil tanınmıyor" : "Dil belirtilmemiş"}</span>}
                     </td>
                     <td style={td}>{g.reservations}</td><td style={td}>{g.pax}</td><td style={td}>1</td>
-                    <td style={td} colSpan={cols.length}>
+                    <td style={{ ...td, whiteSpace: "normal", lineHeight: 1.5 }} colSpan={cols.length}>
                       {mode === "profit" && g.pnl ? (
                         <span data-testid="group-pnl" style={{ color: C.textMid }}>
                           Maliyet {_fmtFinanceMap(g.pnl.projectedCost)}{g.pnl.projectedCostTry != null && Object.keys(g.pnl.projectedCost).some(c => c !== "TRY") ? ` (≈ ₺${Math.round(g.pnl.projectedCostTry).toLocaleString("tr-TR")})` : ""}
@@ -12846,6 +12853,8 @@ function _FinTourTable({ s, mode }) {
                       </>)}
                     </td>
                   </tr>
+                ))}
+                </React.Fragment>
                 ))}
               </React.Fragment>
             );
@@ -20126,30 +20135,26 @@ function buildFinanceMonthSummary(input) {
   };
 
   // ── Tour table: tour → date + language subgroups
-  const tours = new Map();
-  for (const x of reservationRows) {
-    const tk = x.tourId || 'none:' + x.tourLabel;
-    if (!tours.has(tk)) tours.set(tk, { tourId: x.tourId, tourLabel: x.tourLabel, reservations: 0, pax: 0, serviceKeys: new Set(), rows: [] });
-    const t = tours.get(tk); t.reservations += 1; t.pax += x.pax.total; t.rows.push(x);
-    if (x.guideAllocation) t.serviceKeys.add(x.guideAllocation.serviceKey);
-  }
-  const tourRows = [...tours.values()].map(t => {
-    const svcs = [...t.serviceKeys].map(k => guideByKey.get(k));
-    const ticket = _financeSumMaps(...t.rows.map(x => x.planned.ticket));
-    const meal = _financeSumMaps(...t.rows.map(x => x.planned.meal));
-    const other = _financeSumMaps(...t.rows.map(x => _financeSumMaps(x.planned.transport, x.planned.other)));
+  // Tour profitability: ONE row per tour NAME (products of the same tour sold
+  // per language are separate tour records — they are shown together), with
+  // one sub-row per booking language and that language's operations.
+  const tourAgg = (rows, svcs) => {
+    const ticket = _financeSumMaps(...rows.map(x => x.planned.ticket));
+    const meal = _financeSumMaps(...rows.map(x => x.planned.meal));
+    const other = _financeSumMaps(...rows.map(x => _financeSumMaps(x.planned.transport, x.planned.other)));
     const guide = _financeSumMaps(...svcs.map(g => g.planned));
     const totalPlanned = _financeSumMaps(ticket, meal, other, guide);
-    const net = _financeSumMaps(...t.rows.map(x => x.netIncome));
+    const net = _financeSumMaps(...rows.map(x => x.netIncome));
+    const pax = rows.reduce((n, x) => n + x.pax.total, 0);
     const netT = T(net), costT = T(totalPlanned);
-    // Break-even guests per operation (month averages of this tour, in TL):
-    // each guest brings net income minus his own per-guest costs (tickets,
-    // meals, other); the operation's fixed guide cost must be covered by
-    // that. Profit needs MORE guests than fixed ÷ contribution.
+    // Break-even guests per operation (averages of these rows, in TL): each
+    // guest brings net income minus his own per-guest costs (tickets, meals,
+    // other); the operation's fixed guide cost must be covered by that.
+    // Profit needs MORE guests than fixed ÷ contribution.
     const varT = T(_financeSumMaps(ticket, meal, other)), guideT = T(guide);
     const economics = (() => {
-      if (!t.pax || !svcs.length || !netT.complete || !varT.complete || !guideT.complete) return { status: 'unknown' };
-      const netPerPaxTry = Math.round(netT.tryTotal / t.pax), variablePerPaxTry = Math.round(varT.tryTotal / t.pax);
+      if (!pax || !svcs.length || !netT.complete || !varT.complete || !guideT.complete) return { status: 'unknown' };
+      const netPerPaxTry = Math.round(netT.tryTotal / pax), variablePerPaxTry = Math.round(varT.tryTotal / pax);
       const contributionPerPaxTry = netPerPaxTry - variablePerPaxTry, fixedPerOperationTry = Math.round(guideT.tryTotal / svcs.length);
       const base = { netPerPaxTry, variablePerPaxTry, contributionPerPaxTry, fixedPerOperationTry };
       if (contributionPerPaxTry <= 0) return { ...base, status: 'never', breakEvenPax: null };
@@ -20162,12 +20167,28 @@ function buildFinanceMonthSummary(input) {
       const f = T(g.planned);
       return f.complete ? Math.floor(f.tryTotal / economics.contributionPerPaxTry) + 1 : null;
     };
-    return { tourId: t.tourId, tourLabel: t.tourLabel, reservations: t.reservations, pax: t.pax, guideServices: svcs.length,
+    return { reservations: rows.length, pax, guideServices: svcs.length,
       ticket, guide, meal, other, totalPlanned, expectedNet: net, totalPlannedTry: costT.complete ? costT.tryTotal : null,
       projectedProfit: diff(netT, costT), margin: netT.complete && costT.complete && netT.tryTotal > 0 ? (netT.tryTotal - costT.tryTotal) / netT.tryTotal : null,
       economics,
-      subgroups: svcs.map(g => { const be = opBreakEven(g); return ({ key: g.key, date: g.date, language: g.language, unresolvedReason: g.unresolvedReason, reservations: g.reservationCount, pax: g.pax, guideServices: 1, guidePlanned: g.planned, state: g.state, pnl: groupByKey.get(g.key),
+      subgroups: svcs.slice().sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0).map(g => { const be = opBreakEven(g); return ({ key: g.key, date: g.date, language: g.language, unresolvedReason: g.unresolvedReason, reservations: g.reservationCount, pax: g.pax, guideServices: 1, guidePlanned: g.planned, state: g.state, pnl: groupByKey.get(g.key),
         breakEvenPax: be, breakEvenReached: be == null ? (economics.status === 'never' ? false : null) : g.pax >= be }); }) };
+  };
+  const tourName = (x) => String(x.tourLabel || '—').trim().toLocaleLowerCase('tr-TR');
+  const tours = new Map();
+  for (const x of reservationRows) {
+    const tk = x.tourId ? 'name:' + tourName(x) : 'none:' + tourName(x);
+    if (!tours.has(tk)) tours.set(tk, { tourIds: new Set(), tourLabel: x.tourLabel, rows: [] });
+    const t = tours.get(tk); t.rows.push(x); if (x.tourId) t.tourIds.add(x.tourId);
+  }
+  const svcsOf = (rows) => [...new Set(rows.filter(x => x.guideAllocation).map(x => x.guideAllocation.serviceKey))].map(k => guideByKey.get(k));
+  const tourRows = [...tours.values()].map(t => {
+    const byLang = new Map();
+    for (const x of t.rows) { const l = x.language || 'Dil belirtilmemiş'; if (!byLang.has(l)) byLang.set(l, []); byLang.get(l).push(x); }
+    const languages = [...byLang.entries()].map(([language, rows]) => ({ language, ...tourAgg(rows, svcsOf(rows)) }))
+      .sort((a, b) => b.pax - a.pax || a.language.localeCompare(b.language));
+    const tourIds = [...t.tourIds];
+    return { tourId: tourIds[0] || null, tourIds, tourLabel: t.tourLabel, ...tourAgg(t.rows, svcsOf(t.rows)), languages };
   }).sort((a, b) => String(a.tourLabel).localeCompare(String(b.tourLabel)));
 
   return {
