@@ -101,6 +101,19 @@ const CRM_CHANGELOG_CATEGORIES = [
 // Newest first. See the release convention above before editing.
 const CRM_CHANGELOG = [
   {
+    version: '13.11',
+    date: '2026-11-11',
+    title: 'Rehber Operasyon Maliyeti Düzenlenebilir',
+    summary: 'Standart rehber operasyon maliyeti, gerektiğinde rezervasyon ekranından o operasyon için değiştirilebiliyor.',
+    categories: ['Operasyon', 'İyileştirme'],
+    highlights: [
+      'Rezervasyonun Finans kartından rehber maliyeti tutar, para birimi ve sebep ile düzenlenebiliyor; tek tıkla standarda dönülebiliyor.',
+      'Değişiklik operasyonun tamamına uygulanıyor; aynı gün, tur ve dildeki rezervasyonlar tek maliyeti paylaşmaya devam ediyor.',
+      'Ödeme takibi, açık bakiye, hazırlanacak para ve tahmini kâr yeni tutarı kullanıyor; değiştirilen operasyonlar "özel" olarak işaretleniyor.',
+    ],
+    author: 'Berk',
+  },
+  {
     version: '13.10',
     date: '2026-11-11',
     title: 'Ek Satışlar',
@@ -257,21 +270,6 @@ const CRM_CHANGELOG = [
       'Website adresleri normalize edilerek aynı acentenin farklı yazımlarla tekrar kaydedilmesi engelleniyor; bu koruma artık ek bir güvenlik katmanıyla destekleniyor',
       'Acente detay sayfasından mail adresi, iletişim kişisi, telefon ve website bilgileri manuel olarak güncellenebiliyor; daha önce maili bulunamayan acentelere sonradan iletişim bilgisi eklenebiliyor',
       'Araştırma sonuçlarında mevcut CRM kayıtları, tekrar eden adaylar ve iletişim maili olmayan sonuçlar filtreleniyor; yalnızca yeni ve kullanılabilir adaylar sonuç listesinde gösteriliyor',
-    ],
-    author: 'Berk',
-  },
-  {
-    version: '12.49',
-    date: '2026-10-23',
-    title: 'CRM+ ve Yeni Arayüz',
-    summary: 'CRM operasyonlarını daha görünür ve daha hızlı hale getiren Agency CRM+, Son Hareketler ve yeni premium arayüz kullanıma alındı.',
-    categories: ['Yeni Özellik', 'Arayüz'],
-    highlights: [
-      'Agency CRM+: acentelerden gelen e-posta yanıtları artık otomatik takip ediliyor, konuşma geçmişi üzerinden doğrudan yanıt verilebiliyor ve yeni acente/mail/yanıt/takip durumları tek panelden izlenebiliyor',
-      'Bildirimler: yeni acente yanıtları ve önemli operasyonel gelişmeler artık Son Bildirimler alanı ve bildirim ziliyle anında görülüp ilgili kayda doğrudan gidilebiliyor',
-      'Son Hareketler: rezervasyon, rehber atama, acente iletişimi ve notlar gibi önemli işlemlerin kim tarafından yapıldığı takip edilebiliyor; yöneticiler için ayrı bir ekip aktivite görünümü eklendi',
-      'Acenteler: liste ve detay ekranları daha modern ve kompakt bir çalışma alanına dönüştü; yeni yanıtlar, takip bekleyenler, partner durumları, konuşmalar ve notlar daha kolay ayırt edilebiliyor',
-      'Yeni tasarım sistemi: Geist ve Instrument Serif tipografisiyle daha aydınlık ve sade bir arayüz, cihazda hatırlanan açık/koyu tema desteği ve kartlar/tablolar/modallar/mobil genelinde görsel iyileştirmeler',
     ],
     author: 'Berk',
   },
