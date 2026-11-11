@@ -1029,3 +1029,87 @@ test('a payment made on 1 Dec for a 30 Nov operation belongs to November once; D
   assert.deepEqual(dec.categories.guide.cashPaid, {});
   assert.deepEqual(dec.unattributedGuidePayments, []);
 });
+
+// ── Cash to prepare (Genel Bakış) ───────────────────────────────────────
+
+const { buildFinanceCashNeeds } = F;
+const TOP_PREP = (rid, q, st) => ({ id: 'P-' + rid, reservationId: rid, preparationRuleId: 'RULE-TOP', preparationType: 'entrance_ticket', label: 'x', requiredQuantity: q, status: st || 'pending' });
+const monthSum = (m, o) => buildFinanceMonthSummary({ monthISO: m, todayISO: TODAY, languageNames: LANGS, costItems: [GUIDE, MEAL, TOP_COST, TOP_PUBLIC], rules: [TOP_RULE], rateRows: RATES, ...o });
+
+test('cash needs: one €150 per operation + entrance tickets, per 7 / 15 / 30-day window from today', () => {
+  // TODAY = 2026-11-10 → 7d: 10–16 Nov, 15d: 10–24 Nov, 30d: 10 Nov – 9 Dec
+  const resv = [
+    res({ id: 'A', checkIn: '2026-11-12', pax: 2 }), res({ id: 'B', checkIn: '2026-11-12', pax: 4 }),   // one group, 6 tickets
+    res({ id: 'C', checkIn: '2026-11-20', pax: 3 }),                                                   // 15d
+    res({ id: 'D', checkIn: '2026-11-09', pax: 2 }),                                                   // past → excluded
+  ];
+  const nov = monthSum('2026-11', { reservations: resv, preparations: [TOP_PREP('A', 2), TOP_PREP('B', 4), TOP_PREP('C', 3), TOP_PREP('D', 2)] });
+  const dec = monthSum('2026-12', { reservations: [res({ id: 'E', checkIn: '2026-12-05', pax: 1 }), res({ id: 'F', checkIn: '2026-12-10', pax: 1 })], preparations: [TOP_PREP('E', 1), TOP_PREP('F', 1)] });
+  const n = buildFinanceCashNeeds({ summaries: [nov, dec, dec], todayISO: TODAY });
+  const [w7, w15, w30] = n.windows;
+  assert.deepEqual([w7.fromISO, w7.toISO, w15.toISO, w30.toISO], ['2026-11-10', '2026-11-16', '2026-11-24', '2026-12-09']);
+  assert.equal(w7.operations, 1);
+  assert.deepEqual(w7.guide, { EUR: 150 }, 'two reservations, one operation → one €150');
+  assert.deepEqual(w7.tickets, { EUR: 6 * 40 });
+  assert.deepEqual(w7.total, { EUR: 390 });
+  assert.equal(w7.totalTry.tryTotal, 390 * 50);
+  assert.deepEqual(w15.total, { EUR: 390 + 150 + 120 });
+  assert.deepEqual(w30.total, { EUR: 390 + 270 + 190 }, 'crosses into December; 10 Dec is outside');
+  assert.equal(w30.operations, 3);
+  assert.equal(n.operations.length, 3, 'a month summary passed twice is counted once');
+});
+
+test('cash needs: paid guide and tickets with a recorded expense are not asked for again; pending guide payment still is', () => {
+  const resv = [res({ id: 'A', checkIn: '2026-11-12', pax: 2 }), res({ id: 'B', checkIn: '2026-11-13', pax: 2 })];
+  const s = monthSum('2026-11', { reservations: resv, preparations: [TOP_PREP('A', 2), TOP_PREP('B', 2)],
+    guidePayments: [gp({ id: 'P', resId: 'A', amount: 150, statusRaw: 'paid' }), gp({ id: 'Q', resId: 'B', amount: 150, statusRaw: 'pending' })],
+    expenses: [{ id: 'E', reservationId: 'A', category: 'ticket', totalAmount: 80, currency: 'EUR' }] });
+  const n = buildFinanceCashNeeds({ summaries: [s], todayISO: TODAY });
+  const a = n.operations.find(o => o.date === '2026-11-12'), b = n.operations.find(o => o.date === '2026-11-13');
+  assert.deepEqual(a.guide, {}); assert.deepEqual(a.tickets, {}); assert.deepEqual(a.total, {});
+  assert.deepEqual(b.guide, { EUR: 150 }, 'pending is not paid');
+  assert.deepEqual(n.windows[0].total, { EUR: 150 + 80 });
+});
+
+test('cash needs: partial payment → only the remainder; currency review → full obligation, flagged; unknown ticket cost flagged', () => {
+  const resv = [res({ id: 'A', checkIn: '2026-11-12' }), res({ id: 'B', checkIn: '2026-11-13' }), res({ id: 'C', checkIn: '2026-11-14', tourId: 'T-X', tour: 'X' })];
+  const rules = [TOP_RULE, { id: 'RULE-X', tourId: 'T-X', preparationType: 'entrance_ticket', label: 'Ayasofya Giriş Bileti', isActive: true }];
+  const s = monthSum('2026-11', { reservations: resv, rules,
+    preparations: [TOP_PREP('A', 1), TOP_PREP('B', 1), { ...TOP_PREP('C', 2), id: 'PX', preparationRuleId: 'RULE-X' }],
+    guidePayments: [gp({ id: 'P', resId: 'A', amount: 100, statusRaw: 'paid' }), gp({ id: 'Q', resId: 'B', amount: 3000, currency: 'TRY', statusRaw: 'paid' })] });
+  const n = buildFinanceCashNeeds({ summaries: [s], todayISO: TODAY });
+  const [a, b, c] = n.operations;
+  assert.deepEqual(a.guide, { EUR: 50 });
+  assert.deepEqual(b.guide, { EUR: 150 }); assert.equal(b.guideReview, true);
+  assert.deepEqual(c.costGaps.map(g => g.label), ['Ayasofya Giriş Bileti']);
+  assert.deepEqual(a.costGaps, []);
+  assert.equal(n.windows[0].operationsWithCostGaps, 1);
+  assert.equal(n.windows[0].operationsUnderReview, 1);
+});
+
+test('cash needs: a ticket rule without a materialized preparation is an unknown amount, flagged', () => {
+  const s = monthSum('2026-11', { reservations: [res({ id: 'A', checkIn: '2026-11-12' })], preparations: [] });
+  const o = buildFinanceCashNeeds({ summaries: [s], todayISO: TODAY }).operations[0];
+  assert.deepEqual(o.costGaps.map(g => g.reason), ['not_materialized']);
+  assert.deepEqual(o.tickets, {});
+});
+
+test('cash needs: cancelled reservations and fully cancelled operations need no money; TL view incomplete without a rate', () => {
+  const s = monthSum('2026-11', { reservations: [res({ id: 'A', checkIn: '2026-11-12', opStatus: 'İptal', statusRaw: 'cancelled' })] });
+  const n = buildFinanceCashNeeds({ summaries: [s], todayISO: TODAY });
+  assert.equal(n.operations.length, 0);
+  assert.deepEqual(n.windows[2].total, {});
+  const noFx = buildFinanceMonthSummary({ monthISO: MONTH, todayISO: TODAY, languageNames: LANGS, costItems: [GUIDE], rateRows: [], reservations: [res({ checkIn: '2026-11-12' })] });
+  const m = buildFinanceCashNeeds({ summaries: [noFx], todayISO: TODAY });
+  assert.equal(m.windows[0].totalTry.complete, false, 'never a made-up TL figure');
+  assert.deepEqual(m.windows[0].total, { EUR: 150 });
+});
+
+test('tour profitability exposes TL equivalents that explain the profit (net − cost)', () => {
+  const s = summary({ reservations: [res({ id: 'G', checkIn: '2026-11-02', tourId: 'T-GB', tour: 'Grand Bazaar', tourLanguage: 'İtalyanca', total: 3600, currency: 'TRY' })] });
+  const g = s.groups[0];
+  assert.equal(g.projectedCostTry, 150 * 50);
+  assert.equal(g.expectedNetTry, 3600);
+  assert.equal(g.projectedProfit, 3600 - 150 * 50);
+  assert.equal(s.tours[0].totalPlannedTry, 150 * 50);
+});

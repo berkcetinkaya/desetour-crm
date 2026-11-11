@@ -42,14 +42,24 @@ test('Finance UI components never compute money themselves', () => {
   assert.doesNotMatch(ui, /_CIVITATIS_FIXED_EUR_TO_TRY_RATE|\b55\b/);
 });
 
-test('approved tabs, in order, and the planning + realized KPI sets', () => {
+test('approved tabs, in order; Genel Bakış shows only the cash to prepare (7 / 15 / 30 days) — no realized or remaining-budget KPIs', () => {
   assert.match(SOURCE, /\{ key: "genel",\s+label: "Genel Bakış" \},\s+\{ key: "butce",\s+label: "Bütçe & Tahmin" \},\s+\{ key: "turlar",\s+label: "Tur Karlılığı" \},\s+\{ key: "tahsilatlar", label: "Tahsilatlar" \},\s+\{ key: "katalog",\s+label: "Maliyet Kataloğu" \},/);
   const o = body('_FinOverview');
-  for (const l of ['Kalan Operasyon Bütçesi', 'Beklenen Net Tahsilat', 'Tahmini Net Kâr', 'Gerçekleşen Net Gelir', 'Tahsil Edilen Nakit', 'Gerçekleşen Operasyon Maliyeti', 'Gerçekleşen Net Kâr', 'Tahsil Edilmemiş Alacak']) {
-    assert.ok(o.includes(`label="${l}"`), l);
+  assert.match(o, /useFinanceCashNeeds\(\)/);
+  assert.match(o, /Hazırlanması Gereken Para · bugünden itibaren/);
+  assert.match(o, /Önümüzdeki 1 ay/);
+  assert.match(o, /Önümüzdeki \$\{w\.days\} gün/);
+  assert.match(o, /Önümüzdeki 7 gün · operasyon bazında/);
+  assert.match(o, /Yemek giderleri dahil değildir\./);
+  for (const gone of ['Kalan Operasyon Bütçesi', 'Tahsil Edilen Nakit', 'Gerçekleşen Net Gelir', 'Gerçekleşen Operasyon Maliyeti', 'Gerçekleşen Net Kâr', 'Tahsil Edilmemiş Alacak']) {
+    assert.ok(!o.includes(gone), gone);
   }
-  assert.match(o, /badge=\{prov\}/, 'provisional realized profit is badged "Geçici"');
-  assert.match(o, /r\.statusLabel/);
+  const h = body('useFinanceCashNeeds');
+  assert.match(h, /buildFinanceCashNeeds\(\{ summaries: \[a\.summary, b\.summary, c\.summary\], todayISO \}\)/);
+  assert.match(h, /const todayISO = _istanbulISODate\(\);/);
+  const page = body('FinancePage');
+  assert.match(page, /current === "genel" \? \(\s*<_FinOverview\/>/);
+  assert.match(page, /current !== "genel" &&/, 'no month selector on Genel Bakış');
 });
 
 test('an incomplete TRY view is never shown as a total', () => {
@@ -210,4 +220,12 @@ test('one combined catalog-reference notice in the data-quality panel (never one
   const d = body('_FinDataQuality');
   assert.equal((d.match(/Guide Service/g) || []).length, 1);
   assert.doesNotMatch(d, /guideCatalogDiffers\.map\(d => \(\{/);
+});
+
+test('Tur Karlılığı explains the profit: cost with its TL equivalent and the expected net, per operation', () => {
+  const tt = body('_FinTourTable');
+  assert.match(tt, /Maliyet \{_fmtFinanceMap\(g\.pnl\.projectedCost\)\}/);
+  assert.match(tt, /g\.pnl\.projectedCostTry/);
+  assert.match(tt, /Beklenen net \{_fmtFinanceMap\(g\.pnl\.expectedNet\)\}/);
+  assert.match(tt, /t\.totalPlannedTry/);
 });

@@ -12669,37 +12669,87 @@ function _FinCategoryTable({ s, mode }) {
   );
 }
 
-function _FinOverview({ s, isCurrentMonth }) {
-  const rb = _finValue(s.kpis.remainingBudget, s.totals.remainingBudget);
-  const en = _finValue(s.kpis.expectedNet, s.totals.expectedNet);
-  const pp = _finProfit(s.kpis.projectedProfit, "Kur verisi eksik");
-  const r = s.realized;
-  const prov = r.status === "provisional" ? "Geçici" : null;
+// Genel Bakış: ONLY the money to prepare from today on — guides, entrance
+// tickets and other operation payments — for 7 / 15 / 30 days, plus the
+// operations of the coming week. Independent of the month selector; built
+// from the same month summaries (buildFinanceCashNeeds), nothing recomputed.
+function useFinanceCashNeeds() {
+  const todayISO = _istanbulISODate();
+  const m0 = todayISO.slice(0, 7), m1 = _financeShiftMonth(m0, 1), m2 = _financeShiftMonth(m0, 2);
+  const a = useFinanceMonth(m0), b = useFinanceMonth(m1), c = useFinanceMonth(m2);
+  const ready = a.summary && b.summary && c.summary;
+  const needs = useMemo(() => ready ? buildFinanceCashNeeds({ summaries: [a.summary, b.summary, c.summary], todayISO }) : null,
+    [ready, a.summary, b.summary, c.summary, todayISO]);
+  const error = a.error || b.error || c.error;
+  return { needs, loading: !ready && !error, error, reload: () => { a.reload(); b.reload(); c.reload(); } };
+}
+
+const _finShortDate = (iso) => new Date(iso + "T12:00:00").toLocaleDateString("tr-TR", { day: "numeric", month: "short" });
+const _finCashValue = (w) => !Object.keys(w.total).length ? "₺0" : w.totalTry && w.totalTry.complete ? _fmtFinanceTry(w.totalTry) : _fmtFinanceMap(w.total);
+
+function _FinOverview() {
+  const { needs, loading, error, reload } = useFinanceCashNeeds();
+  if (error) return <ErrorState message="Finans verileri yüklenemedi." onRetry={reload}/>;
+  if (loading || !needs) return <LoadingState label="Hazırlanacak tutarlar hesaplanıyor…"/>;
+  const week = needs.windows[0];
+  const ops = needs.operations.filter(o => o.date <= week.toISO);
+  const th = { textAlign: "left", padding: "9px 12px", fontWeight: 600, color: C.textMuted, whiteSpace: "nowrap" };
+  const td = { padding: "9px 12px", color: C.text, verticalAlign: "top" };
+  const num = { ...td, textAlign: "right", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" };
+  const gaps = needs.windows[needs.windows.length - 1].operationsWithCostGaps;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
-      <_FinSection title="Planlama">
+      <_FinSection title="Hazırlanması Gereken Para · bugünden itibaren">
         <_FinGrid min={220}>
-          <_FinKpi testId="kpi-remaining" label="Kalan Operasyon Bütçesi" value={rb.value}
-            sub={isCurrentMonth ? `Bugünden itibaren · ay toplamı ${_fmtFinanceMap(s.totals.plannedOperatingCost)}` : rb.sub}/>
-          <_FinKpi testId="kpi-expected-net" label="Beklenen Net Tahsilat" value={en.value} sub={`Net ${_fmtFinanceMap(s.totals.expectedNet)} · Brüt rezervasyon değeri ${_fmtFinanceMap(s.totals.gross)}${en.incomplete ? " · TL karşılığı için kur verisi eksik" : ""}`}/>
-          <_FinKpi testId="kpi-projected-profit" label="Tahmini Net Kâr" value={pp.value} tone={pp.tone} sub={pp.sub || "Net tahsilat − tahmini operasyon maliyeti"}/>
+          {needs.windows.map(w => (
+            <_FinKpi key={w.days} testId={`cash-need-${w.days}`} label={w.days === 30 ? "Önümüzdeki 1 ay" : `Önümüzdeki ${w.days} gün`}
+              value={_finCashValue(w)}
+              sub={`${_finShortDate(w.fromISO)} – ${_finShortDate(w.toISO)} · ${w.operations} operasyon · Rehber ${_fmtFinanceMap(w.guide)} · Bilet ${_fmtFinanceMap(w.tickets)}${Object.keys(w.other).length ? ` · Diğer ${_fmtFinanceMap(w.other)}` : ""}${w.totalTry && !w.totalTry.complete ? " · TL karşılığı için kur verisi eksik" : ""}`}/>
+          ))}
         </_FinGrid>
+        <div style={{ marginTop: 8, fontSize: 11.5, color: C.textMuted, fontFamily: "'Geist',sans-serif" }}>
+          Ödenmiş rehber operasyonları ve gideri girilmiş biletler düşülmüştür. Yemek giderleri dahil değildir.
+        </div>
       </_FinSection>
-      <_FinSection title="Gerçekleşen" right={prov && <span style={{ fontSize: 11.5, color: C.amber, fontFamily: "'Geist',sans-serif" }}>{r.statusLabel} · {r.missingActualCostCount} eksik maliyet kaydı</span>}>
-        <_FinGrid min={180}>
-          <_FinKpi testId="kpi-earned" label="Gerçekleşen Net Gelir" sub={`${r.reservations} gerçekleşmiş rezervasyon`} {..._finTry(r.earnedNetRevenue)}/>
-          <_FinKpi testId="kpi-cash" label="Tahsil Edilen Nakit" sub="Ödenmiş hakediş ve tahsilatlar" {..._finTry(r.cashReceived)}/>
-          <_FinKpi testId="kpi-actual-cost" label="Gerçekleşen Operasyon Maliyeti" sub="Kayıtlı gider + gerçekleşen rehber operasyonları" {..._finTry(r.actualOperatingCost)}/>
-          <_FinKpi testId="kpi-realized-profit" label="Gerçekleşen Net Kâr" badge={prov} {..._finProfit(r.netProfit, "Kur verisi eksik")}/>
-          <_FinKpi testId="kpi-outstanding" label="Tahsil Edilmemiş Alacak" sub="Kazanılan − tahsil edilen" {..._finTry(r.outstandingReceivable)}/>
-        </_FinGrid>
+      <_FinSection title="Önümüzdeki 7 gün · operasyon bazında">
+        <div style={{ overflowX: "auto", border: `1px solid ${C.border}`, borderRadius: T.radius, background: C.white }}>
+          <table data-testid="finance-cash-week" style={{ width: "100%", borderCollapse: "collapse", fontFamily: "'Geist',sans-serif", fontSize: 12.5 }}>
+            <thead><tr style={{ background: C.ivory }}>
+              <th style={th}>Tarih</th><th style={th}>Tur</th><th style={th}>Dil</th><th style={{ ...th, textAlign: "right" }}>Kişi</th>
+              <th style={{ ...th, textAlign: "right" }}>Rehber</th><th style={{ ...th, textAlign: "right" }}>Giriş biletleri</th>
+              <th style={{ ...th, textAlign: "right" }}>Diğer</th><th style={{ ...th, textAlign: "right" }}>Hazırlanacak</th>
+            </tr></thead>
+            <tbody>
+              {ops.length === 0 && <tr><td colSpan={8} style={{ ...td, color: C.textMuted }}>Önümüzdeki 7 günde operasyon yok.</td></tr>}
+              {ops.map(o => (
+                <tr key={o.key} style={{ borderTop: `1px solid ${C.borderLight}` }}>
+                  <td style={{ ...td, whiteSpace: "nowrap" }}>{_finShortDate(o.date)}</td>
+                  <td style={td}>{o.tourLabel}
+                    <div style={{ fontSize: 11, color: C.textMuted }}>{o.reservations} rezervasyon · {o.guideNames.length ? o.guideNames.join(", ") : o.assignedWithoutName ? "rehber atandı" : <span style={{ color: C.red }}>rehber atanmadı</span>}</div>
+                    {o.costGaps.length > 0 && <div style={{ fontSize: 11, color: C.amber }}>Tutarı bilinmeyen: {[...new Set(o.costGaps.map(g => g.label))].join(", ")}</div>}
+                  </td>
+                  <td style={td}>{o.language || "—"}</td>
+                  <td style={num}>{o.pax}</td>
+                  <td style={num}>{Object.keys(o.guide).length ? _fmtFinanceMap(o.guide) : <span style={{ color: C.green }}>ödendi</span>}
+                    {o.guideReview && <div style={{ fontSize: 11, color: C.amber }}>ödeme incelemede</div>}</td>
+                  <td style={num}>{_fmtFinanceMap(o.tickets)}</td>
+                  <td style={num}>{_fmtFinanceMap(o.other)}</td>
+                  <td style={{ ...num, fontWeight: 600 }}>{_fmtFinanceMap(o.total)}
+                    {o.totalTry.complete && Object.keys(o.total).some(c => c !== "TRY") && <div style={{ fontSize: 11, fontWeight: 400, color: C.textMuted }}>{_fmtFinanceTry(o.totalTry)}</div>}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </_FinSection>
-      <_FinSection title="Maliyet Dağılımı"><_FinCategoryTable s={s} mode="overview"/></_FinSection>
-      <_FinDataQuality s={s}/>
+      {gaps > 0 && (
+        <div data-testid="finance-cash-gaps" style={{ padding: "10px 12px", borderRadius: T.radiusSm, background: C.amberBg, border: `1px solid ${C.borderLight}`, fontSize: 12.5, color: C.text, fontFamily: "'Geist',sans-serif" }}>
+          <b>{gaps}</b> operasyonda bazı bilet veya hazırlık tutarları bilinmiyor — hazırlanacak toplam bu kalemler kadar eksik olabilir. Maliyet Kataloğu'ndan tamamlayın.
+        </div>
+      )}
     </div>
   );
 }
-
 function _FinTourTable({ s, mode }) {
   const [open, setOpen] = useState(() => new Set());
   const toggle = (k) => setOpen(prev => { const n = new Set(prev); n.has(k) ? n.delete(k) : n.add(k); return n; });
@@ -12707,7 +12757,7 @@ function _FinTourTable({ s, mode }) {
   const td = { padding: "9px 12px", textAlign: "right", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap", color: C.text };
   const cols = mode === "budget"
     ? [["Bilet", t => _fmtFinanceMap(t.ticket)], ["Rehber", t => _fmtFinanceMap(t.guide)], ["Yemek", t => _fmtFinanceMap(t.meal)], ["Diğer", t => _fmtFinanceMap(t.other)], ["Toplam plan", t => _fmtFinanceMap(t.totalPlanned)]]
-    : [["Toplam plan", t => _fmtFinanceMap(t.totalPlanned)], ["Beklenen net", t => _fmtFinanceMap(t.expectedNet)],
+    : [["Toplam plan", t => <>{_fmtFinanceMap(t.totalPlanned)}{t.totalPlannedTry != null && Object.keys(t.totalPlanned).some(c => c !== "TRY") && <div style={{ fontSize: 11, color: C.textMuted }}>≈ ₺{Math.round(t.totalPlannedTry).toLocaleString("tr-TR")}</div>}</>], ["Beklenen net", t => _fmtFinanceMap(t.expectedNet)],
        ["Tahmini kâr", t => t.projectedProfit == null ? "—" : `${t.projectedProfit < 0 ? "−" : ""}₺${Math.abs(Math.round(t.projectedProfit)).toLocaleString("tr-TR")}`],
        ["Marj", t => _finPct(t.margin)]];
   if (!s.tours.length) return <div style={{ fontSize: 12.5, color: C.textMuted, fontFamily: "'Geist',sans-serif" }}>Bu ay aktif rezervasyon yok.</div>;
@@ -12742,7 +12792,8 @@ function _FinTourTable({ s, mode }) {
                     <td style={td} colSpan={cols.length}>
                       {mode === "profit" && g.pnl ? (
                         <span data-testid="group-pnl" style={{ color: C.textMid }}>
-                          Plan {_fmtFinanceMap(g.pnl.plannedCost)}
+                          Maliyet {_fmtFinanceMap(g.pnl.projectedCost)}{g.pnl.projectedCostTry != null && Object.keys(g.pnl.projectedCost).some(c => c !== "TRY") ? ` (≈ ₺${Math.round(g.pnl.projectedCostTry).toLocaleString("tr-TR")})` : ""}
+                          {" · "}Beklenen net {_fmtFinanceMap(g.pnl.expectedNet)}
                           {g.pnl.past && <> · Gerçekleşen {_fmtFinanceMap(g.pnl.actualCost)}{g.pnl.varianceTry != null ? ` (sapma ${_finSigned(g.pnl.varianceTry)})` : ""}{g.pnl.actualStatus === "provisional" ? <span style={{ color: C.amber }}> · geçici</span> : null}</>}
                           {" · "}Tahmini kâr <b style={{ color: g.pnl.projectedProfit < 0 ? C.red : C.text }}>{_finSigned(g.pnl.projectedProfit)}</b>
                         </span>
@@ -12888,7 +12939,7 @@ function FinancePage({ tab, navigate }) {
           <h1 style={{ margin: 0, fontSize: isMobile ? 20 : 24, fontWeight: 700, color: C.text, fontFamily: "'Instrument Serif',serif" }}>Finans</h1>
           {!isMobile && <p style={{ margin: "4px 0 0", fontSize: 13.5, color: C.textMuted, fontFamily: "'Geist',sans-serif" }}>Operasyon bütçesi, beklenen tahsilat ve tur karlılığı.</p>}
         </div>
-        {current !== "katalog" && current !== "tahsilatlar" && (
+        {current !== "katalog" && current !== "tahsilatlar" && current !== "genel" && (
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <button type="button" aria-label="Önceki ay" onClick={() => setMonthISO(m => _financeShiftMonth(m, -1))} style={navBtn}>‹</button>
             <span data-testid="finance-month" style={{ minWidth: 120, textAlign: "center", fontSize: 14, fontWeight: 600, color: C.text, fontFamily: "'Geist',sans-serif" }}>{_financeMonthLabel(monthISO)}</span>
@@ -12915,6 +12966,8 @@ function FinancePage({ tab, navigate }) {
         isMobile ? <MobilePaymentsPage/> : <PaymentsPage/>
       ) : current === "katalog" ? (
         <_FinCatalog s={s}/>
+      ) : current === "genel" ? (
+        <_FinOverview/>
       ) : loading && !s ? (
         <LoadingState label="Finans verileri yükleniyor…"/>
       ) : error ? (
@@ -12926,9 +12979,7 @@ function FinancePage({ tab, navigate }) {
           <_FinSection title="Turlara Göre Tahmini Karlılık"><_FinTourTable s={s} mode="profit"/></_FinSection>
           <_FinDataQuality s={s}/>
         </div>
-      ) : (
-        <_FinOverview s={s} isCurrentMonth={isCurrentMonth}/>
-      )}
+      ) : null}
     </div>
   );
 }
@@ -19408,6 +19459,7 @@ function buildFinanceMonthSummary(input) {
     const resExpenses = expensesByRes.get(r.id) || [];
     const actualBy = (cat) => { const m = {}; resExpenses.filter(e => e.category === cat).forEach(e => _financeAdd(m, e.currency, e.totalAmount)); return m; };
     const planned = { ticket: {}, meal: {}, transport: {}, other: {} };
+    const costGaps = []; // amounts that could NOT be planned (cash need understated)
 
     // Tickets (+ any rule-linked cost): quantity ONLY from materialized preparations.
     const preps = prepsByRes.get(r.id) || [];
@@ -19418,14 +19470,14 @@ function buildFinanceMonthSummary(input) {
       if (rule.preparationType === 'meal') continue;
       const prep = preps.find(p => p.preparationRuleId === rule.id);
       const item = _financePickCostItem(costItems, { category: rule.preparationType === 'meal' ? 'meal' : rule.preparationType === 'transport' ? 'transport' : rule.preparationType === 'entrance_ticket' ? 'ticket' : 'other', basis: 'preparation_rule', preparationRuleId: rule.id, date });
-      if (!prep) { dq.notMaterializedPreparations += 1; continue; }
+      if (!prep) { dq.notMaterializedPreparations += 1; costGaps.push({ label: rule.label || 'Hazırlık', reason: 'not_materialized' }); continue; }
       // "Tamamlandı" on a preparation only means a staff member marked the
       // task done (reversible, never tied to purchase/payment) — so it NEVER
       // removes the amount from the remaining budget. Only a recorded ticket
       // expense does. The gap is surfaced instead.
       if (rule.preparationType === 'entrance_ticket' && prep.status === 'completed'
           && !resExpenses.some(e => e.category === 'ticket')) dq.completedTicketWithoutExpense += 1;
-      if (!item) { missingCost(rule.label || prep.label); continue; }
+      if (!item) { missingCost(rule.label || prep.label); costGaps.push({ label: rule.label || prep.label, reason: 'missing_cost' }); continue; }
       if (item.isProvisional) dq.provisionalCostItemsUsed[item.label] = (dq.provisionalCostItemsUsed[item.label] || 0) + 1;
       _financeAdd(planned[item.category], item.currency, Number(item.amount) * (Number(prep.requiredQuantity) || 0));
     }
@@ -19480,9 +19532,8 @@ function buildFinanceMonthSummary(input) {
       ? Object.fromEntries(Object.entries(_financeSumMaps(earned.amount, Object.fromEntries(Object.entries(received).map(([c, v]) => [c, -v]))))
           .filter(([, v]) => Math.abs(v) >= 0.005))
       : {};
-    // Incurred (recorded) operating cost: expense rows + recorded guide
-    // payments for the service (paid or pending), pax-share allocated.
-    // Never the €150 / €40 planning amounts.
+    // Incurred operating cost: recorded expense rows + the pax-share of the
+    // group's fixed guide obligation once the operation has taken place.
     const incurredCost = _financeSumMaps(actual.ticket, actual.meal, actual.transport, actual.other, guideAllocation ? guideAllocation.incurred : {});
     const actualCoverageComplete = missingActualCategories.length === 0 && !(guideAllocation && guideAllocation.missingActual);
 
@@ -19509,7 +19560,7 @@ function buildFinanceMonthSummary(input) {
     const projT = t(projectedCost), planT = t(plannedCost), actT = t(actualCost), recdT = t(received);
     return {
       id: r.id, ref: r.resNumber || r.id, date, tourId: r.tourId, tourLabel: r.tour || '—', language: svc ? svc.language : null,
-      pax, future, opStatus: r.opStatus, planned, actual, best, remaining, guideAllocation, revenue: rev, received,
+      pax, future, opStatus: r.opStatus, planned, actual, best, remaining, costGaps, guideAllocation, revenue: rev, received,
       earned, outstanding, incurredCost, actualCoverageComplete, missingActualCategories, varianceMap,
       plannedCost, projectedCost, actualCost,
       tryView: {
@@ -19555,6 +19606,8 @@ function buildFinanceMonthSummary(input) {
         paymentStatus: g.paymentStatus, cashPaid: g.cashPaid, cashPending: g.cashPending, outstanding: g.outstanding, discrepancies: g.discrepancies,
         guideNames: g.guideNames, unassignedReservations: g.unassignedReservations, assignedWithoutName: g.assignedWithoutName },
       expectedNet: expectedNetMap, plannedCost, projectedCost, actualCost, past,
+      // TL equivalents shown next to the cost so the profit is explainable.
+      expectedNetTry: netT.complete ? netT.tryTotal : null, projectedCostTry: projT.complete ? projT.tryTotal : null,
       projectedProfit: netT.complete && projT.complete ? Math.round((netT.tryTotal - projT.tryTotal) * 100) / 100 : null,
       projectedMargin: netT.complete && projT.complete && netT.tryTotal > 0 ? (netT.tryTotal - projT.tryTotal) / netT.tryTotal : null,
       varianceMap: groupVar.map, varianceTry: groupVar.tryValue,
@@ -19690,7 +19743,7 @@ function buildFinanceMonthSummary(input) {
     const net = _financeSumMaps(...t.rows.map(x => _financeAdd({}, x.revenue.receivable.currency, x.revenue.receivable.amount)));
     const netT = T(net), costT = T(totalPlanned);
     return { tourId: t.tourId, tourLabel: t.tourLabel, reservations: t.reservations, pax: t.pax, guideServices: svcs.length,
-      ticket, guide, meal, other, totalPlanned, expectedNet: net,
+      ticket, guide, meal, other, totalPlanned, expectedNet: net, totalPlannedTry: costT.complete ? costT.tryTotal : null,
       projectedProfit: diff(netT, costT), margin: netT.complete && costT.complete && netT.tryTotal > 0 ? (netT.tryTotal - costT.tryTotal) / netT.tryTotal : null,
       subgroups: svcs.map(g => ({ key: g.key, date: g.date, language: g.language, unresolvedReason: g.unresolvedReason, reservations: g.reservationCount, pax: g.pax, guideServices: 1, guidePlanned: g.planned, state: g.state, pnl: groupByKey.get(g.key) })) };
   }).sort((a, b) => String(a.tourLabel).localeCompare(String(b.tourLabel)));
@@ -19722,10 +19775,64 @@ function buildFinanceMonthSummary(input) {
   };
 }
 
+// ── Cash to prepare (Genel Bakış) ────────────────────────────────────────
+// From today: how much money must be ready for guides, entrance tickets and
+// other operation payments, per operation and for 7 / 15 / 30-day windows.
+// Built ONLY from month summaries (no second calculation):
+//   guide   = the group's still-unpaid fixed obligation (outstanding; a group
+//             under currency review counts its full obligation, flagged)
+//   tickets = reservations' remaining ticket cost (no recorded expense yet)
+//   other   = remaining transport / other cost (e.g. Bosphorus cruise)
+// Meals are not included. Windows can span several months, so the caller
+// passes every month summary that overlaps [today, today + max horizon).
+function _financeAddDays(iso, n) {
+  const d = new Date(String(iso).slice(0, 10) + 'T12:00:00Z');
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+function buildFinanceCashNeeds({ summaries, todayISO, horizons }) {
+  const hs = (horizons && horizons.length ? horizons : [7, 15, 30]).slice().sort((a, b) => a - b);
+  const end = _financeAddDays(todayISO, hs[hs.length - 1]);
+  const seen = new Set(); const ops = []; let fx = null;
+  for (const s of (summaries || [])) {
+    if (!s || seen.has(s.monthISO)) continue;
+    seen.add(s.monthISO);
+    if (!fx) fx = { rates: s.fx.rates, rateSourceError: s.fx.rateSourceError };
+    const svcByKey = new Map(s.guideServices.map(g => [g.key, g]));
+    const resById = new Map(s.reservations.map(r => [r.id, r]));
+    for (const grp of s.groups) {
+      if (grp.date < todayISO || grp.date >= end) continue;
+      const svc = svcByKey.get(grp.key);
+      const rows = grp.reservationIds.map(id => resById.get(id)).filter(Boolean);
+      const guideReview = svc.outstanding === null;
+      const guide = guideReview ? { ...svc.planned } : { ...svc.outstanding };
+      const tickets = _financeSumMaps(...rows.map(x => x.remaining.ticket));
+      const other = _financeSumMaps(...rows.map(x => _financeSumMaps(x.remaining.transport, x.remaining.other)));
+      const total = _financeSumMaps(guide, tickets, other);
+      ops.push({ key: grp.key, date: grp.date, tourLabel: grp.tourLabel, language: grp.language, unresolvedReason: grp.unresolvedReason,
+        reservations: grp.reservations, pax: grp.pax, guideNames: svc.guideNames, assignedWithoutName: svc.assignedWithoutName,
+        guidePaymentStatus: svc.paymentStatus, guideReview, guide, tickets, other, total,
+        totalTry: _financeToTry(total, fx), costGaps: rows.flatMap(x => x.costGaps || []) });
+    }
+  }
+  ops.sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : String(a.tourLabel).localeCompare(String(b.tourLabel)) || String(a.language || '').localeCompare(String(b.language || '')));
+  const windows = hs.map(days => {
+    const until = _financeAddDays(todayISO, days);
+    const list = ops.filter(o => o.date < until);
+    const guide = _financeSumMaps(...list.map(o => o.guide)), tickets = _financeSumMaps(...list.map(o => o.tickets)), other = _financeSumMaps(...list.map(o => o.other));
+    const total = _financeSumMaps(guide, tickets, other);
+    return { days, fromISO: todayISO, toISO: _financeAddDays(todayISO, days - 1), operations: list.length,
+      guide, tickets, other, total, totalTry: fx ? _financeToTry(total, fx) : { tryTotal: 0, complete: !Object.keys(total).length, unresolvedCurrencies: Object.keys(total) },
+      operationsWithCostGaps: list.filter(o => o.costGaps.length).length, operationsUnderReview: list.filter(o => o.guideReview).length };
+  });
+  return { todayISO, windows, operations: ops };
+}
+
 function _financeDomain() {
   return { FINANCE_COST_CATEGORIES, FINANCE_EXPENSE_CATEGORIES, _istanbulISODate, _financeMonthRange,
     _financeCanonicalLanguage, _financeOperationGroupKey, buildGuideServices, attributeGuidePayments, _financePickCostItem, FINANCE_GUIDE_OPERATION_COST,
-    _financeRevenueExpectation, _financeActualRevenue, _financeEarnedNetRevenue, _financeToTry, buildFinanceMonthSummary };
+    _financeRevenueExpectation, _financeActualRevenue, _financeEarnedNetRevenue, _financeToTry, buildFinanceMonthSummary,
+    _financeAddDays, buildFinanceCashNeeds };
 }
 // TESTABLE:_financeDomain:end
 
