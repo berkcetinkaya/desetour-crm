@@ -101,6 +101,19 @@ const CRM_CHANGELOG_CATEGORIES = [
 // Newest first. See the release convention above before editing.
 const CRM_CHANGELOG = [
   {
+    version: '13.08',
+    date: '2026-11-11',
+    title: 'Ana Sayfada Net Gelir',
+    summary: 'Ana sayfadaki aylık gelir artık Civitatis komisyonu düşüldükten sonra bize kalan net tutarı gösteriyor.',
+    categories: ['İyileştirme', 'Arayüz'],
+    highlights: [
+      '"Brüt Beklenen Ciro" yerine "Beklenen Net Gelir" gösteriliyor.',
+      'Civitatis rezervasyonlarında müşteri fiyatı yerine bize gelecek net tutar sayılıyor; direkt rezervasyonlar değişmedi.',
+      'Aylık hedef çubuğu ve kutlama da net gelire göre çalışıyor.',
+    ],
+    author: 'Berk',
+  },
+  {
     version: '13.07',
     date: '2026-11-11',
     title: 'Finans Genel Bakış: Hazırlanacak Para',
@@ -262,21 +275,6 @@ const CRM_CHANGELOG = [
       'En son oluşturulan taslak otomatik olarak açılıyor',
       'Gönderilmiş e-postalar değiştirilemiyor ve geçmiş kayıtlar korunuyor',
       'Taslak oluşturma ve güncelleme işlemlerinin kayıt sistemi iyileştirildi',
-    ],
-    author: 'Berk',
-  },
-  {
-    version: '12.46',
-    date: '2026-10-21',
-    title: 'Acentelere CRM Üzerinden E-posta Gönderimi Eklendi',
-    summary: 'Acenteler modülünde hazırlanan ilk temas e-postaları artık CRM içinden insan onayıyla hello@desetour.com adresinden gönderilebiliyor. Gönderim sonrası iletişim durumu ve ilgili acente bilgileri otomatik olarak güncelleniyor.',
-    categories: ['Yeni Özellik', 'İyileştirme'],
-    highlights: [
-      'Hazırlanan acente e-posta taslakları gönderim öncesinde son kez incelenebiliyor',
-      'Onaylanan e-postalar hello@desetour.com üzerinden gönderiliyor',
-      'Aynı e-postanın yanlışlıkla birden fazla kez gönderilmesine karşı koruma eklendi',
-      'Başarılı gönderim sonrası son iletişim zamanı ve acente durumu otomatik güncelleniyor',
-      'Acentelerle ilgili işlem kayıtları daha güvenilir hale getirildi',
     ],
     author: 'Berk',
   },
