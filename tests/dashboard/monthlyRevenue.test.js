@@ -308,8 +308,8 @@ test('KPI and RevenueGoalCard both read the one useMonthlyRevenueSummary hook �
   assert.doesNotMatch(SOURCE, /summarizeMonthlyTRYRevenue|computeMonthlyReservationRevenue\(/);
 });
 
-test('"Bu Ay Beklenen Ciro" KPI shows ₺ and the normalized total, with converted/excluded sub-labels', () => {
-  const m = SOURCE.match(/label:"Bu Ay Beklenen Ciro",\s*\n\s*value:([^\n]+)\n\s*sub:([\s\S]*?)icon:/);
+test('"Brüt Beklenen Ciro" KPI (gross, label clarified) shows ₺ and the normalized total, with converted/excluded sub-labels', () => {
+  const m = SOURCE.match(/label:"Brüt Beklenen Ciro",\s*\n\s*value:([^\n]+)\n\s*sub:([\s\S]*?)icon:/);
   assert.ok(m, 'KPI card definition');
   assert.match(m[1], /revLoading \? '…' : `₺\$\{rev\.total\.toLocaleString\("tr-TR"/);
   assert.match(m[2], /rev\.excludedCount > 0 \? `Bu ay · \$\{rev\.excludedCount\} rezervasyon hariç`/);

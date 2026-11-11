@@ -3353,7 +3353,7 @@ function KpiRow() {
       icon:"M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2 M23 21v-2a4 4 0 00-3-3.87 M16 3.13a4 4 0 010 7.75",
     },
     {
-      label:"Bu Ay Beklenen Ciro",
+      label:"Brüt Beklenen Ciro",
       value: revLoading ? '…' : `₺${rev.total.toLocaleString("tr-TR",{maximumFractionDigits:0})}`,
       sub: rev.fxUnresolved ? "Bu ay · kur verisine erişilemiyor"
          : rev.excludedCount > 0 ? `Bu ay · ${rev.excludedCount} rezervasyon hariç`
@@ -6209,7 +6209,7 @@ function RevenueGoalCard() {
         <div style={{flex:"1 1 280px", minWidth:0}}>
           <div style={{display:"flex", alignItems:"center", gap:8, flexWrap:"wrap"}}>
             <span style={{fontSize:11, fontWeight:600, letterSpacing:"0.12em", textTransform:"uppercase", color:C.goldText, fontFamily:"'Geist',sans-serif"}}>
-              Bu Ay Beklenen Ciro
+              Brüt Beklenen Ciro
             </span>
             <span style={{fontSize:11, color:C.textMuted, fontFamily:"'Geist',sans-serif", padding:"2px 8px", borderRadius:T.radiusPill, background:C.ivory, border:`1px solid ${C.borderLight}`}}>
               {monthLabel}
@@ -18316,6 +18316,567 @@ function summarizeMonthlyExpectedRevenue(reservations, todayISO, rateRows, optio
 }
 // TESTABLE:summarizeMonthlyExpectedRevenue:end
 
+// ══════════════════════════════════════════════════════════════════════════
+// FINANCE CENTER — the ONE canonical calculation layer (Phase C)
+// ══════════════════════════════════════════════════════════════════════════
+// Every Finance number (Dashboard, Budget, Tour Profitability, reservation
+// P&L, a future Calendar summary) comes from buildFinanceMonthSummary /
+// buildGuideServices below. No component may recompute any of it. Pure: only
+// its parameters, Intl and Date — see tests/finance/*.test.js.
+//
+// Inputs are the already-mapped repository rows (mapResFromDB,
+// mapPreparationFromDB, mapFinanceCostItemFromDB, mapReservationExpenseFromDB,
+// mapGuidePaymentFromDB, mapPayFromDB, mapCivitatisSettlementItemFromDB) plus
+// exchange-rate rows and the rate-source state from CRM 13.03.
+//
+// Double-counting guards (each one has a test):
+//   • guide cost = 1 × per UNIQUE (check_in + tour_id + normalized language)
+//     service — never per reservation, never per guest;
+//   • a guide_payments row counts once, by its own id, in exactly one service;
+//   • forecast → commitment (pending guide payment / recorded expense) →
+//     actual REPLACE each other, never add;
+//   • expected Civitatis net receivable and its settlement item are the same
+//     receivable → the settlement item replaces the expectation;
+//   • only paid payments are cash; refunds subtract; pending/overdue/
+//     cancelled are never "received";
+//   • cancelled reservations contribute nothing; past obligations never
+//     count toward the remaining budget.
+// TESTABLE:_financeDomain:start
+const FINANCE_COST_CATEGORIES = ['ticket', 'guide', 'meal', 'transport', 'other'];
+const FINANCE_EXPENSE_CATEGORIES = ['ticket', 'meal', 'transport', 'other']; // 'guide' structurally excluded
+
+// Istanbul calendar date (YYYY-MM-DD) — Finance never uses the UTC _TODAY_ISO.
+function _istanbulISODate(now) {
+  const d = now instanceof Date ? now : new Date(now == null ? Date.now() : now);
+  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Istanbul', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(d);
+  const get = (t) => parts.find(p => p.type === t).value;
+  return `${get('year')}-${get('month')}-${get('day')}`;
+}
+
+function _financeMonthRange(monthISO) {
+  const [y, m] = String(monthISO).slice(0, 7).split('-').map(Number);
+  const start = `${y}-${String(m).padStart(2, '0')}-01`;
+  const ny = m === 12 ? y + 1 : y, nm = m === 12 ? 1 : m + 1;
+  return { startISO: start, endISO: `${ny}-${String(nm).padStart(2, '0')}-01` }; // end exclusive
+}
+
+function _financeIsCancelled(r) {
+  return !!r && (r.opStatus === 'İptal' || r.statusRaw === 'cancelled');
+}
+function _financeCurrency(c) {
+  const x = String(c || '').trim().toUpperCase();
+  return x === 'TL' ? 'TRY' : x;
+}
+function _financePax(r) {
+  const n = (v) => { const x = parseInt(v, 10); return Number.isFinite(x) && x > 0 ? x : 0; };
+  return { adult: n(r.pax), child: n(r.paxChild), total: n(r.pax) + n(r.paxChild) };
+}
+function _financeAdd(map, currency, amount) {
+  if (!amount) return map;
+  const c = _financeCurrency(currency) || '???';
+  map[c] = Math.round(((map[c] || 0) + amount) * 100) / 100;
+  return map;
+}
+function _financeSumMaps(...maps) {
+  const out = {};
+  for (const m of maps) for (const [c, v] of Object.entries(m || {})) _financeAdd(out, c, v);
+  return out;
+}
+
+// Canonical booking language: trim + case-insensitive match against the
+// CRM's own LANGUAGES names — nothing else (no translation, no guessing).
+// Blank → 'missing'; anything that is not a known CRM language →
+// 'unrecognized'. Both make the reservation its OWN unresolved guide
+// service; neither is ever merged into a recognized language.
+function _financeCanonicalLanguage(raw, languageNames) {
+  const v = typeof raw === 'string' ? raw.trim().replace(/\s+/g, ' ') : '';
+  if (!v) return { key: null, label: null, status: 'missing' };
+  const low = v.toLocaleLowerCase('tr-TR');
+  const hit = (languageNames || []).find(n => String(n).toLocaleLowerCase('tr-TR') === low);
+  if (hit) return { key: hit, label: hit, status: 'ok' };
+  return { key: null, label: v, status: 'unrecognized' };
+}
+
+// THE guide-service grouping. Cancelled reservations are removed BEFORE
+// grouping. Valid key = check_in date + tour_id + canonical language.
+// A reservation with no tour, a blank language or an unrecognized language
+// is its OWN unresolved service (one per reservation — deliberately
+// over-budgets; never merged). Each missing field is reported separately
+// (unresolvedReasons), so "Tur bilgisi eksik" is never shown as
+// "Dil belirtilmemiş". Correcting the field re-groups automatically.
+function buildGuideServices(reservations, opts) {
+  const languageNames = (opts && opts.languageNames) || [];
+  const groups = new Map();
+  for (const r of (reservations || [])) {
+    if (!r || _financeIsCancelled(r) || !r.checkIn) continue;
+    const date = String(r.checkIn).slice(0, 10);
+    const lang = _financeCanonicalLanguage(r.tourLanguage, languageNames);
+    const unresolvedReasons = [];
+    if (!r.tourId) unresolvedReasons.push('tour_missing');
+    if (lang.status === 'missing') unresolvedReasons.push('language_missing');
+    if (lang.status === 'unrecognized') unresolvedReasons.push('language_unrecognized');
+    const unresolvedReason = unresolvedReasons[0] || null;
+    const key = unresolvedReasons.length ? `unresolved:${r.id}` : `${date}|${r.tourId}|${lang.key}`;
+    if (!groups.has(key)) {
+      groups.set(key, {
+        key, date, tourId: r.tourId || null, tourLabel: r.tour || '—',
+        language: lang.label, languageStatus: lang.status, unresolvedReason, unresolvedReasons,
+        reservationIds: [], reservationCount: 0, pax: 0,
+      });
+    }
+    const g = groups.get(key);
+    g.reservationIds.push(r.id);
+    g.reservationCount += 1;
+    g.pax += _financePax(r).total;
+  }
+  return [...groups.values()].sort((a, b) =>
+    a.date < b.date ? -1 : a.date > b.date ? 1 : String(a.tourLabel).localeCompare(String(b.tourLabel)) || String(a.language || '').localeCompare(String(b.language || '')));
+}
+
+// Newest active INTERNAL catalog item covering `date` for a scope.
+// public_reference rows are never returned — they cannot drive Finance.
+function _financePickCostItem(costItems, { category, basis, tourId, preparationRuleId, date }) {
+  const ok = (costItems || []).filter(c => c && c.kind === 'internal' && c.isActive
+    && c.category === category && (!basis || c.basis === basis)
+    && (preparationRuleId ? c.preparationRuleId === preparationRuleId : !c.preparationRuleId)
+    && (!c.validFrom || c.validFrom <= date) && (!c.validTo || date <= c.validTo));
+  const specific = ok.filter(c => tourId && c.tourId === tourId);
+  const pool = specific.length ? specific : ok.filter(c => !c.tourId || preparationRuleId);
+  return pool.sort((a, b) => String(b.validFrom || '').localeCompare(String(a.validFrom || '')))[0] || null;
+}
+
+function _financeGuidePaymentStatus(p) {
+  const raw = p.statusRaw || ({ 'Ödendi': 'paid', 'Bekliyor': 'pending', 'İptal': 'cancelled' })[p.status] || p.status;
+  return raw;
+}
+function _financePaymentStatus(p) {
+  return p.statusRaw || ({ 'Ödendi': 'paid', 'Bekliyor': 'pending', 'Gecikmiş': 'overdue', 'İade Edildi': 'refunded' })[p.status] || p.status;
+}
+function _financePaymentType(p) {
+  return p.paymentTypeRaw || ({ 'Kapora': 'deposit', 'Kalan Ödeme': 'balance', 'Tam Ödeme': 'full', 'İade': 'refund', 'Ek Ödeme': 'extra' })[p.paymentType] || p.paymentType;
+}
+
+// Attach guide_payments to services: each payment id once, via its own
+// reservation_id → that reservation's service. No reservation (or a
+// reservation outside the active set) → the visible unattributed bucket.
+function attributeGuidePayments(services, guidePayments) {
+  const byRes = new Map();
+  for (const s of services) for (const id of s.reservationIds) byRes.set(id, s.key);
+  const seen = new Set();
+  const perService = new Map(services.map(s => [s.key, []]));
+  const unattributed = [];
+  for (const p of (guidePayments || [])) {
+    if (!p || seen.has(p.id)) continue;
+    seen.add(p.id);
+    const status = _financeGuidePaymentStatus(p);
+    if (status === 'cancelled') continue;
+    const key = p.resId ? byRes.get(p.resId) : null;
+    if (key) perService.get(key).push({ ...p, statusRaw: status });
+    else unattributed.push({ ...p, statusRaw: status, reason: p.resId ? 'reservation_not_active' : 'no_reservation' });
+  }
+  return { perService, unattributed };
+}
+
+// FX: original-currency map → TRY with the 13.03 rules (fresh ECB rate,
+// ≤ 7 days, source error = nothing trusted). Never a fixed rate.
+function _financeToTry(map, fx) {
+  let tryTotal = 0; const unresolved = [];
+  for (const [c, v] of Object.entries(map || {})) {
+    if (c === 'TRY') { tryTotal += v; continue; }
+    const r = !fx.rateSourceError && fx.rates[c];
+    if (r && !r.stale) tryTotal += v * r.rate;
+    else unresolved.push(c);
+  }
+  return { tryTotal: Math.round(tryTotal * 100) / 100, complete: unresolved.length === 0, unresolvedCurrencies: unresolved };
+}
+
+// Gross / commission / net for one reservation (expected stage).
+function _financeRevenueExpectation(r, settlement, fx) {
+  const netCurrency = _financeCurrency(r.currency);
+  const net = Number(r.total) || 0;
+  const isCivitatis = r.retailAmount != null || !!settlement;
+  const grossCurrency = r.retailAmount != null ? _financeCurrency(r.retailCurrency) : netCurrency;
+  const gross = r.retailAmount != null ? Number(r.retailAmount) || 0 : net;
+  let commission = null, commissionCurrency = null, commissionStatus = 'none';
+  if (isCivitatis && r.retailAmount != null) {
+    if (grossCurrency && grossCurrency === netCurrency) {
+      commission = Math.round((gross - net) * 100) / 100; commissionCurrency = netCurrency; commissionStatus = 'ok';
+    } else {
+      const g = _financeToTry({ [grossCurrency]: gross }, fx), n = _financeToTry({ [netCurrency]: net }, fx);
+      if (g.complete && n.complete) { commission = Math.round((g.tryTotal - n.tryTotal) * 100) / 100; commissionCurrency = 'TRY'; commissionStatus = 'fx_normalized'; }
+      else commissionStatus = 'unresolved_currency';
+    }
+  } else if (!isCivitatis) {
+    commission = 0; commissionCurrency = netCurrency; commissionStatus = 'direct';
+  }
+  // Same economic receivable at two lifecycle stages → never both.
+  const live = settlement && settlement.status !== 'cancelled' && settlement.status !== 'adjusted' ? settlement : null;
+  const receivable = live
+    ? { amount: Number(live.originalAmount) || 0, currency: _financeCurrency(live.originalCurrency), source: 'settlement', settlementStatus: live.status }
+    : { amount: net, currency: netCurrency, source: 'reservation', settlementStatus: null };
+  return { isCivitatis, gross, grossCurrency, net, netCurrency, commission, commissionCurrency, commissionStatus, receivable };
+}
+
+// Actual received revenue — only trustworthy cash.
+function _financeActualRevenue(r, settlement, payments) {
+  if (settlement && settlement.status === 'paid') {
+    return _financeAdd({}, settlement.originalCurrency, Number(settlement.originalAmount) || 0);
+  }
+  const out = {};
+  for (const p of (payments || [])) {
+    const status = _financePaymentStatus(p), type = _financePaymentType(p);
+    if (type === 'refund' && (status === 'refunded' || status === 'paid')) _financeAdd(out, p.currency, -(Number(p.amount) || 0));
+    else if (type !== 'refund' && status === 'paid') _financeAdd(out, p.currency, Number(p.amount) || 0);
+    // pending / overdue / cancelled → never cash
+  }
+  return out;
+}
+
+// EARNED net revenue for a reservation (what DeseTour is owed for the
+// service, regardless of whether the cash has arrived):
+//   Civitatis — the settlement item's amount when a valid one exists
+//               (authoritative), otherwise total_amount (the net receivable).
+//               Never both. Retail (gross) is never earned NET revenue.
+//   Direct    — total_amount (the booked price) minus refunds recorded in the
+//               same currency. A refund in another currency, or a missing /
+//               zero booking amount, makes it UNRESOLVED — cash received is
+//               never substituted for earned revenue.
+function _financeEarnedNetRevenue(r, settlement, payments) {
+  const netCurrency = _financeCurrency(r.currency);
+  const net = Number(r.total) || 0;
+  const live = settlement && settlement.status !== 'cancelled' && settlement.status !== 'adjusted' ? settlement : null;
+  const isCivitatis = r.retailAmount != null || !!settlement;
+  if (live) {
+    const amt = Number(live.originalAmount) || 0, cur = _financeCurrency(live.originalCurrency);
+    return amt > 0 && cur ? { resolved: true, source: 'settlement', settlementStatus: live.status, amount: _financeAdd({}, cur, amt) }
+                          : { resolved: false, source: 'settlement', reason: 'settlement_amount_invalid', amount: {} };
+  }
+  if (!(net > 0) || !netCurrency) return { resolved: false, source: isCivitatis ? 'civitatis' : 'direct', reason: 'booking_amount_missing', amount: {} };
+  if (isCivitatis) return { resolved: true, source: 'civitatis_expected', amount: _financeAdd({}, netCurrency, net) };
+  let refunds = 0;
+  for (const p of (payments || [])) {
+    const status = _financePaymentStatus(p), type = _financePaymentType(p);
+    if (type !== 'refund' || !(status === 'refunded' || status === 'paid')) continue;
+    if (_financeCurrency(p.currency) !== netCurrency) return { resolved: false, source: 'direct', reason: 'refund_currency_mismatch', amount: {} };
+    refunds += Number(p.amount) || 0;
+  }
+  return { resolved: true, source: 'direct', refunds, amount: _financeAdd({}, netCurrency, Math.round((net - refunds) * 100) / 100) };
+}
+
+// THE month summary.
+function buildFinanceMonthSummary(input) {
+  const { reservations = [], preparations = [], rules = [], costItems = [], expenses = [],
+    guidePayments = [], payments = [], settlementItems = [], rateRows = [], rateSourceError = false,
+    monthISO, todayISO, languageNames = [] } = input || {};
+  const { startISO, endISO } = _financeMonthRange(monthISO);
+  const fx = { rateSourceError: !!rateSourceError, rates: rateSourceError ? {} : _selectLatestFxRatesToTry(rateRows, todayISO) };
+  const inMonth = (r) => r && r.checkIn && String(r.checkIn).slice(0, 10) >= startISO && String(r.checkIn).slice(0, 10) < endISO;
+  const monthRes = reservations.filter(inMonth);
+  const active = monthRes.filter(r => !_financeIsCancelled(r));
+  const byResId = new Map(active.map(r => [r.id, r]));
+
+  const services = buildGuideServices(active, { languageNames });
+  const { perService, unattributed } = attributeGuidePayments(services, guidePayments);
+  const serviceByRes = new Map();
+  for (const s of services) for (const id of s.reservationIds) serviceByRes.set(id, s);
+
+  const prepsByRes = new Map();
+  for (const p of preparations) {
+    if (!p || !byResId.has(p.reservationId) || !['pending', 'completed'].includes(p.status)) continue;
+    if (!prepsByRes.has(p.reservationId)) prepsByRes.set(p.reservationId, []);
+    prepsByRes.get(p.reservationId).push(p);
+  }
+  const rulesByTour = new Map();
+  for (const rule of rules) if (rule && rule.isActive) {
+    if (!rulesByTour.has(rule.tourId)) rulesByTour.set(rule.tourId, []);
+    rulesByTour.get(rule.tourId).push(rule);
+  }
+  const expensesByRes = new Map();
+  for (const e of expenses) {
+    if (!e || !FINANCE_EXPENSE_CATEGORIES.includes(e.category)) continue; // a 'guide' expense can never count
+    if (!expensesByRes.has(e.reservationId)) expensesByRes.set(e.reservationId, []);
+    expensesByRes.get(e.reservationId).push(e);
+  }
+  const settlementByRes = new Map(settlementItems.filter(Boolean).map(s => [s.reservationId, s]));
+  const paymentsByRes = new Map();
+  for (const p of payments) {
+    if (!p) continue;
+    if (!paymentsByRes.has(p.resId)) paymentsByRes.set(p.resId, []);
+    paymentsByRes.get(p.resId).push(p);
+  }
+
+  // Data-quality counters — every one is a separate, named condition so the
+  // UI can say exactly what to fix ("Dil belirtilmemiş" ≠ "Tur bilgisi eksik").
+  const dq = { missingLanguageCount: 0, unrecognizedLanguageCount: 0, missingTourCount: 0,
+    unknownMealReservations: 0, notMaterializedPreparations: 0, missingCostItems: {},
+    missingActualGuideCost: 0, completedTicketWithoutExpense: 0, missingActualExpenseCount: 0,
+    multiPaymentGuideServices: 0, commissionUnresolved: 0, earnedRevenueUnresolved: 0,
+    provisionalCostItemsUsed: {} };
+  const missingCost = (label) => { dq.missingCostItems[label] = (dq.missingCostItems[label] || 0) + 1; };
+
+  // ── Guide services: forecast / commitment / actual, never added together
+  const guideRows = services.map(s => {
+    const item = _financePickCostItem(costItems, { category: 'guide', basis: 'guide_service_group', tourId: s.tourId, date: s.date });
+    const pays = perService.get(s.key) || [];
+    const paid = pays.filter(p => p.statusRaw === 'paid'), pending = pays.filter(p => p.statusRaw !== 'paid');
+    const planned = item ? _financeAdd({}, item.currency, Number(item.amount)) : {};
+    if (!item) missingCost('Guide Service');
+    else if (item.isProvisional) dq.provisionalCostItemsUsed[item.label] = (dq.provisionalCostItemsUsed[item.label] || 0) + 1;
+    const actual = {}; paid.forEach(p => _financeAdd(actual, p.currency, p.amount));
+    const committed = {}; pending.forEach(p => _financeAdd(committed, p.currency, p.amount));
+    const state = paid.length ? 'actual' : pending.length ? 'committed' : 'forecast';
+    const best = pays.length ? _financeSumMaps(actual, committed) : planned; // replaces forecast
+    const future = s.date >= todayISO;
+    const remaining = !future ? {} : paid.length && !pending.length ? {} : pending.length ? committed : planned;
+    // A service that already took place with no guide payment recorded is
+    // flagged — its actual guide cost is UNKNOWN, never reported as zero.
+    const missingActual = !future && !pays.length;
+    if (pays.length > 1) dq.multiPaymentGuideServices += 1;
+    if (missingActual) dq.missingActualGuideCost += 1;
+    const reasons = s.unresolvedReasons || [];
+    if (reasons.includes('tour_missing')) dq.missingTourCount += s.reservationCount;
+    if (reasons.includes('language_missing')) dq.missingLanguageCount += s.reservationCount;
+    if (reasons.includes('language_unrecognized')) dq.unrecognizedLanguageCount += s.reservationCount;
+    return { ...s, costItemId: item ? item.id : null, planned, actual, committed, best, remaining, state, missingActual,
+      // Incurred (recorded) guide cost for a service: paid + pending payments.
+      // Never the €150 forecast.
+      incurred: _financeSumMaps(actual, committed),
+      paymentIds: pays.map(p => p.id), multiPayment: pays.length > 1,
+      sharedLabel: item ? `${Number(item.amount)} ${item.currency} toplam · ${s.reservationCount} rezervasyon paylaşıyor` : null };
+  });
+  const guideByKey = new Map(guideRows.map(g => [g.key, g]));
+
+  // ── Per reservation
+  const reservationRows = active.map(r => {
+    const date = String(r.checkIn).slice(0, 10);
+    const pax = _financePax(r);
+    const future = date >= todayISO;
+    const resExpenses = expensesByRes.get(r.id) || [];
+    const actualBy = (cat) => { const m = {}; resExpenses.filter(e => e.category === cat).forEach(e => _financeAdd(m, e.currency, e.totalAmount)); return m; };
+    const planned = { ticket: {}, meal: {}, transport: {}, other: {} };
+
+    // Tickets (+ any rule-linked cost): quantity ONLY from materialized preparations.
+    const preps = prepsByRes.get(r.id) || [];
+    const tourRules = rulesByTour.get(r.tourId) || [];
+    for (const rule of tourRules) {
+      // Meal cost comes ONLY from meal_status (below) — a meal-type rule can
+      // never add a second meal charge.
+      if (rule.preparationType === 'meal') continue;
+      const prep = preps.find(p => p.preparationRuleId === rule.id);
+      const item = _financePickCostItem(costItems, { category: rule.preparationType === 'meal' ? 'meal' : rule.preparationType === 'transport' ? 'transport' : rule.preparationType === 'entrance_ticket' ? 'ticket' : 'other', basis: 'preparation_rule', preparationRuleId: rule.id, date });
+      if (!prep) { dq.notMaterializedPreparations += 1; continue; }
+      // "Tamamlandı" on a preparation only means a staff member marked the
+      // task done (reversible, never tied to purchase/payment) — so it NEVER
+      // removes the amount from the remaining budget. Only a recorded ticket
+      // expense does. The gap is surfaced instead.
+      if (rule.preparationType === 'entrance_ticket' && prep.status === 'completed'
+          && !resExpenses.some(e => e.category === 'ticket')) dq.completedTicketWithoutExpense += 1;
+      if (!item) { missingCost(rule.label || prep.label); continue; }
+      if (item.isProvisional) dq.provisionalCostItemsUsed[item.label] = (dq.provisionalCostItemsUsed[item.label] || 0) + 1;
+      _financeAdd(planned[item.category], item.currency, Number(item.amount) * (Number(prep.requiredQuantity) || 0));
+    }
+    // Tour-scoped non-rule items (per_guest / per_adult / fixed_per_reservation).
+    for (const cat of ['ticket', 'transport', 'other']) {
+      for (const basis of ['per_guest', 'per_adult', 'fixed_per_reservation']) {
+        const item = r.tourId ? (costItems || []).find(c => c && c.kind === 'internal' && c.isActive && c.category === cat && c.basis === basis && c.tourId === r.tourId && !c.preparationRuleId && (!c.validFrom || c.validFrom <= date) && (!c.validTo || date <= c.validTo)) : null;
+        if (!item) continue;
+        const qty = basis === 'per_guest' ? pax.total : basis === 'per_adult' ? pax.adult : 1;
+        _financeAdd(planned[cat], item.currency, Number(item.amount) * qty);
+      }
+    }
+    // Meal: ONLY meal_status = included; unknown is a risk, never guessed.
+    if (r.mealStatus === 'included') {
+      const item = _financePickCostItem(costItems, { category: 'meal', basis: 'per_guest', tourId: r.tourId, date });
+      if (item) _financeAdd(planned.meal, item.currency, Number(item.amount) * pax.total);
+      else missingCost('Included Meal');
+    } else if (r.mealStatus !== 'not_included') {
+      dq.unknownMealReservations += 1;
+    }
+
+    const actual = { ticket: actualBy('ticket'), meal: actualBy('meal'), transport: actualBy('transport'), other: actualBy('other') };
+    // Recorded actual replaces the forecast for that category.
+    // remaining = cash still REQUIRED (future, no recorded expense);
+    // actual    = ONLY recorded expense rows. Different concepts, never mixed.
+    const best = {}; const remaining = {}; const missingActualCategories = [];
+    for (const cat of ['ticket', 'meal', 'transport', 'other']) {
+      const hasActual = Object.keys(actual[cat]).length > 0;
+      best[cat] = hasActual ? actual[cat] : planned[cat];
+      remaining[cat] = future && !hasActual ? planned[cat] : {};
+      if (!future && !hasActual && Object.keys(planned[cat]).length) missingActualCategories.push(cat);
+    }
+    dq.missingActualExpenseCount += missingActualCategories.length;
+
+    // Guide: the group cost belongs to the service; reservation view gets a
+    // REPORTING-ONLY pax-share allocation, never a payable obligation.
+    const svc = serviceByRes.get(r.id);
+    const g = svc ? guideByKey.get(svc.key) : null;
+    const share = g && g.pax > 0 ? pax.total / g.pax : g ? 1 / g.reservationCount : 0;
+    const scale = (m) => Object.fromEntries(Object.entries(m || {}).map(([c, v]) => [c, Math.round(v * share * 100) / 100]));
+    const guideAllocation = g ? { planned: scale(g.planned), best: scale(g.best), actual: scale(g.actual), incurred: scale(g.incurred),
+      missingActual: g.missingActual, share, serviceKey: g.key, sharedLabel: g.sharedLabel, reportingOnly: true } : null;
+
+    const rev = _financeRevenueExpectation(r, settlementByRes.get(r.id), fx);
+    if (rev.commissionStatus === 'unresolved_currency') dq.commissionUnresolved += 1;
+    const received = _financeActualRevenue(r, settlementByRes.get(r.id), paymentsByRes.get(r.id));
+    const earned = _financeEarnedNetRevenue(r, settlementByRes.get(r.id), paymentsByRes.get(r.id));
+    if (!future && !earned.resolved) dq.earnedRevenueUnresolved += 1;
+    // Outstanding receivable = earned net − cash received (per currency).
+    const outstanding = earned.resolved
+      ? Object.fromEntries(Object.entries(_financeSumMaps(earned.amount, Object.fromEntries(Object.entries(received).map(([c, v]) => [c, -v]))))
+          .filter(([, v]) => Math.abs(v) >= 0.005))
+      : {};
+    // Incurred (recorded) operating cost: expense rows + recorded guide
+    // payments for the service (paid or pending), pax-share allocated.
+    // Never the €150 / €40 planning amounts.
+    const incurredCost = _financeSumMaps(actual.ticket, actual.meal, actual.transport, actual.other, guideAllocation ? guideAllocation.incurred : {});
+    const actualCoverageComplete = missingActualCategories.length === 0 && !(guideAllocation && guideAllocation.missingActual);
+
+    const plannedCost = _financeSumMaps(planned.ticket, planned.meal, planned.transport, planned.other, guideAllocation ? guideAllocation.planned : {});
+    const projectedCost = _financeSumMaps(best.ticket, best.meal, best.transport, best.other, guideAllocation ? guideAllocation.best : {});
+    const actualCost = _financeSumMaps(actual.ticket, actual.meal, actual.transport, actual.other, guideAllocation ? guideAllocation.actual : {});
+    const t = (m) => _financeToTry(m, fx);
+    // Variance compares like with like: ONLY categories that already have a
+    // recorded actual (expenses, or a paid guide payment for the service)
+    // against their own plan — never a partial actual against the full plan.
+    const varPairs = ['ticket', 'meal', 'transport', 'other']
+      .filter(c => Object.keys(actual[c]).length)
+      .map(c => [planned[c], actual[c]]);
+    if (guideAllocation && Object.keys(guideAllocation.actual).length) varPairs.push([guideAllocation.planned, guideAllocation.actual]);
+    let varianceTry = null;
+    if (varPairs.length) {
+      const pv = t(_financeSumMaps(...varPairs.map(v => v[0]))), av = t(_financeSumMaps(...varPairs.map(v => v[1])));
+      varianceTry = pv.complete && av.complete ? Math.round((av.tryTotal - pv.tryTotal) * 100) / 100 : null;
+    }
+    const recvT = t(_financeAdd({}, rev.receivable.currency, rev.receivable.amount));
+    const projT = t(projectedCost), planT = t(plannedCost), actT = t(actualCost), recdT = t(received);
+    return {
+      id: r.id, ref: r.resNumber || r.id, date, tourId: r.tourId, tourLabel: r.tour || '—', language: svc ? svc.language : null,
+      pax, future, opStatus: r.opStatus, planned, actual, best, remaining, guideAllocation, revenue: rev, received,
+      earned, outstanding, incurredCost, actualCoverageComplete, missingActualCategories,
+      plannedCost, projectedCost, actualCost,
+      tryView: {
+        expectedNet: recvT, plannedCost: planT, projectedCost: projT, actualCost: actT, received: recdT,
+        projectedProfit: recvT.complete && projT.complete ? Math.round((recvT.tryTotal - projT.tryTotal) * 100) / 100 : null,
+        projectedMargin: recvT.complete && projT.complete && recvT.tryTotal > 0 ? (recvT.tryTotal - projT.tryTotal) / recvT.tryTotal : null,
+        variance: varianceTry,
+      },
+    };
+  });
+
+  // ── Month totals (original currencies + TRY view)
+  const sumCat = (rows, field, cat) => _financeSumMaps(...rows.map(x => x[field][cat]));
+  const guidePlanned = _financeSumMaps(...guideRows.map(g => g.planned));
+  const guideBest = _financeSumMaps(...guideRows.map(g => g.best));
+  const guideActual = _financeSumMaps(...guideRows.map(g => g.actual));
+  const guideRemaining = _financeSumMaps(...guideRows.map(g => g.remaining));
+  const categories = {};
+  for (const cat of ['ticket', 'meal', 'transport', 'other']) {
+    categories[cat] = { planned: sumCat(reservationRows, 'planned', cat), actual: sumCat(reservationRows, 'actual', cat), remaining: sumCat(reservationRows, 'remaining', cat) };
+  }
+  categories.guide = { planned: guidePlanned, actual: guideActual, remaining: guideRemaining, best: guideBest };
+  const remainingBudget = _financeSumMaps(...['ticket', 'meal', 'transport', 'other', 'guide'].map(c => categories[c].remaining));
+  const plannedOperatingCost = _financeSumMaps(...['ticket', 'meal', 'transport', 'other', 'guide'].map(c => categories[c].planned));
+  const projectedOperatingCost = _financeSumMaps(...reservationRows.map(x => _financeSumMaps(x.best.ticket, x.best.meal, x.best.transport, x.best.other)), guideBest);
+  const actualSpend = _financeSumMaps(...['ticket', 'meal', 'transport', 'other', 'guide'].map(c => categories[c].actual));
+  const expectedNet = _financeSumMaps(...reservationRows.map(x => _financeAdd({}, x.revenue.receivable.currency, x.revenue.receivable.amount)));
+  const gross = _financeSumMaps(...reservationRows.map(x => _financeAdd({}, x.revenue.grossCurrency, x.revenue.gross)));
+  const received = _financeSumMaps(...reservationRows.map(x => x.received));
+  const unattributedAmount = {}; unattributed.forEach(p => _financeAdd(unattributedAmount, p.currency, p.amount));
+  const T = (m) => _financeToTry(m, fx);
+  const kp = { remainingBudget: T(remainingBudget), expectedNet: T(expectedNet), projectedCost: T(projectedOperatingCost), actualSpend: T(actualSpend), received: T(received), gross: T(gross), plannedCost: T(plannedOperatingCost) };
+  const diff = (a, b) => a.complete && b.complete ? Math.round((a.tryTotal - b.tryTotal) * 100) / 100 : null;
+  // ── Realized ("Gerçekleşen") view — tours that already took place
+  // (check_in before today, Istanbul):
+  //   Gerçekleşen Net Gelir           = Σ earned net revenue (settlement amount
+  //                                      or net receivable; direct booked − refunds)
+  //   Tahsil Edilen Nakit              = Σ cash actually received (paid
+  //                                      settlement / paid payments − refunds)
+  //   Tahsil Edilmemiş Alacak          = earned − cash
+  //   Gerçekleşen Operasyon Maliyeti   = Σ recorded expenses + recorded guide
+  //                                      payments (paid or pending) — never a forecast
+  //   Gerçekleşen Net Kâr              = earned − actual operating cost
+  // When any actual cost record is missing (a past guide service without a
+  // payment, a planned category without a recorded expense), or earned
+  // revenue is unresolved, or FX is incomplete, the profit is PROVISIONAL —
+  // "Geçici / maliyet kayıtları eksik" — never presented as final.
+  const pastRows = reservationRows.filter(x => !x.future);
+  const earnedT = T(_financeSumMaps(...pastRows.filter(x => x.earned.resolved).map(x => x.earned.amount)));
+  const pastCashT = T(_financeSumMaps(...pastRows.map(x => x.received)));
+  const outstandingT = T(_financeSumMaps(...pastRows.map(x => x.outstanding)));
+  const incurredT = T(_financeSumMaps(...pastRows.map(x => x.incurredCost)));
+  const missingActualCostCount = pastRows.reduce((n, x) => n + x.missingActualCategories.length, 0)
+    + guideRows.filter(g => g.missingActual).length;
+  const earnedUnresolved = pastRows.filter(x => !x.earned.resolved).length;
+  const realizedComplete = missingActualCostCount === 0 && earnedUnresolved === 0 && earnedT.complete && incurredT.complete;
+  const realized = {
+    earnedNetRevenue: earnedT,
+    cashReceived: pastCashT,
+    outstandingReceivable: outstandingT,
+    actualOperatingCost: incurredT,
+    netProfit: diff(earnedT, incurredT),
+    status: realizedComplete ? 'final' : 'provisional',
+    statusLabel: realizedComplete ? null : 'Geçici / maliyet kayıtları eksik',
+    missingActualCostCount,
+    earnedRevenueUnresolvedCount: earnedUnresolved,
+    reservations: pastRows.length,
+  };
+
+  // ── Tour table: tour → date + language subgroups
+  const tours = new Map();
+  for (const x of reservationRows) {
+    const tk = x.tourId || 'none:' + x.tourLabel;
+    if (!tours.has(tk)) tours.set(tk, { tourId: x.tourId, tourLabel: x.tourLabel, reservations: 0, pax: 0, serviceKeys: new Set(), rows: [] });
+    const t = tours.get(tk); t.reservations += 1; t.pax += x.pax.total; t.rows.push(x);
+    if (x.guideAllocation) t.serviceKeys.add(x.guideAllocation.serviceKey);
+  }
+  const tourRows = [...tours.values()].map(t => {
+    const svcs = [...t.serviceKeys].map(k => guideByKey.get(k));
+    const ticket = _financeSumMaps(...t.rows.map(x => x.planned.ticket));
+    const meal = _financeSumMaps(...t.rows.map(x => x.planned.meal));
+    const other = _financeSumMaps(...t.rows.map(x => _financeSumMaps(x.planned.transport, x.planned.other)));
+    const guide = _financeSumMaps(...svcs.map(g => g.planned));
+    const totalPlanned = _financeSumMaps(ticket, meal, other, guide);
+    const net = _financeSumMaps(...t.rows.map(x => _financeAdd({}, x.revenue.receivable.currency, x.revenue.receivable.amount)));
+    const netT = T(net), costT = T(totalPlanned);
+    return { tourId: t.tourId, tourLabel: t.tourLabel, reservations: t.reservations, pax: t.pax, guideServices: svcs.length,
+      ticket, guide, meal, other, totalPlanned, expectedNet: net,
+      projectedProfit: diff(netT, costT), margin: netT.complete && costT.complete && netT.tryTotal > 0 ? (netT.tryTotal - costT.tryTotal) / netT.tryTotal : null,
+      subgroups: svcs.map(g => ({ key: g.key, date: g.date, language: g.language, unresolvedReason: g.unresolvedReason, reservations: g.reservationCount, pax: g.pax, guideServices: 1, guidePlanned: g.planned, state: g.state })) };
+  }).sort((a, b) => String(a.tourLabel).localeCompare(String(b.tourLabel)));
+
+  return {
+    monthISO: String(monthISO).slice(0, 7), startISO, endISO, todayISO,
+    counts: { reservations: active.length, cancelledExcluded: monthRes.length - active.length, guideServices: guideRows.length,
+      unresolvedGuideServices: guideRows.filter(g => g.unresolvedReason).length },
+    guideServices: guideRows, reservations: reservationRows, tours: tourRows, categories,
+    totals: { remainingBudget, plannedOperatingCost, projectedOperatingCost, actualSpend, expectedNet, gross, received, unattributedGuidePayments: unattributedAmount },
+    kpis: {
+      remainingBudget: kp.remainingBudget, expectedNet: kp.expectedNet, gross: kp.gross,
+      projectedProfit: diff(kp.expectedNet, kp.projectedCost), actualSpend: kp.actualSpend,
+      plannedCost: kp.plannedCost, projectedCost: kp.projectedCost,
+      // Realized KPIs (see `realized`): earned ≠ cash; profit = earned − actual cost.
+      earnedNetRevenue: realized.earnedNetRevenue, cashReceived: kp.received,
+      actualOperatingCost: realized.actualOperatingCost, realizedNetProfit: realized.netProfit,
+      realizedNetProfitStatus: realized.status, outstandingReceivable: realized.outstandingReceivable,
+    },
+    realized,
+    unattributedGuidePayments: unattributed,
+    dataQuality: { ...dq,
+      missingCostItems: Object.entries(dq.missingCostItems).map(([label, count]) => ({ label, count })),
+      provisionalCostItemsUsed: Object.entries(dq.provisionalCostItemsUsed).map(([label, count]) => ({ label, count })) },
+    fx: { rateSourceError: fx.rateSourceError, rates: fx.rates,
+      incomplete: Object.values(kp).some(v => !v.complete),
+      unresolvedCurrencies: [...new Set(Object.values(kp).flatMap(v => v.unresolvedCurrencies))].sort() },
+  };
+}
+
+function _financeDomain() {
+  return { FINANCE_COST_CATEGORIES, FINANCE_EXPENSE_CATEGORIES, _istanbulISODate, _financeMonthRange,
+    _financeCanonicalLanguage, buildGuideServices, attributeGuidePayments, _financePickCostItem,
+    _financeRevenueExpectation, _financeActualRevenue, _financeEarnedNetRevenue, _financeToTry, buildFinanceMonthSummary };
+}
+// TESTABLE:_financeDomain:end
+
 // TESTABLE:computeUnassignedGuideUpcomingCount:start
 // "Rehber Ataması Bekleyen" — the number of upcoming, active reservations
 // that have no guide assigned yet (reservations.guide_id). "Upcoming" means
@@ -20650,7 +21211,7 @@ function mapResFromDB(r) {
     guide:r.guide_name||'', guideId:r.guide_id||null, assignedGuideName:r.guide?.full_name||'', vehicle:r.vehicle_info||'', driver:r.driver_name||'',
     pickup:r.pickup_location||'', pickupTime:r.pickup_time||'—',
     tourLanguage:r.tour_language||'',
-    opStatus:_r2App(r.status), payStatus:_p2App(r.payment_status),
+    opStatus:_r2App(r.status), statusRaw:r.status||null, payStatus:_p2App(r.payment_status),
     total:parseFloat(r.total_amount)||0, deposit:parseFloat(r.deposit_amount)||0,
     remaining:parseFloat(r.total_amount||0)-parseFloat(r.deposit_amount||0),
     currency:r.currency||'EUR', opNotes:r.notes||'', assigneeId:r.assigned_to||null,
@@ -20677,6 +21238,37 @@ function mapResFromDB(r) {
 // exactly the gap meal_status/purchased_activity_raw sat in between Phase
 // A and Phase C1 — this mapper closes that gap for every column up front
 // rather than letting a future phase rediscover it.
+// Finance Center — catalog / expense / rule mappers (raw DB values kept).
+function mapFinanceCostItemFromDB(r) {
+  if (!r) return null;
+  return {
+    id: r.id, label: r.label || '', category: r.category, basis: r.basis,
+    amount: r.amount != null ? parseFloat(r.amount) : 0, currency: r.currency || 'EUR',
+    tourId: r.tour_id || null, preparationRuleId: r.preparation_rule_id || null,
+    validFrom: r.valid_from || null, validTo: r.valid_to || null, isActive: r.is_active !== false,
+    kind: r.kind, isProvisional: r.is_provisional === true, sourceNote: r.source_note || '', sourceUrl: r.source_url || null,
+    lastVerifiedDate: r.last_verified_date || null, createdBy: r.created_by || null,
+    createdAt: r.created_at || null, updatedAt: r.updated_at || null, _fromDB: true,
+  };
+}
+function mapReservationExpenseFromDB(r) {
+  if (!r) return null;
+  const num = (v) => v != null ? parseFloat(v) : null;
+  return {
+    id: r.id, reservationId: r.reservation_id || null, category: r.category,
+    description: r.description || '', quantity: num(r.quantity), unitAmount: num(r.unit_amount),
+    totalAmount: num(r.total_amount) || 0, currency: r.currency || 'EUR', expenseDate: r.expense_date || null,
+    financeCostItemId: r.finance_cost_item_id || null,
+    exchangeRateUsed: num(r.exchange_rate_used), exchangeRateDate: r.exchange_rate_date || null, tryAmount: num(r.try_amount),
+    notes: r.notes || '', createdBy: r.created_by || null, createdAt: r.created_at || null, updatedAt: r.updated_at || null, _fromDB: true,
+  };
+}
+function mapPreparationRuleFromDB(r) {
+  if (!r) return null;
+  return { id: r.id, tourId: r.tour_id || null, preparationType: r.preparation_type || null, label: r.label || '',
+    quantityRule: r.quantity_rule || null, fixedQuantity: r.fixed_quantity != null ? parseInt(r.fixed_quantity, 10) : null,
+    isActive: r.is_active !== false, _fromDB: true };
+}
 function mapPreparationFromDB(r) {
   if (!r) return null;
   return {
@@ -20753,6 +21345,8 @@ function mapPayFromDB(r) {
   return { id:r.id, payNumber:r.payment_number||r.id, resId:r.reservation_id||null,
     customerId:r.customer_id||null, paymentType:tm[r.payment_type]||r.payment_type||'Kapora',
     amount:parseFloat(r.amount)||0, currency:r.currency||'EUR', status:_p2App(r.status),
+    // Raw DB values for Finance — never reverse-mapped from Turkish labels.
+    statusRaw:r.status||null, paymentTypeRaw:r.payment_type||null,
     method:_mFromDB(r.method), dueDate:r.due_date||'', dueDateRaw,
     depositDate:r.paid_at?new Date(r.paid_at).toLocaleDateString('tr-TR',{day:'2-digit',month:'short',year:'numeric'}):'—',
     notes:r.notes||'', createdAt:r.created_at?r.created_at.split('T')[0]:'',
@@ -20848,7 +21442,7 @@ function mapGuidePaymentFromDB(r) {
     id:r.id, payNumber:r.payment_number||r.id, guideId:r.guide_id||null,
     resId:r.reservation_id||null, tourId:r.tour_id||null,
     amount:parseFloat(r.amount)||0, currency:r.currency||'EUR',
-    status:_GPS_APP[r.status]||r.status||'Bekliyor',
+    status:_GPS_APP[r.status]||r.status||'Bekliyor', statusRaw:r.status||null,
     paymentDate:r.payment_date||'', notes:r.notes||'', createdBy:r.created_by||null,
     createdAt:r.created_at?r.created_at.split('T')[0]:'',
     guideName:r.guide?.full_name||'', resRef:r.reservation?.reservation_number||'',
@@ -21734,6 +22328,138 @@ const SupabaseExchangeRateRepo = {
   },
 };
 
+// Finance Center — data access (Phase C). Normal authenticated client only
+// (getSB()); RLS = admin/operations + AAL2 on every table read here. No
+// service-role key ever reaches the browser. getMonthData returns raw mapped
+// rows ONLY — all money math happens in buildFinanceMonthSummary.
+// reservation_expenses' frozen FX columns are written by the database
+// trigger; the browser never sends them.
+// TESTABLE:_financeExpensePayload:start
+const _FINANCE_EXPENSE_CATEGORIES_WRITE = ['ticket', 'meal', 'transport', 'other'];
+function _financeExpensePayload(d) {
+  const category = String(d.category || '');
+  if (!_FINANCE_EXPENSE_CATEGORIES_WRITE.includes(category)) {
+    // Guide actual cost lives ONLY in guide_payments — never here.
+    throw new Error(category === 'guide' ? 'Rehber maliyeti rehber ödemeleri üzerinden kaydedilir.' : 'Geçersiz gider kategorisi.');
+  }
+  const out = {
+    reservation_id: d.reservationId, category, description: d.description || '',
+    quantity: d.quantity != null && d.quantity !== '' ? Number(d.quantity) : null,
+    unit_amount: d.unitAmount != null && d.unitAmount !== '' ? Number(d.unitAmount) : null,
+    total_amount: Number(d.totalAmount), currency: String(d.currency || '').trim().toUpperCase(),
+    expense_date: d.expenseDate, finance_cost_item_id: d.financeCostItemId || null, notes: d.notes || '',
+  };
+  return out; // exchange_rate_used / exchange_rate_date / try_amount intentionally absent
+}
+// TESTABLE:_financeExpensePayload:end
+const FinanceRepository = {
+  async getMonthData(monthISO) {
+    const { startISO, endISO } = _financeMonthRange(monthISO);
+    const reservations = (DB.reservations || []).filter(r => r.checkIn && r.checkIn >= startISO && r.checkIn < endISO);
+    return { reservations, preparations: [], rules: [], costItems: [], expenses: [], guidePayments: [], payments: [],
+      settlementItems: [], rateRows: [], rateSourceError: false };
+  },
+  async getCostItems() { return []; },
+  async getExpenses() { return []; },
+};
+const SupabaseFinanceRepo = {
+  async getMonthData(monthISO) {
+    const sb = getSB();
+    if (!sb) return FinanceRepository.getMonthData(monthISO);
+    const { startISO, endISO } = _financeMonthRange(monthISO);
+    const must = ({ data, error }) => { if (error) throw new Error(error.message); return data || []; };
+    const resRows = must(await sb.from('reservations').select('*').gte('check_in', startISO).lt('check_in', endISO));
+    const reservations = resRows.map(mapResFromDB);
+    const ids = reservations.map(r => r.id);
+    const tourIds = [...new Set(reservations.map(r => r.tourId).filter(Boolean))];
+    const byIds = (q) => ids.length ? q : Promise.resolve({ data: [], error: null });
+    const [preps, rules, items, exps, gpLinked, gpLoose, pays, settle] = await Promise.all([
+      byIds(sb.from('reservation_preparations').select('*').in('reservation_id', ids)),
+      tourIds.length ? sb.from('tour_preparation_rules').select('id,tour_id,preparation_type,label,quantity_rule,fixed_quantity,is_active').in('tour_id', tourIds) : Promise.resolve({ data: [], error: null }),
+      sb.from('finance_cost_items').select('*'),
+      byIds(sb.from('reservation_expenses').select('*').in('reservation_id', ids)),
+      byIds(sb.from('guide_payments').select('*').in('reservation_id', ids)),
+      sb.from('guide_payments').select('*').is('reservation_id', null).gte('payment_date', startISO).lt('payment_date', endISO),
+      byIds(sb.from('payments').select('*').in('reservation_id', ids)),
+      byIds(sb.from('civitatis_settlement_items').select('*').in('reservation_id', ids)),
+    ]);
+    let rateRows = [], rateSourceError = false;
+    try { rateRows = await SupabaseExchangeRateRepo.getLatestToTry(); } catch (_) { rateSourceError = true; }
+    return {
+      reservations,
+      preparations: must(preps).map(mapPreparationFromDB),
+      rules: must(rules).map(mapPreparationRuleFromDB),
+      costItems: must(items).map(mapFinanceCostItemFromDB),
+      expenses: must(exps).map(mapReservationExpenseFromDB),
+      guidePayments: [...must(gpLinked), ...must(gpLoose)].map(mapGuidePaymentFromDB),
+      payments: must(pays).map(mapPayFromDB),
+      settlementItems: must(settle).map(mapCivitatisSettlementItemFromDB),
+      rateRows, rateSourceError,
+    };
+  },
+  async getCostItems() {
+    const sb = getSB(); if (!sb) return [];
+    const { data, error } = await sb.from('finance_cost_items').select('*').order('category').order('label');
+    if (error) throw new Error(error.message);
+    return (data || []).map(mapFinanceCostItemFromDB);
+  },
+  async createCostItem(d) {
+    const sb = getSB(); if (!sb) throw new Error('Supabase bağlantısı yok.');
+    const row = { label: d.label, category: d.category, basis: d.basis, amount: Number(d.amount),
+      currency: String(d.currency || '').trim().toUpperCase(), tour_id: d.tourId || null,
+      preparation_rule_id: d.preparationRuleId || null, valid_from: d.validFrom || undefined, valid_to: d.validTo || null,
+      is_active: d.isActive !== false, kind: d.kind, is_provisional: d.kind === 'internal' && d.isProvisional === true,
+      source_note: d.sourceNote || '', source_url: d.sourceUrl || null,
+      last_verified_date: d.lastVerifiedDate || null, created_by: _authCache?.session?.user?.id || null };
+    const { data, error } = await sb.from('finance_cost_items').insert(row).select().single();
+    if (error) throw new Error(error.message);
+    await _sbLog('finance_cost_item', data.id, 'created', `Maliyet kalemi: ${d.label} · ${row.amount} ${row.currency} (${d.kind === 'internal' ? 'iç maliyet' : 'resmi referans'})`, { category: row.category, basis: row.basis, amount: row.amount, currency: row.currency, kind: row.kind });
+    return mapFinanceCostItemFromDB(data);
+  },
+  async updateCostItem(id, d) {
+    const sb = getSB(); if (!sb) throw new Error('Supabase bağlantısı yok.');
+    const map = { label:'label', amount:'amount', currency:'currency', validFrom:'valid_from', validTo:'valid_to', isActive:'is_active', isProvisional:'is_provisional',
+      sourceNote:'source_note', sourceUrl:'source_url', lastVerifiedDate:'last_verified_date' };
+    const row = {};
+    for (const [k, col] of Object.entries(map)) if (d[k] !== undefined) row[col] = k === 'currency' ? String(d[k]).trim().toUpperCase() : d[k];
+    const { data, error } = await sb.from('finance_cost_items').update(row).eq('id', id).select().single();
+    if (error) throw new Error(error.message);
+    await _sbLog('finance_cost_item', id, row.is_active === false ? 'status_changed' : 'updated', `Maliyet kalemi güncellendi: ${data.label}`, { changes: row });
+    return mapFinanceCostItemFromDB(data);
+  },
+  async getExpenses({ reservationId } = {}) {
+    const sb = getSB(); if (!sb) return [];
+    let q = sb.from('reservation_expenses').select('*').order('expense_date', { ascending: false });
+    if (reservationId) q = q.eq('reservation_id', reservationId);
+    const { data, error } = await q;
+    if (error) throw new Error(error.message);
+    return (data || []).map(mapReservationExpenseFromDB);
+  },
+  async createExpense(d) {
+    const sb = getSB(); if (!sb) throw new Error('Supabase bağlantısı yok.');
+    const row = { ..._financeExpensePayload(d), created_by: _authCache?.session?.user?.id || null };
+    const { data, error } = await sb.from('reservation_expenses').insert(row).select().single();
+    if (error) throw new Error(error.message);
+    await _sbLog('reservation_expense', data.id, 'created', `Gider: ${row.category} · ${row.total_amount} ${row.currency}`, { reservation_id: row.reservation_id, category: row.category, total_amount: row.total_amount, currency: row.currency, try_amount: data.try_amount, exchange_rate_used: data.exchange_rate_used });
+    return mapReservationExpenseFromDB(data);
+  },
+  async updateExpense(id, d) {
+    const sb = getSB(); if (!sb) throw new Error('Supabase bağlantısı yok.');
+    const { reservation_id, ...row } = _financeExpensePayload(d);
+    const { data, error } = await sb.from('reservation_expenses').update(row).eq('id', id).select().single();
+    if (error) throw new Error(error.message);
+    await _sbLog('reservation_expense', id, 'updated', `Gider güncellendi: ${row.category} · ${row.total_amount} ${row.currency}`, { changes: row });
+    return mapReservationExpenseFromDB(data);
+  },
+  async deleteExpense(id) {
+    const sb = getSB(); if (!sb) throw new Error('Supabase bağlantısı yok.');
+    const { data, error } = await sb.from('reservation_expenses').delete().eq('id', id).select().single();
+    if (error) throw new Error(error.message);
+    await _sbLog('reservation_expense', id, 'deleted', `Gider silindi: ${data.category} · ${data.total_amount} ${data.currency}`, { reservation_id: data.reservation_id });
+    return true;
+  },
+};
+
 const SupabaseCivitatisSettlementRepo = {
   async getSummary() {
     const sb = getSB();
@@ -21829,6 +22555,7 @@ function getActiveRepo(entity) {
   if(entity==='staff')      return useReal ? SupabaseStaffRepo       : { getAll: async () => DB.staff };
   if(entity==='reservationPreparation') return useReal ? SupabaseReservationPreparationRepo : { getByReservation: async () => [], getUpcomingPending: async () => [], getRecentCompleted: async () => [], complete: async () => ({ ok:false, reason:'invalid' }), reopen: async () => ({ ok:false, reason:'invalid' }) };
   if(entity==='exchangeRate') return useReal ? SupabaseExchangeRateRepo : ExchangeRateRepository;
+  if(entity==='finance') return useReal ? SupabaseFinanceRepo : FinanceRepository;
   if(entity==='civitatisSettlement') return useReal ? SupabaseCivitatisSettlementRepo : {
     getSummary: async () => _buildCivitatisSettlementSummary([], _TODAY_ISO),
     getDetailed: async () => ({ summary: _buildCivitatisSettlementSummary([], _TODAY_ISO), periods: [] }),
