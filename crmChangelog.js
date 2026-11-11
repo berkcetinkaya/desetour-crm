@@ -101,6 +101,20 @@ const CRM_CHANGELOG_CATEGORIES = [
 // Newest first. See the release convention above before editing.
 const CRM_CHANGELOG = [
   {
+    version: '13.07',
+    date: '2026-11-11',
+    title: 'Finans Genel Bakış: Hazırlanacak Para',
+    summary: 'Finans Genel Bakış artık önümüzdeki 7 gün, 15 gün ve 1 ay içinde rehber ve giriş biletleri için ne kadar para hazırlanması gerektiğini gösteriyor.',
+    categories: ['Operasyon', 'Arayüz'],
+    highlights: [
+      'Önümüzdeki 7 gün, 15 gün ve 1 ay için hazırlanacak toplam tutar; rehber ve bilet kırılımıyla birlikte.',
+      'Bu haftanın operasyonları tek tabloda: tarih, tur, dil, kişi, rehber, giriş biletleri ve hazırlanacak tutar.',
+      'Ödenmiş rehber operasyonları ve gideri girilmiş biletler toplamdan düşülüyor; tutarı bilinmeyen biletler için uyarı gösteriliyor.',
+      'Tur Karlılığı sekmesinde her operasyonun maliyeti TL karşılığı ve beklenen net gelirle birlikte gösteriliyor.',
+    ],
+    author: 'Berk',
+  },
+  {
     version: '13.06',
     date: '2026-11-11',
     title: 'Rehber Operasyonu Maliyeti ve Ödeme Takibi',
@@ -263,21 +277,6 @@ const CRM_CHANGELOG = [
       'Aynı e-postanın yanlışlıkla birden fazla kez gönderilmesine karşı koruma eklendi',
       'Başarılı gönderim sonrası son iletişim zamanı ve acente durumu otomatik güncelleniyor',
       'Acentelerle ilgili işlem kayıtları daha güvenilir hale getirildi',
-    ],
-    author: 'Berk',
-  },
-  {
-    version: '12.45',
-    date: '2026-10-21',
-    title: 'CRM Güvenliği İki Aşamalı Doğrulama ile Güçlendirildi',
-    summary: 'DeseTour CRM giriş güvenliği güçlendirildi. Kullanıcılar artık e-posta ve şifre ile giriş yaptıktan sonra kimlik doğrulama uygulamasındaki tek kullanımlık kodla oturumlarını doğruluyor. Yetkili CRM işlemleri ve operasyon verileri ek güvenlik katmanlarıyla korunuyor.',
-    categories: ['Altyapı', 'İyileştirme'],
-    highlights: [
-      'CRM girişlerine iki aşamalı doğrulama eklendi',
-      'Google Authenticator ve standart TOTP uygulamaları destekleniyor',
-      'Operasyonel CRM erişimi doğrulanmış güvenli oturum gerektiriyor',
-      'Yetkisiz veya devre dışı bırakılmış kullanıcıların doğrudan veri erişimi ek olarak sınırlandırıldı',
-      'Kullanıcıların kendi yetki veya aktiflik durumlarını değiştirebilmesine karşı veritabanı koruması eklendi',
     ],
     author: 'Berk',
   },
