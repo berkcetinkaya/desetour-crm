@@ -101,6 +101,21 @@ const CRM_CHANGELOG_CATEGORIES = [
 // Newest first. See the release convention above before editing.
 const CRM_CHANGELOG = [
   {
+    version: '13.06',
+    date: '2026-11-11',
+    title: 'Rehber Operasyonu Maliyeti ve Ödeme Takibi',
+    summary: 'Her rehber operasyonu (aynı gün, aynı tur, aynı dil) artık tek ve sabit €150 maliyetle hesaplanıyor; rehber ödemeleri bu maliyeti kapatıp kapatmadığına göre takip ediliyor.',
+    categories: ['Operasyon', 'İyileştirme'],
+    highlights: [
+      'Aynı gün, tur ve dildeki rezervasyonlar tek rehber operasyonu sayılıyor ve tek €150 maliyet taşıyor — rezervasyon ve kişi sayısı tutarı değiştirmiyor.',
+      'Bütçe & Tahmin sekmesinde her operasyon için tarih, tur, dil, rezervasyon sayısı, rehber, maliyet, ödeme durumu ve açık bakiye tek satırda görünüyor.',
+      'Rehber ödemeleri maliyeti değiştirmiyor; ödendi, kısmen ödendi, ödeme bekliyor veya inceleme gerekli olarak eşleştiriliyor.',
+      'Tamamen iptal edilen operasyonlar maliyet taşımıyor; bu operasyonlara ait ödemeler ve yeniden açılan operasyonlardaki eski ödemeler inceleme için ayrıca gösteriliyor.',
+      'Farklı para biriminde yapılan ödemeler kur dönüşümü yapılmadan incelemeye alınıyor ve açık bakiyenin yanında ayrıca belirtiliyor.',
+    ],
+    author: 'Berk',
+  },
+  {
     version: '13.05',
     date: '2026-11-11',
     title: 'Mobilde Rezervasyon Finans Kartı',
@@ -263,21 +278,6 @@ const CRM_CHANGELOG = [
       'Operasyonel CRM erişimi doğrulanmış güvenli oturum gerektiriyor',
       'Yetkisiz veya devre dışı bırakılmış kullanıcıların doğrudan veri erişimi ek olarak sınırlandırıldı',
       'Kullanıcıların kendi yetki veya aktiflik durumlarını değiştirebilmesine karşı veritabanı koruması eklendi',
-    ],
-    author: 'Berk',
-  },
-  {
-    version: '12.44',
-    date: '2026-10-20',
-    title: 'Acente Araştırma Sonuçları Daha Güvenilir Hale Getirildi',
-    summary: 'Acenteler modülündeki pazar araştırması sonuçlarının işlenmesi güçlendirildi. Uzun ve kapsamlı aramalarda oluşabilen sonuç işleme hataları giderildi; araştırma başarısız olduğunda kullanıcıya anlaşılır bir Türkçe uyarı gösteriliyor.',
-    categories: ['Altyapı', 'İyileştirme'],
-    highlights: [
-      'Uzun ve kapsamlı pazar araştırmalarında oluşabilen sonuç işleme hataları giderildi',
-      'Araştırma sonuçlarının farklı yanıt biçimlerinde güvenilir şekilde okunabilmesi sağlandı',
-      'Çok sayıda aday içeren araştırmalar için çıktı kapasitesi artırıldı',
-      'Araştırma başarısız olduğunda kullanıcıya teknik detaylar yerine anlaşılır bir Türkçe uyarı gösteriliyor',
-      'Uygunluk, kanıt ve kaynak kuralları değiştirilmedi',
     ],
     author: 'Berk',
   },
