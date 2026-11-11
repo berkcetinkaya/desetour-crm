@@ -101,6 +101,19 @@ const CRM_CHANGELOG_CATEGORIES = [
 // Newest first. See the release convention above before editing.
 const CRM_CHANGELOG = [
   {
+    version: '13.09',
+    date: '2026-11-11',
+    title: 'Ana Sayfada Tahmini Net Kâr',
+    summary: 'Ana sayfada beklenen net gelirin yanında, tahmini giderler düşüldükten sonra kalan tahmini net kâr da gösteriliyor.',
+    categories: ['İyileştirme', 'Arayüz'],
+    highlights: [
+      'Beklenen Net Gelir kartında tahmini net kâr ve hesabın kendisi (net gelir − tahmini gider) görünüyor.',
+      'Tahmini gider: operasyon başına rehber maliyeti, giriş biletleri, dahil olan yemekler ve diğer giderler; girilmiş gerçek giderler tahminin yerine geçiyor.',
+      'Kâr bilgisi yalnızca Yönetici ve Operasyon rollerine görünüyor.',
+    ],
+    author: 'Berk',
+  },
+  {
     version: '13.08',
     date: '2026-11-11',
     title: 'Ana Sayfada Net Gelir',
@@ -260,21 +273,6 @@ const CRM_CHANGELOG = [
       'Aynı belirsiz rezervasyon için tekrarlanan otomatik kontrollerde gereksiz tekrar kayıt oluşturulmuyor',
       'Operasyon ekibi, şüpheli bir müşteri eşleşmesini inceleyip mevcut müşteriyle mi yoksa yeni bir müşteriyle mi ilişkilendirileceğine açıkça karar verebiliyor',
       'Hiçbir müşteri kaydı otomatik olarak birleştirilmiyor veya varsayılan olarak eşleştirilmiyor',
-    ],
-    author: 'Berk',
-  },
-  {
-    version: '12.47',
-    date: '2026-10-21',
-    title: 'Acente E-posta Taslak Akışı İyileştirildi',
-    summary: 'Acenteler için oluşturulan ilk temas e-posta taslakları artık oluşturuldukları anda CRM\'e kaydediliyor. Taslaklar gönderim öncesinde düzenlenebiliyor, kaydedilebiliyor ve geçmiş e-postalar korunuyor.',
-    categories: ['İyileştirme'],
-    highlights: [
-      'Oluşturulan e-posta taslakları artık otomatik olarak CRM\'e kaydediliyor',
-      'Konu ve mesaj içeriği gönderim öncesinde düzenlenip kaydedilebiliyor',
-      'En son oluşturulan taslak otomatik olarak açılıyor',
-      'Gönderilmiş e-postalar değiştirilemiyor ve geçmiş kayıtlar korunuyor',
-      'Taslak oluşturma ve güncelleme işlemlerinin kayıt sistemi iyileştirildi',
     ],
     author: 'Berk',
   },
