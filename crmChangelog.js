@@ -101,6 +101,20 @@ const CRM_CHANGELOG_CATEGORIES = [
 // Newest first. See the release convention above before editing.
 const CRM_CHANGELOG = [
   {
+    version: '13.12',
+    date: '2026-11-11',
+    title: 'Dillere Göre Rehber Maliyeti ve Düzenlenebilir Maliyet Kataloğu',
+    summary: 'Bütçe & Tahmin artık her dil için rehberlere ödenecek tutarı ve maaşlı rehberle karşılaştırmayı gösteriyor; maliyet kataloğundaki tutarlar ekrandan değiştirilebiliyor.',
+    categories: ['Operasyon', 'İyileştirme'],
+    highlights: [
+      'Dillere göre rehber maliyeti: operasyon ve gün sayısı, aynı gün en fazla operasyon, rehberlere ödenecek toplam ve operasyon başı maliyet.',
+      'Aylık maaş girilerek her dil için maaşlı rehberin mi serbest rehberin mi daha uygun olduğu ve başabaş noktası görülebiliyor.',
+      'Maliyet kataloğundaki tutarlar bugünden itibaren ya da tüm tarihler için ekrandan güncellenebiliyor; geçmiş aylar eski tutarla kalabiliyor.',
+      'Bütçe & Tahmin sadeleştirildi: rehber operasyonları tablosu ve kalan bütçe bölümü kaldırıldı, uyarılar Veri Kalitesi panelinde.',
+    ],
+    author: 'Berk',
+  },
+  {
     version: '13.11',
     date: '2026-11-11',
     title: 'Rehber Operasyon Maliyeti Düzenlenebilir',
@@ -255,21 +269,6 @@ const CRM_CHANGELOG = [
       'Yeni mesajlar operasyon bildirimlerine ve rezervasyon aktivite geçmişine yansıyor',
       'Rezervasyon listesinde yeni mesaj bulunan kayıtlar daha kolay fark edilebiliyor',
       'Aynı Civitatis mesajının tekrar işlenmesi duplicate kayıt oluşturmuyor',
-    ],
-    author: 'Berk',
-  },
-  {
-    version: '12.50',
-    date: '2026-10-28',
-    title: 'Acente Araştırması ve Veri Kalitesi',
-    summary: 'Acente araştırma sistemi daha temiz, daha güvenilir ve doğrudan iletişime uygun adaylar üretecek şekilde geliştirildi.',
-    categories: ['Otomasyon', 'İyileştirme'],
-    highlights: [
-      'CRM\'de daha önce kayıtlı olan acenteler yeni araştırmalardan otomatik olarak dışlanıyor; aynı acentenin farklı website formatlarıyla (www, http/https, path, query, port) tekrar bulunması engelleniyor',
-      'Araştırmada kullanılabilir iletişim maili bulunamayan yeni acenteler artık CRM\'e eklenmiyor; sonuçlar doğrudan outreach yapılabilecek gerçek adaylardan oluşuyor',
-      'Website adresleri normalize edilerek aynı acentenin farklı yazımlarla tekrar kaydedilmesi engelleniyor; bu koruma artık ek bir güvenlik katmanıyla destekleniyor',
-      'Acente detay sayfasından mail adresi, iletişim kişisi, telefon ve website bilgileri manuel olarak güncellenebiliyor; daha önce maili bulunamayan acentelere sonradan iletişim bilgisi eklenebiliyor',
-      'Araştırma sonuçlarında mevcut CRM kayıtları, tekrar eden adaylar ve iletişim maili olmayan sonuçlar filtreleniyor; yalnızca yeni ve kullanılabilir adaylar sonuç listesinde gösteriliyor',
     ],
     author: 'Berk',
   },
