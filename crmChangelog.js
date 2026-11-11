@@ -101,6 +101,22 @@ const CRM_CHANGELOG_CATEGORIES = [
 // Newest first. See the release convention above before editing.
 const CRM_CHANGELOG = [
   {
+    version: '13.04',
+    date: '2026-11-11',
+    title: 'Finans Merkezi ve Takvim Hızlı Görünüm',
+    summary: 'Yeni Finans bölümü operasyon bütçesini, beklenen net tahsilatı ve tur karlılığını tek yerde gösteriyor. Takvimde bir rezervasyona tıklamak artık sayfadan çıkmadan hızlı bir özet açıyor.',
+    categories: ['Yeni Özellik', 'Operasyon', 'Arayüz'],
+    highlights: [
+      'Takvimde rezervasyona tıklayınca sağda (mobilde alttan) hızlı görünüm açılıyor; takvimdeki gün, hafta ve ay yerinde kalıyor.',
+      'Finans: kalan operasyon bütçesi, beklenen net tahsilat, tahmini ve gerçekleşen kâr; dövizli tutarlar kendi para biriminde ve ECB kuruyla TL karşılığıyla.',
+      'Rehber bütçesi her tarih, tur ve dil için tek rehber operasyonu olarak hesaplanıyor; aynı gruptaki rezervasyonlar maliyeti paylaşıyor.',
+      'Rezervasyon detayında planlanan ve gerçekleşen maliyet, Civitatis komisyonu ve net alacak; gerçek giderler buradan kaydediliyor.',
+      'Ödemeler artık Finans → Tahsilatlar altında; doğrudan ödeme göstergeleri ve raporlardaki iptal edilmiş ödemeler düzeltildi.',
+    ],
+    author: 'Berk',
+    technicalNote: 'Bilet, yemek ve Boğaz turu gibi maliyetler bir maliyet kataloğundan geliyor; resmi fiyatlar yalnızca referans olarak saklanıyor. Eksik dil, tur, yemek veya maliyet bilgisi Finans ekranında ayrıca listeleniyor. Gerçek giderlerin TL karşılığı kayıt anındaki kurla sabitleniyor.',
+  },
+  {
     version: '13.03',
     date: '2026-11-11',
     title: 'Operasyon Odaklı Ana Sayfa ve Aylık Ciro Takibi',
@@ -262,21 +278,6 @@ const CRM_CHANGELOG = [
       'Pazar araştırması artık daha uzun süren veya çok adaylı aramalarda zaman aşımına uğramıyor',
       'Zaman aşımı durumunda kullanıcıya anlaşılır bir Türkçe bilgi mesajı gösteriliyor',
       'Araştırma kalitesi, kanıt zorunluluğu ve uygunluk değerlendirmesi hiçbir şekilde değişmedi',
-    ],
-    author: 'Berk',
-  },
-  {
-    version: '12.42',
-    date: '2026-10-20',
-    title: 'Acenteler Araştırması Geliştirildi',
-    summary: 'Acenteler modülündeki pazar araştırması sonuçları artık daha anlaşılır bir şekilde sunuluyor. Şirket değerlendirmeleri Türkçe hazırlanırken, firma bilgileri ve kaynaklar orijinal haliyle korunuyor.',
-    categories: ['Arayüz', 'İyileştirme'],
-    highlights: [
-      'Pazar araştırması sonuçlarındaki şirket değerlendirmeleri artık Türkçe gösteriliyor',
-      'Her aday için "Ne yapıyor?", "Neden DeseTour\'a uygun?", "Kanıt" ve "İş Birliği Fırsatı" bölümleri eklendi',
-      'Firma adı, web sitesi, şehir, iletişim bilgileri ve kaynak adresleri orijinal haliyle korunuyor',
-      'İngilizce, İspanyolca, Portekizce ve İtalyanca ilk temas taslakları seçilen hedef dilde hazırlanıyor',
-      'Yüksek Uyum değerlendirmesinde kaynak ve somut kanıt zorunluluğu korunuyor',
     ],
     author: 'Berk',
   },
