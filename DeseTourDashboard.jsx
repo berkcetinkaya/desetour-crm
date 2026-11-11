@@ -12712,35 +12712,6 @@ function _FinDataQuality({ s }) {
   );
 }
 
-function _FinCategoryTable({ s, mode }) {
-  const cats = ["ticket", "guide", "meal", "transport", "other"];
-  const cols = mode === "budget"
-    ? [["remaining", "Kalan bütçe"], ["planned", "Ay toplamı (plan)"]]
-    : [["planned", "Planlanan"], ["actual", "Gerçekleşen"], ["remaining", "Kalan"]];
-  return (
-    <div style={{ overflowX: "auto", border: `1px solid ${C.border}`, borderRadius: T.radius, background: C.white }}>
-      <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: "'Geist',sans-serif", fontSize: 12.5 }}>
-        <thead><tr style={{ background: C.ivory }}>
-          <th style={{ textAlign: "left", padding: "9px 14px", fontWeight: 600, color: C.textMuted }}>Kategori</th>
-          {cols.map(([k, l]) => <th key={k} style={{ textAlign: "right", padding: "9px 14px", fontWeight: 600, color: C.textMuted, whiteSpace: "nowrap" }}>{l}</th>)}
-        </tr></thead>
-        <tbody>
-          {cats.map(c => (
-            <tr key={c} style={{ borderTop: `1px solid ${C.borderLight}` }}>
-              <td style={{ padding: "9px 14px", color: C.text }}>{FINANCE_CATEGORY_LABELS[c]}</td>
-              {cols.map(([k]) => <td key={k} style={{ padding: "9px 14px", textAlign: "right", color: C.text, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{_fmtFinanceMap(s.categories[c][k])}</td>)}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-// Genel Bakış: ONLY the money to prepare from today on — guides, entrance
-// tickets and other operation payments — for 7 / 15 / 30 days, plus the
-// operations of the coming week. Independent of the month selector; built
-// from the same month summaries (buildFinanceCashNeeds), nothing recomputed.
 function useFinanceCashNeeds() {
   const todayISO = _istanbulISODate();
   const m0 = todayISO.slice(0, 7), m1 = _financeShiftMonth(m0, 1), m2 = _financeShiftMonth(m0, 2);
@@ -12994,57 +12965,7 @@ function _FinExtraSales({ s }) {
 }
 
 const _FIN_GUIDE_PAY_LABEL = { unpaid: "ödenmedi", pending: "ödeme bekliyor", partially_paid: "kısmen ödendi", paid: "ödendi", overpaid: "fazla ödeme", review: "inceleme gerekli", no_cost: "maliyet yok" };
-const _FIN_GUIDE_DISC_LABEL = { currency_mismatch: "para birimi farklı", amount_differs: "tutar sabit maliyetle uyuşmuyor", multiple_payments: "birden fazla ödeme", prior_operation_payment: "önceki iptal operasyonun ödemesi" };
-
-// One line per operation group (date + tour + language) — never per
-// reservation. Presentation only: every field comes from summary.guideServices.
-function _FinGuideOperations({ s }) {
-  const th = { textAlign: "left", padding: "9px 12px", fontWeight: 600, color: C.textMuted, whiteSpace: "nowrap" };
-  const td = { padding: "9px 12px", color: C.text, verticalAlign: "top" };
-  const rows = s.guideServices;
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-      <div style={{ overflowX: "auto", border: `1px solid ${C.border}`, borderRadius: T.radius, background: C.white }}>
-        <table data-testid="finance-guide-operations" style={{ width: "100%", borderCollapse: "collapse", fontFamily: "'Geist',sans-serif", fontSize: 12.5 }}>
-          <thead><tr style={{ background: C.ivory }}>
-            {["Tarih", "Tur", "Dil", "Rez.", "Rehber", "Maliyet", "Ödeme", "Açık bakiye"].map((h, i) => <th key={h} style={{ ...th, textAlign: i >= 5 ? "right" : i === 3 ? "right" : "left" }}>{h}</th>)}
-          </tr></thead>
-          <tbody>
-            {rows.length === 0 && <tr><td colSpan={8} style={{ ...td, color: C.textMuted }}>Bu ay rehber operasyonu yok.</td></tr>}
-            {rows.map(g => (
-              <tr key={g.key} style={{ borderTop: `1px solid ${C.borderLight}` }}>
-                <td style={{ ...td, whiteSpace: "nowrap" }}>{new Date(g.date + "T12:00:00").toLocaleDateString("tr-TR", { day: "numeric", month: "short" })}</td>
-                <td style={td}>{g.tourLabel}{g.unresolvedReason && <div style={{ fontSize: 11, color: C.amber }}>{g.unresolvedReason === "tour_missing" ? "Tur bilgisi eksik" : g.unresolvedReason === "language_unrecognized" ? "Dil tanınmıyor" : "Dil belirtilmemiş"} · ayrı operasyon</div>}</td>
-                <td style={td}>{g.language || "—"}</td>
-                <td style={{ ...td, textAlign: "right" }}>{g.reservationCount}</td>
-                <td style={td}>{g.guideNames.length ? g.guideNames.join(", ") : g.assignedWithoutName ? <span style={{ color: C.textMid }}>Rehber atandı (isim yok)</span> : <span style={{ color: C.red }}>Rehber atanmadı</span>}
-                  {g.guideNames.length > 0 && g.unassignedReservations > 0 && <div style={{ fontSize: 11, color: C.amber }}>{g.unassignedReservations} rezervasyonda rehber yok</div>}</td>
-                <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{Object.keys(g.planned).length ? _fmtFinanceMap(g.planned) : "0"}
-                  {g.override && <div title={g.override.reason || ""} style={{ fontSize: 11, color: C.amber }}>özel · standart {_fmtFinanceMap(g.standardCost)}</div>}</td>
-                <td style={{ ...td, textAlign: "right", whiteSpace: "nowrap" }}>
-                  <span style={{ color: g.paymentStatus === "paid" ? C.green : g.paymentStatus === "unpaid" ? C.textMuted : C.amber }}>{_FIN_GUIDE_PAY_LABEL[g.paymentStatus]}</span>
-                  {g.discrepancies.filter(d => d !== "multiple_payments" && d !== "prior_operation_payment").length > 0 && <div style={{ fontSize: 11, color: C.red }}>{g.discrepancies.filter(d => d !== "multiple_payments" && d !== "prior_operation_payment").map(d => _FIN_GUIDE_DISC_LABEL[d]).join(" · ")}</div>}
-                  {Object.keys(g.cashPaid).length > 0 && <div style={{ fontSize: 11, color: C.textMuted }}>ödenen {_fmtFinanceMap(g.cashPaid)}</div>}
-                  {Object.keys(g.cashPending).length > 0 && <div style={{ fontSize: 11, color: C.textMuted }}>bekleyen {_fmtFinanceMap(g.cashPending)}</div>}
-                  {g.priorPayments.length > 0 && <div style={{ fontSize: 11, color: C.amber }}>önceki iptal operasyondan {g.priorPayments.length} ödeme ({_fmtFinanceMap(g.priorAmount)}) — inceleyin, bu maliyete sayılmadı</div>}
-                </td>
-                <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{g.outstanding === null ? <span style={{ color: C.amber }}>para birimi incelemesi</span> : _fmtFinanceMap(g.outstanding)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      {s.cancelledGroups.length > 0 && (
-        <div data-testid="finance-cancelled-operations" style={{ fontSize: 12, color: C.textMuted, fontFamily: "'Geist',sans-serif", lineHeight: 1.6 }}>
-          <b style={{ color: C.textMid }}>İptal edilen operasyonlar (maliyet yok):</b>{" "}
-          {s.cancelledGroups.map(c => `${new Date(c.date + "T12:00:00").toLocaleDateString("tr-TR", { day: "numeric", month: "short" })} · ${c.tourLabel} · ${c.language} (${c.reservations} iptal rez.${c.paymentsToReview.length ? `, ${c.paymentsToReview.length} rehber ödemesi (${_fmtFinanceMap(c.paymentAmount)}) — inceleyin` : ""})`).join(" · ")}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function _FinBudget({ s, isCurrentMonth }) {
+function _FinBudget({ s }) {
   const guide = s.categories.guide;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
@@ -13054,38 +12975,142 @@ function _FinBudget({ s, isCurrentMonth }) {
         <span style={{ fontSize: 15, color: C.text }}><b>{_fmtFinanceMap(guide.planned)}</b> rehber bütçesi</span>
         {s.counts.unresolvedGuideServices > 0 && <span style={{ fontSize: 12, color: C.amber }}>{s.counts.unresolvedGuideServices} operasyon eksik veri nedeniyle ayrı sayıldı</span>}
       </div>
-      <_FinSection title="Rehber Operasyonları" right={<span style={{ fontSize: 11.5, color: C.textMuted, fontFamily: "'Geist',sans-serif" }}>Ödenen {_fmtFinanceMap(guide.cashPaid)} · bekleyen ödeme {_fmtFinanceMap(guide.cashPending)} · açık bakiye {_fmtFinanceMap(guide.outstanding)}{guide.underReview.groups > 0 && <span style={{ color: C.amber }}>{` + ${guide.underReview.groups} operasyon para birimi incelemesinde (${_fmtFinanceMap(guide.underReview.obligation)} yükümlülük; ödenen ${_fmtFinanceMap(guide.underReview.paid)})`}</span>}{guide.reviewPayments.count > 0 && <span style={{ color: C.amber }}>{` · incelemede ${guide.reviewPayments.count} ödeme (${_fmtFinanceMap(guide.reviewPayments.total)}) maliyete sayılmadı`}</span>}</span>}>
-        <_FinGuideOperations s={s}/>
-      </_FinSection>
-      <_FinSection title={isCurrentMonth ? "Kalan Bütçe · bugünden itibaren" : "Ay Bütçesi"}><_FinCategoryTable s={s} mode="budget"/></_FinSection>
-      <_FinSection title="Turlara Göre"><_FinTourTable s={s} mode="budget"/></_FinSection>
+      <_FinGuideLanguages s={s}/>
       <_FinDataQuality s={s}/>
     </div>
   );
 }
 
+// "Dillere Göre Rehber Maliyeti": what the month costs in guides per
+// language, and — with a what-if monthly salary — whether one salaried guide
+// per language would be cheaper. Numbers come from buildGuideLanguageCosts;
+// the salary is a per-browser what-if, never stored in the database.
+function _FinGuideLanguages({ s }) {
+  const read = () => { try { return JSON.parse(localStorage.getItem("dese_fin_guide_salary") || "null"); } catch (_) { return null; } };
+  const [salary, setSalary] = useState(() => read() || { amount: "", currency: "TRY" });
+  useEffect(() => { try { localStorage.setItem("dese_fin_guide_salary", JSON.stringify(salary)); } catch (_) {} }, [salary]);
+  const L = useMemo(() => buildGuideLanguageCosts(s, { salary }), [s, salary]);
+  const th = { textAlign: "right", padding: "9px 12px", fontWeight: 600, color: C.textMuted, whiteSpace: "nowrap" };
+  const td = { padding: "9px 12px", color: C.text, textAlign: "right", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap", verticalAlign: "top" };
+  const tl = (v) => v == null ? "—" : `${v < 0 ? "−" : ""}₺${Math.abs(Math.round(v)).toLocaleString("tr-TR")}`;
+  const input = { boxSizing: "border-box", padding: "7px 9px", borderRadius: T.radiusSm, border: `1px solid ${C.border}`, background: C.white, color: C.text, fontSize: 12.5, fontFamily: "'Geist',sans-serif" };
+  const has = !!L.salary;
+  return (
+    <_FinSection title="Dillere Göre Rehber Maliyeti" right={
+      <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: C.textMuted, fontFamily: "'Geist',sans-serif" }}>
+        Maaşlı rehber (aylık)
+        <input data-testid="guide-salary-amount" inputMode="decimal" value={salary.amount} onChange={e => setSalary({ ...salary, amount: e.target.value })} placeholder="ör. 60000" style={{ ...input, width: 100 }}/>
+        <select data-testid="guide-salary-currency" value={salary.currency} onChange={e => setSalary({ ...salary, currency: e.target.value })} style={input}>
+          {["TRY", "EUR"].map(c => <option key={c} value={c}>{c}</option>)}
+        </select>
+      </span>}>
+      <div style={{ overflowX: "auto", border: `1px solid ${C.border}`, borderRadius: T.radius, background: C.white }}>
+        <table data-testid="finance-guide-languages" style={{ width: "100%", borderCollapse: "collapse", fontFamily: "'Geist',sans-serif", fontSize: 12.5 }}>
+          <thead><tr style={{ background: C.ivory }}>
+            <th style={{ ...th, textAlign: "left" }}>Dil</th><th style={th}>Operasyon</th><th style={th}>Gün</th><th style={th}>Aynı gün en fazla</th>
+            <th style={th}>Rehberlere ödenecek</th><th style={th}>Operasyon başı</th>
+            {has && <><th style={th}>Maaşlı rehberle</th><th style={th}>Fark</th><th style={{ ...th, textAlign: "left" }}>Daha uygun</th></>}
+          </tr></thead>
+          <tbody>
+            {L.rows.length === 0 && <tr><td colSpan={has ? 9 : 6} style={{ ...td, textAlign: "left", color: C.textMuted }}>Bu ay rehber operasyonu yok.</td></tr>}
+            {L.rows.map(r => (
+              <tr key={r.language} style={{ borderTop: `1px solid ${C.borderLight}` }}>
+                <td style={{ ...td, textAlign: "left", fontWeight: 600 }}>{r.language}</td>
+                <td style={td}>{r.operations}</td><td style={td}>{r.days}</td><td style={td}>{r.maxSameDay}</td>
+                <td style={td}><b>{_fmtFinanceMap(r.cost)}</b>{r.costTry != null && Object.keys(r.cost).some(c => c !== "TRY") && <div style={{ fontSize: 11, color: C.textMuted }}>≈ {tl(r.costTry)}</div>}</td>
+                <td style={td}>{tl(r.avgPerOperationTry)}</td>
+                {has && <>
+                  <td style={td}>{tl(r.comparison.inHouseTry)}{r.extraOperations > 0 && <div style={{ fontSize: 11, color: C.textMuted }}>+ {r.extraOperations} ek operasyon serbest rehberle</div>}</td>
+                  <td style={{ ...td, color: r.comparison.savingTry > 0 ? C.green : r.comparison.savingTry < 0 ? C.red : C.text }}>{r.comparison.savingTry == null ? "—" : (r.comparison.savingTry > 0 ? "maaşlı " : "serbest ") + tl(Math.abs(r.comparison.savingTry)) + " daha ucuz"}</td>
+                  <td style={{ ...td, textAlign: "left" }}>{r.comparison.recommendation === "salaried" ? <b style={{ color: C.green }}>Maaşlı rehber</b> : r.comparison.recommendation === "freelance" ? "Serbest rehber" : "—"}
+                    {r.comparison.breakEvenOperations != null && <div style={{ fontSize: 11, color: C.textMuted }}>başabaş: ayda ~{r.comparison.breakEvenOperations} operasyon</div>}</td>
+                </>}
+              </tr>
+            ))}
+            {L.rows.length > 1 && (
+              <tr style={{ borderTop: `1px solid ${C.border}`, background: C.ivory }}>
+                <td style={{ ...td, textAlign: "left", fontWeight: 600 }}>Toplam</td><td style={td}>{L.totalOperations}</td><td style={td}></td><td style={td}></td>
+                <td style={td}><b>{_fmtFinanceMap(L.totalCost)}</b>{L.totalCostTry != null && <div style={{ fontSize: 11, color: C.textMuted }}>≈ {tl(L.totalCostTry)}</div>}</td>
+                <td style={td}></td>{has && <><td style={td}></td><td style={td}></td><td style={td}></td></>}
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+      <div style={{ marginTop: 8, fontSize: 11.5, color: C.textMuted, fontFamily: "'Geist',sans-serif", lineHeight: 1.5 }}>
+        Rehberlere ödenecek: o dildeki her operasyonun rehber maliyeti (iptal edilen operasyonlar hariç, elle değiştirilen tutarlar dahil).
+        {" "}Maaşlı rehber karşılaştırması: o dil için tek bir maaşlı rehberin her gün bir operasyon yaptığı, aynı gündeki diğer operasyonların serbest rehberle yapıldığı varsayılır. Maaşa SGK ve diğer işveren maliyetlerini dahil edin; karar için birkaç ayı karşılaştırın.
+      </div>
+    </_FinSection>
+  );
+}
 function _FinCatalog({ s }) {
   const { data: items, loading } = useRepo("finance", "getCostItems");
+  const { data: tours } = useRepo("tour", "getAll");
+  const { mutate, mutating } = useRepoMutation("finance");
+  const [edit, setEdit] = useState(null);
+  const today = _istanbulISODate();
+  const tourName = (id) => ((tours || []).find(t => t.id === id) || {}).name || "Tura özel";
   const BASIS = { per_guest: "kişi başı", per_adult: "yetişkin başı", fixed_per_reservation: "rezervasyon başı", fixed: "operasyon başı", preparation_rule: "hazırlık miktarı × tutar", guide_service_group: "rehber operasyonu başı" };
+  const input = { boxSizing: "border-box", padding: "6px 8px", borderRadius: T.radiusSm, border: `1px solid ${C.border}`, background: C.white, color: C.text, fontSize: 12.5, fontFamily: "'Geist',sans-serif" };
+  const btn = { padding: "4px 10px", borderRadius: T.radiusSm, border: `1px solid ${C.border}`, background: C.white, color: C.text, cursor: "pointer", fontSize: 11.5, fontFamily: "'Geist',sans-serif" };
+  async function save(c) {
+    const { error } = await mutate("reviseCostItem", c.id, { amount: edit.amount, currency: edit.currency, mode: edit.mode });
+    if (error) { showToast("Hata: " + error); return; }
+    showToast(edit.mode === "all" ? "Tutar tüm tarihler için düzeltildi." : "Yeni tutar bugünden itibaren geçerli.");
+    setEdit(null);
+  }
+  const validity = (c) => `${c.validFrom ? new Date(c.validFrom + "T12:00:00").toLocaleDateString("tr-TR", { day: "numeric", month: "short", year: "numeric" }) : "—"}${c.validTo ? " – " + new Date(c.validTo + "T12:00:00").toLocaleDateString("tr-TR", { day: "numeric", month: "short", year: "numeric" }) : " →"}`;
   const row = (c) => (
-    <tr key={c.id} style={{ borderTop: `1px solid ${C.borderLight}` }}>
+    <React.Fragment key={c.id}>
+    <tr style={{ borderTop: `1px solid ${C.borderLight}` }}>
       <td style={{ padding: "9px 12px", color: C.text }}>{c.label}{c.isProvisional && <span style={{ marginLeft: 6, fontSize: 10.5, color: C.amber }}>Geçici</span>}</td>
       <td style={{ padding: "9px 12px", color: C.textMid }}>{FINANCE_CATEGORY_LABELS[c.category] || c.category}</td>
       <td style={{ padding: "9px 12px", color: C.textMid }}>{BASIS[c.basis] || c.basis}</td>
       <td style={{ padding: "9px 12px", textAlign: "right", fontVariantNumeric: "tabular-nums", color: C.text, whiteSpace: "nowrap" }}>{_fmtFinanceMap({ [c.currency]: c.amount })}</td>
-      <td style={{ padding: "9px 12px", color: C.textMuted }}>{c.tourId || c.preparationRuleId ? "Tura özel" : "Genel"}</td>
+      <td style={{ padding: "9px 12px", color: C.textMuted }}>{c.tourId ? tourName(c.tourId) : "Genel"}</td>
+      <td style={{ padding: "9px 12px", color: C.textMuted, whiteSpace: "nowrap" }}>{validity(c)}</td>
       <td style={{ padding: "9px 12px", color: C.textMuted, whiteSpace: "nowrap" }}>{c.sourceUrl ? <a href={c.sourceUrl} target="_blank" rel="noopener noreferrer" style={{ color: C.goldText }}>Kaynak</a> : "—"}</td>
+      <td style={{ padding: "9px 12px", textAlign: "right", whiteSpace: "nowrap" }}>
+        {c.category === "guide"
+          ? <span title="Rehber maliyeti operasyon başına sabittir; gerekirse rezervasyonun Finans kartından o operasyon için değiştirilir." style={{ fontSize: 11, color: C.textFaint }}>rezervasyondan düzenlenir</span>
+          : edit && edit.id === c.id ? null
+          : <button type="button" data-testid="cost-item-edit" onClick={() => setEdit({ id: c.id, amount: String(c.amount), currency: c.currency, mode: "from_today" })} style={btn}>Düzenle</button>}
+      </td>
     </tr>
+    {edit && edit.id === c.id && (
+      <tr style={{ background: C.ivory }}>
+        <td colSpan={8} style={{ padding: "10px 12px" }}>
+          <form data-testid="cost-item-form" onSubmit={e => { e.preventDefault(); save(c); }} style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end", fontSize: 11.5, color: C.textMuted, fontFamily: "'Geist',sans-serif" }}>
+            <label style={{ display: "flex", flexDirection: "column", gap: 3 }}>Yeni tutar
+              <input inputMode="decimal" value={edit.amount} onChange={e => setEdit({ ...edit, amount: e.target.value })} required style={{ ...input, width: 100 }}/></label>
+            <label style={{ display: "flex", flexDirection: "column", gap: 3 }}>Para birimi
+              <select value={edit.currency} onChange={e => setEdit({ ...edit, currency: e.target.value })} style={input}>
+                {["EUR", "TRY", "USD", "GBP"].map(x => <option key={x} value={x}>{x}</option>)}
+              </select></label>
+            <label style={{ display: "flex", alignItems: "center", gap: 5 }}><input type="radio" checked={edit.mode === "from_today"} onChange={() => setEdit({ ...edit, mode: "from_today" })}/> Bugünden itibaren (geçmiş aylar eski tutarla kalır)</label>
+            <label style={{ display: "flex", alignItems: "center", gap: 5 }}><input type="radio" checked={edit.mode === "all"} onChange={() => setEdit({ ...edit, mode: "all" })}/> Tüm tarihler için düzelt</label>
+            <span style={{ flex: 1 }}/>
+            <button type="button" onClick={() => setEdit(null)} style={btn}>Vazgeç</button>
+            <button type="submit" disabled={mutating} style={{ ...btn, border: "none", background: C.navy, color: "#fff", fontWeight: 600 }}>{mutating ? "…" : "Kaydet"}</button>
+          </form>
+        </td>
+      </tr>
+    )}
+    </React.Fragment>
   );
   const table = (rows) => (
     <div style={{ overflowX: "auto", border: `1px solid ${C.border}`, borderRadius: T.radius, background: C.white }}>
-      <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: "'Geist',sans-serif", fontSize: 12.5 }}>
-        <thead><tr style={{ background: C.ivory }}>{["Kalem", "Kategori", "Hesaplama", "Tutar", "Kapsam", "Kaynak"].map((h, i) => <th key={h} style={{ textAlign: i === 3 ? "right" : "left", padding: "9px 12px", fontWeight: 600, color: C.textMuted }}>{h}</th>)}</tr></thead>
+      <table data-testid="finance-cost-catalog" style={{ width: "100%", borderCollapse: "collapse", fontFamily: "'Geist',sans-serif", fontSize: 12.5 }}>
+        <thead><tr style={{ background: C.ivory }}>{["Kalem", "Kategori", "Hesaplama", "Tutar", "Kapsam", "Geçerlilik", "Kaynak", ""].map((h, i) => <th key={h + i} style={{ textAlign: i === 3 ? "right" : "left", padding: "9px 12px", fontWeight: 600, color: C.textMuted }}>{h}</th>)}</tr></thead>
         <tbody>{rows.map(row)}</tbody>
       </table>
     </div>
   );
-  const active = (items || []).filter(c => c.isActive);
+  // Current versions only (valid today or starting later); earlier versions
+  // stay in the database and keep driving the months they covered.
+  const current = (c) => !c.validTo || c.validTo >= today;
+  const active = (items || []).filter(c => c.isActive && current(c));
   const internal = active.filter(c => c.kind === "internal"), refs = active.filter(c => c.kind === "public_reference");
   if (loading) return <LoadingState label="Maliyet kataloğu yükleniyor…"/>;
   return (
@@ -13154,7 +13179,7 @@ function FinancePage({ tab, navigate }) {
       ) : error ? (
         <ErrorState message="Finans verileri yüklenemedi." onRetry={reload}/>
       ) : !s ? null : current === "butce" ? (
-        <_FinBudget s={s} isCurrentMonth={isCurrentMonth}/>
+        <_FinBudget s={s}/>
       ) : current === "ek-satislar" ? (
         <_FinExtraSales s={s}/>
       ) : current === "turlar" ? (
@@ -20157,11 +20182,91 @@ function buildFinanceCashNeeds({ summaries, todayISO, horizons }) {
   return { todayISO, windows, operations: ops };
 }
 
+// ── Guide cost by language (Bütçe & Tahmin) ──────────────────────────────
+// For the month: per booking language, how many guide operations, on how
+// many days, the most on one day, and the total guide cost — so the owner
+// can judge "freelance guides vs one salaried guide per language".
+// Optional what-if salary: a salaried guide covers ONE operation per day
+// (the costliest one that day); any other operation that day still needs a
+// freelance guide. In-house cost = salary + those extra operations. Built
+// only from summary.guideServices (cancelled operations are not in it).
+function buildGuideLanguageCosts(summary, opts) {
+  const fx = { rates: summary.fx.rates, rateSourceError: summary.fx.rateSourceError };
+  const salaryIn = opts && opts.salary;
+  const salaryAmt = salaryIn ? Number(String(salaryIn.amount).replace(',', '.')) : NaN;
+  const salary = Number.isFinite(salaryAmt) && salaryAmt > 0 ? _financeAdd({}, _financeCurrency(salaryIn.currency) || 'TRY', salaryAmt) : null;
+  const salaryT = salary ? _financeToTry(salary, fx) : null;
+  const byLang = new Map();
+  for (const g of summary.guideServices) {
+    const lang = g.language || 'Dil belirtilmemiş';
+    if (!byLang.has(lang)) byLang.set(lang, []);
+    byLang.get(lang).push(g);
+  }
+  const rows = [...byLang.entries()].map(([language, ops]) => {
+    const byDay = new Map();
+    for (const g of ops) { if (!byDay.has(g.date)) byDay.set(g.date, []); byDay.get(g.date).push(g); }
+    const cost = _financeSumMaps(...ops.map(g => g.planned));
+    const costT = _financeToTry(cost, fx);
+    // One salaried guide: the costliest operation of each day is covered.
+    const extra = [];
+    for (const list of byDay.values()) {
+      const ranked = list.map(g => ({ g, t: _financeToTry(g.planned, fx).tryTotal })).sort((a, b) => b.t - a.t);
+      ranked.slice(1).forEach(x => extra.push(x.g));
+    }
+    const extraCost = _financeSumMaps(...extra.map(g => g.planned));
+    const extraT = _financeToTry(extraCost, fx);
+    const avgPerOperationTry = costT.complete && ops.length ? Math.round(costT.tryTotal / ops.length) : null;
+    let comparison = null;
+    if (salaryT) {
+      const ok = salaryT.complete && costT.complete && extraT.complete;
+      const inHouseTry = ok ? Math.round(salaryT.tryTotal + extraT.tryTotal) : null;
+      const savingTry = ok ? Math.round(costT.tryTotal - inHouseTry) : null;
+      comparison = { inHouseTry, savingTry, recommendation: savingTry == null ? null : savingTry > 0 ? 'salaried' : 'freelance',
+        breakEvenOperations: ok && avgPerOperationTry ? Math.ceil(salaryT.tryTotal / avgPerOperationTry) : null };
+    }
+    return { language, operations: ops.length, days: byDay.size, maxSameDay: Math.max(...[...byDay.values()].map(l => l.length)),
+      cost, costTry: costT.complete ? costT.tryTotal : null, avgPerOperationTry,
+      coveredBySalaried: byDay.size, extraOperations: extra.length, extraCost, comparison };
+  }).sort((a, b) => (b.costTry || 0) - (a.costTry || 0) || a.language.localeCompare(b.language));
+  const totalCost = _financeSumMaps(...rows.map(r => r.cost));
+  const totalT = _financeToTry(totalCost, fx);
+  return { rows, totalOperations: rows.reduce((n, r) => n + r.operations, 0), totalCost, totalCostTry: totalT.complete ? totalT.tryTotal : null,
+    salary, salaryTry: salaryT && salaryT.complete ? salaryT.tryTotal : null };
+}
+
+// ── Cost catalog revision ────────────────────────────────────────────────
+// Changing an amount from the screen. "from_today" keeps history: the
+// current row ends yesterday and a copy with the new amount starts today
+// (Finance picks the row valid on each date, so past months keep the old
+// amount). "all" corrects the row in place for every date. The guide row is
+// reference-only (the guide cost is a fixed rule, changed per operation from
+// the reservation), so it is never revised here.
+function _financeCostItemRevisionPlan(item, input, todayISO) {
+  if (!item) throw new Error('Kalem bulunamadı.');
+  if (item.category === 'guide') throw new Error('Rehber maliyeti katalogdan değiştirilmez — operasyon bazında rezervasyondan düzenlenir.');
+  const raw = typeof input.amount === 'string' ? input.amount.replace(',', '.').trim() : input.amount;
+  const amount = raw === '' || raw == null ? NaN : Math.round(Number(raw) * 100) / 100;
+  if (!Number.isFinite(amount) || amount < 0) throw new Error('Tutar 0 veya daha büyük olmalı.');
+  const currency = String(input.currency || item.currency || '').trim().toUpperCase();
+  if (!/^[A-Z]{3}$/.test(currency)) throw new Error('Geçersiz para birimi.');
+  const today = String(todayISO).slice(0, 10);
+  if (item.validTo && item.validTo < today) throw new Error('Bu kalemin geçerliliği bitmiş; güncel kalemi düzenleyin.');
+  const inPlace = input.mode === 'all' || !item.validFrom || item.validFrom >= today;
+  if (inPlace) return { update: { amount, currency }, insert: null };
+  return {
+    update: { validTo: _financeAddDays(today, -1) },
+    insert: { label: item.label, category: item.category, basis: item.basis, amount, currency, tourId: item.tourId || null,
+      preparationRuleId: item.preparationRuleId || null, validFrom: today, validTo: item.validTo || null, isActive: true,
+      kind: item.kind, isProvisional: !!item.isProvisional, sourceNote: item.sourceNote || '', sourceUrl: item.sourceUrl || null,
+      lastVerifiedDate: item.kind === 'public_reference' ? today : (item.lastVerifiedDate || null) },
+  };
+}
+
 function _financeDomain() {
   return { FINANCE_COST_CATEGORIES, FINANCE_EXPENSE_CATEGORIES, _istanbulISODate, _financeMonthRange,
     _financeCanonicalLanguage, _financeOperationGroupKey, buildGuideServices, attributeGuidePayments, _financePickCostItem, FINANCE_GUIDE_OPERATION_COST,
     _financeRevenueExpectation, _financeActualRevenue, _financeEarnedNetRevenue, _financeToTry, buildFinanceMonthSummary,
-    _financeAddDays, buildFinanceCashNeeds };
+    _financeAddDays, buildFinanceCashNeeds, buildGuideLanguageCosts, _financeCostItemRevisionPlan };
 }
 // TESTABLE:_financeDomain:end
 
@@ -23733,6 +23838,7 @@ const _mockFinanceExtraSales = [];
 // _financeExpensePayload as the Supabase repo — a guide expense is refused
 // here too); no FX is frozen without a database.
 const _mockFinanceExpenses = [];
+const _mockFinanceCostItems = [];
 const FinanceRepository = {
   async getMonthData(monthISO) {
     const { startISO, endISO } = _financeMonthRange(monthISO);
@@ -23773,7 +23879,14 @@ const FinanceRepository = {
     if (i >= 0) _mockFinanceExtraSales.splice(i, 1);
     return true;
   },
-  async getCostItems() { return []; },
+  async getCostItems() { return _mockFinanceCostItems.slice(); },
+  async reviseCostItem(id, input) {
+    const i = _mockFinanceCostItems.findIndex(c => c.id === id);
+    const plan = _financeCostItemRevisionPlan(_mockFinanceCostItems[i], input, _istanbulISODate());
+    if (plan.insert) _mockFinanceCostItems.push({ ...plan.insert, id: 'CI-' + Date.now() });
+    _mockFinanceCostItems[i] = { ..._mockFinanceCostItems[i], ...plan.update };
+    return true;
+  },
   async getExpenses({ reservationId } = {}) { return _mockFinanceExpenses.filter(e => !reservationId || e.reservationId === reservationId); },
   async createExpense(d) {
     const row = _financeExpensePayload(d);
@@ -23911,6 +24024,20 @@ const SupabaseFinanceRepo = {
     if (error) throw new Error(error.message);
     await _sbLog('finance_cost_item', data.id, 'created', `Maliyet kalemi: ${d.label} · ${row.amount} ${row.currency} (${d.kind === 'internal' ? 'iç maliyet' : 'resmi referans'})`, { category: row.category, basis: row.basis, amount: row.amount, currency: row.currency, kind: row.kind });
     return mapFinanceCostItemFromDB(data);
+  },
+  // Amount revision from the catalog screen (see _financeCostItemRevisionPlan).
+  // The new version is created FIRST and the old one closed after, so a
+  // failure in between never leaves a date without a cost (Finance picks the
+  // newest valid_from that covers a date).
+  async reviseCostItem(id, input) {
+    const sb = getSB(); if (!sb) throw new Error('Supabase bağlantısı yok.');
+    const { data: cur, error } = await sb.from('finance_cost_items').select('*').eq('id', id).single();
+    if (error) throw new Error(error.message);
+    const item = mapFinanceCostItemFromDB(cur);
+    const plan = _financeCostItemRevisionPlan(item, input, _istanbulISODate());
+    if (plan.insert) await SupabaseFinanceRepo.createCostItem(plan.insert);
+    await SupabaseFinanceRepo.updateCostItem(id, plan.update);
+    return true;
   },
   async updateCostItem(id, d) {
     const sb = getSB(); if (!sb) throw new Error('Supabase bağlantısı yok.');

@@ -237,3 +237,13 @@ test('Spanish Topkapı backfill: separate file, existing engine, upcoming non-ca
   assert.match(ES_BF, /r\.check_in >= \(now\(\) AT TIME ZONE 'Europe\/Istanbul'\)::date/);
   assert.match(ES_RB, /UPDATE public\.tour_preparation_rules SET is_active = FALSE WHERE id = v_rule\.id;/);
 });
+
+test('6 Nov 2026 Spanish Topkapı backfill: that tour, that date, non-cancelled only, existing engine', () => {
+  const BF = read('finance_topkapi_es_backfill_2026_11_06.sql');
+  const code = sqlCode(BF);
+  assert.match(code, /public\.materialize_reservation_preparations\(r\.id\)/);
+  assert.match(code, /r\.tour_id = '3d3a335a-1320-4277-977d-62a19fa7090a'/);
+  assert.match(code, /r\.check_in = DATE '2026-11-06'/);
+  assert.match(code, /r\.status <> 'cancelled'/);
+  assert.doesNotMatch(code, /INSERT|UPDATE|DELETE/);
+});

@@ -170,39 +170,8 @@ test('mobile reservation detail shows the same Finance card, finance roles only'
 
 // ── Fixed guide operation cost per group ───────────────────────────────
 
-test('guide operations: one line per operation group with tour, language, reservations, guide or "Rehber atanmadı", cost, payment status, outstanding', () => {
-  const g = body('_FinGuideOperations');
-  assert.match(g, /const rows = s\.guideServices;/, 'rows come from the canonical group list, never per reservation');
-  for (const h of ['"Tarih"', '"Tur"', '"Dil"', '"Rez."', '"Rehber"', '"Maliyet"', '"Ödeme"', '"Açık bakiye"']) assert.ok(g.includes(h), h);
-  assert.match(g, /Rehber atanmadı/);
-  assert.match(g, /_fmtFinanceMap\(g\.planned\)/);
-  assert.match(g, /_FIN_GUIDE_PAY_LABEL\[g\.paymentStatus\]/);
-  assert.match(g, /_fmtFinanceMap\(g\.outstanding\)/);
-  assert.match(g, /s\.cancelledGroups/);
-  assert.match(body('_FinBudget'), /<_FinGuideOperations s=\{s\}\/>/);
-  assert.match(body('_FinTourTable'), /_FIN_GUIDE_PAY_LABEL\[g\.state\]/);
-});
 
-test('guide header never silently omits an unresolved balance: confirmed open + groups under currency review', () => {
-  const b = body('_FinBudget');
-  assert.match(b, /açık bakiye \{_fmtFinanceMap\(guide\.outstanding\)\}/);
-  assert.match(b, /guide\.underReview\.groups > 0 &&/);
-  assert.match(b, /operasyon para birimi incelemesinde/);
-  const g = body('_FinGuideOperations');
-  assert.match(g, /para birimi incelemesi/);
-  assert.match(g, /bekleyen \{_fmtFinanceMap\(g\.cashPending\)\}/, 'original-currency pending amount visible in detail');
-  assert.match(g, /Rehber atandı \(isim yok\)/);
-  assert.match(g, /rehber ödemesi \(\$\{_fmtFinanceMap\(c\.paymentAmount\)\}\) — inceleyin/);
-});
 
-test('reactivation review (option B) and review payments are visible in the table, header and data quality', () => {
-  const g = body('_FinGuideOperations');
-  assert.match(g, /önceki iptal operasyondan \{g\.priorPayments\.length\} ödeme/);
-  assert.match(g, /bu maliyete sayılmadı/);
-  assert.match(body('_FinBudget'), /guide\.reviewPayments\.count > 0 &&/);
-  assert.match(body('_FinBudget'), /_fmtFinanceMap\(guide\.reviewPayments\.total\)/);
-  assert.match(body('_FinDataQuality'), /yeniden açılan operasyonda önceki iptal operasyonun rehber ödemesi var/);
-});
 
 test('loader: linked guide payments by reservation_id with NO payment-date filter; unlinked ones by payment_date', () => {
   const a = SOURCE.indexOf('const SupabaseFinanceRepo = {');
@@ -287,4 +256,39 @@ test('repos: extra sales validated by one payload, logged, and Finance keeps wor
   assert.match(repo, /if \(!monthISO \|\| !canAccess\(getAuthContext\(\)\.role, 'finance'\)\) return \{ sales: \[\], unavailable: false \};/);
   const m = SOURCE.indexOf('const FinanceRepository = {');
   assert.match(SOURCE.slice(m, SOURCE.indexOf('\n};', m)), /const row = _financeExtraSalePayload\(d\);/);
+});
+
+// ── Bütçe & Tahmin: language guide cost, no operations table / remaining budget ──
+
+test('Bütçe & Tahmin: headline + guide cost by language (+ salaried what-if) + data quality; no operations table, no remaining budget', () => {
+  const b = body('_FinBudget');
+  assert.match(b, /<_FinGuideLanguages s=\{s\}\/>/);
+  assert.match(b, /<_FinDataQuality s=\{s\}\/>/);
+  assert.doesNotMatch(b, /_FinGuideOperations|_FinCategoryTable|Kalan Bütçe|Turlara Göre/);
+  assert.doesNotMatch(SOURCE, /function _FinGuideOperations\(|function _FinCategoryTable\(/);
+  const g = body('_FinGuideLanguages');
+  assert.match(g, /buildGuideLanguageCosts\(s, \{ salary \}\)/);
+  for (const h of ['Dil', 'Operasyon', 'Gün', 'Aynı gün en fazla', 'Rehberlere ödenecek', 'Operasyon başı', 'Maaşlı rehberle', 'Fark', 'Daha uygun']) assert.ok(g.includes(h), h);
+  assert.match(g, /localStorage/, 'the salary is a per-browser what-if');
+  assert.doesNotMatch(g, /_financeToTry|buildGuideServices/);
+});
+
+test('data quality keeps every guide review item (the operations table is gone, the warnings are not)', () => {
+  const d = body('_FinDataQuality');
+  for (const t2 of ['geçmiş rehber operasyonunun ödemesi tamamlanmamış', 'ödeme kaydı sabit maliyetle uyuşmuyor', 'iptal edilmiş operasyonda rehber ödemesi var',
+    'ödeme farklı para biriminde — açık bakiye incelemede', 'yeniden açılan operasyonda önceki iptal operasyonun rehber ödemesi var', 'rehber operasyonunda maliyet elle değiştirildi']) assert.ok(d.includes(t2), t2);
+});
+
+test('catalog: amounts editable on screen (from today = versioned, or all dates); guide row is not edited here; tour names shown', () => {
+  const c = body('_FinCatalog');
+  assert.match(c, /mutate\("reviseCostItem", c\.id, \{ amount: edit\.amount, currency: edit\.currency, mode: edit\.mode \}\)/);
+  assert.match(c, /Bugünden itibaren \(geçmiş aylar eski tutarla kalır\)/);
+  assert.match(c, /Tüm tarihler için düzelt/);
+  assert.match(c, /c\.category === "guide"/);
+  assert.match(c, /rezervasyondan düzenlenir/);
+  assert.match(c, /useRepo\("tour", "getAll"\)/);
+  assert.match(c, /const current = \(c\) => !c\.validTo \|\| c\.validTo >= today;/);
+  const a = SOURCE.indexOf('const SupabaseFinanceRepo = {');
+  const repo = SOURCE.slice(a, SOURCE.indexOf('\n};', a));
+  assert.match(repo, /if \(plan\.insert\) await SupabaseFinanceRepo\.createCostItem\(plan\.insert\);\n\s+await SupabaseFinanceRepo\.updateCostItem\(id, plan\.update\);/, 'new version first, then close the old one');
 });

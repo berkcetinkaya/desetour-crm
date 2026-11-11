@@ -1214,3 +1214,78 @@ test('an override for another key changes nothing; overrides unavailable is pass
   assert.equal(s.guideCostOverridesUnavailable, true);
   assert.equal(s.dataQuality.guideCostOverrides, 0);
 });
+
+// ── Guide cost by language + salaried what-if ───────────────────────────
+
+const { buildGuideLanguageCosts, _financeCostItemRevisionPlan } = F;
+
+test('language guide costs: operations, days, most on one day, total cost per language; cancelled operations excluded', () => {
+  const s = summary({ reservations: [
+    res({ id: 'A', checkIn: '2026-11-12' }), res({ id: 'B', checkIn: '2026-11-12', tourId: 'T-OLD', tour: 'Old City' }),   // ES: 2 ops same day
+    res({ id: 'C', checkIn: '2026-11-13' }), res({ id: 'D', checkIn: '2026-11-13' }),                                       // ES: 1 op (shared)
+    res({ id: 'E', checkIn: '2026-11-14', tourLanguage: 'İtalyanca' }),
+    res({ id: 'X', checkIn: '2026-11-15', tourLanguage: 'İtalyanca', opStatus: 'İptal', statusRaw: 'cancelled' }),
+  ] });
+  const L = buildGuideLanguageCosts(s);
+  const es = L.rows.find(r => r.language === 'İspanyolca'), it = L.rows.find(r => r.language === 'İtalyanca');
+  assert.deepEqual([es.operations, es.days, es.maxSameDay], [3, 2, 2]);
+  assert.deepEqual(es.cost, { EUR: 450 }); assert.equal(es.costTry, 450 * 50); assert.equal(es.avgPerOperationTry, 150 * 50);
+  assert.deepEqual([it.operations, it.days, it.maxSameDay], [1, 1, 1]);
+  assert.deepEqual(L.totalCost, { EUR: 600 }); assert.equal(L.totalOperations, 4);
+  assert.equal(L.rows[0].language, 'İspanyolca', 'most expensive language first');
+  assert.equal(es.comparison, null, 'no salary entered → no comparison');
+});
+
+test('salaried what-if: one guide covers one operation per day, extra same-day operations stay freelance; recommendation and break-even', () => {
+  const s = summary({ reservations: [res({ id: 'A', checkIn: '2026-11-12' }), res({ id: 'B', checkIn: '2026-11-12', tourId: 'T-OLD', tour: 'Old City' }), res({ id: 'C', checkIn: '2026-11-13' })] });
+  const cheap = buildGuideLanguageCosts(s, { salary: { amount: '10000', currency: 'TRY' } }).rows[0];
+  assert.equal(cheap.extraOperations, 1);
+  assert.deepEqual(cheap.extraCost, { EUR: 150 });
+  assert.equal(cheap.comparison.inHouseTry, 10000 + 150 * 50);
+  assert.equal(cheap.comparison.savingTry, 450 * 50 - (10000 + 7500));
+  assert.equal(cheap.comparison.recommendation, 'salaried');
+  assert.equal(cheap.comparison.breakEvenOperations, Math.ceil(10000 / 7500));
+  const dear = buildGuideLanguageCosts(s, { salary: { amount: 1000, currency: 'EUR' } }).rows[0];
+  assert.equal(dear.comparison.recommendation, 'freelance');
+  assert.equal(dear.comparison.inHouseTry, 1000 * 50 + 150 * 50);
+  assert.equal(buildGuideLanguageCosts(s, { salary: { amount: '', currency: 'TRY' } }).rows[0].comparison, null);
+});
+
+test('language costs follow per-operation overrides (0 = no cost) and never invent a TL figure without a rate', () => {
+  const resv = [res({ id: 'A', checkIn: '2026-11-12' })];
+  const key = summary({ reservations: resv }).guideServices[0].key;
+  const s = summary({ reservations: resv, guideCostOverrides: [{ id: 'o', operationKey: key, tourDate: '2026-11-12', amount: 0, currency: 'EUR' }] });
+  assert.deepEqual(buildGuideLanguageCosts(s).rows[0].cost, {});
+  const noFx = buildFinanceMonthSummary({ monthISO: MONTH, todayISO: TODAY, languageNames: LANGS, costItems: [], rateRows: [], reservations: resv });
+  const r = buildGuideLanguageCosts(noFx, { salary: { amount: 5000, currency: 'TRY' } }).rows[0];
+  assert.equal(r.costTry, null); assert.equal(r.comparison.savingTry, null); assert.equal(r.comparison.recommendation, null);
+});
+
+// ── Cost catalog revision ───────────────────────────────────────────────
+
+test('catalog revision "from today": old row ends yesterday, a new version starts today with the new amount', () => {
+  const plan = _financeCostItemRevisionPlan({ ...TOP_COST, validFrom: '2026-01-01', sourceNote: 'x' }, { amount: '45,5', currency: 'eur', mode: 'from_today' }, '2026-11-11');
+  assert.deepEqual(plan.update, { validTo: '2026-11-10' });
+  assert.equal(plan.insert.amount, 45.5); assert.equal(plan.insert.currency, 'EUR');
+  assert.equal(plan.insert.validFrom, '2026-11-11'); assert.equal(plan.insert.validTo, null);
+  assert.equal(plan.insert.preparationRuleId, 'RULE-TOP'); assert.equal(plan.insert.kind, 'internal');
+});
+
+test('catalog revision: "all" or a row starting today is corrected in place; guide row and bad input refused', () => {
+  assert.deepEqual(_financeCostItemRevisionPlan(TOP_COST, { amount: 42, currency: 'EUR', mode: 'all' }, '2026-11-11'), { update: { amount: 42, currency: 'EUR' }, insert: null });
+  assert.deepEqual(_financeCostItemRevisionPlan({ ...TOP_COST, validFrom: '2026-11-11' }, { amount: 42, mode: 'from_today' }, '2026-11-11').insert, null);
+  assert.throws(() => _financeCostItemRevisionPlan(GUIDE, { amount: 100, mode: 'all' }, '2026-11-11'), /rezervasyondan/);
+  assert.throws(() => _financeCostItemRevisionPlan(TOP_COST, { amount: -1, mode: 'all' }, '2026-11-11'), /0 veya daha büyük/);
+  assert.throws(() => _financeCostItemRevisionPlan({ ...TOP_COST, validTo: '2026-10-31' }, { amount: 1, mode: 'all' }, '2026-11-11'), /geçerliliği bitmiş/);
+});
+
+test('after a "from today" revision, past dates keep the old amount and today onward use the new one', () => {
+  const plan = _financeCostItemRevisionPlan(TOP_COST, { amount: 50, currency: 'EUR', mode: 'from_today' }, '2026-11-11');
+  const items = [GUIDE, MEAL, { ...TOP_COST, ...plan.update }, { ...plan.insert, id: 'CI-T2' }];
+  const preps = [{ id: 'p1', reservationId: 'P', preparationRuleId: 'RULE-TOP', preparationType: 'entrance_ticket', requiredQuantity: 2, status: 'pending' },
+                 { id: 'p2', reservationId: 'F', preparationRuleId: 'RULE-TOP', preparationType: 'entrance_ticket', requiredQuantity: 2, status: 'pending' }];
+  const s = buildFinanceMonthSummary({ monthISO: MONTH, todayISO: '2026-11-11', languageNames: LANGS, rateRows: RATES, costItems: items, rules: [TOP_RULE], preparations: preps,
+    reservations: [res({ id: 'P', checkIn: '2026-11-05' }), res({ id: 'F', checkIn: '2026-11-20' })] });
+  assert.deepEqual(s.reservations.find(x => x.id === 'P').planned.ticket, { EUR: 80 });
+  assert.deepEqual(s.reservations.find(x => x.id === 'F').planned.ticket, { EUR: 100 });
+});
