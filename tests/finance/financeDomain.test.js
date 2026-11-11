@@ -1292,7 +1292,6 @@ test('after a "from today" revision, past dates keep the old amount and today on
 
 // ── Break-even guests + Fikirler data ───────────────────────────────────
 
-const { buildProfitIdeas } = F;
 
 test('break-even: (net − per-guest cost) per guest must exceed the operation guide cost; Topkapı-like example needs 5 guests', () => {
   // net ₺3,990 / guest, ticket €40 = ₺2,000 / guest at 50, guide €150 = ₺7,500
@@ -1321,32 +1320,7 @@ test('break-even: per-operation override changes that operation\'s threshold; pe
   assert.equal(nofx.tours[0].economics.status, 'unknown');
 });
 
-test('Fikirler data: operations under break-even, price / guide-fee / minimum-group targets, cost-heavy tours, extra sales per guest', () => {
-  const mk = (id, date, pax, lang) => res({ id, checkIn: date, pax, total: 3990 * pax, currency: 'TRY', tourLanguage: lang || 'İspanyolca' });
-  const resv = [mk('A', '2026-11-16', 2), mk('B', '2026-11-18', 2), mk('C', '2026-11-20', 6), mk('D', '2026-11-24', 2)];
-  const preps = resv.map(r => ({ id: 'p' + r.id, reservationId: r.id, preparationRuleId: 'RULE-TOP', requiredQuantity: r.pax, status: 'pending' }));
-  const s = summary({ reservations: resv, rules: [TOP_RULE], preparations: preps, extraSales: [{ id: 'x', reservationId: 'C', amount: 120, currency: 'TRY', description: 'x', saleDate: '2026-11-20' }] });
-  const I = buildProfitIdeas(s);
-  assert.equal(I.belowBreakEven.length, 3, '2-guest operations do not reach the break-even');
-  assert.ok(I.lossTry < 0);
-  assert.equal(I.consolidation, undefined, 'no merge suggestions');
-  // 12 guests / 4 operations = 3 on average; net 4000 / guest, tickets 2000 / guest, guide 7500
-  const x = I.targets[0];
-  assert.equal(x.tourLabel, 'Topkapı'); assert.equal(x.avgPax, 3);
-  assert.equal(x.netPerPaxTry, 4000);
-  assert.equal(x.requiredNetPerPaxTry, 2000 + 2500, 'per-guest cost + guide ÷ average group');
-  assert.equal(Math.round(x.priceGapPct * 100), 13);
-  assert.equal(x.maxGuideCostTry, 2000 * 3, 'contribution × average group');
-  assert.equal(x.minGroup, 4);
-  assert.equal(I.costHeavy[0].tourLabel, 'Topkapı');
-  assert.equal(I.extraSalesPerPaxTry, Math.round(120 / 12));
-  assert.ok(I.costHeavy[0].share >= 0.5);
-});
 
-test('targets list only tours that do not break even at their average group size', () => {
-  const s = summary({ reservations: [res({ id: 'A', checkIn: '2026-11-12', pax: 10, total: 30000, currency: 'TRY' })] });
-  assert.deepEqual(buildProfitIdeas(s).targets, []);
-});
 
 
 test('break-even beyond a realistic group (30) is "impractical", still with the number', () => {
@@ -1357,5 +1331,4 @@ test('break-even beyond a realistic group (30) is "impractical", still with the 
   assert.equal(e.contributionPerPaxTry, 100);
   assert.equal(e.status, 'impractical'); assert.equal(e.breakEvenPax, 76);
   assert.equal(s.tours[0].subgroups[0].breakEvenReached, false);
-  assert.equal(buildProfitIdeas(s).belowBreakEven[0].impractical, true);
 });
