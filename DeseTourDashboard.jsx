@@ -3353,12 +3353,12 @@ function KpiRow() {
       icon:"M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2 M23 21v-2a4 4 0 00-3-3.87 M16 3.13a4 4 0 010 7.75",
     },
     {
-      label:"Brüt Beklenen Ciro",
+      label:"Beklenen Net Gelir",
       value: revLoading ? '…' : `₺${rev.total.toLocaleString("tr-TR",{maximumFractionDigits:0})}`,
       sub: rev.fxUnresolved ? "Bu ay · kur verisine erişilemiyor"
          : rev.excludedCount > 0 ? `Bu ay · ${rev.excludedCount} rezervasyon hariç`
          : rev.convertedCount > 0 ? `Bu ay · ${rev.convertedCount} dövizli, ECB kuru ile`
-         : "Bu ay",
+         : "Bu ay · Civitatis komisyonu düşülmüş",
       icon:"M12 2v20M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6",
       accent:true,
     },
@@ -6209,7 +6209,7 @@ function RevenueGoalCard() {
         <div style={{flex:"1 1 280px", minWidth:0}}>
           <div style={{display:"flex", alignItems:"center", gap:8, flexWrap:"wrap"}}>
             <span style={{fontSize:11, fontWeight:600, letterSpacing:"0.12em", textTransform:"uppercase", color:C.goldText, fontFamily:"'Geist',sans-serif"}}>
-              Brüt Beklenen Ciro
+              Beklenen Net Gelir
             </span>
             <span style={{fontSize:11, color:C.textMuted, fontFamily:"'Geist',sans-serif", padding:"2px 8px", borderRadius:T.radiusPill, background:C.ivory, border:`1px solid ${C.borderLight}`}}>
               {monthLabel}
@@ -18934,14 +18934,15 @@ function _selectLatestFxRatesToTry(rateRows, todayISO) {
 
 // "Bu Ay Beklenen Ciro" — THE one revenue calculation behind both the KPI
 // card and the RevenueGoalCard centerpiece (and therefore the milestones
-// and the celebration). The customer-facing SALES value of every
+// and the celebration). The NET amount DeseTour receives for every
 // non-cancelled reservation whose TOUR (checkIn = reservations.check_in)
 // is in the current calendar month — reservation-based, never payments.
 //
-// Amount/currency: Civitatis reservations carry the customer-facing price
-// as retail_amount/retail_currency (their total_amount is DeseTour's net
-// proceeds); every other booking uses total_amount/currency. Currency is
-// only trimmed and uppercased — never inferred.
+// Amount/currency: always total_amount/currency. For Civitatis bookings
+// that is DeseTour's net proceeds (Civitatis commission already deducted);
+// the customer-facing retail_amount is NEVER used here. Direct bookings
+// have no commission, so their total is their net. Currency is only
+// trimmed and uppercased — never inferred.
 //
 // Three distinct outcomes per reservation, kept separate in the result:
 //   1. native   — TRY/TL, added as-is;
@@ -18973,9 +18974,8 @@ function summarizeMonthlyExpectedRevenue(reservations, todayISO, rateRows, optio
     if (!r || !r.checkIn || r.opStatus === "İptal") continue;
     const iso = r.checkIn.slice(0, 10);
     if (iso < startISO || iso > endISO) continue;
-    const useRetail = r.retailAmount != null;
-    const amount = Number(useRetail ? r.retailAmount : r.total) || 0;
-    const currency = String((useRetail ? r.retailCurrency : r.currency) || "").trim().toUpperCase();
+    const amount = Number(r.total) || 0;
+    const currency = String(r.currency || "").trim().toUpperCase();
     if (currency === "TRY" || currency === "TL") {
       nativeTryTotal += amount;
       nativeCount += 1;

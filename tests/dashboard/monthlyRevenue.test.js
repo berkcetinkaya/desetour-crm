@@ -86,23 +86,23 @@ test('cancelled reservations are excluded from the total AND from converted/excl
   assert.equal(s.excludedCount, 0);
 });
 
-test('retail amount + retail currency win when retail_amount is present', () => {
+test('NET amount: Civitatis total_amount (commission deducted) is used; the customer-facing retail price never is', () => {
   const s = summarize([
-    // net proceeds in EUR, retail price in TRY → native TRY, retail amount
+    // net proceeds in EUR, retail price in TRY → EUR net converted
     res({ total: 50, currency: 'EUR', retailAmount: 4800, retailCurrency: 'TRY' }),
-    // net in TRY, retail price in EUR → converted with the EUR rate
+    // net in TRY, retail price in EUR → TRY net as-is
     res({ total: 3000, currency: 'TRY', retailAmount: 90, retailCurrency: 'eur' }),
   ], TODAY_ISO, FRESH_RATES);
-  assert.equal(s.nativeTryTotal, 4800);
-  assert.equal(s.convertedTryTotal, 90 * 40);
-  assert.equal(s.total, 4800 + 3600);
+  assert.equal(s.nativeTryTotal, 3000);
+  assert.equal(s.convertedTryTotal, 50 * 40);
+  assert.equal(s.total, 3000 + 2000);
 });
 
 test('total amount + currency are the fallback when retail_amount is absent', () => {
   const s = summarize([
     res({ total: 100, currency: 'USD', retailAmount: null, retailCurrency: 'TRY' }),
   ], TODAY_ISO, FRESH_RATES);
-  assert.equal(s.total, 3000, 'retail_currency is ignored without a retail_amount');
+  assert.equal(s.total, 3000, 'retail fields are ignored');
   assert.deepEqual(s.convertedByCurrency, { USD: 1 });
 });
 
@@ -224,10 +224,10 @@ test('unsupported or blank currency is excluded, never treated as TRY or EUR', (
 
 // ── November 2026 production structure (fake rate) ───────────────────────
 
-test('November-like scenario: ₺179,835 TRY + €683.30 converted with a supplied test rate', () => {
+test('November-like scenario: ₺168,600 TRY net + €500 net converted with a supplied test rate', () => {
   const TEST_EUR_RATE = 48.5; // FAKE test data only
   const reservations = [
-    // 16 TRY/TL reservations summing to 179,835 (mixed retail/total)
+    // 16 TRY/TL reservations; the Civitatis ones count with their NET total
     ...Array.from({ length: 15 }, (_, i) => res({ checkIn: '2026-11-' + String(i + 2).padStart(2, '0'), total: 11000, currency: i % 2 ? 'TL' : 'TRY' })),
     res({ checkIn: '2026-11-25', total: 3600, currency: 'TL', retailAmount: 14835, retailCurrency: 'TL' }),
     res({ checkIn: '2026-11-20', total: 500, currency: 'EUR', retailAmount: 683.30, retailCurrency: 'EUR' }),
@@ -236,16 +236,16 @@ test('November-like scenario: ₺179,835 TRY + €683.30 converted with a suppli
   ];
   const s = summarize(reservations, '2026-11-10', [rate('EUR', TEST_EUR_RATE, '2026-11-09')]);
   assert.equal(s.nativeCount, 16);
-  assert.equal(s.nativeTryTotal, 179835);
+  assert.equal(s.nativeTryTotal, 15 * 11000 + 3600);
   assert.equal(s.convertedCount, 1);
-  assert.equal(s.convertedTryTotal, Math.round(683.30 * TEST_EUR_RATE * 100) / 100);
-  assert.equal(s.total, Math.round((179835 + 683.30 * TEST_EUR_RATE) * 100) / 100);
+  assert.equal(s.convertedTryTotal, Math.round(500 * TEST_EUR_RATE * 100) / 100);
+  assert.equal(s.total, Math.round((15 * 11000 + 3600 + 500 * TEST_EUR_RATE) * 100) / 100);
   assert.equal(s.excludedCount, 0);
   assert.deepEqual(s.rateDatesUsed, { EUR: '2026-11-09' });
 
   // Same data with today's empty production table: the EUR booking is excluded.
   const empty = summarize(reservations, '2026-11-10', []);
-  assert.equal(empty.total, 179835);
+  assert.equal(empty.total, 15 * 11000 + 3600);
   assert.equal(empty.excludedCount, 1);
   assert.deepEqual(empty.missingRateCurrencies, ['EUR']);
 });
@@ -308,12 +308,13 @@ test('KPI and RevenueGoalCard both read the one useMonthlyRevenueSummary hook �
   assert.doesNotMatch(SOURCE, /summarizeMonthlyTRYRevenue|computeMonthlyReservationRevenue\(/);
 });
 
-test('"Brüt Beklenen Ciro" KPI (gross, label clarified) shows ₺ and the normalized total, with converted/excluded sub-labels', () => {
-  const m = SOURCE.match(/label:"Brüt Beklenen Ciro",\s*\n\s*value:([^\n]+)\n\s*sub:([\s\S]*?)icon:/);
+test('"Beklenen Net Gelir" KPI (net of Civitatis commission) shows ₺ and the normalized total, with converted/excluded sub-labels', () => {
+  const m = SOURCE.match(/label:"Beklenen Net Gelir",\s*\n\s*value:([^\n]+)\n\s*sub:([\s\S]*?)icon:/);
   assert.ok(m, 'KPI card definition');
   assert.match(m[1], /revLoading \? '…' : `₺\$\{rev\.total\.toLocaleString\("tr-TR"/);
   assert.match(m[2], /rev\.excludedCount > 0 \? `Bu ay · \$\{rev\.excludedCount\} rezervasyon hariç`/);
   assert.match(m[2], /rev\.convertedCount > 0 \? `Bu ay · \$\{rev\.convertedCount\} dövizli, ECB kuru ile`/);
+  assert.match(m[2], /"Bu ay · Civitatis komisyonu düşülmüş"/);
   assert.match(SOURCE, /const \{ summary:rev, loading:revLoading \} = useMonthlyRevenueSummary\(\);/);
 });
 

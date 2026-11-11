@@ -155,11 +155,14 @@ test('Finance repo: normal authenticated client, RLS-scoped reads, logged mutati
   assert.match(SOURCE, /statusRaw:r\.status\|\|null, paymentTypeRaw:r\.payment_type\|\|null,/);
 });
 
-test('Home Dashboard label clarified as GROSS; calculation unchanged', () => {
-  assert.match(SOURCE, /label:"Brüt Beklenen Ciro",/);
-  assert.match(SOURCE, />\s*Brüt Beklenen Ciro\s*<\/span>/);
-  assert.doesNotMatch(SOURCE, /label:"Bu Ay Beklenen Ciro"/);
-  assert.match(SOURCE, /const useRetail = r\.retailAmount != null;/, 'the 13.03 gross rule is untouched');
+test('Home Dashboard shows the NET expected income (Civitatis commission deducted), never the gross retail price', () => {
+  assert.match(SOURCE, /label:"Beklenen Net Gelir",/);
+  assert.match(SOURCE, />\s*Beklenen Net Gelir\s*<\/span>/);
+  assert.doesNotMatch(SOURCE, /Brüt Beklenen Ciro|label:"Bu Ay Beklenen Ciro"/);
+  const a = SOURCE.indexOf('function summarizeMonthlyExpectedRevenue(');
+  const body = SOURCE.slice(a, SOURCE.indexOf('\nfunction ', a + 10));
+  assert.match(body, /const amount = Number\(r\.total\) \|\| 0;/);
+  assert.doesNotMatch(body, /retailAmount|retailCurrency/);
 });
 
 // ── Phase C corrections ─────────────────────────────────────────────────
