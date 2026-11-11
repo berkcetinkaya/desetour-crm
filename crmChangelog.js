@@ -101,6 +101,20 @@ const CRM_CHANGELOG_CATEGORIES = [
 // Newest first. See the release convention above before editing.
 const CRM_CHANGELOG = [
   {
+    version: '13.10',
+    date: '2026-11-11',
+    title: 'Ek Satışlar',
+    summary: 'Turdaki müşterilere yapılan satışlar rezervasyona bağlı olarak kaydedilebiliyor; bu tutarlar net gelire ve tahmini kâra ekleniyor.',
+    categories: ['Yeni Özellik', 'Operasyon'],
+    highlights: [
+      'Finans altında yeni Ek Satışlar sekmesi: tur tarihi ve rezervasyon seçilip satılan ürün ve tutar giriliyor.',
+      'Rezervasyon detayındaki Finans kartından da ek satış eklenip silinebiliyor.',
+      'Ek satışlar net gelire ve tahmini kâra ekleniyor; ana sayfada net gelir, tahmini kâr ve ek satış yan yana görünüyor.',
+      'Ek satışları yalnızca Yönetici ve Operasyon rolleri girip görebiliyor.',
+    ],
+    author: 'Berk',
+  },
+  {
     version: '13.09',
     date: '2026-11-11',
     title: 'Ana Sayfada Tahmini Net Kâr',
@@ -258,21 +272,6 @@ const CRM_CHANGELOG = [
       'Son Hareketler: rezervasyon, rehber atama, acente iletişimi ve notlar gibi önemli işlemlerin kim tarafından yapıldığı takip edilebiliyor; yöneticiler için ayrı bir ekip aktivite görünümü eklendi',
       'Acenteler: liste ve detay ekranları daha modern ve kompakt bir çalışma alanına dönüştü; yeni yanıtlar, takip bekleyenler, partner durumları, konuşmalar ve notlar daha kolay ayırt edilebiliyor',
       'Yeni tasarım sistemi: Geist ve Instrument Serif tipografisiyle daha aydınlık ve sade bir arayüz, cihazda hatırlanan açık/koyu tema desteği ve kartlar/tablolar/modallar/mobil genelinde görsel iyileştirmeler',
-    ],
-    author: 'Berk',
-  },
-  {
-    version: '12.48',
-    date: '2026-10-22',
-    title: 'Civitatis Rezervasyon Alım Sürecinde Sessiz Kayıp Önleme',
-    summary: 'Civitatis üzerinden gelen rezervasyonlardan müşteri eşleşmesi belirsiz olanlar veya başka bir güvenlik kontrolüne takılanlar artık hiçbir koşulda sistemden sessizce kaybolmuyor; bu rezervasyonlar "incelemeye alındı" durumunda kayıt altına alınıyor ve operasyon ekibi tarafından görülebiliyor.',
-    categories: ['Operasyon', 'Altyapı'],
-    highlights: [
-      'Müşteri eşleşmesi belirsiz olan veya diğer güvenlik kontrollerine takılan Civitatis rezervasyonları artık sessizce kaybolmuyor, "incelemeye alındı" olarak kayıt altına alınıyor',
-      'Otomatik kontrol (cron) süreci artık başarısız olan veya incelemeye alınan rezervasyonları daha güvenilir şekilde raporluyor',
-      'Aynı belirsiz rezervasyon için tekrarlanan otomatik kontrollerde gereksiz tekrar kayıt oluşturulmuyor',
-      'Operasyon ekibi, şüpheli bir müşteri eşleşmesini inceleyip mevcut müşteriyle mi yoksa yeni bir müşteriyle mi ilişkilendirileceğine açıkça karar verebiliyor',
-      'Hiçbir müşteri kaydı otomatik olarak birleştirilmiyor veya varsayılan olarak eşleştirilmiyor',
     ],
     author: 'Berk',
   },
