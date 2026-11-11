@@ -101,6 +101,19 @@ const CRM_CHANGELOG_CATEGORIES = [
 // Newest first. See the release convention above before editing.
 const CRM_CHANGELOG = [
   {
+    version: '13.13',
+    date: '2026-11-11',
+    title: 'Kâra Geçiş Sayısı ve Fikirler',
+    summary: 'Tur Karlılığı her tur ve operasyon için kâra geçmek için gereken kişi sayısını gösteriyor; Finans altında kârlılığı artırma önerileri içeren Fikirler bölümü eklendi.',
+    categories: ['Yeni Özellik', 'Operasyon'],
+    highlights: [
+      'Her tur için kâra geçiş kişi sayısı ve kişi başı katkı; her operasyonda kaç kişi daha gerektiği görünüyor.',
+      'Fikirler: bu ay kâra geçemeyen operasyonlar, tur başına hedef net fiyat, pazarlıkta hedeflenecek en yüksek rehber ücreti ve minimum katılımcı sayısı.',
+      'Takvim, fiyatlandırma, rehber ve bilet maliyeti, ek satış ve kanal konularında öneriler; her önerinin CRM içinde nerede ölçüleceği belirtiliyor.',
+    ],
+    author: 'Berk',
+  },
+  {
     version: '13.12',
     date: '2026-11-11',
     title: 'Dillere Göre Rehber Maliyeti ve Düzenlenebilir Maliyet Kataloğu',
@@ -256,21 +269,6 @@ const CRM_CHANGELOG = [
     ],
     author: 'Berk',
     technicalNote: 'Light ve Dark Mode genelinde renk, yüzey, kontrast, shadow, radius ve motion sistemi standartlaştırıldı. Klavye erişimi, focus durumları, aria etiketleri, switch ve accordion davranışları dahil olmak üzere erişilebilirlik iyileştirmeleri yapıldı. Tours, Guides, Payments, Agencies, Messages, Reminders, Reports ve Settings ekranları ortak UI sistemiyle uyumlu hale getirildi. CRM artık QITEOS platform imzasını uygulama footer\'ında gösteriyor.',
-  },
-  {
-    version: '13.01',
-    date: '2026-10-30',
-    title: 'Civitatis Mesajları Rezervasyonlarda',
-    summary: 'Civitatis üzerinden gelen misafir mesajları artık ilgili rezervasyonla otomatik eşleştiriliyor, rezervasyon detayından takip edilebiliyor ve operasyon ekibine bildirim olarak yansıyor.',
-    categories: ['Yeni Özellik', 'Otomasyon'],
-    highlights: [
-      'Civitatis misafir mesajları artık rezervasyon numarası üzerinden ilgili rezervasyonla otomatik eşleştiriliyor',
-      'Rezervasyon detayına yeni "Civitatis Mesajları" bölümü eklendi; mesaj içerikleri daha temiz ve okunabilir şekilde gösteriliyor',
-      'Yeni mesajlar operasyon bildirimlerine ve rezervasyon aktivite geçmişine yansıyor',
-      'Rezervasyon listesinde yeni mesaj bulunan kayıtlar daha kolay fark edilebiliyor',
-      'Aynı Civitatis mesajının tekrar işlenmesi duplicate kayıt oluşturmuyor',
-    ],
-    author: 'Berk',
   },
 ];
 
