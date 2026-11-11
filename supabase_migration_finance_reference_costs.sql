@@ -1,6 +1,6 @@
 -- ============================================================
 -- DESE TOUR OPERATIONS CENTER
--- Migration: Finance reference costs (Topkapı, Ayasofya) — Phase C
+-- Migration: Finance reference + provisional costs (Topkapı, Ayasofya, Bosphorus)
 -- ============================================================
 -- File:    supabase_migration_finance_reference_costs.sql
 -- Rollback: supabase_migration_finance_reference_costs_ROLLBACK.sql
@@ -23,20 +23,22 @@
 --      This is the paid visitor gallery, NOT the separate "Hagia Sophia History
 --      and Experience Museum", and NOT the free worship area.
 --      a) Always stored as kind='public_reference' (reference only).
---      b) The INTERNAL provisional €25 planning cost is inserted ONLY when
---         v_confirm_ayasofya_visitor_gallery = TRUE. The current itinerary
---         ("Ayasofya ziyaret edilir" + "öncelikli giriş biletleri" + an active
---         ticket-preparation rule) shows a ticket is bought, but does not say
---         explicitly that it is the visitor-gallery ticket — so it stays FALSE
---         and Finance shows "Maliyet girilmemiş" until the owner confirms.
---         When enabled it is is_provisional=TRUE with its source preserved, to
---         be replaced by a real supplier rate later.
+--      b) INTERNAL provisional €25 planning cost — OWNER CONFIRMED on
+--         2026-11-11 that the tour includes the paid visitor gallery.
+--         is_provisional=TRUE with its source preserved, to be replaced by a
+--         real supplier rate later.
+--   3. Bosphorus cruise — OWNER CONFIRMED on 2026-11-11 that "Bosforo y Barrio
+--      Sultanahmet" (PT, 8f308669-…) uses the Şehir Hatları SHORT Bosphorus
+--      Tour: ₺340 per foreign passenger
+--        https://sehirhatlari.istanbul/en/price-list/bosphorus-tours-78
+--      Stored as a public_reference row AND as an INTERNAL provisional
+--      transport cost, per_guest, in TRY (original currency — no converted EUR
+--      amount). Bound to the tour, verified by its "Boğaz Tekne Turu" stop.
 --
 -- WHAT THIS DOES NOT DO
---   • No Bosphorus cruise cost: the product says "Boğaz Tekne Turu" from the
---     Eminönü pier but does not identify Şehir Hatları or the route (Short ₺340
---     / Long return ₺640 / Moonlight ₺730 are three different products). Stays
---     unresolved until the operator and route are confirmed.
+--   • No Long (₺640) or Moonlight (₺730) Bosphorus price — different products.
+--   • The Italian "Bosforo y Barrio Sultanahmet" (2ea5551f-…) has no itinerary
+--     or rules in production yet; it gets no cost until its itinerary exists.
 --   • No Grand Bazaar tea cost: "Bir adet geleneksel Türk çayı" is included,
 --     but whether DeseTour pays for it (and how much) is not known.
 --   • Never overwrites or deactivates any internal cost row.
@@ -46,12 +48,13 @@ BEGIN;
 
 DO $$
 DECLARE
-  v_confirm_ayasofya_visitor_gallery CONSTANT BOOLEAN := FALSE;  -- owner confirmation required
+  v_confirm_ayasofya_visitor_gallery CONSTANT BOOLEAN := TRUE;   -- owner confirmed 2026-11-11
   v_topkapi_rule  CONSTANT UUID := '4a9e8bc3-bb93-4394-9b40-48695cfb3dfa';
   v_topkapi_tour  CONSTANT UUID := 'a4e4bf16-a108-4a45-9418-d849f5bb7917';
   v_ayasofya_rule CONSTANT UUID := '0c888a99-9544-49b8-ac0f-f81008c48fc9';
   v_ayasofya_tour CONSTANT UUID := '8f308669-2bb6-42ac-9b2f-a07f77e231d4';
-  v_internal_before NUMERIC;
+  v_bosphorus_tour CONSTANT UUID := '8f308669-2bb6-42ac-9b2f-a07f77e231d4';
+  v_internal_fp_before TEXT;
 BEGIN
   IF to_regclass('public.finance_cost_items') IS NULL
      OR NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='finance_cost_items' AND column_name='is_provisional') THEN
@@ -67,7 +70,13 @@ BEGIN
     RAISE EXCEPTION 'FINANCE REFERENCE COSTS FAILED: Ayasofya rule % on tour % not found as an active entrance_ticket rule. Aborting before writing anything.', v_ayasofya_rule, v_ayasofya_tour;
   END IF;
 
-  SELECT COALESCE(SUM(amount), 0) INTO v_internal_before FROM public.finance_cost_items WHERE kind = 'internal';
+  IF NOT EXISTS (SELECT 1 FROM public.tour_itinerary_stops WHERE tour_id = v_bosphorus_tour AND place_name ILIKE '%Boğaz Tekne Turu%') THEN
+    RAISE EXCEPTION 'FINANCE REFERENCE COSTS FAILED: tour % has no "Boğaz Tekne Turu" itinerary stop. Aborting before writing anything.', v_bosphorus_tour;
+  END IF;
+
+  -- Fingerprint of every PRE-EXISTING internal row: none may change.
+  SELECT COALESCE(string_agg(id::text || ':' || amount::text || ':' || currency || ':' || is_active::text, ',' ORDER BY id), '')
+    INTO v_internal_fp_before FROM public.finance_cost_items WHERE kind = 'internal';
 
   -- 1. Topkapı public reference (TRY, reference only).
   IF NOT EXISTS (SELECT 1 FROM public.finance_cost_items WHERE preparation_rule_id = v_topkapi_rule AND kind = 'public_reference' AND is_active) THEN
@@ -100,12 +109,37 @@ BEGIN
             'https://istanbul.com/hagia-sophia', DATE '2026-11-11');
   END IF;
 
-  -- POSTFLIGHT: no public reference may have changed any internal amount.
-  IF (SELECT COALESCE(SUM(amount), 0) FROM public.finance_cost_items WHERE kind = 'internal') - v_internal_before
-     NOT IN (0, CASE WHEN v_confirm_ayasofya_visitor_gallery THEN 25 ELSE 0 END) THEN
-    RAISE EXCEPTION 'FINANCE REFERENCE COSTS POSTFLIGHT FAILED: internal cost totals changed unexpectedly.';
+  -- 3. Bosphorus — Şehir Hatları short tour: public reference + internal provisional (TRY).
+  IF NOT EXISTS (SELECT 1 FROM public.finance_cost_items WHERE tour_id = v_bosphorus_tour AND category = 'transport' AND kind = 'public_reference' AND is_active) THEN
+    INSERT INTO public.finance_cost_items (label, category, basis, amount, currency, tour_id, valid_from, kind,
+                                           source_note, source_url, last_verified_date)
+    VALUES ('Şehir Hatları Short Bosphorus Tour (official tariff)', 'transport', 'per_guest', 340, 'TRY', v_bosphorus_tour,
+            DATE '2026-11-11', 'public_reference',
+            'Şehir Hatları official foreign-passenger tariff, Short Bosphorus Tour. Not the Long (₺640) or Moonlight (₺730) tour.',
+            'https://sehirhatlari.istanbul/en/price-list/bosphorus-tours-78', DATE '2026-11-11');
   END IF;
-  RAISE NOTICE 'FINANCE REFERENCE COSTS POSTFLIGHT PASSED (Ayasofya internal provisional cost: %).', CASE WHEN v_confirm_ayasofya_visitor_gallery THEN 'enabled' ELSE 'NOT created — awaiting confirmation' END;
+  IF NOT EXISTS (SELECT 1 FROM public.finance_cost_items WHERE tour_id = v_bosphorus_tour AND category = 'transport' AND kind = 'internal' AND is_active) THEN
+    INSERT INTO public.finance_cost_items (label, category, basis, amount, currency, tour_id, valid_from, kind, is_provisional,
+                                           source_note, source_url, last_verified_date)
+    VALUES ('Bosphorus Cruise (Şehir Hatları short tour)', 'transport', 'per_guest', 340, 'TRY', v_bosphorus_tour,
+            DATE '2026-01-01', 'internal', TRUE,
+            'PROVISIONAL: owner confirmed the product uses the Şehir Hatları Short Bosphorus Tour; current public tariff used until a negotiated rate is known.',
+            'https://sehirhatlari.istanbul/en/price-list/bosphorus-tours-78', DATE '2026-11-11');
+  END IF;
+
+  -- POSTFLIGHT: no pre-existing internal row changed; new internal rows are
+  -- only the two confirmed provisional ones.
+  IF (SELECT COALESCE(string_agg(id::text || ':' || amount::text || ':' || currency || ':' || is_active::text, ',' ORDER BY id), '')
+        FROM public.finance_cost_items WHERE kind = 'internal' AND created_at < now()) <>
+     (SELECT COALESCE(string_agg(x, ',' ORDER BY x), '') FROM unnest(string_to_array(NULLIF(v_internal_fp_before, ''), ',')) AS x
+       WHERE split_part(x, ':', 1)::uuid IN (SELECT id FROM public.finance_cost_items WHERE created_at < now())) THEN
+    RAISE EXCEPTION 'FINANCE REFERENCE COSTS POSTFLIGHT FAILED: a pre-existing internal cost row changed.';
+  END IF;
+  IF EXISTS (SELECT 1 FROM public.finance_cost_items WHERE kind = 'internal' AND created_at >= now()
+              AND NOT (is_provisional AND label IN ('Hagia Sophia Visitor Gallery', 'Bosphorus Cruise (Şehir Hatları short tour)'))) THEN
+    RAISE EXCEPTION 'FINANCE REFERENCE COSTS POSTFLIGHT FAILED: an unexpected internal cost row was created.';
+  END IF;
+  RAISE NOTICE 'FINANCE REFERENCE COSTS POSTFLIGHT PASSED (Ayasofya internal provisional: %; Bosphorus short tour ₺340 provisional).', CASE WHEN v_confirm_ayasofya_visitor_gallery THEN 'enabled' ELSE 'not created' END;
 END $$;
 
 COMMIT;

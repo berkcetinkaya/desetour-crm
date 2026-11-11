@@ -19,7 +19,6 @@ const MIG = read('supabase_migration_finance_center.sql');
 const MIG_RB = read('supabase_migration_finance_center_ROLLBACK.sql');
 const TOP = read('supabase_migration_finance_topkapi_rule.sql');
 const TOP_RB = read('supabase_migration_finance_topkapi_rule_ROLLBACK.sql');
-const BACKFILL = read('finance_topkapi_rule_backfill.sql');
 const PREFLIGHT = read('finance_topkapi_rule_preflight.sql');
 const SOURCE = read('DeseTourDashboard.jsx');
 const sqlCode = (s) => s.split('\n').filter(l => !l.trim().startsWith('--')).join('\n');
@@ -107,34 +106,27 @@ test('rollback refuses to destroy actual expense history or manual catalog rows'
 
 // ── Topkapı rule ─────────────────────────────────────────────────────────
 
-test('Topkapı rule: explicit approved tour ids (not display names), palace stop only, per_guest entrance ticket', () => {
-  assert.match(TOP, /v_tour_ids UUID\[\] := ARRAY\[\s*'a4e4bf16-a108-4a45-9418-d849f5bb7917'::uuid/);
-  assert.doesNotMatch(sqlCode(TOP), /t\.name\s*=|tours\.name\s*=/);
-  assert.match(TOP, /AND place_name NOT ILIKE '%harem%'/);
-  assert.match(TOP, /VALUES \(v_tour, v_stop, 'entrance_ticket', v_label, 'per_guest', NULL, TRUE\)/);
-  assert.match(TOP, /an active rule is attached to a Harem stop/);
+test('Topkapı €40 is linked to the EXISTING production rule by explicit id — no new rule, no rule change, no backfill', () => {
+  assert.match(TOP, /v_rule CONSTANT UUID := '4a9e8bc3-bb93-4394-9b40-48695cfb3dfa';/);
+  assert.match(TOP, /v_tour CONSTANT UUID := 'a4e4bf16-a108-4a45-9418-d849f5bb7917';/);
+  const code = sqlCode(TOP);
+  assert.doesNotMatch(code, /INSERT INTO public\.tour_preparation_rules|UPDATE public\.tour_preparation_rules|DELETE FROM public\.tour_preparation_rules/);
+  assert.doesNotMatch(code, /reservation_preparations/);
+  assert.match(TOP, /this migration must never create or delete a rule/);
+  assert.equal(fs.existsSync(path.join(ROOT, 'finance_topkapi_rule_backfill.sql')), false, 'backfill no longer needed');
 });
 
-test('Topkapı €40 is INTERNAL and bound to the rule (basis preparation_rule) — no Harem / Hagia Irene charge', () => {
+test('Topkapı €40 is INTERNAL, preparation_rule basis, single row — no Harem / Hagia Irene charge; aborts on duplicate Topkapı rules', () => {
   assert.match(TOP, /VALUES \('Topkapı Combined Entry', 'ticket', 'preparation_rule', 40, 'EUR', v_tour, v_rule, DATE '2026-01-01', 'internal'/);
-  const inserts = sqlCode(TOP).match(/INSERT INTO public\.finance_cost_items/g) || [];
-  assert.equal(inserts.length, 1);
-  // The only cost row is the combined entry; Harem/Hagia Irene appear only in its explanatory note.
-  const labels = [...sqlCode(TOP).matchAll(/VALUES \('([^']+)', 'ticket'/g)].map(m => m[1]);
-  assert.deepEqual(labels, ['Topkapı Combined Entry']);
-  assert.doesNotMatch(sqlCode(TOP), /INSERT INTO public\.tour_preparation_rules[^;]*Harem/);
+  assert.equal((sqlCode(TOP).match(/INSERT INTO public\.finance_cost_items/g) || []).length, 1);
+  assert.match(TOP, /has more than one active Topkapı entrance-ticket rule/);
+  assert.match(TOP_RB, /AND kind = 'internal' AND label = 'Topkapı Combined Entry';/);
+  assert.doesNotMatch(sqlCode(TOP_RB), /tour_preparation_rules/);
 });
 
-test('Topkapı migration never writes reservation_preparations; backfill is separate, uses the existing engine, upcoming + non-cancelled only', () => {
-  assert.doesNotMatch(sqlCode(TOP), /INSERT INTO public\.reservation_preparations|UPDATE public\.reservation_preparations/);
-  assert.match(BACKFILL, /public\.materialize_reservation_preparations\(r\.id\)/);
-  assert.match(BACKFILL, /r\.status <> 'cancelled'/);
-  assert.match(BACKFILL, /r\.check_in >= \(now\(\) AT TIME ZONE 'Europe\/Istanbul'\)::date/);
+test('preflight is read-only and recognises any existing Topkapı rule label', () => {
   assert.doesNotMatch(sqlCode(PREFLIGHT), /\b(INSERT|UPDATE|DELETE|ALTER|CREATE|DROP)\b/);
-});
-
-test('Topkapı rollback deactivates (never deletes) a rule that has preparation history', () => {
-  assert.match(TOP_RB, /UPDATE public\.tour_preparation_rules SET is_active = FALSE WHERE id = v_rule\.id;/);
+  assert.match(PREFLIGHT, /r\.label ILIKE ANY \(ARRAY\['%Topkapı%', '%Topkapi%'\]\)/);
 });
 
 // ── Browser data-access layer ───────────────────────────────────────────
@@ -181,12 +173,6 @@ test('is_provisional exists, is internal-only, and must carry its source', () =>
   assert.match(MIG, /CONSTRAINT finance_cost_items_provisional_sourced CHECK \(NOT is_provisional OR \(btrim\(source_note\) <> '' AND source_url IS NOT NULL\)\)/);
 });
 
-test('Topkapı migration refuses to create a duplicate when the tour already has another active Topkapı ticket rule', () => {
-  assert.match(TOP, /DUPLICATE GUARD/);
-  assert.match(TOP, /AND label <> v_label AND label ILIKE ANY \(ARRAY\['%Topkapı%', '%Topkapi%'\]\)\) THEN\s+RAISE EXCEPTION 'TOPKAPI RULE MIGRATION FAILED: tour % already has another active Topkapı entrance-ticket rule/);
-  // allowlist unchanged pending owner approval
-  assert.match(TOP, /v_tour_ids UUID\[\] := ARRAY\[\s*'a4e4bf16-a108-4a45-9418-d849f5bb7917'::uuid\s+-- Estambul Histórica · Portekizce \(Civitatis\)\s*\];/);
-});
 
 test('reference costs: Topkapı ₺2,750 and Ayasofya €25 are public_reference only, bound by verified rule id, with sources', () => {
   assert.match(REF, /v_topkapi_rule\s+CONSTANT UUID := '4a9e8bc3-bb93-4394-9b40-48695cfb3dfa'/);
@@ -199,16 +185,27 @@ test('reference costs: Topkapı ₺2,750 and Ayasofya €25 are public_reference
   assert.match(REF, /not the separate History and Experience Museum, not the free worship area/);
 });
 
-test('Ayasofya internal provisional €25 is gated behind explicit owner confirmation (off by default) and marked provisional', () => {
-  assert.match(REF, /v_confirm_ayasofya_visitor_gallery CONSTANT BOOLEAN := FALSE;/);
+test('Ayasofya internal provisional €25: owner-confirmed, marked provisional, with source', () => {
+  assert.match(REF, /v_confirm_ayasofya_visitor_gallery CONSTANT BOOLEAN := TRUE;   -- owner confirmed 2026-11-11/);
   assert.match(REF, /IF v_confirm_ayasofya_visitor_gallery\s+AND NOT EXISTS/);
   assert.match(REF, /'internal', TRUE,\s+'PROVISIONAL:/);
 });
 
-test('reference migration never creates a Bosphorus or tea cost and never changes internal amounts', () => {
+test('Bosphorus: ONLY the Şehir Hatları short tour ₺340, TRY, per guest, provisional + public reference, bound to the verified PT tour', () => {
+  assert.match(REF, /v_bosphorus_tour CONSTANT UUID := '8f308669-2bb6-42ac-9b2f-a07f77e231d4';/);
+  assert.match(REF, /place_name ILIKE '%Boğaz Tekne Turu%'/);
+  assert.match(REF, /VALUES \('Şehir Hatları Short Bosphorus Tour \(official tariff\)', 'transport', 'per_guest', 340, 'TRY', v_bosphorus_tour,\s+DATE '2026-11-11', 'public_reference'/);
+  assert.match(REF, /VALUES \('Bosphorus Cruise \(Şehir Hatları short tour\)', 'transport', 'per_guest', 340, 'TRY', v_bosphorus_tour,\s+DATE '2026-01-01', 'internal', TRUE,/);
+  assert.match(REF, /https:\/\/sehirhatlari\.istanbul\/en\/price-list\/bosphorus-tours-78/);
   const code = sqlCode(REF);
-  assert.doesNotMatch(code, /Şehir Hatları|Bosphorus|Boğaz|340|640|730|tea|çay/i);
-  assert.match(REF, /FINANCE REFERENCE COSTS POSTFLIGHT FAILED: internal cost totals changed unexpectedly/);
+  assert.doesNotMatch(code, /'per_guest', (640|730), 'TRY'/, 'no Long / Moonlight price is stored as an amount (they only appear in the explanatory note)');
+  assert.doesNotMatch(code, /tea|çay/i, 'no tea cost without a confirmed amount');
+});
+
+test('reference migration never modifies or deletes a pre-existing internal row', () => {
+  const code = sqlCode(REF);
   assert.doesNotMatch(code, /UPDATE public\.finance_cost_items|DELETE FROM public\.finance_cost_items/);
-  assert.match(REF_RB, /kind = 'public_reference' AND label = 'Topkapı Palace Combine Ticket \(official tariff\)'/);
+  assert.match(REF, /a pre-existing internal cost row changed/);
+  assert.match(REF, /an unexpected internal cost row was created/);
+  assert.match(REF_RB, /label = 'Bosphorus Cruise \(Şehir Hatları short tour\)'/);
 });

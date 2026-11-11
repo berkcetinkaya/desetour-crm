@@ -19246,6 +19246,7 @@ function buildFinanceMonthSummary(input) {
       for (const basis of ['per_guest', 'per_adult', 'fixed_per_reservation']) {
         const item = r.tourId ? (costItems || []).find(c => c && c.kind === 'internal' && c.isActive && c.category === cat && c.basis === basis && c.tourId === r.tourId && !c.preparationRuleId && (!c.validFrom || c.validFrom <= date) && (!c.validTo || date <= c.validTo)) : null;
         if (!item) continue;
+        if (item.isProvisional) dq.provisionalCostItemsUsed[item.label] = (dq.provisionalCostItemsUsed[item.label] || 0) + 1;
         const qty = basis === 'per_guest' ? pax.total : basis === 'per_adult' ? pax.adult : 1;
         _financeAdd(planned[cat], item.currency, Number(item.amount) * qty);
       }

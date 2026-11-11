@@ -546,3 +546,11 @@ test('tour subgroups carry the group P&L', () => {
   assert.equal(t.subgroups.length, 2);
   assert.ok(t.subgroups.every(sg => sg.pnl && sg.pnl.key === sg.key));
 });
+
+test('tour-scoped provisional per-guest cost in TRY (Bosphorus ₺340) applies per guest, keeps TRY, is flagged provisional; its public reference does not double it', () => {
+  const BOS = { id: 'BOS', kind: 'internal', isActive: true, isProvisional: true, label: 'Bosphorus Cruise', category: 'transport', basis: 'per_guest', amount: 340, currency: 'TRY', tourId: 'T-BOS', preparationRuleId: null, validFrom: '2026-01-01' };
+  const BOS_PUB = { ...BOS, id: 'BOS-PUB', kind: 'public_reference', isProvisional: false };
+  const s = summary({ reservations: [res({ id: 'A', tourId: 'T-BOS', tour: 'Bosforo', pax: 3, paxChild: 1 })], costItems: [GUIDE, MEAL, BOS, BOS_PUB] });
+  assert.deepEqual(s.categories.transport.planned, { TRY: 1360 });
+  assert.deepEqual(s.dataQuality.provisionalCostItemsUsed, [{ label: 'Bosphorus Cruise', count: 1 }]);
+});

@@ -3,9 +3,9 @@
 -- READ-ONLY PREFLIGHT: which tours are Topkapı products?
 -- ============================================================
 -- Run BEFORE supabase_migration_finance_topkapi_rule.sql. Writes nothing
--- (SELECT only). Use the result to confirm / extend v_tour_ids in that
--- migration — every tour that visits the Topkapı PALACE (not just the
--- Harem) and should get the €40 combined-entry rule.
+-- (SELECT only). Shows every tour that visits Topkapı, its channel identity
+-- and whether it already has an active Topkapı ticket rule (any label) —
+-- the €40 internal cost is linked to that existing rule.
 -- ============================================================
 
 -- 1. Every tour with a Topkapı itinerary stop, its channel identity, and
@@ -15,7 +15,7 @@ SELECT t.id AS tour_id, t.name AS tour_name, t.status AS tour_status,
        (s.place_name ILIKE '%harem%') AS is_harem_stop,
        string_agg(DISTINCT src.slug || ':' || COALESCE(tc.external_product_id,'') || ':' || COALESCE(tc.booking_language,''), ', ') AS channels,
        EXISTS (SELECT 1 FROM public.tour_preparation_rules r
-                WHERE r.tour_id = t.id AND r.is_active AND r.label = 'Topkapı Sarayı Kombine Giriş Bileti') AS has_topkapi_rule
+                WHERE r.tour_id = t.id AND r.is_active AND r.preparation_type = 'entrance_ticket' AND r.label ILIKE ANY (ARRAY['%Topkapı%', '%Topkapi%'])) AS has_topkapi_rule
   FROM public.tours t
   JOIN public.tour_itinerary_stops s ON s.tour_id = t.id
   LEFT JOIN public.tour_channels tc ON tc.tour_id = t.id
@@ -41,7 +41,7 @@ SELECT t.name AS tour_name, r.check_in, COUNT(*) AS reservations,
          SELECT 1 FROM public.reservation_preparations p
            JOIN public.tour_preparation_rules tr ON tr.id = p.preparation_rule_id
           WHERE p.reservation_id = r.id AND p.status IN ('pending','completed')
-            AND tr.label = 'Topkapı Sarayı Kombine Giriş Bileti')) AS with_topkapi_preparation
+            AND tr.label ILIKE ANY (ARRAY['%Topkapı%', '%Topkapi%']))) AS with_topkapi_preparation
   FROM public.reservations r
   JOIN public.tours t ON t.id = r.tour_id
  WHERE r.status <> 'cancelled'
