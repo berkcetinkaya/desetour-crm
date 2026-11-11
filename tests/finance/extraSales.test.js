@@ -58,3 +58,27 @@ test('rollback refuses while sales exist and only removes its own CHECK value wh
   assert.match(RB, /WHERE x <> 'reservation_extra_sale'/);
   assert.match(RB, /DROP TABLE IF EXISTS public\.reservation_extra_sales;/);
 });
+
+const search = (() => {
+  const SRC = fs.readFileSync(path.join(ROOT, 'DeseTourDashboard.jsx'), 'utf8');
+  const a = SRC.indexOf('// TESTABLE:_searchReservationsForSale:start'), b = SRC.indexOf('// TESTABLE:_searchReservationsForSale:end');
+  // eslint-disable-next-line no-new-func
+  return new Function(SRC.slice(a, b) + '\nreturn _searchReservationsForSale;')();
+})();
+const R = [
+  { id: '1', resNumber: 'R-2026-0001', externalBookingId: '41748096', name: 'Ana López', tour: 'Grand Bazaar Experience', checkIn: '2026-10-02', opStatus: 'Tamamlandı', statusRaw: 'completed' },
+  { id: '2', resNumber: 'R-2026-0040', externalBookingId: 'A52000001', name: 'Íñigo Peña', tour: 'Topkapi Palace Complete Tour', checkIn: '2026-11-06', opStatus: 'Tamamlandı', statusRaw: 'completed' },
+  { id: '3', resNumber: 'R-2026-0050', externalBookingId: 'A52000002', name: 'Maria Rossi', tour: 'Topkapi Palace Complete Tour', checkIn: '2026-12-13', opStatus: 'Onay Bekliyor', statusRaw: 'pending_confirmation' },
+  { id: '4', resNumber: 'R-2026-0060', externalBookingId: 'A52000003', name: 'İptal Kişi', tour: 'Topkapi', checkIn: '2026-11-20', opStatus: 'İptal', statusRaw: 'cancelled' },
+];
+
+test('reservation search: Civitatis code (A…), reservation no, customer and tour — any date, newest first, cancelled excluded', () => {
+  assert.deepEqual(search(R, 'A4174').map(r => r.id), ['1'], 'past (October) booking found by its A-code although only digits are stored');
+  assert.deepEqual(search(R, '41748096').map(r => r.id), ['1'], 'bare digits also work');
+  assert.deepEqual(search(R, 'a52').map(r => r.id), ['3', '2'], 'case-insensitive, newest tour date first, cancelled left out');
+  assert.deepEqual(search(R, 'R-2026-0040').map(r => r.id), ['2']);
+  assert.deepEqual(search(R, 'inigo pena').map(r => r.id), ['2'], 'accent-insensitive');
+  assert.deepEqual(search(R, 'topkapi rossi').map(r => r.id), ['3'], 'every word must match');
+  assert.deepEqual(search(R, 'a'), [], 'at least 2 characters');
+  assert.equal(search(R.concat(Array.from({ length: 30 }, (_, i) => ({ ...R[0], id: 'x' + i }))), 'grand', 20).length, 20);
+});

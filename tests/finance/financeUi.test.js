@@ -221,18 +221,22 @@ test('Ek Satışlar tab: totals from the summary, entry form, month list with de
   assert.match(x, /_finValue\(s\.kpis\.extraSales, s\.totals\.extraSales\)/);
   assert.match(x, /_finValue\(s\.kpis\.expectedNet, s\.totals\.expectedNet\)/);
   assert.match(x, /_finProfit\(s\.kpis\.projectedProfit/);
-  assert.match(x, /<_ExtraSaleForm reservations=\{s\.reservations\}/);
+  assert.match(x, /<_ExtraSaleForm onDone=/);
   assert.match(x, /mutate\("deleteExtraSale", x\.id\)/);
   assert.match(x, /window\.confirm\(/);
   assert.match(x, /xs\.unavailable \?/);
   assert.match(body('FinancePage'), /current === "ek-satislar" \? \(\s*<_FinExtraSales s=\{s\}\/>/);
 });
 
-test('extra-sale form: pick tour date → reservation, free-text product, amount, currency, sale date; goes through the finance repo', () => {
+test('extra-sale form: search every reservation (any date) by Civitatis code / reservation no / customer / tour; then product, amount, currency, date', () => {
   const f = body('_ExtraSaleForm');
-  for (const l of ['Tur tarihi', 'Tur / rezervasyon', 'Satılan ürün / hizmet', 'Tutar', 'Para birimi', 'Satış tarihi']) assert.ok(f.includes(l), l);
+  for (const l of ['Rezervasyon ara', 'Satılan ürün / hizmet', 'Tutar', 'Para birimi', 'Satış tarihi', 'Değiştir']) assert.ok(f.includes(l), l);
+  assert.match(f, /useRepo\("reservation", "getAll"\)/, 'all reservations, not only the selected month');
+  assert.match(f, /_searchReservationsForSale\(allRes \|\| \[\], q, 20\)/);
   assert.match(f, /useRepoMutation\("finance"\)/);
-  assert.match(f, /mutate\("createExtraSale", \{ reservationId: reservationId \|\| f\.reservationId,/);
+  assert.match(f, /mutate\("createExtraSale", \{ reservationId: rid,/);
+  assert.match(SOURCE, /externalBookingId:r\.external_booking_id\|\|null,/);
+  assert.match(body('_FinExtraSales'), /<_ExtraSaleForm onDone=\{\(\) => setOpen\(false\)\}\/>/);
 });
 
 test('reservation Finance card lists and records extra sales for that reservation (desktop + mobile share the card)', () => {

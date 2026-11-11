@@ -12858,38 +12858,78 @@ function _FinTourTable({ s, mode }) {
 }
 
 // ── Ek satış (extra sales) ───────────────────────────────────────────────
+// TESTABLE:_searchReservationsForSale:start
+// Civitatis shows its booking code as "A42635449"; the CRM stores only the
+// digits in external_booking_id. Display (and search) the familiar form.
+function _channelBookingCode(id) {
+  const v = String(id || '').trim();
+  return /^\d+$/.test(v) ? 'A' + v : v;
+}
+// Search EVERY non-cancelled reservation (any date) by Civitatis code
+// ("A42635449" or the bare digits), reservation number ("R-2026-0001"),
+// customer name or tour name — case- and Turkish-accent-insensitive;
+// newest tour date first.
+function _searchReservationsForSale(reservations, query, limit) {
+  const norm = (v) => String(v || '').toLocaleLowerCase('tr-TR').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/ı/g, 'i').trim();
+  const q = norm(query);
+  if (q.length < 2) return [];
+  const terms = q.split(/\s+/).filter(Boolean);
+  return (reservations || [])
+    .filter(r => r && r.opStatus !== 'İptal' && r.statusRaw !== 'cancelled')
+    .filter(r => { const hay = norm([_channelBookingCode(r.externalBookingId), r.resNumber, r.name, r.tour].join(' ')); return terms.every(t => hay.includes(t)); })
+    .sort((a, b) => String(b.checkIn || '').localeCompare(String(a.checkIn || '')))
+    .slice(0, limit || 20);
+}
+// TESTABLE:_searchReservationsForSale:end
 // One shared form: with `reservationId` it records a sale for that
 // reservation; otherwise the user picks the tour date and the reservation
 // from `reservations` (the month summary's active reservation rows).
-function _ExtraSaleForm({ reservationId, defaultDate, reservations, onDone }) {
+function _ExtraSaleForm({ reservationId, defaultDate, onDone }) {
   const { mutate, mutating } = useRepoMutation("finance");
-  const dates = reservations ? [...new Set(reservations.map(x => x.date))].sort() : [];
-  const firstDate = defaultDate || dates[0] || _istanbulISODate();
-  const [f, setF] = useState({ tourDate: firstDate, reservationId: reservationId || "", description: "", amount: "", currency: "TRY", saleDate: firstDate });
-  const options = reservations ? reservations.filter(x => x.date === f.tourDate) : [];
+  const { data: allRes } = useRepo("reservation", "getAll");
+  const today = _istanbulISODate();
+  const [q, setQ] = useState("");
+  const [picked, setPicked] = useState(null);
+  const [f, setF] = useState({ description: "", amount: "", currency: "TRY", saleDate: defaultDate || today });
+  const hits = reservationId || picked ? [] : _searchReservationsForSale(allRes || [], q, 20);
   const input = { width: "100%", boxSizing: "border-box", padding: "7px 9px", borderRadius: T.radiusSm, border: `1px solid ${C.border}`, background: C.white, color: C.text, fontSize: 12.5, fontFamily: "'Geist',sans-serif" };
   const lbl = { fontSize: 11, color: C.textMuted, fontFamily: "'Geist',sans-serif", display: "flex", flexDirection: "column", gap: 4 };
+  const resLine = (r) => [r.checkIn ? _finShortDate(String(r.checkIn).slice(0, 10)) + " " + String(r.checkIn).slice(0, 4) : "tarih yok",
+    r.tour, r.tourLanguage, r.resNumber, r.externalBookingId && _channelBookingCode(r.externalBookingId), r.name, `${(Number(r.pax) || 0) + (Number(r.paxChild) || 0)} kişi`].filter(Boolean).join(" · ");
+  function pick(r) { setPicked(r); setF({ ...f, saleDate: r.checkIn ? String(r.checkIn).slice(0, 10) : f.saleDate }); }
   async function save(e) {
     e.preventDefault();
-    const { error } = await mutate("createExtraSale", { reservationId: reservationId || f.reservationId, description: f.description,
+    const rid = reservationId || (picked && picked.id);
+    if (!rid) { showToast("Önce rezervasyonu arayıp seçin."); return; }
+    const { error } = await mutate("createExtraSale", { reservationId: rid, description: f.description,
       amount: Number(String(f.amount).replace(",", ".")), currency: f.currency, saleDate: f.saleDate });
     if (error) { showToast("Hata: " + error); return; }
-    showToast("Ek satış kaydedildi.");
+    showToast(picked && picked.checkIn ? `Ek satış kaydedildi — ${_financeMonthLabel(String(picked.checkIn).slice(0, 7))} turuna eklendi.` : "Ek satış kaydedildi.");
     onDone && onDone();
   }
   return (
     <form onSubmit={save} data-testid="extra-sale-form" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 10, marginTop: 8 }}>
-      {!reservationId && (<>
-        <label style={lbl}>Tur tarihi
-          <select value={f.tourDate} onChange={e => setF({ ...f, tourDate: e.target.value, reservationId: "", saleDate: e.target.value })} style={input}>
-            {dates.map(d => <option key={d} value={d}>{_finShortDate(d)}</option>)}
-          </select></label>
-        <label style={{ ...lbl, gridColumn: "span 2" }}>Tur / rezervasyon
-          <select value={f.reservationId} onChange={e => setF({ ...f, reservationId: e.target.value })} required style={input}>
-            <option value="">Seçin…</option>
-            {options.map(x => <option key={x.id} value={x.id}>{x.tourLabel} · {x.language || "—"} · {x.ref}{x.customerName ? ` · ${x.customerName}` : ""} · {x.pax.total} kişi</option>)}
-          </select></label>
-      </>)}
+      {!reservationId && (
+        <div style={{ gridColumn: "1 / -1", display: "flex", flexDirection: "column", gap: 6 }}>
+          {picked ? (
+            <div data-testid="extra-sale-picked" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "8px 10px", borderRadius: T.radiusSm, border: `1px solid ${C.border}`, background: C.ivory, fontSize: 12.5, color: C.text, fontFamily: "'Geist',sans-serif" }}>
+              <span>{resLine(picked)}</span>
+              <button type="button" onClick={() => { setPicked(null); }} style={{ border: "none", background: "transparent", color: C.goldText, cursor: "pointer", fontSize: 12 }}>Değiştir</button>
+            </div>
+          ) : (<>
+            <label style={lbl}>Rezervasyon ara
+              <input data-testid="extra-sale-search" autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="Civitatis kodu (A42635449), rezervasyon no (R-…), müşteri adı veya tur" style={input}/></label>
+            {q.trim().length >= 2 && (
+              <div data-testid="extra-sale-results" style={{ border: `1px solid ${C.border}`, borderRadius: T.radiusSm, background: C.white, maxHeight: 260, overflowY: "auto" }}>
+                {hits.length === 0 && <div style={{ padding: "8px 10px", fontSize: 12, color: C.textMuted, fontFamily: "'Geist',sans-serif" }}>{allRes ? "Eşleşen rezervasyon yok." : "Rezervasyonlar yükleniyor…"}</div>}
+                {hits.map(r => (
+                  <button type="button" key={r.id} onClick={() => pick(r)} style={{ display: "block", width: "100%", textAlign: "left", padding: "8px 10px", border: "none", borderBottom: `1px solid ${C.borderLight}`, background: "transparent", color: C.text, cursor: "pointer", fontSize: 12.5, fontFamily: "'Geist',sans-serif" }}>{resLine(r)}</button>
+                ))}
+              </div>
+            )}
+          </>)}
+        </div>
+      )}
       <label style={{ ...lbl, gridColumn: "1 / -1" }}>Satılan ürün / hizmet
         <input value={f.description} onChange={e => setF({ ...f, description: e.target.value })} required placeholder="ör. Türk lokumu kutusu, fotoğraf paketi" style={input}/></label>
       <label style={lbl}>Tutar
@@ -12907,9 +12947,6 @@ function _ExtraSaleForm({ reservationId, defaultDate, reservations, onDone }) {
     </form>
   );
 }
-
-const _FIN_EXTRA_UNAVAILABLE = "Ek satış kaydı henüz etkin değil — veritabanı güncellemesi uygulandığında açılacak.";
-
 function _FinExtraSales({ s }) {
   const { mutate, mutating } = useRepoMutation("finance");
   const [open, setOpen] = useState(false);
@@ -12932,10 +12969,10 @@ function _FinExtraSales({ s }) {
       {xs.unavailable ? (
         <div data-testid="extra-sales-unavailable" style={{ padding: "10px 12px", borderRadius: T.radiusSm, background: C.amberBg, border: `1px solid ${C.borderLight}`, fontSize: 12.5, color: C.text, fontFamily: "'Geist',sans-serif" }}>{_FIN_EXTRA_UNAVAILABLE}</div>
       ) : (
-        <_FinSection title="Yeni Ek Satış" right={!open && <button type="button" onClick={() => setOpen(true)} disabled={!s.reservations.length}
+        <_FinSection title="Yeni Ek Satış" right={!open && <button type="button" onClick={() => setOpen(true)}
           style={{ padding: "5px 12px", borderRadius: T.radiusSm, border: `1px solid ${C.border}`, background: C.white, color: C.text, cursor: "pointer", fontSize: 12, fontFamily: "'Geist',sans-serif" }}>Ek Satış Ekle</button>}>
-          {open ? <_ExtraSaleForm reservations={s.reservations} onDone={() => setOpen(false)}/>
-            : <div style={{ fontSize: 12, color: C.textMuted, fontFamily: "'Geist',sans-serif" }}>{s.reservations.length ? "Turdaki müşterilere yapılan satışları buradan ya da rezervasyon detayındaki Finans kartından girin." : "Bu ay aktif rezervasyon yok."}</div>}
+          {open ? <_ExtraSaleForm onDone={() => setOpen(false)}/>
+            : <div style={{ fontSize: 12, color: C.textMuted, fontFamily: "'Geist',sans-serif" }}>Turdaki müşterilere yapılan satışları buradan (tüm rezervasyonlarda arayarak) ya da rezervasyon detayındaki Finans kartından girin. Liste, seçili ayın turlarına ait satışları gösterir.</div>}
         </_FinSection>
       )}
       <_FinSection title="Bu Ayın Ek Satışları">
@@ -22811,6 +22848,8 @@ function mapResFromDB(r) {
     purchasedActivityRaw:r.purchased_activity_raw||null,
     // Full timestamps (Finance: was an operation group continuously active?)
     createdAtTs:r.created_at||null, cancelledAt:r.cancelled_at||null,
+    // Channel booking code (Civitatis "A41748096"), searchable in the CRM.
+    externalBookingId:r.external_booking_id||null,
     createdAt:r.created_at?r.created_at.split('T')[0]:'', _fromDB:true };
 }
 // Tour Preparation Intelligence Phase C2D-1 — maps EVERY column of a
