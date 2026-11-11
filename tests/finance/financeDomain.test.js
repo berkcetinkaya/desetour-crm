@@ -1158,3 +1158,59 @@ test('extra sales unavailable (migration not applied yet) is passed through, not
   assert.deepEqual(s.totals.extraSales, {});
   assert.deepEqual(s.extraSales.items, []);
 });
+
+// ── Guide cost override (per operation) ─────────────────────────────────
+
+const OV = (key, o) => ({ id: 'OV-' + key, operationKey: key, tourDate: '2026-11-12', amount: 100, currency: 'EUR', reason: 'yarım gün', ...o });
+
+test('override replaces the standard cost for that ONE operation only — shared by all its reservations, never added', () => {
+  const resv = [res({ id: 'A' }), res({ id: 'B' }), res({ id: 'C', tourLanguage: 'İngilizce' })];
+  const key = summary({ reservations: resv }).guideServices.find(g => g.reservationIds.includes('A')).key;
+  const s = summary({ reservations: resv, guideCostOverrides: [OV(key)] });
+  const a = s.guideServices.find(g => g.key === key), c = s.guideServices.find(g => g.reservationIds.includes('C'));
+  assert.deepEqual(a.planned, { EUR: 100 }); assert.equal(a.costSource, 'override');
+  assert.deepEqual(a.override, { amount: 100, currency: 'EUR', reason: 'yarım gün', updatedAt: null });
+  assert.deepEqual(a.standardCost, { EUR: 150 });
+  assert.deepEqual(c.planned, { EUR: 150 }); assert.equal(c.costSource, 'fixed_rule');
+  assert.equal(guideEur(s), 250, 'two reservations in the overridden operation still one cost');
+  assert.equal(s.dataQuality.guideCostOverrides, 1);
+  const grp = s.groups.find(g => g.key === key);
+  assert.equal(grp.guide.costSource, 'override');
+  assert.deepEqual(grp.guide.planned, { EUR: 100 });
+});
+
+test('payments reconcile against the overridden amount; outstanding and cash needs follow it', () => {
+  const resv = [res({ id: 'A', checkIn: '2026-11-12' })];
+  const key = summary({ reservations: resv }).guideServices[0].key;
+  const s = summary({ reservations: resv, guideCostOverrides: [OV(key)], guidePayments: [gp({ id: 'P', resId: 'A', amount: 100, statusRaw: 'paid' })] });
+  assert.equal(s.guideServices[0].paymentStatus, 'paid');
+  assert.deepEqual(s.guideServices[0].outstanding, {});
+  assert.deepEqual(s.guideServices[0].discrepancies, []);
+  const u = summary({ reservations: resv, guideCostOverrides: [OV(key, { amount: 120 })] });
+  assert.deepEqual(F.buildFinanceCashNeeds({ summaries: [u], todayISO: TODAY }).windows[0].guide, { EUR: 120 });
+  const tr = summary({ reservations: resv, guideCostOverrides: [OV(key, { amount: 5000, currency: 'TRY' })] });
+  assert.deepEqual(tr.guideServices[0].planned, { TRY: 5000 });
+  assert.equal(tr.kpis.projectedCost.tryTotal >= 5000, true);
+});
+
+test('override 0 = no guide cost for that operation ("maliyet yok"), nothing to prepare', () => {
+  const resv = [res({ id: 'A', checkIn: '2026-11-12' })];
+  const key = summary({ reservations: resv }).guideServices[0].key;
+  const s = summary({ reservations: resv, guideCostOverrides: [OV(key, { amount: 0 })] });
+  const g = s.guideServices[0];
+  assert.deepEqual(g.planned, {});
+  assert.equal(g.paymentStatus, 'no_cost');
+  assert.deepEqual(g.outstanding, {});
+  assert.equal(guideEur(s), 0);
+  assert.equal(s.dataQuality.unpaidPastGuideServices, 0);
+  assert.deepEqual(F.buildFinanceCashNeeds({ summaries: [s], todayISO: TODAY }).windows[0].guide, {});
+  const paid = summary({ reservations: resv, guideCostOverrides: [OV(key, { amount: 0 })], guidePayments: [gp({ id: 'P', resId: 'A', amount: 50, statusRaw: 'paid' })] });
+  assert.equal(paid.guideServices[0].paymentStatus, 'overpaid', 'a payment against a zero cost is surfaced');
+});
+
+test('an override for another key changes nothing; overrides unavailable is passed through', () => {
+  const s = summary({ reservations: [res({ id: 'A' })], guideCostOverrides: [OV('2026-11-30|T-X|İspanyolca')], guideCostOverridesUnavailable: true });
+  assert.equal(guideEur(s), 150);
+  assert.equal(s.guideCostOverridesUnavailable, true);
+  assert.equal(s.dataQuality.guideCostOverrides, 0);
+});
