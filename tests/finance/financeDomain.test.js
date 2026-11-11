@@ -511,3 +511,38 @@ test('a TRY public reference (₺2,750 Topkapı tariff) never replaces the inter
   const s = summary({ reservations: [res({ id: 'A' })], rules: [TOP_RULE], preparations: [topPrep('A', 'pending', 3)], costItems: [GUIDE, MEAL, TOP_COST, pubTry] });
   assert.deepEqual(s.categories.ticket.planned, { EUR: 120 });
 });
+
+// ── Phase E: group-level P&L ────────────────────────────────────────────
+
+test('group P&L: guide counted ONCE per service (not per reservation allocation), ticket/meal summed over reservations', () => {
+  const s = summary({ reservations: [res({ id: 'A', pax: 8, mealStatus: 'included' }), res({ id: 'B', pax: 12 })], rules: [TOP_RULE],
+    preparations: [topPrep('A', 'pending', 8), topPrep('B', 'pending', 12)] });
+  assert.equal(s.groups.length, 1);
+  const g = s.groups[0];
+  assert.deepEqual(g.plannedCost, { EUR: 150 + 20 * 40 + 8 * 10 });
+  assert.equal(g.reservations, 2);
+  assert.equal(g.actualStatus, 'not_yet');
+  assert.equal(g.varianceTry, null);
+});
+
+test('group variance is like-for-like: only categories with recorded actuals + the guide once', () => {
+  const s = summary({ reservations: [res({ id: 'A', checkIn: '2026-11-05', mealStatus: 'included', pax: 4 }), res({ id: 'B', checkIn: '2026-11-05', mealStatus: 'included', pax: 2 })],
+    expenses: [{ id: 'E', reservationId: 'A', category: 'meal', totalAmount: 35, currency: 'EUR' }],
+    guidePayments: [gp({ id: 'G', resId: 'B', amount: 160, statusRaw: 'paid' })] });
+  const g = s.groups[0];
+  assert.deepEqual(g.varianceMap, { EUR: (35 - 40) + (160 - 150) }, 'B\'s un-actualized meal plan is not in the variance');
+  assert.equal(g.varianceTry, 5 * 50);
+  assert.equal(g.actualStatus, 'provisional', 'B has a planned meal without a recorded expense');
+});
+
+test('reservation variance is also available in original currencies', () => {
+  const s = summary({ reservations: [res({ id: 'A', mealStatus: 'included', pax: 4 })], expenses: [{ id: 'E', reservationId: 'A', category: 'meal', totalAmount: 45, currency: 'EUR' }] });
+  assert.deepEqual(s.reservations[0].varianceMap, { EUR: 5 });
+});
+
+test('tour subgroups carry the group P&L', () => {
+  const s = summary({ reservations: [res({ id: 'A' }), res({ id: 'B', tourLanguage: 'İngilizce' })] });
+  const t = s.tours.find(x => x.tourId === 'T-TOP');
+  assert.equal(t.subgroups.length, 2);
+  assert.ok(t.subgroups.every(sg => sg.pnl && sg.pnl.key === sg.key));
+});

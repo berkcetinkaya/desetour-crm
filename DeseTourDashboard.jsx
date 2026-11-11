@@ -10806,6 +10806,7 @@ function ReservationDetailPage({ resId, onBack }) {
               </div>
             ))}
           </RCard>
+          {canAccess(auth.role, "finance") && <ReservationFinanceCard r={r}/>}
         </div>
 
         {}
@@ -11812,6 +11813,12 @@ function ReservationQuickView({ resId, onClose }) {
                 )}
               </_QvSection>
 
+              {!vm.isCancelled && canAccess(auth.role, "finance") && (
+                <_QvSection title="Finans">
+                  <ReservationFinanceSummary resId={vm.id} checkIn={r.checkIn}/>
+                </_QvSection>
+              )}
+
               {vm.notes && (
                 <_QvSection title="Notlar">
                   <p style={{ margin:"4px 0 0", fontSize:12.5, color:C.textMid, lineHeight:1.55, whiteSpace:"pre-wrap", fontFamily:"'Geist',sans-serif" }}>{vm.notes}</p>
@@ -12696,7 +12703,7 @@ function _FinTourTable({ s, mode }) {
     ? [["Bilet", t => _fmtFinanceMap(t.ticket)], ["Rehber", t => _fmtFinanceMap(t.guide)], ["Yemek", t => _fmtFinanceMap(t.meal)], ["Diğer", t => _fmtFinanceMap(t.other)], ["Toplam plan", t => _fmtFinanceMap(t.totalPlanned)]]
     : [["Toplam plan", t => _fmtFinanceMap(t.totalPlanned)], ["Beklenen net", t => _fmtFinanceMap(t.expectedNet)],
        ["Tahmini kâr", t => t.projectedProfit == null ? "—" : `${t.projectedProfit < 0 ? "−" : ""}₺${Math.abs(Math.round(t.projectedProfit)).toLocaleString("tr-TR")}`],
-       ["Marj", t => t.margin == null ? "—" : `%${Math.round(t.margin * 100)}`]];
+       ["Marj", t => _finPct(t.margin)]];
   if (!s.tours.length) return <div style={{ fontSize: 12.5, color: C.textMuted, fontFamily: "'Geist',sans-serif" }}>Bu ay aktif rezervasyon yok.</div>;
   return (
     <div style={{ overflowX: "auto", border: `1px solid ${C.border}`, borderRadius: T.radius, background: C.white }}>
@@ -12727,8 +12734,16 @@ function _FinTourTable({ s, mode }) {
                     </td>
                     <td style={td}>{g.reservations}</td><td style={td}>{g.pax}</td><td style={td}>1</td>
                     <td style={td} colSpan={cols.length}>
-                      <span style={{ color: C.textMid }}>Rehber {_fmtFinanceMap(g.guidePlanned)} toplam{g.reservations > 1 ? ` · ${g.reservations} rezervasyon paylaşıyor` : ""}</span>
-                      {g.state !== "forecast" && <span style={{ marginLeft: 8, fontSize: 11, color: C.textMuted }}>{g.state === "actual" ? "ödendi" : "ödeme bekliyor"}</span>}
+                      {mode === "profit" && g.pnl ? (
+                        <span data-testid="group-pnl" style={{ color: C.textMid }}>
+                          Plan {_fmtFinanceMap(g.pnl.plannedCost)}
+                          {g.pnl.past && <> · Gerçekleşen {_fmtFinanceMap(g.pnl.actualCost)}{g.pnl.varianceTry != null ? ` (sapma ${_finSigned(g.pnl.varianceTry)})` : ""}{g.pnl.actualStatus === "provisional" ? <span style={{ color: C.amber }}> · geçici</span> : null}</>}
+                          {" · "}Tahmini kâr <b style={{ color: g.pnl.projectedProfit < 0 ? C.red : C.text }}>{_finSigned(g.pnl.projectedProfit)}</b>
+                        </span>
+                      ) : (<>
+                        <span style={{ color: C.textMid }}>Rehber {_fmtFinanceMap(g.guidePlanned)} toplam{g.reservations > 1 ? ` · ${g.reservations} rezervasyon paylaşıyor` : ""}</span>
+                        {g.state !== "forecast" && <span style={{ marginLeft: 8, fontSize: 11, color: C.textMuted }}>{g.state === "actual" ? "ödendi" : "ödeme bekliyor"}</span>}
+                      </>)}
                     </td>
                   </tr>
                 ))}
@@ -12859,6 +12874,186 @@ function FinancePage({ tab, navigate }) {
       ) : (
         <_FinOverview s={s} isCurrentMonth={isCurrentMonth}/>
       )}
+    </div>
+  );
+}
+
+// ── Finance Center Phase E — reservation / group P&L (presentation only) ──
+// Every figure is picked from the SAME month summary the Finance page uses
+// (useFinanceMonth → buildFinanceMonthSummary); nothing is recomputed here.
+function useReservationFinance(resId, checkIn) {
+  const monthISO = checkIn ? String(checkIn).slice(0, 7) : _istanbulISODate().slice(0, 7);
+  const { summary, loading, error } = useFinanceMonth(monthISO);
+  const row = summary ? summary.reservations.find(x => x.id === resId) || null : null;
+  const group = row && row.guideAllocation ? summary.groups.find(g => g.key === row.guideAllocation.serviceKey) || null : null;
+  return { summary, row, group, loading, error };
+}
+
+const FINANCE_EXPENSE_CATEGORY_OPTIONS = [
+  { value: "ticket", label: "Bilet" }, { value: "meal", label: "Yemek" },
+  { value: "transport", label: "Ulaşım" }, { value: "other", label: "Diğer" },
+];
+
+function _finMoneyLine(label, value, opts) {
+  const o = opts || {};
+  return (
+    <div style={{ display: "flex", justifyContent: "space-between", gap: 12, padding: "6px 0", fontFamily: "'Geist',sans-serif", fontSize: 12.5 }}>
+      <span style={{ color: o.strong ? C.text : C.textMuted, fontWeight: o.strong ? 600 : 400 }}>{label}</span>
+      <span style={{ color: o.tone === "bad" ? C.red : C.text, fontWeight: o.strong ? 700 : 500, fontVariantNumeric: "tabular-nums", textAlign: "right" }}>{value}</span>
+    </div>
+  );
+}
+function _finPct(m) {
+  return m == null ? "—" : `${m < 0 ? "−" : ""}%${Math.abs(Math.round(m * 100))}`;
+}
+function _finSigned(v) {
+  return v == null ? "—" : `${v > 0 ? "+" : v < 0 ? "−" : ""}₺${Math.abs(Math.round(v)).toLocaleString("tr-TR")}`;
+}
+function _finSignedMap(m) {
+  if (!m) return "—";
+  const f = _fmtFinanceMap(m);
+  return f === "—" ? "0" : f.split(" · ").map(x => x.startsWith("−") ? x : "+" + x).join(" · ");
+}
+
+function ReservationFinanceCard({ r }) {
+  const { row, group, loading, error } = useReservationFinance(r.id, r.checkIn);
+  const { data: expenses } = useRepo("finance", "getExpenses", { reservationId: r.id });
+  const { mutate, mutating } = useRepoMutation("finance");
+  const [form, setForm] = useState(null);
+  const today = _istanbulISODate();
+  async function save(e) {
+    e.preventDefault();
+    const amount = Number(String(form.totalAmount).replace(",", "."));
+    if (!(amount > 0)) { showToast("Geçerli bir tutar girin."); return; }
+    const { error: err } = await mutate("createExpense", { reservationId: r.id, category: form.category, description: form.description,
+      totalAmount: amount, currency: form.currency, expenseDate: form.expenseDate });
+    if (err) { showToast("Hata: " + err); return; }
+    showToast("Gider kaydedildi.");
+    setForm(null);
+  }
+  async function remove(x) {
+    if (!window.confirm(`${x.description || "Gider"} (${_fmtFinanceMap({ [x.currency]: x.totalAmount })}) silinsin mi?`)) return;
+    const { error: err } = await mutate("deleteExpense", x.id);
+    showToast(err ? "Hata: " + err : "Gider silindi.");
+  }
+  const cats = [["ticket", "Bilet"], ["meal", "Yemek"], ["transport", "Ulaşım"], ["other", "Diğer"]];
+  const g = row && row.guideAllocation;
+  const td = { padding: "7px 0", fontVariantNumeric: "tabular-nums", textAlign: "right", whiteSpace: "nowrap", fontSize: 12.5, color: C.text };
+  const input = { width: "100%", boxSizing: "border-box", padding: "7px 9px", borderRadius: T.radiusSm, border: `1px solid ${C.border}`, background: C.white, color: C.text, fontSize: 12.5, fontFamily: "'Geist',sans-serif" };
+  return (
+    <RCard>
+      <RCardHead title="Finans" right={row && row.future ? <span style={{ fontSize: 11, color: C.textMuted, fontFamily: "'Geist',sans-serif" }}>Tahmini</span> : row ? <span style={{ fontSize: 11, color: row.actualCoverageComplete ? C.green : C.amber, fontFamily: "'Geist',sans-serif" }}>{row.actualCoverageComplete ? "Gerçekleşen" : "Gerçekleşen · geçici"}</span> : null}/>
+      <div data-testid="reservation-finance" style={{ padding: "6px 20px 16px" }}>
+        {loading && !row ? <div style={{ padding: "12px 0", fontSize: 12.5, color: C.textMuted, fontFamily: "'Geist',sans-serif" }}>Finans verisi yükleniyor…</div>
+          : error ? <div style={{ padding: "12px 0", fontSize: 12.5, color: C.red, fontFamily: "'Geist',sans-serif" }}>Finans verisi yüklenemedi.</div>
+          : !row ? <div style={{ padding: "12px 0", fontSize: 12.5, color: C.textMuted, fontFamily: "'Geist',sans-serif" }}>{r.opStatus === "İptal" ? "İptal edilen rezervasyonlar finans hesaplarına dahil edilmez." : "Bu rezervasyon için finans verisi yok."}</div>
+          : (<>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: "'Geist',sans-serif" }}>
+              <thead><tr>
+                <th style={{ textAlign: "left", fontSize: 11, fontWeight: 600, color: C.textFaint, padding: "4px 0" }}>Maliyet</th>
+                <th style={{ textAlign: "right", fontSize: 11, fontWeight: 600, color: C.textFaint, padding: "4px 0" }}>Tahmini</th>
+                <th style={{ textAlign: "right", fontSize: 11, fontWeight: 600, color: C.textFaint, padding: "4px 0 4px 10px" }}>Gerçekleşen</th>
+              </tr></thead>
+              <tbody>
+                {cats.map(([k, l]) => (Object.keys(row.planned[k]).length || Object.keys(row.actual[k]).length) ? (
+                  <tr key={k} style={{ borderTop: `1px solid ${C.borderLight}` }}>
+                    <td style={{ ...td, textAlign: "left", color: C.textMuted }}>{l}</td>
+                    <td style={td}>{_fmtFinanceMap(row.planned[k])}</td>
+                    <td style={{ ...td, paddingLeft: 10 }}>{Object.keys(row.actual[k]).length ? _fmtFinanceMap(row.actual[k]) : (row.missingActualCategories.includes(k) ? <span style={{ color: C.amber }}>girilmedi</span> : "—")}</td>
+                  </tr>) : null)}
+                {g && (
+                  <tr style={{ borderTop: `1px solid ${C.borderLight}` }}>
+                    <td style={{ ...td, textAlign: "left", color: C.textMuted }}>Rehber <span style={{ fontSize: 11, color: C.textFaint }}>· payı</span></td>
+                    <td style={td}>{_fmtFinanceMap(g.planned)}</td>
+                    <td style={{ ...td, paddingLeft: 10 }}>{Object.keys(g.incurred).length ? _fmtFinanceMap(g.incurred) : g.missingActual ? <span style={{ color: C.amber }}>ödeme kaydı yok</span> : "—"}</td>
+                  </tr>
+                )}
+                <tr style={{ borderTop: `1px solid ${C.border}` }}>
+                  <td style={{ ...td, textAlign: "left", fontWeight: 600 }}>Toplam</td>
+                  <td style={{ ...td, fontWeight: 600 }}>{_fmtFinanceMap(row.plannedCost)}</td>
+                  <td style={{ ...td, paddingLeft: 10, fontWeight: 600 }}>{_fmtFinanceMap(row.incurredCost)}</td>
+                </tr>
+              </tbody>
+            </table>
+            {row.varianceMap && <div data-testid="reservation-finance-variance" style={{ marginTop: 6, fontSize: 12, color: C.textMuted, fontFamily: "'Geist',sans-serif" }}>Sapma (gerçekleşen kalemler): <b style={{ color: C.text }}>{_finSignedMap(row.varianceMap)}</b></div>}
+            {g && group && (
+              <div style={{ marginTop: 8, padding: "8px 10px", borderRadius: T.radiusSm, background: C.ivory, border: `1px solid ${C.borderLight}`, fontSize: 11.5, color: C.textMid, fontFamily: "'Geist',sans-serif", lineHeight: 1.5 }}>
+                Rehber operasyonu: {_fmtFinanceMap(group.guide.planned)} toplam · {group.reservations > 1 ? `${group.reservations} rezervasyon paylaşıyor.` : "yalnızca bu rezervasyon."}
+                {group.reservations > 1 && <> Bu rezervasyonun payı (%{Math.round(g.share * 100)}, kişi sayısına göre) yalnızca raporlama içindir.</>}
+              </div>
+            )}
+            <div style={{ marginTop: 12, borderTop: `1px solid ${C.borderLight}`, paddingTop: 6 }}>
+              {row.revenue.isCivitatis && _finMoneyLine("Brüt rezervasyon değeri", _fmtFinanceMap({ [row.revenue.grossCurrency]: row.revenue.gross }))}
+              {row.revenue.isCivitatis && _finMoneyLine("Civitatis komisyonu", row.revenue.commission == null ? "kur nedeniyle hesaplanamadı" : _fmtFinanceMap({ [row.revenue.commissionCurrency]: row.revenue.commission }))}
+              {_finMoneyLine(row.revenue.receivable.source === "settlement" ? `DeseTour net alacağı · hakediş (${({ accrued: "biriken", claimable: "talep edilebilir", requested: "talep edildi", paid: "ödeme alındı" })[row.revenue.receivable.settlementStatus] || row.revenue.receivable.settlementStatus})` : "DeseTour net alacağı",
+                _fmtFinanceMap({ [row.revenue.receivable.currency]: row.revenue.receivable.amount }), { strong: true })}
+              {_finMoneyLine("Tahsil edilen", _fmtFinanceMap(row.received))}
+              {_finMoneyLine("Tahmini kâr", _finSigned(row.tryView.projectedProfit) + (row.tryView.projectedMargin != null ? ` · ${_finPct(row.tryView.projectedMargin)}` : ""), { strong: true, tone: row.tryView.projectedProfit < 0 ? "bad" : null })}
+            </div>
+          </>)}
+        <div style={{ marginTop: 12, borderTop: `1px solid ${C.borderLight}`, paddingTop: 10 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+            <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: C.textFaint, fontFamily: "'Geist',sans-serif" }}>Gerçek Giderler</span>
+            {!form && r.opStatus !== "İptal" && (
+              <button type="button" onClick={() => setForm({ category: "ticket", description: "", totalAmount: "", currency: "EUR", expenseDate: today })}
+                style={{ padding: "4px 10px", borderRadius: T.radiusSm, border: `1px solid ${C.border}`, background: C.white, color: C.text, cursor: "pointer", fontSize: 11.5, fontFamily: "'Geist',sans-serif" }}>Gider Ekle</button>
+            )}
+          </div>
+          {(expenses || []).length === 0 && !form && <div style={{ fontSize: 12, color: C.textFaint, marginTop: 6, fontFamily: "'Geist',sans-serif" }}>Henüz gider kaydı yok.</div>}
+          {(expenses || []).map(x => (
+            <div key={x.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "6px 0", borderBottom: `1px solid ${C.borderLight}`, fontSize: 12.5, fontFamily: "'Geist',sans-serif" }}>
+              <span style={{ color: C.text, minWidth: 0 }}>{(FINANCE_EXPENSE_CATEGORY_OPTIONS.find(o => o.value === x.category) || {}).label || x.category}{x.description ? ` · ${x.description}` : ""}
+                <span style={{ color: C.textFaint }}> · {x.expenseDate}</span></span>
+              <span style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+                <b style={{ fontVariantNumeric: "tabular-nums" }}>{_fmtFinanceMap({ [x.currency]: x.totalAmount })}</b>
+                <button type="button" aria-label="Gideri sil" onClick={() => remove(x)} disabled={mutating} style={{ border: "none", background: "transparent", color: C.textFaint, cursor: "pointer", padding: 2 }}>
+                  <RIc d="M18 6L6 18M6 6l12 12" size={12} sw={2}/>
+                </button>
+              </span>
+            </div>
+          ))}
+          {form && (
+            <form onSubmit={save} data-testid="expense-form" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 8 }}>
+              <label style={{ fontSize: 11, color: C.textMuted, fontFamily: "'Geist',sans-serif" }}>Kategori
+                <select value={form.category} onChange={e => setForm({ ...form, category: e.target.value })} style={input}>
+                  {FINANCE_EXPENSE_CATEGORY_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                </select></label>
+              <label style={{ fontSize: 11, color: C.textMuted, fontFamily: "'Geist',sans-serif" }}>Tarih
+                <input type="date" value={form.expenseDate} onChange={e => setForm({ ...form, expenseDate: e.target.value })} required style={input}/></label>
+              <label style={{ fontSize: 11, color: C.textMuted, fontFamily: "'Geist',sans-serif", gridColumn: "1 / -1" }}>Açıklama
+                <input value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} placeholder="ör. Topkapı biletleri" style={input}/></label>
+              <label style={{ fontSize: 11, color: C.textMuted, fontFamily: "'Geist',sans-serif" }}>Tutar
+                <input inputMode="decimal" value={form.totalAmount} onChange={e => setForm({ ...form, totalAmount: e.target.value })} required style={input}/></label>
+              <label style={{ fontSize: 11, color: C.textMuted, fontFamily: "'Geist',sans-serif" }}>Para birimi
+                <select value={form.currency} onChange={e => setForm({ ...form, currency: e.target.value })} style={input}>
+                  {["EUR", "TRY", "USD", "GBP"].map(c => <option key={c} value={c}>{c}</option>)}
+                </select></label>
+              <div style={{ gridColumn: "1 / -1", fontSize: 11, color: C.textFaint, fontFamily: "'Geist',sans-serif" }}>Rehber maliyeti buraya girilmez — rehber ödemelerinden gelir. TL karşılığı kayıt anındaki ECB kuruyla sabitlenir.</div>
+              <div style={{ gridColumn: "1 / -1", display: "flex", justifyContent: "flex-end", gap: 8 }}>
+                <button type="button" onClick={() => setForm(null)} style={{ padding: "7px 12px", borderRadius: T.radiusSm, border: `1px solid ${C.border}`, background: "transparent", color: C.textMid, cursor: "pointer", fontSize: 12.5, fontFamily: "'Geist',sans-serif" }}>Vazgeç</button>
+                <button type="submit" disabled={mutating} style={{ padding: "7px 12px", borderRadius: T.radiusSm, border: "none", background: C.navy, color: "#fff", cursor: "pointer", fontSize: 12.5, fontWeight: 600, fontFamily: "'Geist',sans-serif" }}>{mutating ? "…" : "Kaydet"}</button>
+              </div>
+            </form>
+          )}
+        </div>
+      </div>
+    </RCard>
+  );
+}
+
+// Calendar Quick View — compact finance summary from the same canonical
+// month summary. The group guide cost is shown as shared, never as if this
+// reservation alone created it.
+function ReservationFinanceSummary({ resId, checkIn }) {
+  const { row, group, loading } = useReservationFinance(resId, checkIn);
+  if (loading && !row) return null;
+  if (!row) return null;
+  return (
+    <div data-testid="quickview-finance" style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+      {_finMoneyLine("Beklenen net gelir", _fmtFinanceMap({ [row.revenue.receivable.currency]: row.revenue.receivable.amount }))}
+      {_finMoneyLine("Planlanan maliyet", _fmtFinanceMap(row.plannedCost))}
+      {_finMoneyLine("Tahmini kâr", _finSigned(row.tryView.projectedProfit), { strong: true, tone: row.tryView.projectedProfit < 0 ? "bad" : null })}
+      {group && <div style={{ fontSize: 11.5, color: C.textMuted, fontFamily: "'Geist',sans-serif", marginTop: 2 }}>Rehber operasyonu: {_fmtFinanceMap(group.guide.planned)} toplam · {group.reservations > 1 ? `${group.reservations} rezervasyon paylaşıyor` : "yalnızca bu rezervasyon"}</div>}
     </div>
   );
 }
@@ -19113,6 +19308,9 @@ function buildFinanceMonthSummary(input) {
       .filter(c => Object.keys(actual[c]).length)
       .map(c => [planned[c], actual[c]]);
     if (guideAllocation && Object.keys(guideAllocation.actual).length) varPairs.push([guideAllocation.planned, guideAllocation.actual]);
+    const neg = (m) => Object.fromEntries(Object.entries(m || {}).map(([c, v]) => [c, -v]));
+    // Same like-for-like variance in ORIGINAL currencies (actual − planned).
+    const varianceMap = varPairs.length ? _financeSumMaps(...varPairs.map(v => v[1]), ...varPairs.map(v => neg(v[0]))) : null;
     let varianceTry = null;
     if (varPairs.length) {
       const pv = t(_financeSumMaps(...varPairs.map(v => v[0]))), av = t(_financeSumMaps(...varPairs.map(v => v[1])));
@@ -19123,7 +19321,7 @@ function buildFinanceMonthSummary(input) {
     return {
       id: r.id, ref: r.resNumber || r.id, date, tourId: r.tourId, tourLabel: r.tour || '—', language: svc ? svc.language : null,
       pax, future, opStatus: r.opStatus, planned, actual, best, remaining, guideAllocation, revenue: rev, received,
-      earned, outstanding, incurredCost, actualCoverageComplete, missingActualCategories,
+      earned, outstanding, incurredCost, actualCoverageComplete, missingActualCategories, varianceMap,
       plannedCost, projectedCost, actualCost,
       tryView: {
         expectedNet: recvT, plannedCost: planT, projectedCost: projT, actualCost: actT, received: recdT,
@@ -19133,6 +19331,46 @@ function buildFinanceMonthSummary(input) {
       },
     };
   });
+
+  // ── Group-level P&L: one row per guide service (date + tour + language).
+  // The guide cost is counted ONCE here (the service's own planned /
+  // committed / paid amounts) — never the sum of reservation allocations.
+  const nonGuide = (x, field) => _financeSumMaps(x[field].ticket, x[field].meal, x[field].transport, x[field].other);
+  const T2 = (m) => _financeToTry(m, fx);
+  const groupRows = guideRows.map(g => {
+    const rows = reservationRows.filter(x => x.guideAllocation && x.guideAllocation.serviceKey === g.key);
+    const expectedNetMap = _financeSumMaps(...rows.map(x => _financeAdd({}, x.revenue.receivable.currency, x.revenue.receivable.amount)));
+    const plannedCost = _financeSumMaps(...rows.map(x => nonGuide(x, 'planned')), g.planned);
+    const projectedCost = _financeSumMaps(...rows.map(x => nonGuide(x, 'best')), g.best);
+    const actualCost = _financeSumMaps(...rows.map(x => nonGuide(x, 'actual')), g.incurred);
+    const netT = T2(expectedNetMap), projT = T2(projectedCost), planT = T2(plannedCost), actT = T2(actualCost);
+    // Like-for-like variance (same rule as reservations): only categories
+    // that have a recorded actual, against their own plan; the guide once,
+    // for the group, when a guide payment is recorded.
+    const vPairs = [];
+    for (const x of rows) for (const c of ['ticket', 'meal', 'transport', 'other']) if (Object.keys(x.actual[c]).length) vPairs.push([x.planned[c], x.actual[c]]);
+    if (Object.keys(g.incurred).length) vPairs.push([g.planned, g.incurred]);
+    const groupVar = { map: null, tryValue: null };
+    if (vPairs.length) {
+      const neg2 = (m) => Object.fromEntries(Object.entries(m || {}).map(([c, v]) => [c, -v]));
+      groupVar.map = _financeSumMaps(...vPairs.map(v => v[1]), ...vPairs.map(v => neg2(v[0])));
+      const pv = T2(_financeSumMaps(...vPairs.map(v => v[0]))), av = T2(_financeSumMaps(...vPairs.map(v => v[1])));
+      groupVar.tryValue = pv.complete && av.complete ? Math.round((av.tryTotal - pv.tryTotal) * 100) / 100 : null;
+    }
+    const past = g.date < todayISO;
+    const coverageComplete = past ? rows.every(x => x.actualCoverageComplete) && !g.missingActual : null;
+    return {
+      key: g.key, date: g.date, tourId: g.tourId, tourLabel: g.tourLabel, language: g.language,
+      unresolvedReason: g.unresolvedReason, reservationIds: rows.map(x => x.id), reservations: rows.length, pax: g.pax,
+      guide: { planned: g.planned, best: g.best, incurred: g.incurred, state: g.state, missingActual: g.missingActual, multiPayment: g.multiPayment },
+      expectedNet: expectedNetMap, plannedCost, projectedCost, actualCost, past,
+      projectedProfit: netT.complete && projT.complete ? Math.round((netT.tryTotal - projT.tryTotal) * 100) / 100 : null,
+      projectedMargin: netT.complete && projT.complete && netT.tryTotal > 0 ? (netT.tryTotal - projT.tryTotal) / netT.tryTotal : null,
+      varianceMap: groupVar.map, varianceTry: groupVar.tryValue,
+      actualStatus: past ? (coverageComplete ? 'final' : 'provisional') : 'not_yet',
+    };
+  });
+  const groupByKey = new Map(groupRows.map(x => [x.key, x]));
 
   // ── Month totals (original currencies + TRY view)
   const sumCat = (rows, field, cat) => _financeSumMaps(...rows.map(x => x[field][cat]));
@@ -19212,14 +19450,14 @@ function buildFinanceMonthSummary(input) {
     return { tourId: t.tourId, tourLabel: t.tourLabel, reservations: t.reservations, pax: t.pax, guideServices: svcs.length,
       ticket, guide, meal, other, totalPlanned, expectedNet: net,
       projectedProfit: diff(netT, costT), margin: netT.complete && costT.complete && netT.tryTotal > 0 ? (netT.tryTotal - costT.tryTotal) / netT.tryTotal : null,
-      subgroups: svcs.map(g => ({ key: g.key, date: g.date, language: g.language, unresolvedReason: g.unresolvedReason, reservations: g.reservationCount, pax: g.pax, guideServices: 1, guidePlanned: g.planned, state: g.state })) };
+      subgroups: svcs.map(g => ({ key: g.key, date: g.date, language: g.language, unresolvedReason: g.unresolvedReason, reservations: g.reservationCount, pax: g.pax, guideServices: 1, guidePlanned: g.planned, state: g.state, pnl: groupByKey.get(g.key) })) };
   }).sort((a, b) => String(a.tourLabel).localeCompare(String(b.tourLabel)));
 
   return {
     monthISO: String(monthISO).slice(0, 7), startISO, endISO, todayISO,
     counts: { reservations: active.length, cancelledExcluded: monthRes.length - active.length, guideServices: guideRows.length,
       unresolvedGuideServices: guideRows.filter(g => g.unresolvedReason).length },
-    guideServices: guideRows, reservations: reservationRows, tours: tourRows, categories,
+    guideServices: guideRows, groups: groupRows, reservations: reservationRows, tours: tourRows, categories,
     totals: { remainingBudget, plannedOperatingCost, projectedOperatingCost, actualSpend, expectedNet, gross, received, unattributedGuidePayments: unattributedAmount },
     kpis: {
       remainingBudget: kp.remainingBudget, expectedNet: kp.expectedNet, gross: kp.gross,
@@ -22723,15 +22961,31 @@ function _financeExpensePayload(d) {
   return out; // exchange_rate_used / exchange_rate_date / try_amount intentionally absent
 }
 // TESTABLE:_financeExpensePayload:end
+// Mock/demo mode: expenses live in memory only (validated by the SAME
+// _financeExpensePayload as the Supabase repo — a guide expense is refused
+// here too); no FX is frozen without a database.
+const _mockFinanceExpenses = [];
 const FinanceRepository = {
   async getMonthData(monthISO) {
     const { startISO, endISO } = _financeMonthRange(monthISO);
     const reservations = (DB.reservations || []).filter(r => r.checkIn && r.checkIn >= startISO && r.checkIn < endISO);
-    return { reservations, preparations: [], rules: [], costItems: [], expenses: [], guidePayments: [], payments: [],
-      settlementItems: [], rateRows: [], rateSourceError: false };
+    const ids = new Set(reservations.map(r => r.id));
+    return { reservations, preparations: [], rules: [], costItems: [], expenses: _mockFinanceExpenses.filter(e => ids.has(e.reservationId)),
+      guidePayments: [], payments: [], settlementItems: [], rateRows: [], rateSourceError: false };
   },
   async getCostItems() { return []; },
-  async getExpenses() { return []; },
+  async getExpenses({ reservationId } = {}) { return _mockFinanceExpenses.filter(e => !reservationId || e.reservationId === reservationId); },
+  async createExpense(d) {
+    const row = _financeExpensePayload(d);
+    const e = mapReservationExpenseFromDB({ ...row, id: 'EXP-' + (_mockFinanceExpenses.length + 1) + '-' + Date.now() });
+    _mockFinanceExpenses.push(e);
+    return e;
+  },
+  async deleteExpense(id) {
+    const i = _mockFinanceExpenses.findIndex(e => e.id === id);
+    if (i >= 0) _mockFinanceExpenses.splice(i, 1);
+    return true;
+  },
 };
 const SupabaseFinanceRepo = {
   async getMonthData(monthISO) {

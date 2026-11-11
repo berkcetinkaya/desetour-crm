@@ -102,3 +102,49 @@ test('navigation: Finans in sidebar (role-gated on desktop), mobile drawer and M
   assert.match(SOURCE, /\{ id:"finance",\s+label:"Finans",\s+icon:/);
   assert.match(SOURCE, /finance:"Finans", payments:"Ödemeler"/);
 });
+
+// ── Phase E ─────────────────────────────────────────────────────────────
+
+test('reservation finance is picked from the SAME month summary — never recomputed', () => {
+  const h = body('useReservationFinance');
+  assert.match(h, /const \{ summary, loading, error \} = useFinanceMonth\(monthISO\);/);
+  assert.match(h, /summary\.reservations\.find\(x => x\.id === resId\)/);
+  assert.match(h, /summary\.groups\.find\(g => g\.key === row\.guideAllocation\.serviceKey\)/);
+  const ui = body('ReservationFinanceCard') + body('ReservationFinanceSummary');
+  assert.doesNotMatch(ui, /buildFinanceMonthSummary|buildGuideServices|_financeToTry|\b150\b|\* 40|rate \*/);
+});
+
+test('Finance card: Admin/Operations only, shows shared guide cost as reporting share, never a payable', () => {
+  assert.match(SOURCE, /\{canAccess\(auth\.role, "finance"\) && <ReservationFinanceCard r=\{r\}\/>\}/);
+  const c = body('ReservationFinanceCard');
+  assert.match(c, /rezervasyon paylaşıyor\./);
+  assert.match(c, /yalnızca raporlama içindir/);
+  assert.match(c, /İptal edilen rezervasyonlar finans hesaplarına dahil edilmez\./);
+  assert.match(c, /ödeme kaydı yok/);
+  assert.match(c, /girilmedi/);
+});
+
+test('expense entry: only ticket/meal/transport/other, through the finance repo, guide explicitly excluded', () => {
+  assert.match(SOURCE, /const FINANCE_EXPENSE_CATEGORY_OPTIONS = \[\s*\{ value: "ticket", label: "Bilet" \}, \{ value: "meal", label: "Yemek" \},\s*\{ value: "transport", label: "Ulaşım" \}, \{ value: "other", label: "Diğer" \},\s*\];/);
+  const c = body('ReservationFinanceCard');
+  assert.match(c, /useRepoMutation\("finance"\)/);
+  assert.match(c, /mutate\("createExpense", \{ reservationId: r\.id,/);
+  assert.match(c, /mutate\("deleteExpense", x\.id\)/);
+  assert.match(c, /window\.confirm\(/, 'delete asks for confirmation');
+  assert.match(c, /Rehber maliyeti buraya girilmez — rehber ödemelerinden gelir\./);
+  assert.doesNotMatch(c, /exchangeRateUsed|tryAmount|exchange_rate_used|try_amount/, 'the browser never sends frozen FX');
+});
+
+test('Calendar Quick View finance summary: finance roles only, never for cancelled, group guide cost shown as shared', () => {
+  assert.match(SOURCE, /\{!vm\.isCancelled && canAccess\(auth\.role, "finance"\) && \(\s*<_QvSection title="Finans">\s*<ReservationFinanceSummary resId=\{vm\.id\} checkIn=\{r\.checkIn\}\/>/);
+  const q = body('ReservationFinanceSummary');
+  for (const l of ['Beklenen net gelir', 'Planlanan maliyet', 'Tahmini kâr']) assert.ok(q.includes(l), l);
+  assert.match(q, /rezervasyon paylaşıyor/);
+  assert.match(q, /yalnızca bu rezervasyon/);
+});
+
+test('mock repo validates expenses with the same payload rules (guide refused)', () => {
+  const a = SOURCE.indexOf('const FinanceRepository = {');
+  const repo = SOURCE.slice(a, SOURCE.indexOf('\n};', a));
+  assert.match(repo, /const row = _financeExpensePayload\(d\);/);
+});
