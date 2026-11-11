@@ -101,6 +101,19 @@ const CRM_CHANGELOG_CATEGORIES = [
 // Newest first. See the release convention above before editing.
 const CRM_CHANGELOG = [
   {
+    version: '13.15',
+    date: '2026-11-11',
+    title: 'Tur Karlılığında Tek Tur, Dillere Göre Detay',
+    summary: 'Aynı turun farklı dillerdeki ürünleri Tur Karlılığı\'nda tek satırda gösteriliyor; tura tıklayınca her dil kendi rakamları ve kâra geçiş sayısıyla açılıyor.',
+    categories: ['İyileştirme', 'Arayüz'],
+    highlights: [
+      'Aynı isimli turlar tek satırda; altında her dil ayrı satır ve o dilin operasyonları.',
+      'Her dil satırında rezervasyon, kişi, plan, beklenen net, kâr, marj ve kendi kâra geçiş sayısı görünüyor.',
+      'Uzun operasyon satırları artık tabloyu genişletmiyor; kâra geçiş sütunu her zaman görünüyor.',
+    ],
+    author: 'Berk',
+  },
+  {
     version: '13.14',
     date: '2026-11-11',
     title: 'Ek Satışta Rezervasyon Arama',
@@ -251,22 +264,6 @@ const CRM_CHANGELOG = [
     ],
     author: 'Berk',
     technicalNote: 'Bilet, yemek ve Boğaz turu gibi maliyetler bir maliyet kataloğundan geliyor; resmi fiyatlar yalnızca referans olarak saklanıyor. Eksik dil, tur, yemek veya maliyet bilgisi Finans ekranında ayrıca listeleniyor. Gerçek giderlerin TL karşılığı kayıt anındaki kurla sabitleniyor.',
-  },
-  {
-    version: '13.03',
-    date: '2026-11-11',
-    title: 'Operasyon Odaklı Ana Sayfa ve Aylık Ciro Takibi',
-    summary: 'Ana Sayfa operasyon önceliklerine göre yeniden tasarlandı. Bu ayın beklenen cirosu artık dövizli rezervasyonları da güncel ECB kuruyla TL\'ye çevirerek gösteriyor ve 100.000 TL\'lik hedeflerle takip ediliyor.',
-    categories: ['Yeni Özellik', 'Arayüz', 'Otomasyon'],
-    highlights: [
-      'Yeni operasyon odaklı Ana Sayfa; bilgi yoğunluğunu azaltan açılır/kapanır bölümlerle.',
-      'Aylık beklenen ciro ve 100.000 TL hedef takibi; her yeni hedef aşıldığında kutlama.',
-      'Dövizli (EUR, USD, GBP) rezervasyonlar güncel ECB kuruyla otomatik olarak TL\'ye çevrilir; kullanılan kur tarihi kartta gösterilir.',
-      'Yeni rezervasyon, mesaj ve iptaller için canlı sinyaller.',
-      'Kur verisi eksik, eski veya erişilemez olduğunda toplam "Eksik toplam" olarak işaretlenir; hiçbir zaman tahmini kur kullanılmaz.',
-    ],
-    author: 'Berk',
-    technicalNote: 'Döviz kurları her iş günü Avrupa Merkez Bankası (ECB) yayınından otomatik olarak güncellenir. 7 günden eski kurlar kullanılmaz; kur kaynağına erişilemediğinde dövizli rezervasyonlar toplam dışında bırakılır ve hedef kutlaması bekletilir.',
   },
 ];
 
