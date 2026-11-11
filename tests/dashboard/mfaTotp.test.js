@@ -280,7 +280,7 @@ test('ROLE_PERMISSIONS is byte-for-byte unchanged by this phase', () => {
   // Updated by the later Son Hareketler phase, which additively granted
   // every role "activity" access — MFA gating itself is untouched;
   // this just tracks the current literal shape.
-  assert.match(SOURCE, /const ROLE_PERMISSIONS = \{\n  "Yönetici": null, \/\/ null = all pages\n  "Satış":    \["dashboard","customers","reservations","guides","leads","quotes","reminders","agencies","messages","reports","more","changelog","activity"\],\n  "Operasyon":\["dashboard","reservations","calendar","tours","guides","leads","quotes","reminders","payments","reports","more","changelog","activity"\],\n  "Rehber":   \["dashboard","calendar","reservations","more","changelog","activity"\],\n\};/);
+  assert.match(SOURCE, /const ROLE_PERMISSIONS = \{\n  "Yönetici": null, \/\/ null = all pages\n  "Satış":    \["dashboard","customers","reservations","guides","leads","quotes","reminders","agencies","messages","reports","more","changelog","activity"\],\n  "Operasyon":\["dashboard","reservations","calendar","tours","guides","leads","quotes","reminders","finance","payments","reports","more","changelog","activity"\],\n  "Rehber":   \["dashboard","calendar","reservations","more","changelog","activity"\],\n\};/);
 });
 
 test('MFA resolution/gating never reads or writes `role` — role stays sourced only from staff.role, same as before this phase', () => {

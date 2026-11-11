@@ -2349,6 +2349,7 @@ const NAV_TOP = [
   { id:"guides",       label:"Rehberlerimiz",   badge:null, icon:"M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2 M23 21v-2a4 4 0 00-3-3.87 M16 3.13a4 4 0 010 7.75 M12 11a4 4 0 100-8 4 4 0 000 8z" },
 ];
 const NAV_BOT = [
+  { id:"finance",    label:"Finans",        badge:null, icon:"M3 3v18h18 M7 15l4-4 3 3 5-6" },
   { id:"payments",   label:"Ödemeler",      badge:null, icon:"M2 9a2 2 0 012-2h16a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V9zM2 13h20" },
   { id:"messages",   label:"Mesajlar",      badge:null, icon:"M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" },
   { id:"reminders",  label:"Hatırlatmalar", badge:null, icon:"M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0" },
@@ -2961,7 +2962,7 @@ function Sidebar({ currentBase, collapsed, onToggle, mobileOpen, onMobileClose, 
         </nav>
         <div style={{height:1, background:C.borderLight, margin:"12px 18px"}}/>
         <nav style={{padding:"0 10px", display:"flex", flexDirection:"column", gap:2}}>
-          {NAV_BOT.map(it=><NavItem key={it.id} item={{...withLiveBadge(it),_collapsed:collapsed}} currentBase={currentBase} variant={light?"light":"dark"}/>)}
+          {NAV_BOT.filter(it => it.id !== "finance" || canAccess(auth.role, "finance")).map(it=><NavItem key={it.id} item={{...withLiveBadge(it),_collapsed:collapsed}} currentBase={currentBase} variant={light?"light":"dark"}/>)}
         </nav>
         <div style={{height:1, background:C.borderLight, margin:"12px 18px"}}/>
         <nav style={{padding:"0 10px", display:"flex", flexDirection:"column", gap:2}}>
@@ -12492,6 +12493,376 @@ function PaySidebar({ payments }) {
 // not a route change, so "Hakedişleri Gör" links from the homepage
 // card/Dashboard still land here correctly with zero change needed
 // there.
+// ══════════════════════════════════════════════════════════════════════════
+// FINANCE CENTER — UI (Phase D). Presentation ONLY: every number comes from
+// useFinanceMonth → buildFinanceMonthSummary (the one canonical Finance
+// calculation layer). No component below adds, converts or allocates money.
+// ══════════════════════════════════════════════════════════════════════════
+
+const FINANCE_TABS = [
+  { key: "genel",       label: "Genel Bakış" },
+  { key: "butce",       label: "Bütçe & Tahmin" },
+  { key: "turlar",      label: "Tur Karlılığı" },
+  { key: "tahsilatlar", label: "Tahsilatlar" },
+  { key: "katalog",     label: "Maliyet Kataloğu" },
+];
+const FINANCE_CATEGORY_LABELS = { ticket: "Biletler", guide: "Rehberler", meal: "Yemekler", transport: "Ulaşım", other: "Diğer" };
+
+// TESTABLE:_fmtFinanceMap:start
+// Original-currency amounts, never converted: { EUR: 1250, TRY: 3400 } →
+// "€1.250 · ₺3.400". An empty map is "—" (nothing recorded / nothing due).
+function _fmtFinanceMap(map) {
+  const SYM = { EUR: "€", USD: "$", GBP: "£", TRY: "₺" };
+  const order = ["TRY", "EUR", "USD", "GBP"];
+  const entries = Object.entries(map || {}).filter(([, v]) => Number.isFinite(v) && Math.abs(v) >= 0.005)
+    .sort((a, b) => (order.indexOf(a[0]) + 99 * (order.indexOf(a[0]) < 0)) - (order.indexOf(b[0]) + 99 * (order.indexOf(b[0]) < 0)));
+  if (!entries.length) return "—";
+  return entries.map(([c, v]) => {
+    const n = Math.round(v).toLocaleString("tr-TR");
+    return SYM[c] ? `${v < 0 ? "−" : ""}${SYM[c]}${n.replace("-", "")}` : `${n} ${c}`;
+  }).join(" · ");
+}
+// TESTABLE:_fmtFinanceMap:end
+
+// A TRY view from the domain ({ tryTotal, complete, unresolvedCurrencies }).
+function _fmtFinanceTry(r) {
+  if (!r) return "—";
+  return `≈ ₺${Math.round(r.tryTotal || 0).toLocaleString("tr-TR")}`;
+}
+
+// One shared month loader for every Finance tab (the repo returns raw rows;
+// the summary is built ONCE here by the canonical layer).
+function useFinanceMonth(monthISO) {
+  const { data, loading, error, reload } = useRepo("finance", "getMonthData", monthISO);
+  const todayISO = _istanbulISODate();
+  const summary = useMemo(() => data ? buildFinanceMonthSummary({
+    ...data, monthISO, todayISO, languageNames: LANGUAGES.map(l => l[1]),
+  }) : null, [data, monthISO, todayISO]);
+  return { summary, loading, error, reload, todayISO };
+}
+
+function _financeMonthLabel(monthISO) {
+  return new Date(monthISO + "-01T12:00:00").toLocaleDateString("tr-TR", { month: "long", year: "numeric" });
+}
+function _financeShiftMonth(monthISO, delta) {
+  const [y, m] = monthISO.split("-").map(Number);
+  const d = new Date(Date.UTC(y, m - 1 + delta, 1));
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
+function _FinKpi({ label, value, sub, tone, badge, testId }) {
+  const color = tone === "bad" ? C.red : tone === "good" ? C.green : C.text;
+  return (
+    <div data-testid={testId} style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: T.radius, padding: "16px 18px", display: "flex", flexDirection: "column", gap: 6, minWidth: 0 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 11.5, color: C.textMuted, fontFamily: "'Geist',sans-serif" }}>{label}</span>
+        {badge && <span style={{ fontSize: 10.5, fontWeight: 600, color: C.amber, background: C.amberBg, border: `1px solid ${C.amberBorder}`, borderRadius: T.radiusPill, padding: "1px 7px", fontFamily: "'Geist',sans-serif" }}>{badge}</span>}
+      </div>
+      <div style={{ fontSize: 22, fontWeight: 700, color, fontFamily: "'Geist',sans-serif", lineHeight: 1.15, fontVariantNumeric: "tabular-nums", wordBreak: "break-word" }}>{value}</div>
+      {sub && <div style={{ fontSize: 11.5, color: C.textFaint, fontFamily: "'Geist',sans-serif", lineHeight: 1.45 }}>{sub}</div>}
+    </div>
+  );
+}
+function _FinSection({ title, right, children }) {
+  return (
+    <section style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+        <h2 style={{ margin: 0, fontSize: 11, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: C.textFaint, fontFamily: "'Geist',sans-serif" }}>{title}</h2>
+        {right}
+      </div>
+      {children}
+    </section>
+  );
+}
+function _FinGrid({ min, children }) {
+  return <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${min || 200}px, 1fr))`, gap: 12 }}>{children}</div>;
+}
+
+// KPI value: the TRY view when complete, otherwise the original currencies
+// with an explicit "kur verisi eksik" note — never a guessed TRY total.
+function _finValue(tryResult, originalMap) {
+  if (tryResult && tryResult.complete) return { value: _fmtFinanceTry(tryResult), sub: _fmtFinanceMap(originalMap) };
+  return { value: _fmtFinanceMap(originalMap), sub: "TL karşılığı için kur verisi eksik", incomplete: true };
+}
+// Realized TRY figures: shown only when the TRY view is complete — never a
+// partial total presented as the whole.
+function _finTry(r) {
+  return r && r.complete ? { value: _fmtFinanceTry(r) } : { value: "—", sub: "TL karşılığı için kur verisi eksik" };
+}
+function _finProfit(v, fallback) {
+  return v == null ? { value: "—", sub: fallback } : { value: `${v < 0 ? "−" : ""}₺${Math.abs(Math.round(v)).toLocaleString("tr-TR")}`, tone: v < 0 ? "bad" : null };
+}
+
+function _FinDataQuality({ s }) {
+  const dq = s.dataQuality;
+  const items = [
+    dq.missingLanguageCount && { n: dq.missingLanguageCount, t: "rezervasyonda dil belirtilmemiş", hint: "Her biri ayrı rehber operasyonu sayılıyor" },
+    dq.unrecognizedLanguageCount && { n: dq.unrecognizedLanguageCount, t: "rezervasyonda dil tanınmıyor", hint: "Dil listesindeki bir değerle düzeltin" },
+    dq.missingTourCount && { n: dq.missingTourCount, t: "rezervasyonda tur bilgisi eksik" },
+    dq.unknownMealReservations && { n: dq.unknownMealReservations, t: "rezervasyonda yemek durumu belirsiz", hint: "Yemek maliyetine dahil edilmedi" },
+    dq.notMaterializedPreparations && { n: dq.notMaterializedPreparations, t: "hazırlık kaydı oluşturulmamış", hint: "Bilet maliyeti hesaplanamadı" },
+    ...dq.missingCostItems.map(m => ({ n: m.count, t: `× “${m.label}” — maliyet girilmemiş` })),
+    ...dq.provisionalCostItemsUsed.map(m => ({ n: m.count, t: `× “${m.label}” — geçici maliyet`, tone: "info" })),
+    dq.completedTicketWithoutExpense && { n: dq.completedTicketWithoutExpense, t: "bilet hazırlığı tamamlandı, gerçek harcama tutarı girilmemiş" },
+    dq.missingActualGuideCost && { n: dq.missingActualGuideCost, t: "geçmiş rehber operasyonunda rehber ödemesi kaydı yok" },
+    dq.multiPaymentGuideServices && { n: dq.multiPaymentGuideServices, t: "rehber operasyonunda birden fazla ödeme var", tone: "info" },
+    s.unattributedGuidePayments.length && { n: s.unattributedGuidePayments.length, t: `eşleştirilmemiş rehber ödemesi (${_fmtFinanceMap(s.totals.unattributedGuidePayments)})` },
+    dq.commissionUnresolved && { n: dq.commissionUnresolved, t: "rezervasyonda komisyon farklı para birimi nedeniyle hesaplanamadı" },
+    dq.earnedRevenueUnresolved && { n: dq.earnedRevenueUnresolved, t: "geçmiş rezervasyonda kazanılan gelir belirlenemedi" },
+    s.fx.rateSourceError && { n: null, t: "Kur verisine erişilemiyor — TL karşılıkları gösterilmiyor" },
+    !s.fx.rateSourceError && s.fx.unresolvedCurrencies.length && { n: null, t: `${s.fx.unresolvedCurrencies.join(", ")} için güncel ECB kuru yok — TL karşılıkları eksik` },
+  ].filter(Boolean);
+  return (
+    <_FinSection title="Veri Kalitesi">
+      {items.length === 0 ? (
+        <div style={{ fontSize: 12.5, color: C.textMuted, fontFamily: "'Geist',sans-serif" }}>Bu ay için eksik veya belirsiz bir kayıt yok.</div>
+      ) : (
+        <ul data-testid="finance-data-quality" style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 6 }}>
+          {items.map((it, i) => (
+            <li key={i} style={{ display: "flex", alignItems: "baseline", gap: 8, padding: "8px 12px", borderRadius: T.radiusSm, background: it.tone === "info" ? C.ivory : C.amberBg, border: `1px solid ${it.tone === "info" ? C.borderLight : C.amberBorder}`, fontSize: 12.5, color: C.text, fontFamily: "'Geist',sans-serif" }}>
+              {it.n != null && <b style={{ fontVariantNumeric: "tabular-nums" }}>{it.n}</b>}
+              <span>{it.t}</span>
+              {it.hint && <span style={{ color: C.textMuted, fontSize: 11.5 }}>· {it.hint}</span>}
+            </li>
+          ))}
+        </ul>
+      )}
+    </_FinSection>
+  );
+}
+
+function _FinCategoryTable({ s, mode }) {
+  const cats = ["ticket", "guide", "meal", "transport", "other"];
+  const cols = mode === "budget"
+    ? [["remaining", "Kalan bütçe"], ["planned", "Ay toplamı (plan)"]]
+    : [["planned", "Planlanan"], ["actual", "Gerçekleşen"], ["remaining", "Kalan"]];
+  return (
+    <div style={{ overflowX: "auto", border: `1px solid ${C.border}`, borderRadius: T.radius, background: C.white }}>
+      <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: "'Geist',sans-serif", fontSize: 12.5 }}>
+        <thead><tr style={{ background: C.ivory }}>
+          <th style={{ textAlign: "left", padding: "9px 14px", fontWeight: 600, color: C.textMuted }}>Kategori</th>
+          {cols.map(([k, l]) => <th key={k} style={{ textAlign: "right", padding: "9px 14px", fontWeight: 600, color: C.textMuted, whiteSpace: "nowrap" }}>{l}</th>)}
+        </tr></thead>
+        <tbody>
+          {cats.map(c => (
+            <tr key={c} style={{ borderTop: `1px solid ${C.borderLight}` }}>
+              <td style={{ padding: "9px 14px", color: C.text }}>{FINANCE_CATEGORY_LABELS[c]}</td>
+              {cols.map(([k]) => <td key={k} style={{ padding: "9px 14px", textAlign: "right", color: C.text, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{_fmtFinanceMap(s.categories[c][k])}</td>)}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function _FinOverview({ s, isCurrentMonth }) {
+  const rb = _finValue(s.kpis.remainingBudget, s.totals.remainingBudget);
+  const en = _finValue(s.kpis.expectedNet, s.totals.expectedNet);
+  const pp = _finProfit(s.kpis.projectedProfit, "Kur verisi eksik");
+  const r = s.realized;
+  const prov = r.status === "provisional" ? "Geçici" : null;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
+      <_FinSection title="Planlama">
+        <_FinGrid min={220}>
+          <_FinKpi testId="kpi-remaining" label="Kalan Operasyon Bütçesi" value={rb.value}
+            sub={isCurrentMonth ? `Bugünden itibaren · ay toplamı ${_fmtFinanceMap(s.totals.plannedOperatingCost)}` : rb.sub}/>
+          <_FinKpi testId="kpi-expected-net" label="Beklenen Net Tahsilat" value={en.value} sub={`Net ${_fmtFinanceMap(s.totals.expectedNet)} · Brüt rezervasyon değeri ${_fmtFinanceMap(s.totals.gross)}${en.incomplete ? " · TL karşılığı için kur verisi eksik" : ""}`}/>
+          <_FinKpi testId="kpi-projected-profit" label="Tahmini Net Kâr" value={pp.value} tone={pp.tone} sub={pp.sub || "Net tahsilat − tahmini operasyon maliyeti"}/>
+        </_FinGrid>
+      </_FinSection>
+      <_FinSection title="Gerçekleşen" right={prov && <span style={{ fontSize: 11.5, color: C.amber, fontFamily: "'Geist',sans-serif" }}>{r.statusLabel} · {r.missingActualCostCount} eksik maliyet kaydı</span>}>
+        <_FinGrid min={180}>
+          <_FinKpi testId="kpi-earned" label="Gerçekleşen Net Gelir" sub={`${r.reservations} gerçekleşmiş rezervasyon`} {..._finTry(r.earnedNetRevenue)}/>
+          <_FinKpi testId="kpi-cash" label="Tahsil Edilen Nakit" sub="Ödenmiş hakediş ve tahsilatlar" {..._finTry(r.cashReceived)}/>
+          <_FinKpi testId="kpi-actual-cost" label="Gerçekleşen Operasyon Maliyeti" sub="Kayıtlı gider + rehber ödemeleri" {..._finTry(r.actualOperatingCost)}/>
+          <_FinKpi testId="kpi-realized-profit" label="Gerçekleşen Net Kâr" badge={prov} {..._finProfit(r.netProfit, "Kur verisi eksik")}/>
+          <_FinKpi testId="kpi-outstanding" label="Tahsil Edilmemiş Alacak" sub="Kazanılan − tahsil edilen" {..._finTry(r.outstandingReceivable)}/>
+        </_FinGrid>
+      </_FinSection>
+      <_FinSection title="Maliyet Dağılımı"><_FinCategoryTable s={s} mode="overview"/></_FinSection>
+      <_FinDataQuality s={s}/>
+    </div>
+  );
+}
+
+function _FinTourTable({ s, mode }) {
+  const [open, setOpen] = useState(() => new Set());
+  const toggle = (k) => setOpen(prev => { const n = new Set(prev); n.has(k) ? n.delete(k) : n.add(k); return n; });
+  const th = { textAlign: "right", padding: "9px 12px", fontWeight: 600, color: C.textMuted, whiteSpace: "nowrap" };
+  const td = { padding: "9px 12px", textAlign: "right", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap", color: C.text };
+  const cols = mode === "budget"
+    ? [["Bilet", t => _fmtFinanceMap(t.ticket)], ["Rehber", t => _fmtFinanceMap(t.guide)], ["Yemek", t => _fmtFinanceMap(t.meal)], ["Diğer", t => _fmtFinanceMap(t.other)], ["Toplam plan", t => _fmtFinanceMap(t.totalPlanned)]]
+    : [["Toplam plan", t => _fmtFinanceMap(t.totalPlanned)], ["Beklenen net", t => _fmtFinanceMap(t.expectedNet)],
+       ["Tahmini kâr", t => t.projectedProfit == null ? "—" : `${t.projectedProfit < 0 ? "−" : ""}₺${Math.abs(Math.round(t.projectedProfit)).toLocaleString("tr-TR")}`],
+       ["Marj", t => t.margin == null ? "—" : `%${Math.round(t.margin * 100)}`]];
+  if (!s.tours.length) return <div style={{ fontSize: 12.5, color: C.textMuted, fontFamily: "'Geist',sans-serif" }}>Bu ay aktif rezervasyon yok.</div>;
+  return (
+    <div style={{ overflowX: "auto", border: `1px solid ${C.border}`, borderRadius: T.radius, background: C.white }}>
+      <table data-testid={`finance-tour-table-${mode}`} style={{ width: "100%", borderCollapse: "collapse", fontFamily: "'Geist',sans-serif", fontSize: 12.5 }}>
+        <thead><tr style={{ background: C.ivory }}>
+          <th style={{ ...th, textAlign: "left" }}>Tur</th><th style={th}>Rez.</th><th style={th}>Kişi</th><th style={th}>Rehber op.</th>
+          {cols.map(([l]) => <th key={l} style={th}>{l}</th>)}
+        </tr></thead>
+        <tbody>
+          {s.tours.map(t => {
+            const key = t.tourId || t.tourLabel; const isOpen = open.has(key);
+            return (
+              <React.Fragment key={key}>
+                <tr style={{ borderTop: `1px solid ${C.borderLight}` }}>
+                  <td style={{ ...td, textAlign: "left" }}>
+                    <button type="button" onClick={() => toggle(key)} aria-expanded={isOpen} style={{ display: "inline-flex", alignItems: "center", gap: 6, border: "none", background: "transparent", cursor: "pointer", color: C.text, fontSize: 12.5, fontWeight: 600, fontFamily: "'Geist',sans-serif", padding: 0, textAlign: "left" }}>
+                      <span aria-hidden="true" style={{ display: "inline-block", transform: isOpen ? "rotate(90deg)" : "none", transition: "transform .15s" }}>›</span>{t.tourLabel}
+                    </button>
+                  </td>
+                  <td style={td}>{t.reservations}</td><td style={td}>{t.pax}</td><td style={td}>{t.guideServices}</td>
+                  {cols.map(([l, f]) => <td key={l} style={td}>{f(t)}</td>)}
+                </tr>
+                {isOpen && t.subgroups.map(g => (
+                  <tr key={g.key} style={{ background: C.ivory, borderTop: `1px solid ${C.borderLight}` }}>
+                    <td style={{ ...td, textAlign: "left", paddingLeft: 30, color: C.textMid }}>
+                      {new Date(g.date + "T12:00:00").toLocaleDateString("tr-TR", { day: "numeric", month: "short" })} · {g.language || "—"}
+                      {g.unresolvedReason && <span style={{ marginLeft: 6, fontSize: 11, color: C.amber }}>{g.unresolvedReason === "tour_missing" ? "Tur bilgisi eksik" : g.unresolvedReason === "language_unrecognized" ? "Dil tanınmıyor" : "Dil belirtilmemiş"}</span>}
+                    </td>
+                    <td style={td}>{g.reservations}</td><td style={td}>{g.pax}</td><td style={td}>1</td>
+                    <td style={td} colSpan={cols.length}>
+                      <span style={{ color: C.textMid }}>Rehber {_fmtFinanceMap(g.guidePlanned)} toplam{g.reservations > 1 ? ` · ${g.reservations} rezervasyon paylaşıyor` : ""}</span>
+                      {g.state !== "forecast" && <span style={{ marginLeft: 8, fontSize: 11, color: C.textMuted }}>{g.state === "actual" ? "ödendi" : "ödeme bekliyor"}</span>}
+                    </td>
+                  </tr>
+                ))}
+              </React.Fragment>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function _FinBudget({ s, isCurrentMonth }) {
+  const guide = s.categories.guide;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
+      <div data-testid="finance-guide-headline" style={{ display: "flex", gap: 18, flexWrap: "wrap", alignItems: "baseline", fontFamily: "'Geist',sans-serif" }}>
+        <span style={{ fontSize: 15, color: C.text }}><b>{s.counts.reservations}</b> rezervasyon</span>
+        <span style={{ fontSize: 15, color: C.text }}><b>{s.counts.guideServices}</b> rehber operasyonu</span>
+        <span style={{ fontSize: 15, color: C.text }}><b>{_fmtFinanceMap(guide.planned)}</b> rehber bütçesi</span>
+        {s.counts.unresolvedGuideServices > 0 && <span style={{ fontSize: 12, color: C.amber }}>{s.counts.unresolvedGuideServices} operasyon eksik veri nedeniyle ayrı sayıldı</span>}
+      </div>
+      <_FinSection title={isCurrentMonth ? "Kalan Bütçe · bugünden itibaren" : "Ay Bütçesi"}><_FinCategoryTable s={s} mode="budget"/></_FinSection>
+      <_FinSection title="Turlara Göre"><_FinTourTable s={s} mode="budget"/></_FinSection>
+      <_FinDataQuality s={s}/>
+    </div>
+  );
+}
+
+function _FinCatalog({ s }) {
+  const { data: items, loading } = useRepo("finance", "getCostItems");
+  const BASIS = { per_guest: "kişi başı", per_adult: "yetişkin başı", fixed_per_reservation: "rezervasyon başı", fixed: "operasyon başı", preparation_rule: "hazırlık miktarı × tutar", guide_service_group: "rehber operasyonu başı" };
+  const row = (c) => (
+    <tr key={c.id} style={{ borderTop: `1px solid ${C.borderLight}` }}>
+      <td style={{ padding: "9px 12px", color: C.text }}>{c.label}{c.isProvisional && <span style={{ marginLeft: 6, fontSize: 10.5, color: C.amber }}>Geçici</span>}</td>
+      <td style={{ padding: "9px 12px", color: C.textMid }}>{FINANCE_CATEGORY_LABELS[c.category] || c.category}</td>
+      <td style={{ padding: "9px 12px", color: C.textMid }}>{BASIS[c.basis] || c.basis}</td>
+      <td style={{ padding: "9px 12px", textAlign: "right", fontVariantNumeric: "tabular-nums", color: C.text, whiteSpace: "nowrap" }}>{_fmtFinanceMap({ [c.currency]: c.amount })}</td>
+      <td style={{ padding: "9px 12px", color: C.textMuted }}>{c.tourId || c.preparationRuleId ? "Tura özel" : "Genel"}</td>
+      <td style={{ padding: "9px 12px", color: C.textMuted, whiteSpace: "nowrap" }}>{c.sourceUrl ? <a href={c.sourceUrl} target="_blank" rel="noopener noreferrer" style={{ color: C.goldText }}>Kaynak</a> : "—"}</td>
+    </tr>
+  );
+  const table = (rows) => (
+    <div style={{ overflowX: "auto", border: `1px solid ${C.border}`, borderRadius: T.radius, background: C.white }}>
+      <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: "'Geist',sans-serif", fontSize: 12.5 }}>
+        <thead><tr style={{ background: C.ivory }}>{["Kalem", "Kategori", "Hesaplama", "Tutar", "Kapsam", "Kaynak"].map((h, i) => <th key={h} style={{ textAlign: i === 3 ? "right" : "left", padding: "9px 12px", fontWeight: 600, color: C.textMuted }}>{h}</th>)}</tr></thead>
+        <tbody>{rows.map(row)}</tbody>
+      </table>
+    </div>
+  );
+  const active = (items || []).filter(c => c.isActive);
+  const internal = active.filter(c => c.kind === "internal"), refs = active.filter(c => c.kind === "public_reference");
+  if (loading) return <LoadingState label="Maliyet kataloğu yükleniyor…"/>;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
+      <_FinSection title="İç Planlama Maliyetleri">{internal.length ? table(internal) : <div style={{ fontSize: 12.5, color: C.textMuted, fontFamily: "'Geist',sans-serif" }}>Henüz maliyet kalemi yok.</div>}</_FinSection>
+      {s && s.dataQuality.missingCostItems.length > 0 && (
+        <_FinSection title="Maliyet Girilmemiş">
+          <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12.5, color: C.text, fontFamily: "'Geist',sans-serif" }}>
+            {s.dataQuality.missingCostItems.map(m => <li key={m.label}>{m.label} <span style={{ color: C.textMuted }}>· bu ay {m.count} kullanım</span></li>)}
+          </ul>
+        </_FinSection>
+      )}
+      <_FinSection title="Resmi / Kamuya Açık Referans Fiyatlar" right={<span style={{ fontSize: 11.5, color: C.textMuted, fontFamily: "'Geist',sans-serif" }}>Yalnızca bilgi amaçlı — hesaplamalarda kullanılmaz</span>}>
+        {refs.length ? table(refs) : <div style={{ fontSize: 12.5, color: C.textMuted, fontFamily: "'Geist',sans-serif" }}>Referans fiyat yok.</div>}
+      </_FinSection>
+    </div>
+  );
+}
+
+function FinancePage({ tab, navigate }) {
+  const { isMobile } = useBreakpoint();
+  const current = FINANCE_TABS.some(t => t.key === tab) ? tab : "genel";
+  const [monthISO, setMonthISO] = useState(() => _istanbulISODate().slice(0, 7));
+  const { summary: s, loading, error, reload, todayISO } = useFinanceMonth(monthISO);
+  const isCurrentMonth = monthISO === todayISO.slice(0, 7);
+  const go = (k) => navigate && navigate(k === "genel" ? "/finance" : "/finance/" + k);
+  const navBtn = { padding: "7px 11px", border: `1px solid ${C.border}`, background: C.white, color: C.textMid, cursor: "pointer", borderRadius: T.radiusSm, fontFamily: "'Geist',sans-serif", fontSize: 12.5 };
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+      <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", alignItems: isMobile ? "stretch" : "center", justifyContent: "space-between", gap: 12 }}>
+        <div>
+          <h1 style={{ margin: 0, fontSize: isMobile ? 20 : 24, fontWeight: 700, color: C.text, fontFamily: "'Instrument Serif',serif" }}>Finans</h1>
+          {!isMobile && <p style={{ margin: "4px 0 0", fontSize: 13.5, color: C.textMuted, fontFamily: "'Geist',sans-serif" }}>Operasyon bütçesi, beklenen tahsilat ve tur karlılığı.</p>}
+        </div>
+        {current !== "katalog" && current !== "tahsilatlar" && (
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <button type="button" aria-label="Önceki ay" onClick={() => setMonthISO(m => _financeShiftMonth(m, -1))} style={navBtn}>‹</button>
+            <span data-testid="finance-month" style={{ minWidth: 120, textAlign: "center", fontSize: 14, fontWeight: 600, color: C.text, fontFamily: "'Geist',sans-serif" }}>{_financeMonthLabel(monthISO)}</span>
+            <button type="button" aria-label="Sonraki ay" onClick={() => setMonthISO(m => _financeShiftMonth(m, 1))} style={navBtn}>›</button>
+            {!isCurrentMonth && <button type="button" onClick={() => setMonthISO(todayISO.slice(0, 7))} style={navBtn}>Bu ay</button>}
+          </div>
+        )}
+      </div>
+      <div role="tablist" aria-label="Finans bölümleri" style={{ display: "flex", gap: isMobile ? 14 : 20, borderBottom: `1px solid ${C.borderLight}`, overflowX: "auto" }}>
+        {FINANCE_TABS.map(t => {
+          const on = current === t.key;
+          return (
+            <button key={t.key} role="tab" aria-selected={on} type="button" onClick={() => go(t.key)} style={{
+              padding: "11px 2px", marginBottom: -1, border: "none", borderBottom: on ? `2px solid ${C.gold}` : "2px solid transparent",
+              background: "transparent", color: on ? C.goldText : C.textMuted, fontFamily: "'Geist',sans-serif", fontSize: 13.5,
+              fontWeight: on ? 600 : 500, cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0,
+            }}>{t.label}</button>
+          );
+        })}
+      </div>
+      {current === "tahsilatlar" ? (
+        <div style={{ padding: "20px 22px", border: `1px solid ${C.border}`, borderRadius: T.radius, background: C.white, display: "flex", flexDirection: isMobile ? "column" : "row", alignItems: isMobile ? "stretch" : "center", justifyContent: "space-between", gap: 14 }}>
+          <div style={{ fontFamily: "'Geist',sans-serif" }}>
+            <div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>Tahsilatlar ve Civitatis hakedişleri</div>
+            <div style={{ fontSize: 12.5, color: C.textMuted, marginTop: 4 }}>Tahsilat ve hakediş işlemleri şimdilik Ödemeler sayfasında yapılıyor.</div>
+          </div>
+          <button type="button" onClick={() => navigate && navigate("/payments")} style={{ padding: "9px 16px", borderRadius: T.radiusSm, border: "none", background: C.navy, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600, fontFamily: "'Geist',sans-serif" }}>Ödemeler'e git</button>
+        </div>
+      ) : current === "katalog" ? (
+        <_FinCatalog s={s}/>
+      ) : loading && !s ? (
+        <LoadingState label="Finans verileri yükleniyor…"/>
+      ) : error ? (
+        <ErrorState message="Finans verileri yüklenemedi." onRetry={reload}/>
+      ) : !s ? null : current === "butce" ? (
+        <_FinBudget s={s} isCurrentMonth={isCurrentMonth}/>
+      ) : current === "turlar" ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
+          <_FinSection title="Turlara Göre Tahmini Karlılık"><_FinTourTable s={s} mode="profit"/></_FinSection>
+          <_FinDataQuality s={s}/>
+        </div>
+      ) : (
+        <_FinOverview s={s} isCurrentMonth={isCurrentMonth}/>
+      )}
+    </div>
+  );
+}
+
 function PaymentsPage() {
   const [view, setView] = useState("civitatis");
   return (
@@ -22703,7 +23074,7 @@ function AppFooter() {
 const ROLE_PERMISSIONS = {
   "Yönetici": null, // null = all pages
   "Satış":    ["dashboard","customers","reservations","guides","leads","quotes","reminders","agencies","messages","reports","more","changelog","activity"],
-  "Operasyon":["dashboard","reservations","calendar","tours","guides","leads","quotes","reminders","payments","reports","more","changelog","activity"],
+  "Operasyon":["dashboard","reservations","calendar","tours","guides","leads","quotes","reminders","finance","payments","reports","more","changelog","activity"],
   "Rehber":   ["dashboard","calendar","reservations","more","changelog","activity"],
 };
 
@@ -27488,6 +27859,9 @@ function PageRouter({ base, param, isMobile, navigate }) {
   }
 
   if (base === "more") return <MobileMorePage navigate={navigate}/>;
+  // Finance Center (Phase D shell) — one responsive page for desktop and
+  // mobile. /payments keeps working unchanged until Phase F.
+  if (base === "finance") return <FinancePage tab={param} navigate={navigate}/>;
 
   // ── Mobile: dedicated screens for every route reachable from daily
   // operations, list AND detail. Each one is its own information
@@ -28272,7 +28646,7 @@ function FormShell({ isMobile, title, onClose, onSubmit, submitLabel, submitting
 const MOBILE_PAGE_TITLES = {
   dashboard:"Bugün", leads:"Talep", customers:"Misafirler", quotes:"Teklif",
   reservations:"Rezervasyonlar", calendar:"Takvim", tours:"Turlar", guides:"Rehberlerimiz",
-  payments:"Ödemeler", reminders:"Hatırlatmalar", agencies:"Acenteler", reports:"Raporlar", settings:"Ayarlar",
+  finance:"Finans", payments:"Ödemeler", reminders:"Hatırlatmalar", agencies:"Acenteler", reports:"Raporlar", settings:"Ayarlar",
   messages:"Mesajlar", more:"Diğer", changelog:"CRM Güncellemeleri", activity:"Son Hareketler",
 };
 const BOTTOM_NAV_ITEMS = [
@@ -28321,6 +28695,7 @@ function MobileMorePage({ navigate }) {
     { id:"customers",  label:"Misafirler",     icon:"M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2 M23 21v-2a4 4 0 00-3-3.87 M16 3.13a4 4 0 010 7.75" },
     { id:"tours",      label:"Turlar",         icon:"M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z M9 22V12h6v10" },
     { id:"guides",     label:"Rehberlerimiz",  icon:"M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2 M23 21v-2a4 4 0 00-3-3.87 M16 3.13a4 4 0 010 7.75 M12 11a4 4 0 100-8 4 4 0 000 8z" },
+    { id:"finance",    label:"Finans",         icon:"M3 3v18h18 M7 15l4-4 3 3 5-6" },
     { id:"payments",   label:"Ödemeler",       icon:"M2 9a2 2 0 012-2h16a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V9zM2 13h20" },
     { id:"reminders",  label:"Hatırlatmalar",  icon:"M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0" },
     { id:"agencies",   label:"Acenteler",      icon:"M3 21h18 M5 21V7l8-4v18 M19 21V11l-6-4" },
