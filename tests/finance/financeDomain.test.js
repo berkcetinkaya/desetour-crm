@@ -1289,3 +1289,70 @@ test('after a "from today" revision, past dates keep the old amount and today on
   assert.deepEqual(s.reservations.find(x => x.id === 'P').planned.ticket, { EUR: 80 });
   assert.deepEqual(s.reservations.find(x => x.id === 'F').planned.ticket, { EUR: 100 });
 });
+
+// ── Break-even guests + Fikirler data ───────────────────────────────────
+
+const { buildProfitIdeas } = F;
+
+test('break-even: (net − per-guest cost) per guest must exceed the operation guide cost; Topkapı-like example needs 5 guests', () => {
+  // net ₺3,990 / guest, ticket €40 = ₺2,000 / guest at 50, guide €150 = ₺7,500
+  const mk = (id, date, pax) => res({ id, checkIn: date, pax, total: 3990 * pax, currency: 'TRY' });
+  const resv = [mk('A', '2026-11-06', 6), mk('B', '2026-11-12', 3)];
+  const preps = [{ id: 'pa', reservationId: 'A', preparationRuleId: 'RULE-TOP', requiredQuantity: 6, status: 'pending' }, { id: 'pb', reservationId: 'B', preparationRuleId: 'RULE-TOP', requiredQuantity: 3, status: 'pending' }];
+  const s = summary({ reservations: resv, rules: [TOP_RULE], preparations: preps });
+  const e = s.tours[0].economics;
+  assert.deepEqual([e.status, e.netPerPaxTry, e.variablePerPaxTry, e.contributionPerPaxTry, e.fixedPerOperationTry], ['ok', 3990, 2000, 1990, 7500]);
+  assert.equal(e.breakEvenPax, 4, '7500 / 1990 = 3.77 → 4 guests');
+  const [g6, g3] = s.tours[0].subgroups;
+  assert.deepEqual([g6.pax, g6.breakEvenPax, g6.breakEvenReached], [6, 4, true]);
+  assert.deepEqual([g3.pax, g3.breakEvenPax, g3.breakEvenReached], [3, 4, false]);
+});
+
+test('break-even: per-operation override changes that operation\'s threshold; per-guest cost ≥ net → never', () => {
+  const resv = [res({ id: 'A', checkIn: '2026-11-12', pax: 2, total: 1000, currency: 'TRY' })];
+  const key = summary({ reservations: resv }).guideServices[0].key;
+  const s = summary({ reservations: resv, guideCostOverrides: [{ id: 'o', operationKey: key, tourDate: '2026-11-12', amount: 0, currency: 'EUR' }] });
+  assert.equal(s.tours[0].subgroups[0].breakEvenPax, 1);
+  const never = summary({ reservations: [res({ id: 'N', checkIn: '2026-11-12', pax: 2, total: 50, currency: 'TRY' })],
+    rules: [TOP_RULE], preparations: [{ id: 'pn', reservationId: 'N', preparationRuleId: 'RULE-TOP', requiredQuantity: 2, status: 'pending' }] });
+  assert.equal(never.tours[0].economics.status, 'never');
+  assert.equal(never.tours[0].subgroups[0].breakEvenReached, false);
+  const nofx = buildFinanceMonthSummary({ monthISO: MONTH, todayISO: TODAY, languageNames: LANGS, costItems: [], rateRows: [], reservations: resv });
+  assert.equal(nofx.tours[0].economics.status, 'unknown');
+});
+
+test('Fikirler data: operations under break-even, same-week consolidation saving, cost-heavy tours, extra sales per guest', () => {
+  const mk = (id, date, pax, lang) => res({ id, checkIn: date, pax, total: 3990 * pax, currency: 'TRY', tourLanguage: lang || 'İspanyolca' });
+  const resv = [mk('A', '2026-11-16', 2), mk('B', '2026-11-18', 2), mk('C', '2026-11-20', 6), mk('D', '2026-11-24', 2)];
+  const preps = resv.map(r => ({ id: 'p' + r.id, reservationId: r.id, preparationRuleId: 'RULE-TOP', requiredQuantity: r.pax, status: 'pending' }));
+  const s = summary({ reservations: resv, rules: [TOP_RULE], preparations: preps, extraSales: [{ id: 'x', reservationId: 'C', amount: 120, currency: 'TRY', description: 'x', saleDate: '2026-11-20' }] });
+  const I = buildProfitIdeas(s);
+  assert.equal(I.belowBreakEven.length, 3, '2-guest operations do not reach the break-even');
+  assert.ok(I.lossTry < 0);
+  assert.equal(I.consolidation.length, 1, '16, 18, 20 Nov fall within 7 days of the first; 24 Nov starts a new window');
+  assert.deepEqual(I.consolidation[0].dates, ['2026-11-16', '2026-11-18', '2026-11-20']);
+  assert.equal(I.consolidation[0].guideSavingTry, 2 * 7500);
+  assert.equal(I.consolidationSavingTry, 15000);
+  assert.equal(I.costHeavy[0].tourLabel, 'Topkapı');
+  assert.equal(I.extraSalesPerPaxTry, Math.round(120 / 12));
+  assert.ok(I.costHeavy[0].share >= 0.5);
+});
+
+test('consolidation window is 7 days from the first operation, across calendar weeks (Sat 28 + Mon 30 Nov)', () => {
+  const s = summary({ reservations: [res({ id: 'A', checkIn: '2026-11-28', pax: 2 }), res({ id: 'B', checkIn: '2026-11-30', pax: 2 }), res({ id: 'C', checkIn: '2026-11-28', pax: 2, tourLanguage: 'İtalyanca' })] });
+  const I = buildProfitIdeas(s);
+  assert.equal(I.consolidation.length, 1);
+  assert.deepEqual(I.consolidation[0].dates, ['2026-11-28', '2026-11-30']);
+  assert.equal(I.consolidation[0].guideSavingTry, 7500);
+});
+
+test('break-even beyond a realistic group (30) is "impractical", still with the number', () => {
+  const s = summary({ reservations: [res({ id: 'A', checkIn: '2026-11-12', pax: 2, total: 4200, currency: 'TRY' })],
+    rules: [TOP_RULE], preparations: [{ id: 'p', reservationId: 'A', preparationRuleId: 'RULE-TOP', requiredQuantity: 2, status: 'pending' }] });
+  const e = s.tours[0].economics;
+  assert.equal(F.FINANCE_PRACTICAL_GROUP_MAX, 30);
+  assert.equal(e.contributionPerPaxTry, 100);
+  assert.equal(e.status, 'impractical'); assert.equal(e.breakEvenPax, 76);
+  assert.equal(s.tours[0].subgroups[0].breakEvenReached, false);
+  assert.equal(buildProfitIdeas(s).belowBreakEven[0].impractical, true);
+});

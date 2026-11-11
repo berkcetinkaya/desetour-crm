@@ -292,3 +292,17 @@ test('catalog: amounts editable on screen (from today = versioned, or all dates)
   const repo = SOURCE.slice(a, SOURCE.indexOf('\n};', a));
   assert.match(repo, /if \(plan\.insert\) await SupabaseFinanceRepo\.createCostItem\(plan\.insert\);\n\s+await SupabaseFinanceRepo\.updateCostItem\(id, plan\.update\);/, 'new version first, then close the old one');
 });
+
+test('Tur Karlılığı shows break-even guests per tour and per operation; Fikirler tab with month data + playbook', () => {
+  const tt = body('_FinTourTable');
+  assert.match(tt, /\["Kâra geçiş", t => <_FinBreakEven e=\{t\.economics\}\/>\]/);
+  assert.match(tt, /g\.breakEvenPax/);
+  assert.match(tt, /kâra geçmek için/);
+  assert.match(SOURCE, /\{ key: "fikirler",\s+label: "Fikirler" \}/);
+  assert.match(body('FinancePage'), /current === "fikirler" \? \(\s*<_FinIdeas s=\{s\}\/>/);
+  const i = body('_FinIdeas');
+  assert.match(i, /buildProfitIdeas\(s\)/);
+  for (const id of ['idea-below-break-even', 'idea-consolidation', 'idea-cost-heavy', 'idea-extra-sales']) assert.ok(i.includes(id), id);
+  assert.match(SOURCE, /Tur günlerini azaltın, rezervasyonları belirli günlerde toplayın/);
+  assert.match(SOURCE, /Rehberlerle hacim anlaşması yapın/);
+});

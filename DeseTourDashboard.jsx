@@ -12578,6 +12578,7 @@ const FINANCE_TABS = [
   { key: "ek-satislar", label: "Ek Satışlar" },
   { key: "tahsilatlar", label: "Tahsilatlar" },
   { key: "katalog",     label: "Maliyet Kataloğu" },
+  { key: "fikirler",    label: "Fikirler" },
 ];
 const FINANCE_CATEGORY_LABELS = { ticket: "Biletler", guide: "Rehberler", meal: "Yemekler", transport: "Ulaşım", other: "Diğer" };
 
@@ -12798,7 +12799,8 @@ function _FinTourTable({ s, mode }) {
     ? [["Bilet", t => _fmtFinanceMap(t.ticket)], ["Rehber", t => _fmtFinanceMap(t.guide)], ["Yemek", t => _fmtFinanceMap(t.meal)], ["Diğer", t => _fmtFinanceMap(t.other)], ["Toplam plan", t => _fmtFinanceMap(t.totalPlanned)]]
     : [["Toplam plan", t => <>{_fmtFinanceMap(t.totalPlanned)}{t.totalPlannedTry != null && Object.keys(t.totalPlanned).some(c => c !== "TRY") && <div style={{ fontSize: 11, color: C.textMuted }}>≈ ₺{Math.round(t.totalPlannedTry).toLocaleString("tr-TR")}</div>}</>], ["Beklenen net", t => _fmtFinanceMap(t.expectedNet)],
        ["Tahmini kâr", t => t.projectedProfit == null ? "—" : `${t.projectedProfit < 0 ? "−" : ""}₺${Math.abs(Math.round(t.projectedProfit)).toLocaleString("tr-TR")}`],
-       ["Marj", t => _finPct(t.margin)]];
+       ["Marj", t => _finPct(t.margin)],
+       ["Kâra geçiş", t => <_FinBreakEven e={t.economics}/>]];
   if (!s.tours.length) return <div style={{ fontSize: 12.5, color: C.textMuted, fontFamily: "'Geist',sans-serif" }}>Bu ay aktif rezervasyon yok.</div>;
   return (
     <div style={{ overflowX: "auto", border: `1px solid ${C.border}`, borderRadius: T.radius, background: C.white }}>
@@ -12835,6 +12837,9 @@ function _FinTourTable({ s, mode }) {
                           {" · "}Beklenen net {_fmtFinanceMap(g.pnl.expectedNet)}
                           {g.pnl.past && <> · Gerçekleşen {_fmtFinanceMap(g.pnl.actualCost)}{g.pnl.varianceTry != null ? ` (sapma ${_finSigned(g.pnl.varianceTry)})` : ""}{g.pnl.actualStatus === "provisional" ? <span style={{ color: C.amber }}> · geçici</span> : null}</>}
                           {" · "}Tahmini kâr <b style={{ color: g.pnl.projectedProfit < 0 ? C.red : C.text }}>{_finSigned(g.pnl.projectedProfit)}</b>
+                          {g.breakEvenPax != null && g.breakEvenPax > FINANCE_PRACTICAL_GROUP_MAX && !g.breakEvenReached && <span style={{ marginLeft: 8, fontSize: 11, color: C.red }}>pratikte kâra geçmez</span>}
+                          {g.breakEvenPax != null && g.breakEvenPax <= FINANCE_PRACTICAL_GROUP_MAX && <span data-testid="group-break-even" style={{ marginLeft: 8, fontSize: 11, color: g.breakEvenReached ? C.green : C.red }}>{g.pax} / {g.breakEvenPax} kişi {g.breakEvenReached ? "✓" : "— kâra geçmek için " + (g.breakEvenPax - g.pax) + " kişi daha"}</span>}
+                          {g.breakEvenPax == null && g.breakEvenReached === false && <span style={{ marginLeft: 8, fontSize: 11, color: C.red }}>kişi sayısı artsa da kâra geçmez</span>}
                         </span>
                       ) : (<>
                         <span style={{ color: C.textMid }}>Rehber {_fmtFinanceMap(g.guidePlanned)} toplam{g.reservations > 1 ? ` · ${g.reservations} rezervasyon paylaşıyor` : ""}</span>
@@ -12964,7 +12969,119 @@ function _FinExtraSales({ s }) {
   );
 }
 
+// Break-even cell: "≥ N kişi" with the per-guest arithmetic as sub-line.
+function _FinBreakEven({ e }) {
+  const tl = (v) => `₺${Math.round(v).toLocaleString("tr-TR")}`;
+  if (!e || e.status === "unknown") return "—";
+  if (e.status === "impractical") return <span style={{ color: C.red }} title={`Kişi başı katkı yalnızca ${tl(e.contributionPerPaxTry)}`}>pratikte kâra geçmez<div style={{ fontSize: 11, color: C.textMuted }}>≥ {e.breakEvenPax} kişi gerekir</div></span>;
+  if (e.status === "never") return <span style={{ color: C.red }} title={`Kişi başı net ${tl(e.netPerPaxTry)}, kişi başı gider ${tl(e.variablePerPaxTry)}`}>kâra geçmez<div style={{ fontSize: 11, color: C.textMuted }}>kişi başı gider ≥ net</div></span>;
+  return <span data-testid="tour-break-even" title={`Kişi başı net ${tl(e.netPerPaxTry)} − kişi başı gider ${tl(e.variablePerPaxTry)} = ${tl(e.contributionPerPaxTry)}; rehber ${tl(e.fixedPerOperationTry)} ÷ ${tl(e.contributionPerPaxTry)}`}>
+    en az <b>{e.breakEvenPax}</b> kişi
+    <div style={{ fontSize: 11, color: C.textMuted }}>kişi başı katkı {tl(e.contributionPerPaxTry)}</div>
+  </span>;
+}
+
 const _FIN_GUIDE_PAY_LABEL = { unpaid: "ödenmedi", pending: "ödeme bekliyor", partially_paid: "kısmen ödendi", paid: "ödendi", overpaid: "fazla ödeme", review: "inceleme gerekli", no_cost: "maliyet yok" };
+// ── Fikirler: how to raise profitability ─────────────────────────────────
+// Top: what THIS month's numbers point at (buildProfitIdeas — nothing is
+// recomputed here). Below: a tour operator's playbook, each idea pointing at
+// the CRM screen that measures it.
+const _FIN_IDEAS = [
+  { group: "Takvim ve doluluk", items: [
+    ["Tur günlerini azaltın, rezervasyonları belirli günlerde toplayın", "Her tur–dil için haftada daha az gün açın (örn. İspanyolca Topkapı yalnızca Salı/Perşembe/Cumartesi). Aynı kişi sayısı daha az operasyona toplanır, her birleştirmede bir rehber ücreti cebinizde kalır.", "Fikirler → birleştirilebilecek operasyonlar; Tur Karlılığı → kâra geçiş"],
+    ["Minimum katılımcı sayısı belirleyin", "Kâra geçiş kişi sayısının altındaki turlar için kanal ayarlarında minimum katılımcı / iptal koşulu kullanın; altında kalan rezervasyonları en yakın dolu güne taşıyın (müşteriye alternatif gün + küçük bir jest önerin).", "Tur Karlılığı → operasyon satırındaki “x / y kişi”"],
+    ["Rezervasyon kapanış saatini öne çekin", "Satış kapanışını 24–48 saat önceye almak, düşük doluluklu günleri zamanında birleştirmenize ve bileti/rehberi son dakika maliyetine düşmeden planlamanıza izin verir.", "Genel Bakış → önümüzdeki 7 gün"],
+    ["Diller arası birleştirme", "Aynı gün aynı turda iki dilde az kişi varsa iki dilli rehberle tek operasyon yapın (İspanyolca–Portekizce, İspanyolca–İtalyanca gibi yakın diller). Müşteriye önceden bildirin.", "Bütçe & Tahmin → dillere göre; Takvim"],
+    ["Sezon takvimi", "Düşük sezonda gün sayısını kısın, yüksek sezonda yoğun günlere ikinci saat ekleyin. Takvimi aylık değil sezonluk planlayın.", "Ay seçiciyle aylar arası karşılaştırma"],
+  ]},
+  { group: "Fiyatlandırma", items: [
+    ["Fiyatı kişi başı gidere göre güncelleyin", "Bilet ve yemek gibi kişi başı giderler net gelirin yarısını geçiyorsa fiyat düşüktür. Bilet fiyatı her değiştiğinde tur fiyatını da gözden geçirin.", "Fikirler → kişi başı gideri yüksek turlar; Maliyet Kataloğu"],
+    ["Küçük grup için minimum ücret", "1–2 kişilik rezervasyonlar için “özel tur” fiyatı veya minimum grup ücreti tanımlayın; aksi hâlde rehber ücreti tek başına zarar yazdırır.", "Tur Karlılığı → kâra geçiş"],
+    ["Gün ve sezon bazlı fiyat", "Talebin yüksek olduğu günler ve dönemler (hafta sonu, bayram, yaz) için fiyatı artırın; zayıf günlerde indirim yerine günü kapatmayı tercih edin.", "Ek Satışlar ve Tur Karlılığı ile aylık kıyas"],
+    ["Komisyonu yönetin", "Civitatis kampanyalarına katılım ve sıralama karşılığı verilen ek komisyonu kârlılıkla birlikte değerlendirin; kampanya cirosu artırıp kârı düşürüyor olabilir.", "Rezervasyon Finans kartı → Civitatis komisyonu"],
+    ["Para birimi", "Fiyat EUR, giderlerin bir kısmı TL ise kur farkını fiyatlamaya yansıtın; bilet gibi TL giderleri kur avantajlı zamanda toplu alın.", "Genel Bakış → hazırlanacak para"],
+  ]},
+  { group: "Rehber maliyeti", items: [
+    ["Rehberlerle hacim anlaşması yapın", "Ayda belirli sayıda operasyon garantisi karşılığında operasyon başı ücreti düşürün (örn. ayda 8+ operasyona indirimli ücret). Ödemeyi düzenli ve zamanında yapmak pazarlık gücünüzü artırır.", "Bütçe & Tahmin → rehberlere ödenecek"],
+    ["Kısa ve yarım gün turlarına farklı ücret", "Her tur aynı süre değil; kısa turlar için daha düşük rehber ücreti belirleyin ve operasyon bazında girin.", "Rezervasyon → Rehber maliyetini düzenle"],
+    ["Aynı rehberle günde iki tur", "Sabah ve öğleden sonra turlarını aynı rehbere verip günlük ücret üzerinden anlaşın; iki ayrı operasyon ücretinden ucuzdur.", "Takvim"],
+    ["Maaşlı rehber", "Bir dilde ayda yeterli operasyon varsa maaşlı rehber serbest rehberden ucuza gelir. Maaşa SGK ve diğer işveren maliyetlerini dahil ederek birkaç ayı karşılaştırın.", "Bütçe & Tahmin → maaşlı rehber karşılaştırması"],
+    ["Çok dilli rehber havuzu", "İki dil konuşan rehberler takvimi esnekleştirir ve birleştirmeyi kolaylaştırır; ekibinizi buna göre kurun.", "Rehberlerimiz"],
+  ]},
+  { group: "Bilet ve giriş maliyetleri", items: [
+    ["Acente / rehber bileti ve grup indirimleri", "Resmî acente, rehber ve grup bileti seçeneklerini ve toplu alım indirimlerini araştırın; kişi başı birkaç euro fark, kâra geçiş sayısını doğrudan düşürür.", "Maliyet Kataloğu → bilet tutarları"],
+    ["Biletleri zamanında ve doğru sayıda alın", "Kesinleşmemiş rezervasyonlar için bilet almayın; iptal ve no-show yüzünden boşa giden bileti takip edin.", "Tur Hazırlıkları; Gider Ekle"],
+    ["Gerçek bilet giderini girin", "Tahmin ile gerçek arasındaki farkı görmek için her turdan sonra bilet harcamasını kaydedin; katalog tutarını gerçeğe göre güncelleyin.", "Rezervasyon Finans kartı → Gerçek Giderler"],
+  ]},
+  { group: "Gelir artırma ve ek satış", items: [
+    ["Turda ek satış", "Fotoğraf paketi, lokum/baharat kutusu, yemek yükseltmesi, Boğaz turu veya transfer ekleme gibi ürünleri turda sunun ve her satışı kaydedin. Kişi başı ek satış, turun kârını tek başına değiştirebilir.", "Ek Satışlar"],
+    ["Anlaşmalı mekânlar", "Turun doğal güzergâhındaki dükkân, kafe ve restoranlarla şeffaf komisyon veya indirim anlaşmaları yapın; müşteri memnuniyetini bozmadan ek gelir sağlar.", "Ek Satışlar"],
+    ["Tur sonrası çapraz satış", "Tur bitiminde diğer turlarınız için doğrudan rezervasyon indirimi verin; ikinci tur komisyonsuz gelir.", "Rezervasyonlar → kanal"],
+  ]},
+  { group: "Kanal ve pazarlama", items: [
+    ["Doğrudan satış payını artırın", "Web sitesi, WhatsApp, otel resepsiyonları ve acentelerden gelen komisyonsuz rezervasyonlar aynı tur için daha yüksek net gelir demektir.", "Acenteler; Ana Sayfa → net gelir"],
+    ["Yorum ve puan", "Civitatis sıralamasını yorum belirler: tur sonunda nazik bir hatırlatma ve iyi deneyim, aynı reklam bütçesiyle daha fazla rezervasyon getirir.", "Rezervasyon değerlendirmeleri"],
+    ["Kanal çeşitliliği", "Tek bir platforma bağımlılık riskini azaltın; komisyonu ve kârlılığı karşılaştırarak ikinci bir kanal deneyin.", "Tur Karlılığı"],
+    ["B2B ve garantili gruplar", "Acente ve okullarla garanti grup anlaşmaları, düşük sezonda doluluğu artırır ve birleştirmeyi kolaylaştırır.", "Acenteler"],
+  ]},
+  { group: "İptal, nakit ve kontrol", items: [
+    ["İptal politikası", "Son dakika iptallerini sınırlayın (24–48 saat kuralı) ve iptal edilen operasyonlara yapılmış ödemeleri takip edin.", "Veri Kalitesi → iptal edilmiş operasyonda ödeme"],
+    ["Hakedişleri zamanında talep edin", "Civitatis hakedişlerini düzenli talep etmek nakit akışını iyileştirir.", "Tahsilatlar"],
+    ["Her ay kârlılık gözden geçirmesi", "Ay sonunda zarar eden operasyonları, kâra geçiş sayısının altında kalan günleri ve ek satışı birlikte inceleyin; bir sonraki ayın takvimini buna göre açın.", "Tur Karlılığı; Fikirler"],
+  ]},
+];
+
+function _FinIdeas({ s }) {
+  const I = useMemo(() => buildProfitIdeas(s), [s]);
+  const tl = (v) => v == null ? "—" : `${v < 0 ? "−" : ""}₺${Math.abs(Math.round(v)).toLocaleString("tr-TR")}`;
+  const d = (iso) => new Date(iso + "T12:00:00").toLocaleDateString("tr-TR", { day: "numeric", month: "short" });
+  const card = { border: `1px solid ${C.border}`, borderRadius: T.radius, background: C.white, padding: "14px 16px", fontFamily: "'Geist',sans-serif" };
+  const li = { fontSize: 12.5, color: C.text, padding: "5px 0", borderTop: `1px solid ${C.borderLight}` };
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
+      <_FinSection title="Bu ayın verisinden">
+        <_FinGrid min={260}>
+          <div data-testid="idea-below-break-even" style={card}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>Kâra geçemeyen operasyonlar: {I.belowBreakEven.length}</div>
+            <div style={{ fontSize: 12, color: C.textMuted, margin: "4px 0 8px" }}>Zarar eden operasyonların toplamı {tl(I.lossTry)}</div>
+            {I.belowBreakEven.slice(0, 6).map(o => <div key={o.key} style={li}>{d(o.date)} · {o.tourLabel} · {o.language || "—"} — {o.pax}{o.breakEvenPax && !o.impractical ? ` / ${o.breakEvenPax}` : ""} kişi{o.impractical ? " (pratikte kâra geçmez)" : ""} · <span style={{ color: C.red }}>{tl(o.profitTry)}</span></div>)}
+            {!I.belowBreakEven.length && <div style={{ ...li, color: C.textMuted }}>Bu ay tüm operasyonlar kâra geçiyor.</div>}
+          </div>
+          <div data-testid="idea-consolidation" style={card}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>Birleştirilebilecek operasyonlar: rehber tasarrufu {tl(I.consolidationSavingTry)}</div>
+            <div style={{ fontSize: 12, color: C.textMuted, margin: "4px 0 8px" }}>Aynı tur ve dilde 7 gün içinde birden fazla operasyon</div>
+            {I.consolidation.slice(0, 6).map(c => <div key={c.tourLabel + c.language + c.weekStart} style={li}>{c.tourLabel} · {c.language} — {c.dates.map(d).join(", ")} · {c.pax} kişi · <b>{tl(c.guideSavingTry)}</b>{c.future ? "" : <span style={{ color: C.textMuted }}> (geçmiş)</span>}</div>)}
+            {!I.consolidation.length && <div style={{ ...li, color: C.textMuted }}>Bu ay birleştirilebilecek operasyon yok.</div>}
+          </div>
+          <div data-testid="idea-cost-heavy" style={card}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>Kişi başı gideri yüksek turlar</div>
+            <div style={{ fontSize: 12, color: C.textMuted, margin: "4px 0 8px" }}>Bilet / yemek gibi kişi başı giderler net gelirin yarısını geçiyor</div>
+            {I.costHeavy.map(t => <div key={t.tourLabel} style={li}>{t.tourLabel} — kişi başı net {tl(t.netPerPaxTry)}, gider {tl(t.variablePerPaxTry)} (%{Math.round(t.share * 100)}) · {t.status === "never" || t.status === "impractical" ? <span style={{ color: C.red }}>{t.status === "never" ? "kâra geçmez" : "pratikte kâra geçmez"}</span> : <>kâra geçiş {t.breakEvenPax} kişi</>}</div>)}
+            {!I.costHeavy.length && <div style={{ ...li, color: C.textMuted }}>Böyle bir tur yok.</div>}
+          </div>
+          <div data-testid="idea-extra-sales" style={card}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>Kişi başı ek satış: {tl(I.extraSalesPerPaxTry)}</div>
+            <div style={{ fontSize: 12, color: C.textMuted, marginTop: 4 }}>{I.pax} misafir. Turda kişi başı birkaç yüz liralık ek satış, düşük dolulukta bile operasyonu kâra geçirebilir.</div>
+          </div>
+        </_FinGrid>
+      </_FinSection>
+      {_FIN_IDEAS.map(g => (
+        <_FinSection key={g.group} title={g.group}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {g.items.map(([title, body, where]) => (
+              <div key={title} style={card}>
+                <div style={{ fontSize: 13.5, fontWeight: 600, color: C.text }}>{title}</div>
+                <div style={{ fontSize: 12.5, color: C.textMid, marginTop: 4, lineHeight: 1.5 }}>{body}</div>
+                <div style={{ fontSize: 11.5, color: C.goldText, marginTop: 6 }}>CRM'de: {where}</div>
+              </div>
+            ))}
+          </div>
+        </_FinSection>
+      ))}
+    </div>
+  );
+}
+
 function _FinBudget({ s }) {
   const guide = s.categories.guide;
   return (
@@ -13180,6 +13297,8 @@ function FinancePage({ tab, navigate }) {
         <ErrorState message="Finans verileri yüklenemedi." onRetry={reload}/>
       ) : !s ? null : current === "butce" ? (
         <_FinBudget s={s}/>
+      ) : current === "fikirler" ? (
+        <_FinIdeas s={s}/>
       ) : current === "ek-satislar" ? (
         <_FinExtraSales s={s}/>
       ) : current === "turlar" ? (
@@ -19491,6 +19610,8 @@ function _financePaymentType(p) {
 // override or change this obligation (a mismatch is only reported).
 // Guide payments SETTLE this obligation; they never create or replace it.
 const FINANCE_GUIDE_OPERATION_COST = Object.freeze({ amount: 150, currency: 'EUR' });
+// Break-even above this many guests per operation = "pratikte kâra geçmez".
+const FINANCE_PRACTICAL_GROUP_MAX = 30;
 
 // Attach guide_payments to operation groups, each payment id exactly once.
 // A payment is linked to a reservation but belongs to that reservation's
@@ -20087,10 +20208,32 @@ function buildFinanceMonthSummary(input) {
     const totalPlanned = _financeSumMaps(ticket, meal, other, guide);
     const net = _financeSumMaps(...t.rows.map(x => x.netIncome));
     const netT = T(net), costT = T(totalPlanned);
+    // Break-even guests per operation (month averages of this tour, in TL):
+    // each guest brings net income minus his own per-guest costs (tickets,
+    // meals, other); the operation's fixed guide cost must be covered by
+    // that. Profit needs MORE guests than fixed ÷ contribution.
+    const varT = T(_financeSumMaps(ticket, meal, other)), guideT = T(guide);
+    const economics = (() => {
+      if (!t.pax || !svcs.length || !netT.complete || !varT.complete || !guideT.complete) return { status: 'unknown' };
+      const netPerPaxTry = Math.round(netT.tryTotal / t.pax), variablePerPaxTry = Math.round(varT.tryTotal / t.pax);
+      const contributionPerPaxTry = netPerPaxTry - variablePerPaxTry, fixedPerOperationTry = Math.round(guideT.tryTotal / svcs.length);
+      const base = { netPerPaxTry, variablePerPaxTry, contributionPerPaxTry, fixedPerOperationTry };
+      if (contributionPerPaxTry <= 0) return { ...base, status: 'never', breakEvenPax: null };
+      const be = Math.floor(fixedPerOperationTry / contributionPerPaxTry) + 1;
+      // Beyond a realistic group size the tour does not break even in practice.
+      return { ...base, status: be > FINANCE_PRACTICAL_GROUP_MAX ? 'impractical' : 'ok', breakEvenPax: be };
+    })();
+    const opBreakEven = (g) => {
+      if (economics.status !== 'ok' && economics.status !== 'impractical') return null;
+      const f = T(g.planned);
+      return f.complete ? Math.floor(f.tryTotal / economics.contributionPerPaxTry) + 1 : null;
+    };
     return { tourId: t.tourId, tourLabel: t.tourLabel, reservations: t.reservations, pax: t.pax, guideServices: svcs.length,
       ticket, guide, meal, other, totalPlanned, expectedNet: net, totalPlannedTry: costT.complete ? costT.tryTotal : null,
       projectedProfit: diff(netT, costT), margin: netT.complete && costT.complete && netT.tryTotal > 0 ? (netT.tryTotal - costT.tryTotal) / netT.tryTotal : null,
-      subgroups: svcs.map(g => ({ key: g.key, date: g.date, language: g.language, unresolvedReason: g.unresolvedReason, reservations: g.reservationCount, pax: g.pax, guideServices: 1, guidePlanned: g.planned, state: g.state, pnl: groupByKey.get(g.key) })) };
+      economics,
+      subgroups: svcs.map(g => { const be = opBreakEven(g); return ({ key: g.key, date: g.date, language: g.language, unresolvedReason: g.unresolvedReason, reservations: g.reservationCount, pax: g.pax, guideServices: 1, guidePlanned: g.planned, state: g.state, pnl: groupByKey.get(g.key),
+        breakEvenPax: be, breakEvenReached: be == null ? (economics.status === 'never' ? false : null) : g.pax >= be }); }) };
   }).sort((a, b) => String(a.tourLabel).localeCompare(String(b.tourLabel)));
 
   return {
@@ -20262,11 +20405,66 @@ function _financeCostItemRevisionPlan(item, input, todayISO) {
   };
 }
 
+// ── Fikirler: data hooks for the profit ideas page ───────────────────────
+// Derived only from the month summary: operations that do not reach their
+// break-even, tour + language operations within 7 days that could have
+// been one operation (guide cost saved), tours whose per-guest costs eat
+// most of the per-guest income, and extra sales per guest.
+function buildProfitIdeas(summary) {
+  const fx = { rates: summary.fx.rates, rateSourceError: summary.fx.rateSourceError };
+  const T = (m) => _financeToTry(m, fx);
+  const below = [];
+  for (const t of summary.tours) for (const g of t.subgroups) {
+    if (g.breakEvenReached === false) below.push({ impractical: !!(g.breakEvenPax && g.breakEvenPax > FINANCE_PRACTICAL_GROUP_MAX), key: g.key, date: g.date, tourLabel: t.tourLabel, language: g.language, pax: g.pax,
+      breakEvenPax: g.breakEvenPax, profitTry: g.pnl ? g.pnl.projectedProfit : null });
+  }
+  below.sort((a, b) => (a.profitTry || 0) - (b.profitTry || 0));
+  const lossTry = Math.round(summary.groups.filter(g => g.projectedProfit != null && g.projectedProfit < 0).reduce((n, g) => n + g.projectedProfit, 0));
+  // Same tour + language, several operations within 7 days (counted from
+  // the first one) → one operation would have needed ONE guide cost.
+  const byTourLang = new Map();
+  for (const g of summary.guideServices) {
+    if (g.unresolvedReason || !g.tourId) continue;
+    const k = `${g.tourId}|${g.language}`;
+    if (!byTourLang.has(k)) byTourLang.set(k, []);
+    byTourLang.get(k).push(g);
+  }
+  const clusters = [];
+  for (const list of byTourLang.values()) {
+    let cur = null;
+    for (const g of list.slice().sort((a, b) => a.date < b.date ? -1 : 1)) {
+      if (cur && g.date < _financeAddDays(cur[0].date, 7)) cur.push(g);
+      else { cur = [g]; clusters.push(cur); }
+    }
+  }
+  const consolidation = clusters.filter(l => l.length > 1).map(l => {
+    const sorted = l.slice().sort((a, b) => a.date < b.date ? -1 : 1);
+    const ranked = l.map(g => T(g.planned)).sort((a, b) => b.tryTotal - a.tryTotal);
+    const ok = ranked.every(r => r.complete);
+    return { tourLabel: l[0].tourLabel, language: l[0].language, weekStart: sorted[0].date, dates: sorted.map(g => g.date),
+      operations: l.length, pax: l.reduce((n, g) => n + g.pax, 0), future: sorted.some(g => g.date >= summary.todayISO),
+      guideSavingTry: ok ? Math.round(ranked.slice(1).reduce((n, r) => n + r.tryTotal, 0)) : null };
+  }).sort((a, b) => (b.guideSavingTry || 0) - (a.guideSavingTry || 0));
+  const costHeavy = summary.tours.filter(t => t.economics && t.economics.status !== 'unknown' && t.economics.netPerPaxTry > 0
+      && t.economics.variablePerPaxTry / t.economics.netPerPaxTry >= 0.5)
+    .map(t => ({ tourLabel: t.tourLabel, netPerPaxTry: t.economics.netPerPaxTry, variablePerPaxTry: t.economics.variablePerPaxTry,
+      share: t.economics.variablePerPaxTry / t.economics.netPerPaxTry, breakEvenPax: t.economics.breakEvenPax, status: t.economics.status }))
+    .sort((a, b) => b.share - a.share);
+  const pax = summary.reservations.reduce((n, x) => n + x.pax.total, 0);
+  const xs = summary.kpis.extraSales;
+  return {
+    belowBreakEven: below, lossTry,
+    consolidation, consolidationSavingTry: consolidation.reduce((n, c) => n + (c.guideSavingTry || 0), 0),
+    costHeavy,
+    extraSalesPerPaxTry: pax && xs && xs.complete ? Math.round(xs.tryTotal / pax) : null, pax,
+  };
+}
+
 function _financeDomain() {
   return { FINANCE_COST_CATEGORIES, FINANCE_EXPENSE_CATEGORIES, _istanbulISODate, _financeMonthRange,
     _financeCanonicalLanguage, _financeOperationGroupKey, buildGuideServices, attributeGuidePayments, _financePickCostItem, FINANCE_GUIDE_OPERATION_COST,
     _financeRevenueExpectation, _financeActualRevenue, _financeEarnedNetRevenue, _financeToTry, buildFinanceMonthSummary,
-    _financeAddDays, buildFinanceCashNeeds, buildGuideLanguageCosts, _financeCostItemRevisionPlan };
+    _financeAddDays, buildFinanceCashNeeds, buildGuideLanguageCosts, _financeCostItemRevisionPlan, buildProfitIdeas, FINANCE_PRACTICAL_GROUP_MAX };
 }
 // TESTABLE:_financeDomain:end
 
