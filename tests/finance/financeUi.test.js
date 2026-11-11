@@ -60,9 +60,12 @@ test('an incomplete TRY view is never shown as a total', () => {
 test('data-quality panel names each condition separately', () => {
   const d = body('_FinDataQuality');
   for (const t of ['dil belirtilmemiş', 'dil tanınmıyor', 'tur bilgisi eksik', 'yemek durumu belirsiz', 'maliyet girilmemiş', 'geçici maliyet',
-    'bilet hazırlığı tamamlandı, gerçek harcama tutarı girilmemiş', 'rehber ödemesi kaydı yok', 'eşleştirilmemiş rehber ödemesi', 'Kur verisine erişilemiyor']) {
+    'bilet hazırlığı tamamlandı, gerçek harcama tutarı girilmemiş', 'eşleştirilmemiş rehber ödemesi', 'Kur verisine erişilemiyor',
+    'geçmiş rehber operasyonunun ödemesi tamamlanmamış', 'ödeme kaydı sabit maliyetle uyuşmuyor', 'rehber atanmamış', 'iptal edilmiş operasyonda rehber ödemesi var',
+    'rehber operasyonu maliyeti sabit kuraldan', 'hesaplamada kullanılmıyor', 'ödeme farklı para biriminde — açık bakiye incelemede']) {
     assert.ok(d.includes(t), t);
   }
+  assert.doesNotMatch(d, /rehber ödemesi kaydı yok/, 'a missing guide payment never makes the cost unknown');
 });
 
 test('budget view uses the operational guide concept, never "N × €150"', () => {
@@ -120,7 +123,8 @@ test('Finance card: Admin/Operations only, shows shared guide cost as reporting 
   assert.match(c, /rezervasyon paylaşıyor\./);
   assert.match(c, /yalnızca raporlama içindir/);
   assert.match(c, /İptal edilen rezervasyonlar finans hesaplarına dahil edilmez\./);
-  assert.match(c, /ödeme kaydı yok/);
+  assert.doesNotMatch(c, /ödeme kaydı yok/, 'guide cost is fixed; payment status is shown instead');
+  assert.match(c, /_FIN_GUIDE_PAY_LABEL\[group\.guide\.paymentStatus\]/);
   assert.match(c, /girilmedi/);
 });
 
@@ -131,7 +135,7 @@ test('expense entry: only ticket/meal/transport/other, through the finance repo,
   assert.match(c, /mutate\("createExpense", \{ reservationId: r\.id,/);
   assert.match(c, /mutate\("deleteExpense", x\.id\)/);
   assert.match(c, /window\.confirm\(/, 'delete asks for confirmation');
-  assert.match(c, /Rehber maliyeti buraya girilmez — rehber ödemelerinden gelir\./);
+  assert.match(c, /Rehber maliyeti buraya girilmez — operasyon başına sabit maliyet olarak hesaplanır, ödemesi rehber ödemelerinden girilir\./);
   assert.doesNotMatch(c, /exchangeRateUsed|tryAmount|exchange_rate_used|try_amount/, 'the browser never sends frozen FX');
 });
 
@@ -152,4 +156,58 @@ test('mock repo validates expenses with the same payload rules (guide refused)',
 test('mobile reservation detail shows the same Finance card, finance roles only', () => {
   const m = body('MobileReservationDetailPage');
   assert.match(m, /\{canAccess\(mobAuth\.role, "finance"\) && <ReservationFinanceCard r=\{r\}\/>\}/);
+});
+
+// ── Fixed guide operation cost per group ───────────────────────────────
+
+test('guide operations: one line per operation group with tour, language, reservations, guide or "Rehber atanmadı", cost, payment status, outstanding', () => {
+  const g = body('_FinGuideOperations');
+  assert.match(g, /const rows = s\.guideServices;/, 'rows come from the canonical group list, never per reservation');
+  for (const h of ['"Tarih"', '"Tur"', '"Dil"', '"Rez."', '"Rehber"', '"Maliyet"', '"Ödeme"', '"Açık bakiye"']) assert.ok(g.includes(h), h);
+  assert.match(g, /Rehber atanmadı/);
+  assert.match(g, /_fmtFinanceMap\(g\.planned\)/);
+  assert.match(g, /_FIN_GUIDE_PAY_LABEL\[g\.paymentStatus\]/);
+  assert.match(g, /_fmtFinanceMap\(g\.outstanding\)/);
+  assert.match(g, /s\.cancelledGroups/);
+  assert.match(body('_FinBudget'), /<_FinGuideOperations s=\{s\}\/>/);
+  assert.match(body('_FinTourTable'), /_FIN_GUIDE_PAY_LABEL\[g\.state\]/);
+});
+
+test('guide header never silently omits an unresolved balance: confirmed open + groups under currency review', () => {
+  const b = body('_FinBudget');
+  assert.match(b, /açık bakiye \{_fmtFinanceMap\(guide\.outstanding\)\}/);
+  assert.match(b, /guide\.underReview\.groups > 0 &&/);
+  assert.match(b, /operasyon para birimi incelemesinde/);
+  const g = body('_FinGuideOperations');
+  assert.match(g, /para birimi incelemesi/);
+  assert.match(g, /bekleyen \{_fmtFinanceMap\(g\.cashPending\)\}/, 'original-currency pending amount visible in detail');
+  assert.match(g, /Rehber atandı \(isim yok\)/);
+  assert.match(g, /rehber ödemesi \(\$\{_fmtFinanceMap\(c\.paymentAmount\)\}\) — inceleyin/);
+});
+
+test('reactivation review (option B) and review payments are visible in the table, header and data quality', () => {
+  const g = body('_FinGuideOperations');
+  assert.match(g, /önceki iptal operasyondan \{g\.priorPayments\.length\} ödeme/);
+  assert.match(g, /bu maliyete sayılmadı/);
+  assert.match(body('_FinBudget'), /guide\.reviewPayments\.count > 0 &&/);
+  assert.match(body('_FinBudget'), /_fmtFinanceMap\(guide\.reviewPayments\.total\)/);
+  assert.match(body('_FinDataQuality'), /yeniden açılan operasyonda önceki iptal operasyonun rehber ödemesi var/);
+});
+
+test('loader: linked guide payments by reservation_id with NO payment-date filter; unlinked ones by payment_date', () => {
+  const a = SOURCE.indexOf('const SupabaseFinanceRepo = {');
+  const repo = SOURCE.slice(a, SOURCE.indexOf('\n};', a));
+  assert.match(repo, /byIds\(sb\.from\('guide_payments'\)\.select\('\*'\)\.in\('reservation_id', ids\)\),/);
+  assert.match(repo, /sb\.from\('guide_payments'\)\.select\('\*'\)\.is\('reservation_id', null\)\.gte\('payment_date', startISO\)\.lt\('payment_date', endISO\)/);
+  assert.match(repo, /from\('reservations'\)\.select\('\*'\)\.gte\('check_in', startISO\)\.lt\('check_in', endISO\)/);
+});
+
+test('reservation mapping carries full created_at / cancelled_at timestamps for the continuity rule', () => {
+  assert.match(body('mapResFromDB'), /createdAtTs:r\.created_at\|\|null, cancelledAt:r\.cancelled_at\|\|null,/);
+});
+
+test('one combined catalog-reference notice in the data-quality panel (never one per catalog value)', () => {
+  const d = body('_FinDataQuality');
+  assert.equal((d.match(/Guide Service/g) || []).length, 1);
+  assert.doesNotMatch(d, /guideCatalogDiffers\.map\(d => \(\{/);
 });

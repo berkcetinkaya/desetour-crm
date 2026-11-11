@@ -12609,8 +12609,15 @@ function _FinDataQuality({ s }) {
     dq.notMaterializedPreparations && { n: dq.notMaterializedPreparations, t: "hazırlık kaydı oluşturulmamış", hint: "Bilet maliyeti hesaplanamadı" },
     ...dq.missingCostItems.map(m => ({ n: m.count, t: `× “${m.label}” — maliyet girilmemiş` })),
     ...dq.provisionalCostItemsUsed.map(m => ({ n: m.count, t: `× “${m.label}” — geçici maliyet`, tone: "info" })),
+    (dq.guideCatalogMissing || dq.guideCatalogDiffers.length) && { n: null, tone: "info",
+      t: `Katalogdaki “Guide Service” referansı ${[dq.guideCatalogMissing && "eksik veya pasif", dq.guideCatalogDiffers.length && `sabit tutardan farklı (${dq.guideCatalogDiffers.map(d => d.catalog).join(", ")})`].filter(Boolean).join(" / ")} — hesaplamada kullanılmıyor; rehber operasyonu maliyeti sabit kuraldan (${_fmtFinanceMap(s.guideOperationCost)}) hesaplanıyor` },
     dq.completedTicketWithoutExpense && { n: dq.completedTicketWithoutExpense, t: "bilet hazırlığı tamamlandı, gerçek harcama tutarı girilmemiş" },
-    dq.missingActualGuideCost && { n: dq.missingActualGuideCost, t: "geçmiş rehber operasyonunda rehber ödemesi kaydı yok" },
+    dq.unpaidPastGuideServices && { n: dq.unpaidPastGuideServices, t: "geçmiş rehber operasyonunun ödemesi tamamlanmamış", hint: "Sabit operasyon maliyeti yine sayılıyor" },
+    dq.guidePaymentDiscrepancies && { n: dq.guidePaymentDiscrepancies, t: "rehber operasyonunda ödeme kaydı sabit maliyetle uyuşmuyor — inceleme gerekli" },
+    dq.unassignedGuideServices && { n: dq.unassignedGuideServices, t: "rehber operasyonunda rehber atanmamış", hint: "Maliyet yine sayılıyor", tone: "info" },
+    s.cancelledGroups.some(c => c.paymentsToReview.length) && { n: s.cancelledGroups.filter(c => c.paymentsToReview.length).length, t: "iptal edilmiş operasyonda rehber ödemesi var — inceleme gerekli" },
+    dq.priorOperationPaymentGroups && { n: dq.priorOperationPaymentGroups, t: "yeniden açılan operasyonda önceki iptal operasyonun rehber ödemesi var — inceleme gerekli", hint: "Yeni operasyon maliyetine sayılmadı" },
+    s.categories.guide.underReview.groups && { n: s.categories.guide.underReview.groups, t: "rehber operasyonunda ödeme farklı para biriminde — açık bakiye incelemede", hint: "Kur dönüşümü yapılmadı" },
     dq.multiPaymentGuideServices && { n: dq.multiPaymentGuideServices, t: "rehber operasyonunda birden fazla ödeme var", tone: "info" },
     s.unattributedGuidePayments.length && { n: s.unattributedGuidePayments.length, t: `eşleştirilmemiş rehber ödemesi (${_fmtFinanceMap(s.totals.unattributedGuidePayments)})` },
     dq.commissionUnresolved && { n: dq.commissionUnresolved, t: "rezervasyonda komisyon farklı para birimi nedeniyle hesaplanamadı" },
@@ -12682,7 +12689,7 @@ function _FinOverview({ s, isCurrentMonth }) {
         <_FinGrid min={180}>
           <_FinKpi testId="kpi-earned" label="Gerçekleşen Net Gelir" sub={`${r.reservations} gerçekleşmiş rezervasyon`} {..._finTry(r.earnedNetRevenue)}/>
           <_FinKpi testId="kpi-cash" label="Tahsil Edilen Nakit" sub="Ödenmiş hakediş ve tahsilatlar" {..._finTry(r.cashReceived)}/>
-          <_FinKpi testId="kpi-actual-cost" label="Gerçekleşen Operasyon Maliyeti" sub="Kayıtlı gider + rehber ödemeleri" {..._finTry(r.actualOperatingCost)}/>
+          <_FinKpi testId="kpi-actual-cost" label="Gerçekleşen Operasyon Maliyeti" sub="Kayıtlı gider + gerçekleşen rehber operasyonları" {..._finTry(r.actualOperatingCost)}/>
           <_FinKpi testId="kpi-realized-profit" label="Gerçekleşen Net Kâr" badge={prov} {..._finProfit(r.netProfit, "Kur verisi eksik")}/>
           <_FinKpi testId="kpi-outstanding" label="Tahsil Edilmemiş Alacak" sub="Kazanılan − tahsil edilen" {..._finTry(r.outstandingReceivable)}/>
         </_FinGrid>
@@ -12741,7 +12748,7 @@ function _FinTourTable({ s, mode }) {
                         </span>
                       ) : (<>
                         <span style={{ color: C.textMid }}>Rehber {_fmtFinanceMap(g.guidePlanned)} toplam{g.reservations > 1 ? ` · ${g.reservations} rezervasyon paylaşıyor` : ""}</span>
-                        {g.state !== "forecast" && <span style={{ marginLeft: 8, fontSize: 11, color: C.textMuted }}>{g.state === "actual" ? "ödendi" : "ödeme bekliyor"}</span>}
+                        <span style={{ marginLeft: 8, fontSize: 11, color: C.textMuted }}>{_FIN_GUIDE_PAY_LABEL[g.state] || ""}</span>
                       </>)}
                     </td>
                   </tr>
@@ -12751,6 +12758,56 @@ function _FinTourTable({ s, mode }) {
           })}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+const _FIN_GUIDE_PAY_LABEL = { unpaid: "ödenmedi", pending: "ödeme bekliyor", partially_paid: "kısmen ödendi", paid: "ödendi", overpaid: "fazla ödeme", review: "inceleme gerekli" };
+const _FIN_GUIDE_DISC_LABEL = { currency_mismatch: "para birimi farklı", amount_differs: "tutar sabit maliyetle uyuşmuyor", multiple_payments: "birden fazla ödeme", prior_operation_payment: "önceki iptal operasyonun ödemesi" };
+
+// One line per operation group (date + tour + language) — never per
+// reservation. Presentation only: every field comes from summary.guideServices.
+function _FinGuideOperations({ s }) {
+  const th = { textAlign: "left", padding: "9px 12px", fontWeight: 600, color: C.textMuted, whiteSpace: "nowrap" };
+  const td = { padding: "9px 12px", color: C.text, verticalAlign: "top" };
+  const rows = s.guideServices;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <div style={{ overflowX: "auto", border: `1px solid ${C.border}`, borderRadius: T.radius, background: C.white }}>
+        <table data-testid="finance-guide-operations" style={{ width: "100%", borderCollapse: "collapse", fontFamily: "'Geist',sans-serif", fontSize: 12.5 }}>
+          <thead><tr style={{ background: C.ivory }}>
+            {["Tarih", "Tur", "Dil", "Rez.", "Rehber", "Maliyet", "Ödeme", "Açık bakiye"].map((h, i) => <th key={h} style={{ ...th, textAlign: i >= 5 ? "right" : i === 3 ? "right" : "left" }}>{h}</th>)}
+          </tr></thead>
+          <tbody>
+            {rows.length === 0 && <tr><td colSpan={8} style={{ ...td, color: C.textMuted }}>Bu ay rehber operasyonu yok.</td></tr>}
+            {rows.map(g => (
+              <tr key={g.key} style={{ borderTop: `1px solid ${C.borderLight}` }}>
+                <td style={{ ...td, whiteSpace: "nowrap" }}>{new Date(g.date + "T12:00:00").toLocaleDateString("tr-TR", { day: "numeric", month: "short" })}</td>
+                <td style={td}>{g.tourLabel}{g.unresolvedReason && <div style={{ fontSize: 11, color: C.amber }}>{g.unresolvedReason === "tour_missing" ? "Tur bilgisi eksik" : g.unresolvedReason === "language_unrecognized" ? "Dil tanınmıyor" : "Dil belirtilmemiş"} · ayrı operasyon</div>}</td>
+                <td style={td}>{g.language || "—"}</td>
+                <td style={{ ...td, textAlign: "right" }}>{g.reservationCount}</td>
+                <td style={td}>{g.guideNames.length ? g.guideNames.join(", ") : g.assignedWithoutName ? <span style={{ color: C.textMid }}>Rehber atandı (isim yok)</span> : <span style={{ color: C.red }}>Rehber atanmadı</span>}
+                  {g.guideNames.length > 0 && g.unassignedReservations > 0 && <div style={{ fontSize: 11, color: C.amber }}>{g.unassignedReservations} rezervasyonda rehber yok</div>}</td>
+                <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{_fmtFinanceMap(g.planned)}</td>
+                <td style={{ ...td, textAlign: "right", whiteSpace: "nowrap" }}>
+                  <span style={{ color: g.paymentStatus === "paid" ? C.green : g.paymentStatus === "unpaid" ? C.textMuted : C.amber }}>{_FIN_GUIDE_PAY_LABEL[g.paymentStatus]}</span>
+                  {g.discrepancies.filter(d => d !== "multiple_payments" && d !== "prior_operation_payment").length > 0 && <div style={{ fontSize: 11, color: C.red }}>{g.discrepancies.filter(d => d !== "multiple_payments" && d !== "prior_operation_payment").map(d => _FIN_GUIDE_DISC_LABEL[d]).join(" · ")}</div>}
+                  {Object.keys(g.cashPaid).length > 0 && <div style={{ fontSize: 11, color: C.textMuted }}>ödenen {_fmtFinanceMap(g.cashPaid)}</div>}
+                  {Object.keys(g.cashPending).length > 0 && <div style={{ fontSize: 11, color: C.textMuted }}>bekleyen {_fmtFinanceMap(g.cashPending)}</div>}
+                  {g.priorPayments.length > 0 && <div style={{ fontSize: 11, color: C.amber }}>önceki iptal operasyondan {g.priorPayments.length} ödeme ({_fmtFinanceMap(g.priorAmount)}) — inceleyin, bu maliyete sayılmadı</div>}
+                </td>
+                <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{g.outstanding === null ? <span style={{ color: C.amber }}>para birimi incelemesi</span> : _fmtFinanceMap(g.outstanding)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {s.cancelledGroups.length > 0 && (
+        <div data-testid="finance-cancelled-operations" style={{ fontSize: 12, color: C.textMuted, fontFamily: "'Geist',sans-serif", lineHeight: 1.6 }}>
+          <b style={{ color: C.textMid }}>İptal edilen operasyonlar (maliyet yok):</b>{" "}
+          {s.cancelledGroups.map(c => `${new Date(c.date + "T12:00:00").toLocaleDateString("tr-TR", { day: "numeric", month: "short" })} · ${c.tourLabel} · ${c.language} (${c.reservations} iptal rez.${c.paymentsToReview.length ? `, ${c.paymentsToReview.length} rehber ödemesi (${_fmtFinanceMap(c.paymentAmount)}) — inceleyin` : ""})`).join(" · ")}
+        </div>
+      )}
     </div>
   );
 }
@@ -12765,6 +12822,9 @@ function _FinBudget({ s, isCurrentMonth }) {
         <span style={{ fontSize: 15, color: C.text }}><b>{_fmtFinanceMap(guide.planned)}</b> rehber bütçesi</span>
         {s.counts.unresolvedGuideServices > 0 && <span style={{ fontSize: 12, color: C.amber }}>{s.counts.unresolvedGuideServices} operasyon eksik veri nedeniyle ayrı sayıldı</span>}
       </div>
+      <_FinSection title="Rehber Operasyonları" right={<span style={{ fontSize: 11.5, color: C.textMuted, fontFamily: "'Geist',sans-serif" }}>Ödenen {_fmtFinanceMap(guide.cashPaid)} · bekleyen ödeme {_fmtFinanceMap(guide.cashPending)} · açık bakiye {_fmtFinanceMap(guide.outstanding)}{guide.underReview.groups > 0 && <span style={{ color: C.amber }}>{` + ${guide.underReview.groups} operasyon para birimi incelemesinde (${_fmtFinanceMap(guide.underReview.obligation)} yükümlülük; ödenen ${_fmtFinanceMap(guide.underReview.paid)})`}</span>}{guide.reviewPayments.count > 0 && <span style={{ color: C.amber }}>{` · incelemede ${guide.reviewPayments.count} ödeme (${_fmtFinanceMap(guide.reviewPayments.total)}) maliyete sayılmadı`}</span>}</span>}>
+        <_FinGuideOperations s={s}/>
+      </_FinSection>
       <_FinSection title={isCurrentMonth ? "Kalan Bütçe · bugünden itibaren" : "Ay Bütçesi"}><_FinCategoryTable s={s} mode="budget"/></_FinSection>
       <_FinSection title="Turlara Göre"><_FinTourTable s={s} mode="budget"/></_FinSection>
       <_FinDataQuality s={s}/>
@@ -12960,7 +13020,7 @@ function ReservationFinanceCard({ r }) {
                   <tr style={{ borderTop: `1px solid ${C.borderLight}` }}>
                     <td style={{ ...td, textAlign: "left", color: C.textMuted }}>Rehber <span style={{ fontSize: 11, color: C.textFaint }}>· payı</span></td>
                     <td style={td}>{_fmtFinanceMap(g.planned)}</td>
-                    <td style={{ ...td, paddingLeft: 10 }}>{Object.keys(g.incurred).length ? _fmtFinanceMap(g.incurred) : g.missingActual ? <span style={{ color: C.amber }}>ödeme kaydı yok</span> : "—"}</td>
+                    <td style={{ ...td, paddingLeft: 10 }}>{Object.keys(g.incurred).length ? _fmtFinanceMap(g.incurred) : "—"}</td>
                   </tr>
                 )}
                 <tr style={{ borderTop: `1px solid ${C.border}` }}>
@@ -12974,6 +13034,7 @@ function ReservationFinanceCard({ r }) {
             {g && group && (
               <div style={{ marginTop: 8, padding: "8px 10px", borderRadius: T.radiusSm, background: C.ivory, border: `1px solid ${C.borderLight}`, fontSize: 11.5, color: C.textMid, fontFamily: "'Geist',sans-serif", lineHeight: 1.5 }}>
                 Rehber operasyonu: {_fmtFinanceMap(group.guide.planned)} toplam · {group.reservations > 1 ? `${group.reservations} rezervasyon paylaşıyor.` : "yalnızca bu rezervasyon."}
+                {" "}Ödeme: {_FIN_GUIDE_PAY_LABEL[group.guide.paymentStatus]}{group.guide.outstanding && Object.keys(group.guide.outstanding).length ? ` · açık ${_fmtFinanceMap(group.guide.outstanding)}` : ""}.
                 {group.reservations > 1 && <> Bu rezervasyonun payı (%{Math.round(g.share * 100)}, kişi sayısına göre) yalnızca raporlama içindir.</>}
               </div>
             )}
@@ -13023,7 +13084,7 @@ function ReservationFinanceCard({ r }) {
                 <select value={form.currency} onChange={e => setForm({ ...form, currency: e.target.value })} style={input}>
                   {["EUR", "TRY", "USD", "GBP"].map(c => <option key={c} value={c}>{c}</option>)}
                 </select></label>
-              <div style={{ gridColumn: "1 / -1", fontSize: 11, color: C.textFaint, fontFamily: "'Geist',sans-serif" }}>Rehber maliyeti buraya girilmez — rehber ödemelerinden gelir. TL karşılığı kayıt anındaki ECB kuruyla sabitlenir.</div>
+              <div style={{ gridColumn: "1 / -1", fontSize: 11, color: C.textFaint, fontFamily: "'Geist',sans-serif" }}>Rehber maliyeti buraya girilmez — operasyon başına sabit maliyet olarak hesaplanır, ödemesi rehber ödemelerinden girilir. TL karşılığı kayıt anındaki ECB kuruyla sabitlenir.</div>
               <div style={{ gridColumn: "1 / -1", display: "flex", justifyContent: "flex-end", gap: 8 }}>
                 <button type="button" onClick={() => setForm(null)} style={{ padding: "7px 12px", borderRadius: T.radiusSm, border: `1px solid ${C.border}`, background: "transparent", color: C.textMid, cursor: "pointer", fontSize: 12.5, fontFamily: "'Geist',sans-serif" }}>Vazgeç</button>
                 <button type="submit" disabled={mutating} style={{ padding: "7px 12px", borderRadius: T.radiusSm, border: "none", background: C.navy, color: "#fff", cursor: "pointer", fontSize: 12.5, fontWeight: 600, fontFamily: "'Geist',sans-serif" }}>{mutating ? "…" : "Kaydet"}</button>
@@ -18993,30 +19054,45 @@ function _financeCanonicalLanguage(raw, languageNames) {
 // over-budgets; never merged). Each missing field is reported separately
 // (unresolvedReasons), so "Tur bilgisi eksik" is never shown as
 // "Dil belirtilmemiş". Correcting the field re-groups automatically.
+// THE operation-group key for one reservation (cancelled or not):
+// check_in date + tour_id + canonical language, or `unresolved:<id>` when a
+// field is missing / unrecognized. Single definition — used for grouping,
+// for payment attribution and for the cancelled-group audit.
+function _financeOperationGroupKey(r, languageNames) {
+  const date = String(r.checkIn).slice(0, 10);
+  const lang = _financeCanonicalLanguage(r.tourLanguage, languageNames);
+  const unresolvedReasons = [];
+  if (!r.tourId) unresolvedReasons.push('tour_missing');
+  if (lang.status === 'missing') unresolvedReasons.push('language_missing');
+  if (lang.status === 'unrecognized') unresolvedReasons.push('language_unrecognized');
+  const key = unresolvedReasons.length ? `unresolved:${r.id}` : `${date}|${r.tourId}|${lang.key}`;
+  return { key, date, lang, unresolvedReasons };
+}
+
 function buildGuideServices(reservations, opts) {
   const languageNames = (opts && opts.languageNames) || [];
   const groups = new Map();
   for (const r of (reservations || [])) {
     if (!r || _financeIsCancelled(r) || !r.checkIn) continue;
-    const date = String(r.checkIn).slice(0, 10);
-    const lang = _financeCanonicalLanguage(r.tourLanguage, languageNames);
-    const unresolvedReasons = [];
-    if (!r.tourId) unresolvedReasons.push('tour_missing');
-    if (lang.status === 'missing') unresolvedReasons.push('language_missing');
-    if (lang.status === 'unrecognized') unresolvedReasons.push('language_unrecognized');
+    const { key, date, lang, unresolvedReasons } = _financeOperationGroupKey(r, languageNames);
     const unresolvedReason = unresolvedReasons[0] || null;
-    const key = unresolvedReasons.length ? `unresolved:${r.id}` : `${date}|${r.tourId}|${lang.key}`;
     if (!groups.has(key)) {
       groups.set(key, {
         key, date, tourId: r.tourId || null, tourLabel: r.tour || '—',
         language: lang.label, languageStatus: lang.status, unresolvedReason, unresolvedReasons,
-        reservationIds: [], reservationCount: 0, pax: 0,
+        reservationIds: [], reservationCount: 0, pax: 0, guideNames: [], unassignedReservations: 0, assignedWithoutName: 0,
       });
     }
     const g = groups.get(key);
     g.reservationIds.push(r.id);
     g.reservationCount += 1;
     g.pax += _financePax(r).total;
+    // Display only: guide assignment NEVER affects the key or the cost.
+    // A guideId without a resolvable name is still ASSIGNED (name unavailable).
+    const gName = r.assignedGuideName || r.guide || null;
+    if (gName) { if (!g.guideNames.includes(gName)) g.guideNames.push(gName); }
+    else if (r.guideId) g.assignedWithoutName += 1;
+    else g.unassignedReservations += 1;
   }
   return [...groups.values()].sort((a, b) =>
     a.date < b.date ? -1 : a.date > b.date ? 1 : String(a.tourLabel).localeCompare(String(b.tourLabel)) || String(a.language || '').localeCompare(String(b.language || '')));
@@ -19045,25 +19121,57 @@ function _financePaymentType(p) {
   return p.paymentTypeRaw || ({ 'Kapora': 'deposit', 'Kalan Ödeme': 'balance', 'Tam Ödeme': 'full', 'İade': 'refund', 'Ek Ödeme': 'extra' })[p.paymentType] || p.paymentType;
 }
 
-// Attach guide_payments to services: each payment id once, via its own
-// reservation_id → that reservation's service. No reservation (or a
-// reservation outside the active set) → the visible unattributed bucket.
-function attributeGuidePayments(services, guidePayments) {
+// Confirmed business rule — the SINGLE source of truth for the guide
+// operation cost: every operation group (check_in + tour_id + normalized
+// booking language) with at least one non-cancelled reservation carries
+// exactly this amount. It does NOT come from finance_cost_items: the
+// "Guide Service" catalog row is reference-only and can never suppress,
+// override or change this obligation (a mismatch is only reported).
+// Guide payments SETTLE this obligation; they never create or replace it.
+const FINANCE_GUIDE_OPERATION_COST = Object.freeze({ amount: 150, currency: 'EUR' });
+
+// Attach guide_payments to operation groups, each payment id exactly once.
+// A payment is linked to a reservation but belongs to that reservation's
+// whole operation group:
+//   • linked reservation active                 → its group
+//   • linked reservation cancelled while the group
+//     stayed active (proven by timestamps)      → that active group
+//   • linked reservation cancelled, group active
+//     NOW but it was fully cancelled in between
+//     (reactivated) or continuity cannot be
+//     proven (timestamps missing)               → `prior` (shown on the active
+//                                                  group for manual review; it
+//                                                  does NOT settle the new €150)
+//   • linked reservation cancelled, whole group
+//     cancelled                                 → `cancelled` (audit/review,
+//                                                  never settles an obligation)
+//   • no reservation / reservation not in scope → visible `unattributed`
+// opts.cancelledKeys: Map(cancelled reservation id → operation-group key).
+// opts.continuity: Map(cancelled reservation id → 'continuous' |
+//   'reactivated' | 'unknown'); absent = 'continuous' (legacy callers).
+function attributeGuidePayments(services, guidePayments, opts) {
+  const cancelledKeys = (opts && opts.cancelledKeys) || new Map();
+  const continuity = (opts && opts.continuity) || null;
   const byRes = new Map();
   for (const s of services) for (const id of s.reservationIds) byRes.set(id, s.key);
   const seen = new Set();
   const perService = new Map(services.map(s => [s.key, []]));
-  const unattributed = [];
+  const unattributed = [], cancelled = [], prior = [];
   for (const p of (guidePayments || [])) {
     if (!p || seen.has(p.id)) continue;
     seen.add(p.id);
     const status = _financeGuidePaymentStatus(p);
     if (status === 'cancelled') continue;
-    const key = p.resId ? byRes.get(p.resId) : null;
-    if (key) perService.get(key).push({ ...p, statusRaw: status });
-    else unattributed.push({ ...p, statusRaw: status, reason: p.resId ? 'reservation_not_active' : 'no_reservation' });
+    const row = { ...p, statusRaw: status };
+    if (p.resId && byRes.has(p.resId)) { perService.get(byRes.get(p.resId)).push(row); continue; }
+    const cKey = p.resId ? cancelledKeys.get(p.resId) : null;
+    const cont = continuity ? (continuity.get(p.resId) || 'unknown') : 'continuous';
+    if (cKey && perService.has(cKey) && cont === 'continuous') perService.get(cKey).push({ ...row, viaCancelledReservation: true });
+    else if (cKey && perService.has(cKey)) prior.push({ ...row, groupKey: cKey, reason: cont === 'reactivated' ? 'group_reactivated' : 'continuity_unknown' });
+    else if (cKey && !cKey.startsWith('unresolved:')) cancelled.push({ ...row, groupKey: cKey });
+    else unattributed.push({ ...row, reason: !p.resId ? 'no_reservation' : cKey ? 'reservation_cancelled' : 'reservation_not_active' });
   }
-  return { perService, unattributed };
+  return { perService, unattributed, cancelled, prior };
 }
 
 // FX: original-currency map → TRY with the 13.03 rules (fresh ECB rate,
@@ -19165,7 +19273,30 @@ function buildFinanceMonthSummary(input) {
   const byResId = new Map(active.map(r => [r.id, r]));
 
   const services = buildGuideServices(active, { languageNames });
-  const { perService, unattributed } = attributeGuidePayments(services, guidePayments);
+  const cancelledKeys = new Map(monthRes.filter(r => _financeIsCancelled(r) && r.checkIn)
+    .map(r => [r.id, _financeOperationGroupKey(r, languageNames).key]));
+  // Option B (reactivation): a payment linked to a cancelled reservation only
+  // settles the CURRENT group when the group provably stayed active through
+  // that cancellation — some reservation active now existed before it was
+  // cancelled and was never cancelled itself. Otherwise (the group was fully
+  // cancelled in between, or timestamps are missing) the payment is kept for
+  // manual review and the group starts with its own unpaid €150.
+  const ts = (v) => { const t = v ? Date.parse(v) : NaN; return Number.isFinite(t) ? t : null; };
+  const activeByKey = new Map(services.map(sv => [sv.key, sv.reservationIds]));
+  const activeById = new Map(active.map(r => [r.id, r]));
+  const continuity = new Map();
+  for (const r of monthRes) {
+    if (!cancelledKeys.has(r.id)) continue;
+    const ids = activeByKey.get(cancelledKeys.get(r.id));
+    if (!ids) continue;
+    const cAt = ts(r.cancelledAt);
+    const since = ids.map(id => activeById.get(id)).map(a => (a && !a.cancelledAt) ? ts(a.createdAtTs) : null);
+    if (cAt === null || since.every(t => t === null)) { continuity.set(r.id, 'unknown'); continue; }
+    continuity.set(r.id, since.some(t => t !== null && t <= cAt) ? 'continuous'
+      : since.every(t => t !== null) ? 'reactivated' : 'unknown');
+  }
+  const { perService, unattributed, cancelled: cancelledGroupPayments, prior: priorOperationPayments } =
+    attributeGuidePayments(services, guidePayments, { cancelledKeys, continuity });
   const serviceByRes = new Map();
   for (const s of services) for (const id of s.reservationIds) serviceByRes.set(id, s);
 
@@ -19198,40 +19329,74 @@ function buildFinanceMonthSummary(input) {
   // UI can say exactly what to fix ("Dil belirtilmemiş" ≠ "Tur bilgisi eksik").
   const dq = { missingLanguageCount: 0, unrecognizedLanguageCount: 0, missingTourCount: 0,
     unknownMealReservations: 0, notMaterializedPreparations: 0, missingCostItems: {},
-    missingActualGuideCost: 0, completedTicketWithoutExpense: 0, missingActualExpenseCount: 0,
-    multiPaymentGuideServices: 0, commissionUnresolved: 0, earnedRevenueUnresolved: 0,
+    unpaidPastGuideServices: 0, guidePaymentDiscrepancies: 0, unassignedGuideServices: 0,
+    completedTicketWithoutExpense: 0, missingActualExpenseCount: 0,
+    multiPaymentGuideServices: 0, priorOperationPaymentGroups: 0, guideCatalogMissing: 0, guideCatalogDiffers: [], commissionUnresolved: 0, earnedRevenueUnresolved: 0,
     provisionalCostItemsUsed: {} };
   const missingCost = (label) => { dq.missingCostItems[label] = (dq.missingCostItems[label] || 0) + 1; };
 
-  // ── Guide services: forecast / commitment / actual, never added together
+  // ── Guide operations: ONE fixed obligation per operation group ─────────
+  // Confirmed business rule: every non-cancelled operation group
+  // (check_in + tour_id + normalized booking language) carries exactly one
+  // fixed guide operation cost (FINANCE_GUIDE_OPERATION_COST) — whether or
+  // not a guide is assigned, whatever the reservation / guest count, and
+  // whatever guide payments say. guide_payments are CASH records reconciled
+  // against that obligation: they never replace it and never add a second
+  // cost. A mismatch is surfaced as a discrepancy for review.
   const guideRows = services.map(s => {
-    const item = _financePickCostItem(costItems, { category: 'guide', basis: 'guide_service_group', tourId: s.tourId, date: s.date });
     const pays = perService.get(s.key) || [];
-    const paid = pays.filter(p => p.statusRaw === 'paid'), pending = pays.filter(p => p.statusRaw !== 'paid');
-    const planned = item ? _financeAdd({}, item.currency, Number(item.amount)) : {};
-    if (!item) missingCost('Guide Service');
-    else if (item.isProvisional) dq.provisionalCostItemsUsed[item.label] = (dq.provisionalCostItemsUsed[item.label] || 0) + 1;
-    const actual = {}; paid.forEach(p => _financeAdd(actual, p.currency, p.amount));
-    const committed = {}; pending.forEach(p => _financeAdd(committed, p.currency, p.amount));
-    const state = paid.length ? 'actual' : pending.length ? 'committed' : 'forecast';
-    const best = pays.length ? _financeSumMaps(actual, committed) : planned; // replaces forecast
+    const paidList = pays.filter(p => p.statusRaw === 'paid'), pendingList = pays.filter(p => p.statusRaw !== 'paid');
+    const oblCur = FINANCE_GUIDE_OPERATION_COST.currency, oblAmt = FINANCE_GUIDE_OPERATION_COST.amount;
+    const planned = _financeAdd({}, oblCur, oblAmt);
+    // Catalog "Guide Service" row: reference only. Reported when missing,
+    // inactive or different — never used to compute the obligation.
+    const ref = _financePickCostItem(costItems, { category: 'guide', basis: 'guide_service_group', tourId: s.tourId, date: s.date });
+    if (!ref) dq.guideCatalogMissing += 1;
+    else if (_financeCurrency(ref.currency) !== oblCur || Number(ref.amount) !== oblAmt) {
+      const k = `${Number(ref.amount)} ${_financeCurrency(ref.currency)}`;
+      const hit = dq.guideCatalogDiffers.find(d => d.catalog === k);
+      if (hit) hit.count += 1; else dq.guideCatalogDiffers.push({ catalog: k, label: ref.label || 'Guide Service', count: 1 });
+    }
+    const cashPaid = {}; paidList.forEach(p => _financeAdd(cashPaid, p.currency, p.amount));
+    const cashPending = {}; pendingList.forEach(p => _financeAdd(cashPending, p.currency, p.amount));
     const future = s.date >= todayISO;
-    const remaining = !future ? {} : paid.length && !pending.length ? {} : pending.length ? committed : planned;
-    // A service that already took place with no guide payment recorded is
-    // flagged — its actual guide cost is UNKNOWN, never reported as zero.
-    const missingActual = !future && !pays.length;
+    // Reconciliation against the fixed obligation (same currency only).
+    const foreign = pays.some(p => _financeCurrency(p.currency) !== oblCur);
+    const sumCur = (list) => Math.round(list.filter(p => _financeCurrency(p.currency) === oblCur).reduce((t, p) => t + (Number(p.amount) || 0), 0) * 100) / 100;
+    const paidAmt = sumCur(paidList), pendingAmt = sumCur(pendingList);
+    const paymentStatus = !pays.length ? 'unpaid' : !paidList.length ? 'pending'
+      : foreign ? 'review' : paidAmt < oblAmt ? 'partially_paid' : paidAmt === oblAmt ? 'paid' : 'overpaid';
+    const outstanding = foreign ? null : _financeAdd({}, oblCur, Math.max(0, Math.round((oblAmt - paidAmt) * 100) / 100));
+    const discrepancies = [];
+    if (foreign) discrepancies.push('currency_mismatch');
+    if (!foreign && pays.length && Math.round((paidAmt + pendingAmt) * 100) / 100 !== oblAmt) discrepancies.push('amount_differs');
+    if (pays.length > 1) discrepancies.push('multiple_payments');
+    // Payments from an earlier (cancelled) incarnation of this group: shown
+    // for manual review, never counted against this group's obligation.
+    const priorPayments = priorOperationPayments.filter(p => p.groupKey === s.key);
+    const priorAmount = {}; priorPayments.forEach(p => _financeAdd(priorAmount, p.currency, p.amount));
+    if (priorPayments.length) { discrepancies.push('prior_operation_payment'); dq.priorOperationPaymentGroups += 1; }
     if (pays.length > 1) dq.multiPaymentGuideServices += 1;
-    if (missingActual) dq.missingActualGuideCost += 1;
+    if (discrepancies.some(d => d !== 'multiple_payments' && d !== 'prior_operation_payment')) dq.guidePaymentDiscrepancies += 1;
+    if (!future && (outstanding === null || Object.keys(outstanding).length)) dq.unpaidPastGuideServices += 1;
+    if (!s.guideNames.length && !s.assignedWithoutName) dq.unassignedGuideServices += 1;
     const reasons = s.unresolvedReasons || [];
     if (reasons.includes('tour_missing')) dq.missingTourCount += s.reservationCount;
     if (reasons.includes('language_missing')) dq.missingLanguageCount += s.reservationCount;
     if (reasons.includes('language_unrecognized')) dq.unrecognizedLanguageCount += s.reservationCount;
-    return { ...s, costItemId: item ? item.id : null, planned, actual, committed, best, remaining, state, missingActual,
-      // Incurred (recorded) guide cost for a service: paid + pending payments.
-      // Never the €150 forecast.
-      incurred: _financeSumMaps(actual, committed),
+    // Cost (obligation) vs cash:
+    //   planned / best  = the fixed obligation (always, never a payment amount)
+    //   actual / incurred = the obligation once the operation took place
+    //   remaining (budget, today onward) = obligation still unpaid
+    //   cashPaid / cashPending = guide_payments, cash only
+    const recognized = future ? {} : planned;
+    const remaining = !future ? {} : (outstanding === null ? planned : outstanding);
+    return { ...s, costSource: 'fixed_rule', referenceCostItemId: ref ? ref.id : null, planned, best: planned, actual: recognized, incurred: recognized,
+      remaining, cashPaid, cashPending, outstanding, paymentStatus, discrepancies, state: paymentStatus,
+      missingActual: false, // the cost is fixed and known — only the PAYMENT can be missing
       paymentIds: pays.map(p => p.id), multiPayment: pays.length > 1,
-      sharedLabel: item ? `${Number(item.amount)} ${item.currency} toplam · ${s.reservationCount} rezervasyon paylaşıyor` : null };
+      priorPayments: priorPayments.map(p => ({ id: p.id, resId: p.resId, amount: p.amount, currency: p.currency, statusRaw: p.statusRaw, reason: p.reason })), priorAmount,
+      sharedLabel: `${oblAmt} ${oblCur} toplam · ${s.reservationCount} rezervasyon paylaşıyor` };
   });
   const guideByKey = new Map(guideRows.map(g => [g.key, g]));
 
@@ -19386,7 +19551,9 @@ function buildFinanceMonthSummary(input) {
     return {
       key: g.key, date: g.date, tourId: g.tourId, tourLabel: g.tourLabel, language: g.language,
       unresolvedReason: g.unresolvedReason, reservationIds: rows.map(x => x.id), reservations: rows.length, pax: g.pax,
-      guide: { planned: g.planned, best: g.best, incurred: g.incurred, state: g.state, missingActual: g.missingActual, multiPayment: g.multiPayment },
+      guide: { planned: g.planned, best: g.best, incurred: g.incurred, state: g.state, missingActual: g.missingActual, multiPayment: g.multiPayment,
+        paymentStatus: g.paymentStatus, cashPaid: g.cashPaid, cashPending: g.cashPending, outstanding: g.outstanding, discrepancies: g.discrepancies,
+        guideNames: g.guideNames, unassignedReservations: g.unassignedReservations, assignedWithoutName: g.assignedWithoutName },
       expectedNet: expectedNetMap, plannedCost, projectedCost, actualCost, past,
       projectedProfit: netT.complete && projT.complete ? Math.round((netT.tryTotal - projT.tryTotal) * 100) / 100 : null,
       projectedMargin: netT.complete && projT.complete && netT.tryTotal > 0 ? (netT.tryTotal - projT.tryTotal) / netT.tryTotal : null,
@@ -19406,7 +19573,58 @@ function buildFinanceMonthSummary(input) {
   for (const cat of ['ticket', 'meal', 'transport', 'other']) {
     categories[cat] = { planned: sumCat(reservationRows, 'planned', cat), actual: sumCat(reservationRows, 'actual', cat), remaining: sumCat(reservationRows, 'remaining', cat) };
   }
-  categories.guide = { planned: guidePlanned, actual: guideActual, remaining: guideRemaining, best: guideBest };
+  categories.guide = { planned: guidePlanned, actual: guideActual, remaining: guideRemaining, best: guideBest,
+    // Cash side of the guide obligation (never added to cost):
+    cashPaid: _financeSumMaps(...guideRows.map(g => g.cashPaid)),
+    cashPending: _financeSumMaps(...guideRows.map(g => g.cashPending)),
+    // Confirmed outstanding (obligation currency, settled in that currency)…
+    outstanding: _financeSumMaps(...guideRows.map(g => g.outstanding || {})),
+    // …plus groups whose payments are in another currency: NOT netted (no
+    // frozen FX exists on guide_payments), never silently dropped.
+    // Guide payments that settle NO active obligation but must stay visible:
+    // on fully cancelled operations + from an earlier cancelled incarnation.
+    reviewPayments: (() => {
+      const list = [...cancelledGroupPayments, ...priorOperationPayments];
+      const paid = {}, pending = {};
+      list.forEach(p => _financeAdd(p.statusRaw === 'paid' ? paid : pending, p.currency, p.amount));
+      return { count: list.length, paid, pending, total: _financeSumMaps(paid, pending) };
+    })(),
+    underReview: (() => {
+      const rv = guideRows.filter(g => g.outstanding === null);
+      return { groups: rv.length, obligation: _financeSumMaps(...rv.map(g => g.planned)),
+        paid: _financeSumMaps(...rv.map(g => g.cashPaid)), pending: _financeSumMaps(...rv.map(g => g.cashPending)) };
+    })() };
+
+  // ── Cancelled operation groups (audit view, derived — nothing is deleted):
+  // a resolvable date + tour + language group whose reservations are ALL
+  // cancelled carries no cost. A new non-cancelled reservation for the same
+  // key brings the group back automatically with exactly one charge.
+  const activeKeys = new Set(services.map(sv => sv.key));
+  const cancelledMap = new Map();
+  for (const r of monthRes) {
+    if (!cancelledKeys.has(r.id)) continue;
+    const key = cancelledKeys.get(r.id);
+    if (key.startsWith('unresolved:') || activeKeys.has(key)) continue; // group still active → one charge stays
+    const { date, lang } = _financeOperationGroupKey(r, languageNames);
+    if (!cancelledMap.has(key)) cancelledMap.set(key, { key, date, tourId: r.tourId, tourLabel: r.tour || '—', language: lang.label, reservationIds: [], cost: {}, status: 'cancelled' });
+    cancelledMap.get(key).reservationIds.push(r.id);
+  }
+  const cancelledGroups = [...cancelledMap.values()].map(cg => {
+    // Guide payments on a fully cancelled operation: kept for audit, flagged
+    // for review, never treated as settling an active obligation.
+    const pays = cancelledGroupPayments.filter(p => p.groupKey === cg.key);
+    const amount = {}; pays.forEach(p => _financeAdd(amount, p.currency, p.amount));
+    return { ...cg, reservations: cg.reservationIds.length, paymentsToReview: pays.map(p => p.id), paymentAmount: amount,
+      payments: pays.map(p => ({ id: p.id, resId: p.resId, amount: p.amount, currency: p.currency, statusRaw: p.statusRaw })) };
+  }).sort((x, y) => x.date < y.date ? -1 : x.date > y.date ? 1 : 0);
+
+  // ── Cash flow (month's reservations): money in vs money out. Guide cash out
+  // = PAID guide payments only; pending is not cash. Expenses are recorded
+  // actual payments.
+  const expensesPaid = _financeSumMaps(...reservationRows.map(x => _financeSumMaps(x.actual.ticket, x.actual.meal, x.actual.transport, x.actual.other)));
+  const cashFlow = { inflow: null, guidePaid: categories.guide.cashPaid, guidePending: categories.guide.cashPending, expensesPaid,
+    guidePaidUnderReview: categories.guide.reviewPayments.paid,
+    outflow: _financeSumMaps(categories.guide.cashPaid, expensesPaid) };
   const remainingBudget = _financeSumMaps(...['ticket', 'meal', 'transport', 'other', 'guide'].map(c => categories[c].remaining));
   const plannedOperatingCost = _financeSumMaps(...['ticket', 'meal', 'transport', 'other', 'guide'].map(c => categories[c].planned));
   const projectedOperatingCost = _financeSumMaps(...reservationRows.map(x => _financeSumMaps(x.best.ticket, x.best.meal, x.best.transport, x.best.other)), guideBest);
@@ -19414,6 +19632,7 @@ function buildFinanceMonthSummary(input) {
   const expectedNet = _financeSumMaps(...reservationRows.map(x => _financeAdd({}, x.revenue.receivable.currency, x.revenue.receivable.amount)));
   const gross = _financeSumMaps(...reservationRows.map(x => _financeAdd({}, x.revenue.grossCurrency, x.revenue.gross)));
   const received = _financeSumMaps(...reservationRows.map(x => x.received));
+  cashFlow.inflow = received;
   const unattributedAmount = {}; unattributed.forEach(p => _financeAdd(unattributedAmount, p.currency, p.amount));
   const T = (m) => _financeToTry(m, fx);
   const kp = { remainingBudget: T(remainingBudget), expectedNet: T(expectedNet), projectedCost: T(projectedOperatingCost), actualSpend: T(actualSpend), received: T(received), gross: T(gross), plannedCost: T(plannedOperatingCost) };
@@ -19437,8 +19656,7 @@ function buildFinanceMonthSummary(input) {
   const pastCashT = T(_financeSumMaps(...pastRows.map(x => x.received)));
   const outstandingT = T(_financeSumMaps(...pastRows.map(x => x.outstanding)));
   const incurredT = T(_financeSumMaps(...pastRows.map(x => x.incurredCost)));
-  const missingActualCostCount = pastRows.reduce((n, x) => n + x.missingActualCategories.length, 0)
-    + guideRows.filter(g => g.missingActual).length;
+  const missingActualCostCount = pastRows.reduce((n, x) => n + x.missingActualCategories.length, 0);
   const earnedUnresolved = pastRows.filter(x => !x.earned.resolved).length;
   const realizedComplete = missingActualCostCount === 0 && earnedUnresolved === 0 && earnedT.complete && incurredT.complete;
   const realized = {
@@ -19481,7 +19699,7 @@ function buildFinanceMonthSummary(input) {
     monthISO: String(monthISO).slice(0, 7), startISO, endISO, todayISO,
     counts: { reservations: active.length, cancelledExcluded: monthRes.length - active.length, guideServices: guideRows.length,
       unresolvedGuideServices: guideRows.filter(g => g.unresolvedReason).length },
-    guideServices: guideRows, groups: groupRows, reservations: reservationRows, tours: tourRows, categories,
+    guideServices: guideRows, groups: groupRows, cancelledGroups, cashFlow, reservations: reservationRows, tours: tourRows, categories,
     totals: { remainingBudget, plannedOperatingCost, projectedOperatingCost, actualSpend, expectedNet, gross, received, unattributedGuidePayments: unattributedAmount },
     kpis: {
       remainingBudget: kp.remainingBudget, expectedNet: kp.expectedNet, gross: kp.gross,
@@ -19494,6 +19712,7 @@ function buildFinanceMonthSummary(input) {
     },
     realized,
     unattributedGuidePayments: unattributed,
+    guideOperationCost: _financeAdd({}, FINANCE_GUIDE_OPERATION_COST.currency, FINANCE_GUIDE_OPERATION_COST.amount),
     dataQuality: { ...dq,
       missingCostItems: Object.entries(dq.missingCostItems).map(([label, count]) => ({ label, count })),
       provisionalCostItemsUsed: Object.entries(dq.provisionalCostItemsUsed).map(([label, count]) => ({ label, count })) },
@@ -19505,7 +19724,7 @@ function buildFinanceMonthSummary(input) {
 
 function _financeDomain() {
   return { FINANCE_COST_CATEGORIES, FINANCE_EXPENSE_CATEGORIES, _istanbulISODate, _financeMonthRange,
-    _financeCanonicalLanguage, buildGuideServices, attributeGuidePayments, _financePickCostItem,
+    _financeCanonicalLanguage, _financeOperationGroupKey, buildGuideServices, attributeGuidePayments, _financePickCostItem, FINANCE_GUIDE_OPERATION_COST,
     _financeRevenueExpectation, _financeActualRevenue, _financeEarnedNetRevenue, _financeToTry, buildFinanceMonthSummary };
 }
 // TESTABLE:_financeDomain:end
@@ -21862,6 +22081,8 @@ function mapResFromDB(r) {
     // missing value — as 'unknown', never 'not_included'.
     mealStatus:r.meal_status||null,
     purchasedActivityRaw:r.purchased_activity_raw||null,
+    // Full timestamps (Finance: was an operation group continuously active?)
+    createdAtTs:r.created_at||null, cancelledAt:r.cancelled_at||null,
     createdAt:r.created_at?r.created_at.split('T')[0]:'', _fromDB:true };
 }
 // Tour Preparation Intelligence Phase C2D-1 — maps EVERY column of a
@@ -23003,7 +23224,7 @@ function _financeExpensePayload(d) {
   const category = String(d.category || '');
   if (!_FINANCE_EXPENSE_CATEGORIES_WRITE.includes(category)) {
     // Guide actual cost lives ONLY in guide_payments — never here.
-    throw new Error(category === 'guide' ? 'Rehber maliyeti rehber ödemeleri üzerinden kaydedilir.' : 'Geçersiz gider kategorisi.');
+    throw new Error(category === 'guide' ? 'Rehber maliyeti gider olarak girilmez: her aktif operasyon için sabit maliyet otomatik hesaplanır, ödemesi rehber ödemelerinden girilir.' : 'Geçersiz gider kategorisi.');
   }
   const out = {
     reservation_id: d.reservationId, category, description: d.description || '',
