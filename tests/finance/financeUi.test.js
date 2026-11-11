@@ -302,7 +302,8 @@ test('Tur Karlılığı shows break-even guests per tour and per operation; Fiki
   assert.match(body('FinancePage'), /current === "fikirler" \? \(\s*<_FinIdeas s=\{s\}\/>/);
   const i = body('_FinIdeas');
   assert.match(i, /buildProfitIdeas\(s\)/);
-  for (const id of ['idea-below-break-even', 'idea-consolidation', 'idea-cost-heavy', 'idea-extra-sales']) assert.ok(i.includes(id), id);
-  assert.match(SOURCE, /Tur günlerini azaltın, rezervasyonları belirli günlerde toplayın/);
+  for (const id of ['idea-below-break-even', 'idea-targets', 'idea-cost-heavy', 'idea-extra-sales']) assert.ok(i.includes(id), id);
+  assert.doesNotMatch(SOURCE, /birleştir|idea-consolidation/i, 'no merge suggestions');
+  assert.match(SOURCE, /Satış günlerini talebe göre planlayın/);
   assert.match(SOURCE, /Rehberlerle hacim anlaşması yapın/);
 });

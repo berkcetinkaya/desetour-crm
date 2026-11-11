@@ -12988,25 +12988,24 @@ const _FIN_GUIDE_PAY_LABEL = { unpaid: "ödenmedi", pending: "ödeme bekliyor", 
 // the CRM screen that measures it.
 const _FIN_IDEAS = [
   { group: "Takvim ve doluluk", items: [
-    ["Tur günlerini azaltın, rezervasyonları belirli günlerde toplayın", "Her tur–dil için haftada daha az gün açın (örn. İspanyolca Topkapı yalnızca Salı/Perşembe/Cumartesi). Aynı kişi sayısı daha az operasyona toplanır, her birleştirmede bir rehber ücreti cebinizde kalır.", "Fikirler → birleştirilebilecek operasyonlar; Tur Karlılığı → kâra geçiş"],
-    ["Minimum katılımcı sayısı belirleyin", "Kâra geçiş kişi sayısının altındaki turlar için kanal ayarlarında minimum katılımcı / iptal koşulu kullanın; altında kalan rezervasyonları en yakın dolu güne taşıyın (müşteriye alternatif gün + küçük bir jest önerin).", "Tur Karlılığı → operasyon satırındaki “x / y kişi”"],
-    ["Rezervasyon kapanış saatini öne çekin", "Satış kapanışını 24–48 saat önceye almak, düşük doluluklu günleri zamanında birleştirmenize ve bileti/rehberi son dakika maliyetine düşmeden planlamanıza izin verir.", "Genel Bakış → önümüzdeki 7 gün"],
-    ["Diller arası birleştirme", "Aynı gün aynı turda iki dilde az kişi varsa iki dilli rehberle tek operasyon yapın (İspanyolca–Portekizce, İspanyolca–İtalyanca gibi yakın diller). Müşteriye önceden bildirin.", "Bütçe & Tahmin → dillere göre; Takvim"],
+    ["Satış günlerini talebe göre planlayın", "Her tur–dil için talebin geldiği günleri açın, zayıf günleri kapatın (örn. İspanyolca Topkapı haftada belirli günler). Takvimi talep verisiyle kurmak, düşük doluluklu operasyonları baştan önler.", "Tur Karlılığı → operasyon satırındaki “x / y kişi”"],
+    ["Minimum katılımcı sayısı belirleyin", "Satış kanalında her tur için minimum katılımcıyı kâra geçiş sayısına göre ayarlayın; eşik altında kalan tarihler için kanalın kendi iptal/alternatif tarih akışını kullanın.", "Fikirler → fiyat ve rehber ücreti hedefleri"],
+    ["Rezervasyon kapanış saatini öne çekin", "Satış kapanışını 24–48 saat önceye almak, bileti ve rehberi son dakika maliyetine düşmeden planlamanıza izin verir.", "Genel Bakış → önümüzdeki 7 gün"],
     ["Sezon takvimi", "Düşük sezonda gün sayısını kısın, yüksek sezonda yoğun günlere ikinci saat ekleyin. Takvimi aylık değil sezonluk planlayın.", "Ay seçiciyle aylar arası karşılaştırma"],
   ]},
   { group: "Fiyatlandırma", items: [
-    ["Fiyatı kişi başı gidere göre güncelleyin", "Bilet ve yemek gibi kişi başı giderler net gelirin yarısını geçiyorsa fiyat düşüktür. Bilet fiyatı her değiştiğinde tur fiyatını da gözden geçirin.", "Fikirler → kişi başı gideri yüksek turlar; Maliyet Kataloğu"],
+    ["Fiyatı kişi başı gidere göre güncelleyin", "Bilet ve yemek gibi kişi başı giderler net gelirin yarısını geçiyorsa fiyat düşüktür. Bilet fiyatı her değiştiğinde tur fiyatını da gözden geçirin; komisyonlu kanalda satış fiyatının, hedef net fiyatı komisyon sonrası karşılaması gerekir.", "Fikirler → fiyat ve rehber ücreti hedefleri; Maliyet Kataloğu"],
     ["Küçük grup için minimum ücret", "1–2 kişilik rezervasyonlar için “özel tur” fiyatı veya minimum grup ücreti tanımlayın; aksi hâlde rehber ücreti tek başına zarar yazdırır.", "Tur Karlılığı → kâra geçiş"],
     ["Gün ve sezon bazlı fiyat", "Talebin yüksek olduğu günler ve dönemler (hafta sonu, bayram, yaz) için fiyatı artırın; zayıf günlerde indirim yerine günü kapatmayı tercih edin.", "Ek Satışlar ve Tur Karlılığı ile aylık kıyas"],
     ["Komisyonu yönetin", "Civitatis kampanyalarına katılım ve sıralama karşılığı verilen ek komisyonu kârlılıkla birlikte değerlendirin; kampanya cirosu artırıp kârı düşürüyor olabilir.", "Rezervasyon Finans kartı → Civitatis komisyonu"],
     ["Para birimi", "Fiyat EUR, giderlerin bir kısmı TL ise kur farkını fiyatlamaya yansıtın; bilet gibi TL giderleri kur avantajlı zamanda toplu alın.", "Genel Bakış → hazırlanacak para"],
   ]},
   { group: "Rehber maliyeti", items: [
-    ["Rehberlerle hacim anlaşması yapın", "Ayda belirli sayıda operasyon garantisi karşılığında operasyon başı ücreti düşürün (örn. ayda 8+ operasyona indirimli ücret). Ödemeyi düzenli ve zamanında yapmak pazarlık gücünüzü artırır.", "Bütçe & Tahmin → rehberlere ödenecek"],
+    ["Rehberlerle hacim anlaşması yapın", "Ayda belirli sayıda operasyon garantisi karşılığında operasyon başı ücreti düşürün (örn. ayda 8+ operasyona indirimli ücret). Pazarlıkta turun kâra geçtiği en yüksek ücreti hedef alın; ödemeyi düzenli ve zamanında yapmak pazarlık gücünüzü artırır.", "Fikirler → fiyat ve rehber ücreti hedefleri; Bütçe & Tahmin"],
     ["Kısa ve yarım gün turlarına farklı ücret", "Her tur aynı süre değil; kısa turlar için daha düşük rehber ücreti belirleyin ve operasyon bazında girin.", "Rezervasyon → Rehber maliyetini düzenle"],
     ["Aynı rehberle günde iki tur", "Sabah ve öğleden sonra turlarını aynı rehbere verip günlük ücret üzerinden anlaşın; iki ayrı operasyon ücretinden ucuzdur.", "Takvim"],
     ["Maaşlı rehber", "Bir dilde ayda yeterli operasyon varsa maaşlı rehber serbest rehberden ucuza gelir. Maaşa SGK ve diğer işveren maliyetlerini dahil ederek birkaç ayı karşılaştırın.", "Bütçe & Tahmin → maaşlı rehber karşılaştırması"],
-    ["Çok dilli rehber havuzu", "İki dil konuşan rehberler takvimi esnekleştirir ve birleştirmeyi kolaylaştırır; ekibinizi buna göre kurun.", "Rehberlerimiz"],
+    ["Çok dilli rehber havuzu", "İki dil konuşan rehberler takvimi esnekleştirir ve tek rehberle daha fazla günü karşılamanızı sağlar; ekibinizi buna göre kurun.", "Rehberlerimiz"],
   ]},
   { group: "Bilet ve giriş maliyetleri", items: [
     ["Acente / rehber bileti ve grup indirimleri", "Resmî acente, rehber ve grup bileti seçeneklerini ve toplu alım indirimlerini araştırın; kişi başı birkaç euro fark, kâra geçiş sayısını doğrudan düşürür.", "Maliyet Kataloğu → bilet tutarları"],
@@ -13022,7 +13021,7 @@ const _FIN_IDEAS = [
     ["Doğrudan satış payını artırın", "Web sitesi, WhatsApp, otel resepsiyonları ve acentelerden gelen komisyonsuz rezervasyonlar aynı tur için daha yüksek net gelir demektir.", "Acenteler; Ana Sayfa → net gelir"],
     ["Yorum ve puan", "Civitatis sıralamasını yorum belirler: tur sonunda nazik bir hatırlatma ve iyi deneyim, aynı reklam bütçesiyle daha fazla rezervasyon getirir.", "Rezervasyon değerlendirmeleri"],
     ["Kanal çeşitliliği", "Tek bir platforma bağımlılık riskini azaltın; komisyonu ve kârlılığı karşılaştırarak ikinci bir kanal deneyin.", "Tur Karlılığı"],
-    ["B2B ve garantili gruplar", "Acente ve okullarla garanti grup anlaşmaları, düşük sezonda doluluğu artırır ve birleştirmeyi kolaylaştırır.", "Acenteler"],
+    ["B2B ve garantili gruplar", "Acente ve okullarla garanti grup anlaşmaları, düşük sezonda doluluğu ve operasyon başı kişi sayısını artırır.", "Acenteler"],
   ]},
   { group: "İptal, nakit ve kontrol", items: [
     ["İptal politikası", "Son dakika iptallerini sınırlayın (24–48 saat kuralı) ve iptal edilen operasyonlara yapılmış ödemeleri takip edin.", "Veri Kalitesi → iptal edilmiş operasyonda ödeme"],
@@ -13047,11 +13046,14 @@ function _FinIdeas({ s }) {
             {I.belowBreakEven.slice(0, 6).map(o => <div key={o.key} style={li}>{d(o.date)} · {o.tourLabel} · {o.language || "—"} — {o.pax}{o.breakEvenPax && !o.impractical ? ` / ${o.breakEvenPax}` : ""} kişi{o.impractical ? " (pratikte kâra geçmez)" : ""} · <span style={{ color: C.red }}>{tl(o.profitTry)}</span></div>)}
             {!I.belowBreakEven.length && <div style={{ ...li, color: C.textMuted }}>Bu ay tüm operasyonlar kâra geçiyor.</div>}
           </div>
-          <div data-testid="idea-consolidation" style={card}>
-            <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>Birleştirilebilecek operasyonlar: rehber tasarrufu {tl(I.consolidationSavingTry)}</div>
-            <div style={{ fontSize: 12, color: C.textMuted, margin: "4px 0 8px" }}>Aynı tur ve dilde 7 gün içinde birden fazla operasyon</div>
-            {I.consolidation.slice(0, 6).map(c => <div key={c.tourLabel + c.language + c.weekStart} style={li}>{c.tourLabel} · {c.language} — {c.dates.map(d).join(", ")} · {c.pax} kişi · <b>{tl(c.guideSavingTry)}</b>{c.future ? "" : <span style={{ color: C.textMuted }}> (geçmiş)</span>}</div>)}
-            {!I.consolidation.length && <div style={{ ...li, color: C.textMuted }}>Bu ay birleştirilebilecek operasyon yok.</div>}
+          <div data-testid="idea-targets" style={card}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>Fiyat ve rehber ücreti hedefleri</div>
+            <div style={{ fontSize: 12, color: C.textMuted, margin: "4px 0 8px" }}>Ortalama grup büyüklüğüyle kâra geçmek için (net = komisyon sonrası)</div>
+            {I.targets.map(x => <div key={x.tourLabel} style={li}><b>{x.tourLabel}</b> — ort. {x.avgPax.toLocaleString("tr-TR")} kişi
+              <div style={{ color: C.textMid }}>Kişi başı net {tl(x.netPerPaxTry)} → <b>{tl(x.requiredNetPerPaxTry)}</b>{x.priceGapPct != null ? ` (+%${Math.round(x.priceGapPct * 100)})` : ""}
+                {" · "}rehber ücreti {tl(x.guideCostTry)} → en fazla <b>{tl(x.maxGuideCostTry)}</b>
+                {x.minGroup ? ` · minimum katılımcı ${x.minGroup}` : ""}</div></div>)}
+            {!I.targets.length && <div style={{ ...li, color: C.textMuted }}>Tüm turlar ortalama grupla kâra geçiyor.</div>}
           </div>
           <div data-testid="idea-cost-heavy" style={card}>
             <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>Kişi başı gideri yüksek turlar</div>
@@ -20407,8 +20409,8 @@ function _financeCostItemRevisionPlan(item, input, todayISO) {
 
 // ── Fikirler: data hooks for the profit ideas page ───────────────────────
 // Derived only from the month summary: operations that do not reach their
-// break-even, tour + language operations within 7 days that could have
-// been one operation (guide cost saved), tours whose per-guest costs eat
+// break-even, per-tour price / guide-fee / minimum-group targets at the
+// average group size, tours whose per-guest costs eat
 // most of the per-guest income, and extra sales per guest.
 function buildProfitIdeas(summary) {
   const fx = { rates: summary.fx.rates, rateSourceError: summary.fx.rateSourceError };
@@ -20420,31 +20422,18 @@ function buildProfitIdeas(summary) {
   }
   below.sort((a, b) => (a.profitTry || 0) - (b.profitTry || 0));
   const lossTry = Math.round(summary.groups.filter(g => g.projectedProfit != null && g.projectedProfit < 0).reduce((n, g) => n + g.projectedProfit, 0));
-  // Same tour + language, several operations within 7 days (counted from
-  // the first one) → one operation would have needed ONE guide cost.
-  const byTourLang = new Map();
-  for (const g of summary.guideServices) {
-    if (g.unresolvedReason || !g.tourId) continue;
-    const k = `${g.tourId}|${g.language}`;
-    if (!byTourLang.has(k)) byTourLang.set(k, []);
-    byTourLang.get(k).push(g);
-  }
-  const clusters = [];
-  for (const list of byTourLang.values()) {
-    let cur = null;
-    for (const g of list.slice().sort((a, b) => a.date < b.date ? -1 : 1)) {
-      if (cur && g.date < _financeAddDays(cur[0].date, 7)) cur.push(g);
-      else { cur = [g]; clusters.push(cur); }
-    }
-  }
-  const consolidation = clusters.filter(l => l.length > 1).map(l => {
-    const sorted = l.slice().sort((a, b) => a.date < b.date ? -1 : 1);
-    const ranked = l.map(g => T(g.planned)).sort((a, b) => b.tryTotal - a.tryTotal);
-    const ok = ranked.every(r => r.complete);
-    return { tourLabel: l[0].tourLabel, language: l[0].language, weekStart: sorted[0].date, dates: sorted.map(g => g.date),
-      operations: l.length, pax: l.reduce((n, g) => n + g.pax, 0), future: sorted.some(g => g.date >= summary.todayISO),
-      guideSavingTry: ok ? Math.round(ranked.slice(1).reduce((n, r) => n + r.tryTotal, 0)) : null };
-  }).sort((a, b) => (b.guideSavingTry || 0) - (a.guideSavingTry || 0));
+  // Targets per tour, at the tour's AVERAGE group size this month: the net
+  // price per guest that would break even, the highest guide fee that would
+  // break even, and the minimum group size to set on the sales channel.
+  const targets = summary.tours.filter(t => t.economics && t.economics.status !== 'unknown' && t.guideServices > 0).map(t => {
+    const e = t.economics, avgPax = t.pax / t.guideServices;
+    const requiredNetPerPaxTry = Math.round(e.variablePerPaxTry + e.fixedPerOperationTry / avgPax);
+    return { tourLabel: t.tourLabel, avgPax: Math.round(avgPax * 10) / 10, netPerPaxTry: e.netPerPaxTry, requiredNetPerPaxTry,
+      priceGapPct: e.netPerPaxTry > 0 ? requiredNetPerPaxTry / e.netPerPaxTry - 1 : null,
+      guideCostTry: e.fixedPerOperationTry, maxGuideCostTry: e.contributionPerPaxTry > 0 ? Math.round(e.contributionPerPaxTry * avgPax) : 0,
+      minGroup: e.status === 'ok' ? e.breakEvenPax : null, status: e.status };
+  }).filter(x => x.requiredNetPerPaxTry > x.netPerPaxTry)
+    .sort((a, b) => (b.priceGapPct || 0) - (a.priceGapPct || 0));
   const costHeavy = summary.tours.filter(t => t.economics && t.economics.status !== 'unknown' && t.economics.netPerPaxTry > 0
       && t.economics.variablePerPaxTry / t.economics.netPerPaxTry >= 0.5)
     .map(t => ({ tourLabel: t.tourLabel, netPerPaxTry: t.economics.netPerPaxTry, variablePerPaxTry: t.economics.variablePerPaxTry,
@@ -20454,7 +20443,7 @@ function buildProfitIdeas(summary) {
   const xs = summary.kpis.extraSales;
   return {
     belowBreakEven: below, lossTry,
-    consolidation, consolidationSavingTry: consolidation.reduce((n, c) => n + (c.guideSavingTry || 0), 0),
+    targets,
     costHeavy,
     extraSalesPerPaxTry: pax && xs && xs.complete ? Math.round(xs.tryTotal / pax) : null, pax,
   };
