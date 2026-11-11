@@ -148,3 +148,8 @@ test('mock repo validates expenses with the same payload rules (guide refused)',
   const repo = SOURCE.slice(a, SOURCE.indexOf('\n};', a));
   assert.match(repo, /const row = _financeExpensePayload\(d\);/);
 });
+
+test('mobile reservation detail shows the same Finance card, finance roles only', () => {
+  const m = body('MobileReservationDetailPage');
+  assert.match(m, /\{canAccess\(mobAuth\.role, "finance"\) && <ReservationFinanceCard r=\{r\}\/>\}/);
+});

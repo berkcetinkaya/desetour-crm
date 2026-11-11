@@ -101,6 +101,19 @@ const CRM_CHANGELOG_CATEGORIES = [
 // Newest first. See the release convention above before editing.
 const CRM_CHANGELOG = [
   {
+    version: '13.05',
+    date: '2026-11-11',
+    title: 'Mobilde Rezervasyon Finans Kartı',
+    summary: 'Rezervasyonun finans özeti ve gerçek gider girişi artık mobil rezervasyon detayında da var.',
+    categories: ['Arayüz', 'İyileştirme'],
+    highlights: [
+      'Mobil rezervasyon detayında planlanan ve gerçekleşen maliyet, rehber payı, net alacak ve tahmini kâr görünüyor.',
+      'Bilet, yemek, ulaşım ve diğer gerçek giderler mobilden de kaydedilip silinebiliyor.',
+      'Kart yalnızca Yönetici ve Operasyon rolleri için görünüyor; hesaplar masaüstü Finans ile aynı.',
+    ],
+    author: 'Berk',
+  },
+  {
     version: '13.04',
     date: '2026-11-11',
     title: 'Finans Merkezi ve Takvim Hızlı Görünüm',
@@ -265,19 +278,6 @@ const CRM_CHANGELOG = [
       'Çok sayıda aday içeren araştırmalar için çıktı kapasitesi artırıldı',
       'Araştırma başarısız olduğunda kullanıcıya teknik detaylar yerine anlaşılır bir Türkçe uyarı gösteriliyor',
       'Uygunluk, kanıt ve kaynak kuralları değiştirilmedi',
-    ],
-    author: 'Berk',
-  },
-  {
-    version: '12.43',
-    date: '2026-10-20',
-    title: 'Pazar Araştırmasında Zaman Aşımı Sorunu Giderildi',
-    summary: 'Acenteler modülündeki pazar araştırması, çok adaylı veya kapsamlı aramalarda bazen zaman aşımına uğrayıp hata veriyordu. Bu sorun giderildi; araştırma artık daha uzun süren aramalarda da güvenilir şekilde tamamlanıyor.',
-    categories: ['Altyapı', 'İyileştirme'],
-    highlights: [
-      'Pazar araştırması artık daha uzun süren veya çok adaylı aramalarda zaman aşımına uğramıyor',
-      'Zaman aşımı durumunda kullanıcıya anlaşılır bir Türkçe bilgi mesajı gösteriliyor',
-      'Araştırma kalitesi, kanıt zorunluluğu ve uygunluk değerlendirmesi hiçbir şekilde değişmedi',
     ],
     author: 'Berk',
   },

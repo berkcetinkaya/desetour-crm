@@ -1,1 +1,1 @@
-window.__DESETOUR_BUILD__ = {"version":"13.04","major":13,"minor":4,"buildTimestamp":"2026-11-11T06:04:20.525Z","commitSha":"c0088cd4bf28717f3ca661ab4a8c73ef5c9be0ba","commitShaShort":"c0088cd","branch":"feature/finance-center"};
+window.__DESETOUR_BUILD__ = {"version":"13.05","major":13,"minor":5,"buildTimestamp":"2026-11-11T07:34:32.311Z","commitSha":"2adb6eb3d272d8631839a85089a04789f03595dd","commitShaShort":"2adb6eb","branch":"release/13.05"};
