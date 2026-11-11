@@ -851,7 +851,7 @@ function IDLink({ id, type }) {
     customer:    '/customers/',
     tour:        '/tours/',
     guide:       '/guides/',
-    payment:     '/payments',
+    payment:     '/finance/tahsilatlar',
   };
   const route = routes[type];
   const href = route ? '#' + route + (type === 'payment' ? '' : id) : null;
@@ -2350,7 +2350,6 @@ const NAV_TOP = [
 ];
 const NAV_BOT = [
   { id:"finance",    label:"Finans",        badge:null, icon:"M3 3v18h18 M7 15l4-4 3 3 5-6" },
-  { id:"payments",   label:"Ödemeler",      badge:null, icon:"M2 9a2 2 0 012-2h16a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V9zM2 13h20" },
   { id:"messages",   label:"Mesajlar",      badge:null, icon:"M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" },
   { id:"reminders",  label:"Hatırlatmalar", badge:null, icon:"M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0" },
   { id:"agencies",   label:"Acenteler",     badge:null, icon:"M3 21h18 M5 21V7l8-4v18 M19 21V11l-6-4" },
@@ -2958,15 +2957,15 @@ function Sidebar({ currentBase, collapsed, onToggle, mobileOpen, onMobileClose, 
           scrolling is the standard, viewport-height-proof fix. */}
       <div style={{flex:1, minHeight:0, overflowY:"auto", display:"flex", flexDirection:"column"}}>
         <nav style={{padding:"12px 10px 0", display:"flex", flexDirection:"column", gap:2}}>
-          {NAV_TOP.map(it=><NavItem key={it.id} item={{...withLiveBadge(it),_collapsed:collapsed}} currentBase={currentBase} variant={light?"light":"dark"}/>)}
+          {NAV_TOP.filter(it => canAccess(auth.role, it.id)).map(it=><NavItem key={it.id} item={{...withLiveBadge(it),_collapsed:collapsed}} currentBase={currentBase} variant={light?"light":"dark"}/>)}
         </nav>
         <div style={{height:1, background:C.borderLight, margin:"12px 18px"}}/>
         <nav style={{padding:"0 10px", display:"flex", flexDirection:"column", gap:2}}>
-          {NAV_BOT.filter(it => it.id !== "finance" || canAccess(auth.role, "finance")).map(it=><NavItem key={it.id} item={{...withLiveBadge(it),_collapsed:collapsed}} currentBase={currentBase} variant={light?"light":"dark"}/>)}
+          {NAV_BOT.filter(it => canAccess(auth.role, it.id)).map(it=><NavItem key={it.id} item={{...withLiveBadge(it),_collapsed:collapsed}} currentBase={currentBase} variant={light?"light":"dark"}/>)}
         </nav>
         <div style={{height:1, background:C.borderLight, margin:"12px 18px"}}/>
         <nav style={{padding:"0 10px", display:"flex", flexDirection:"column", gap:2}}>
-          {NAV_SETTINGS.map(it=><NavItem key={it.id} item={{...withLiveBadge(it),_collapsed:collapsed}} currentBase={currentBase} variant={light?"light":"dark"}/>)}
+          {NAV_SETTINGS.filter(it => canAccess(auth.role, it.id)).map(it=><NavItem key={it.id} item={{...withLiveBadge(it),_collapsed:collapsed}} currentBase={currentBase} variant={light?"light":"dark"}/>)}
           {canAccess(auth.role, "changelog") && (
             <ChangelogNavRow currentBase={currentBase} onNavigate={()=>{ if (typeof NAV_REF.fn === 'function') NAV_REF.fn('/changelog'); }} collapsed={collapsed} variant={light?"light":"dark"}/>
           )}
@@ -5666,7 +5665,7 @@ function CivitatisHakedisPanel() {
 
   return (
     <Card style={cardStyle}>
-      <SectionHeader title="Civitatis Hakedişi" action="Hakedişleri Gör" onAction={() => NAV_REF.fn && NAV_REF.fn('/payments')}/>
+      <SectionHeader title="Civitatis Hakedişi" action="Hakedişleri Gör" onAction={() => NAV_REF.fn && NAV_REF.fn('/finance/tahsilatlar')}/>
       <div style={{ display:"grid", gridTemplateColumns: requested.itemCount>0 ? "1fr 1fr 1fr" : "1fr 1fr", gap:16 }}>
         <div>
           <div style={{ fontSize:11, fontWeight:600, color:C.textMuted, fontFamily:"'Geist',sans-serif", textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:6 }}>
@@ -12363,7 +12362,7 @@ function PaymentRow({ p, isLast, onOpen }) {
           fontFamily:"'DM Mono',monospace",
           background:C.ivory, border:`1px solid ${C.borderLight}`,
           padding:"2px 7px", borderRadius:5,
-        }}>{p.resId}</span>
+        }}>{p.resRef || p.resId}</span>
       </td>
       {}
       <td style={{padding:"14px 12px", borderBottom:isLast?"none":`1px solid ${C.borderLight}`, verticalAlign:"middle", maxWidth:170}}>
@@ -12454,7 +12453,7 @@ function PaySidebar({ payments }) {
                 {fmtMoney(p.remaining, p.currency)}
               </div>
             </div>
-            <div style={{fontSize:11.5, color:C.textMuted, fontFamily:"'Geist',sans-serif"}}>{p.resId} · {p.dueDate}</div>
+            <div style={{fontSize:11.5, color:C.textMuted, fontFamily:"'Geist',sans-serif"}}>{p.resRef || p.resId} · {p.dueDate}</div>
           </div>
         ))}
       </div>
@@ -12851,13 +12850,9 @@ function FinancePage({ tab, navigate }) {
         })}
       </div>
       {current === "tahsilatlar" ? (
-        <div style={{ padding: "20px 22px", border: `1px solid ${C.border}`, borderRadius: T.radius, background: C.white, display: "flex", flexDirection: isMobile ? "column" : "row", alignItems: isMobile ? "stretch" : "center", justifyContent: "space-between", gap: 14 }}>
-          <div style={{ fontFamily: "'Geist',sans-serif" }}>
-            <div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>Tahsilatlar ve Civitatis hakedişleri</div>
-            <div style={{ fontSize: 12.5, color: C.textMuted, marginTop: 4 }}>Tahsilat ve hakediş işlemleri şimdilik Ödemeler sayfasında yapılıyor.</div>
-          </div>
-          <button type="button" onClick={() => navigate && navigate("/payments")} style={{ padding: "9px 16px", borderRadius: T.radiusSm, border: "none", background: C.navy, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600, fontFamily: "'Geist',sans-serif" }}>Ödemeler'e git</button>
-        </div>
+        // Phase F: the existing Payments experience (Civitatis Hakedişleri +
+        // Doğrudan Ödemeler), unchanged, now living under Finans.
+        isMobile ? <MobilePaymentsPage/> : <PaymentsPage/>
       ) : current === "katalog" ? (
         <_FinCatalog s={s}/>
       ) : loading && !s ? (
@@ -13285,6 +13280,49 @@ const CIVITATIS_TRANSITION_MESSAGES = {
   period_not_found: 'Hakediş dönemi bulunamadı.',
 };
 
+// TESTABLE:_summarizeDirectPayments:start
+// Direct payments (public.payments rows). The old view read reservation-
+// shaped mock fields (total/paid/remaining, "Tamamlandı"), so with real
+// Supabase rows every KPI stayed blank. These read the real row shape (and
+// still understand the legacy demo labels): one state per payment —
+// paid / pending (incl. overdue) / refund / cancelled — and per-currency
+// totals. Refunds subtract from collected; cancelled is never money.
+function _directPaymentState(p) {
+  const type = p.paymentTypeRaw || (p.paymentType === 'İade' ? 'refund' : null);
+  const raw = p.statusRaw || ({ 'Ödendi': 'paid', 'Tamamlandı': 'paid', 'Kapora Ödendi': 'paid', 'Kısmi Ödendi': 'paid',
+    'Bekliyor': 'pending', 'Gecikmiş': 'overdue', 'İade Edildi': 'refunded', 'İptal': 'cancelled', 'cancelled': 'cancelled' })[p.status] || 'pending';
+  if (raw === 'cancelled') return 'cancelled';
+  if (type === 'refund' || raw === 'refunded') return 'refund';
+  if (raw === 'pending' || raw === 'overdue') return 'pending';
+  return 'paid';
+}
+function _summarizeDirectPayments(payments, monthISO) {
+  const add = (m, c, v) => { const k = String(c || 'EUR').toUpperCase() === 'TL' ? 'TRY' : String(c || 'EUR').toUpperCase(); m[k] = Math.round(((m[k] || 0) + v) * 100) / 100; };
+  const out = { collected: {}, pending: {}, refunded: {}, thisMonth: {}, counts: { all: 0, paid: 0, pending: 0, refund: 0, cancelled: 0 } };
+  for (const p of (payments || [])) {
+    if (!p) continue;
+    const st = _directPaymentState(p);
+    const amt = Number(p.amount != null ? p.amount : p.paid) || 0;
+    out.counts.all += 1; out.counts[st] += 1;
+    const inMonth = !!(p.paidAt && monthISO && String(p.paidAt).slice(0, 7) === monthISO);
+    if (st === 'paid') { add(out.collected, p.currency, amt); if (inMonth) add(out.thisMonth, p.currency, amt); }
+    else if (st === 'refund') { add(out.collected, p.currency, -amt); add(out.refunded, p.currency, amt); if (inMonth) add(out.thisMonth, p.currency, -amt); }
+    else if (st === 'pending') add(out.pending, p.currency, amt);
+  }
+  return out;
+}
+// Real payment rows → the row shape PaymentRow renders (one payment per
+// row: Toplam = this payment, Kapora = received, Kalan = still due).
+function _directPaymentRowView(p) {
+  if (!p || !p._fromDB) return p;
+  const st = _directPaymentState(p);
+  const amt = Number(p.amount) || 0;
+  return { ...p, guest: p.customerName || '—', tour: p.resTour || '—', flag: '', country: '',
+    total: amt, deposit: st === 'paid' ? amt : 0, paid: st === 'paid' ? amt : 0, remaining: st === 'pending' ? amt : 0,
+    status: st === 'cancelled' ? 'İptal' : p.status };
+}
+// TESTABLE:_summarizeDirectPayments:end
+
 function _DogrudanOdemelerView() {
   const [showNewPayment, setShowNewPayment] = useState(false);
   const [_payTick, setPayTick] = useState(0);
@@ -13294,34 +13332,22 @@ function _DogrudanOdemelerView() {
   const { data:repoPays, loading:payLoading, error:payError, reload:reloadPays }
     = useRepo("payment", "getAll");
 
-  const TABS = ["Tümü", "Bekliyor", "Kısmi Ödendi", "Tamamlandı", "İade"];
+  // Tabs follow the real payment states (paid / pending incl. overdue /
+  // refund); cancelled rows appear only under "Tümü".
+  const TABS = ["Tümü", "Bekliyor", "Ödendi", "İade"];
+  const TAB_STATE = { "Bekliyor": "pending", "Ödendi": "paid", "İade": "refund" };
 
-  const _allPays = repoPays ?? [];
+  const _rawPays = repoPays ?? [];
+  const _allPays = _rawPays.map(_directPaymentRowView);
   const filtered = _allPays.filter(p => {
-    const tabOk = activeTab === "Tümü"
-      || (activeTab === "İade" && p.status === "İade Edildi")
-      || p.status === activeTab;
-    const srchOk = !search ||
-      p.guest.toLowerCase().includes(search.toLowerCase()) ||
-      p.resId.toLowerCase().includes(search.toLowerCase()) ||
-      p.tour.toLowerCase().includes(search.toLowerCase());
-    return tabOk && srchOk;
+    const tabOk = activeTab === "Tümü" || _directPaymentState(p) === TAB_STATE[activeTab];
+    const q = search.trim().toLowerCase();
+    const hay = [p.guest, p.customerName, p.resRef, p.resId, p.tour, p.payNumber].filter(Boolean).join(" ").toLowerCase();
+    return tabOk && (!q || hay.includes(q));
   });
 
-  const tabCounts = {
-    "Tümü":         _allPays.length,
-    "Bekliyor":     _allPays.filter(p=>p.status==="Bekliyor").length,
-    "Kısmi Ödendi": _allPays.filter(p=>p.status==="Kısmi Ödendi").length,
-    "Tamamlandı":   _allPays.filter(p=>p.status==="Tamamlandı").length,
-    "İade":         _allPays.filter(p=>p.status==="İade Edildi").length,
-  };
-
-  const eurPayments  = _allPays.filter(p=>p.currency==="EUR");
-  const totalExp     = eurPayments.reduce((s,p)=>s+p.total, 0);
-  const totalColl    = eurPayments.reduce((s,p)=>s+p.paid, 0);
-  const totalPending = eurPayments.reduce((s,p)=>s+p.remaining, 0);
-  const thisMonth    = eurPayments.filter(p=>!["Bekliyor","İade Edildi"].includes(p.status)).reduce((s,p)=>s+p.paid,0);
-  const collPct      = totalExp > 0 ? Math.round(totalColl/totalExp*100) : 0;
+  const sum = _summarizeDirectPayments(_rawPays, _istanbulISODate().slice(0, 7));
+  const tabCounts = { "Tümü": sum.counts.all, "Bekliyor": sum.counts.pending, "Ödendi": sum.counts.paid, "İade": sum.counts.refund };
 
   return (
     <>
@@ -13340,7 +13366,7 @@ function _DogrudanOdemelerView() {
           display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:20,
         }}>
           <div>
-            <h1 style={{margin:0, fontSize:24, fontWeight:700, color:C.text, fontFamily:"'Instrument Serif',serif", marginBottom:5}}>Ödemeler</h1>
+            <h2 style={{margin:0, fontSize:20, fontWeight:700, color:C.text, fontFamily:"'Instrument Serif',serif", marginBottom:5}}>Doğrudan Tahsilatlar</h2>
             <p style={{margin:0, fontSize:13.5, color:C.textMuted, fontFamily:"'Geist',sans-serif"}}>
               Tüm tahsilatları, kaporaları ve bekleyen ödemeleri yönetin.
             </p>
@@ -13383,28 +13409,28 @@ function _DogrudanOdemelerView() {
         <div className="rsp-stat-grid" style={{display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:14}}>
           {[
             {
-              label:"Beklenen Toplam Gelir", val:`€${totalExp.toLocaleString("tr-TR")}`,
-              sub:"EUR bazlı rezervasyonlar",
-              icon:"M12 2v20M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6",
-              color:C.text, iconColor:C.textMuted,
+              label:"Tahsil Edilen", val:_fmtFinanceMap(sum.collected),
+              sub:`${sum.counts.paid} ödeme · iadeler düşüldü`,
+              icon:"M22 11.08V12a10 10 0 11-5.93-9.14 M22 4L12 14.01l-3-3",
+              color:C.green, iconColor:C.green,
               progress:null,
             },
             {
-              label:"Tahsil Edilen", val:`€${totalColl.toLocaleString("tr-TR")}`,
-              sub:`%${collPct} tahsil edildi`,
-              icon:"M22 11.08V12a10 10 0 11-5.93-9.14 M22 4L12 14.01l-3-3",
-              color:C.green, iconColor:C.green,
-              progress:collPct,
-            },
-            {
-              label:"Bekleyen Ödemeler", val:`€${totalPending.toLocaleString("tr-TR")}`,
-              sub:`${_allPays.filter(p=>p.remaining>0&&p.currency==="EUR"&&!["İade Edildi"].includes(p.status)).length} rezervasyon`,
+              label:"Bekleyen Ödemeler", val:_fmtFinanceMap(sum.pending),
+              sub:`${sum.counts.pending} ödeme · geciken dahil`,
               icon:"M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z",
               color:C.red, iconColor:C.red,
               progress:null,
             },
             {
-              label:"Bu Ayki Tahsilat", val:`€${thisMonth.toLocaleString("tr-TR")}`,
+              label:"İade Edilen", val:_fmtFinanceMap(sum.refunded),
+              sub:`${sum.counts.refund} iade`,
+              icon:"M3 10h10a5 5 0 010 10H9 M3 10l4-4 M3 10l4 4",
+              color:C.text, iconColor:C.textMuted,
+              progress:null,
+            },
+            {
+              label:"Bu Ayki Tahsilat", val:_fmtFinanceMap(sum.thisMonth),
               sub:new Date().toLocaleDateString("tr-TR",{month:"long",year:"numeric"}),
               icon:"M8 2v4M16 2v4M3 10h18M21 8a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2h14a2 2 0 002-2V8z",
               color:C.gold, iconColor:C.gold,
@@ -18591,14 +18617,11 @@ function calculateReportMetrics(period, reservations, payments, customers, sourc
   // money actually received, just at different completion stages.
   const payByCurrency = {};
   fPays.forEach(p => {
+    const bucket = _reportPaymentBucket(p);
+    if (bucket === 'cancelled') return; // a cancelled payment is not money in any bucket
     const cur = p.currency || 'EUR';
     if (!payByCurrency[cur]) payByCurrency[cur] = { collected:0, pending:0, partial:0, refunded:0 };
-    const b = payByCurrency[cur];
-    const amt = parseFloat(p.amount||0);
-    if (p.status === 'İade Edildi') b.refunded += amt;
-    else if (p.status === 'Kısmi Ödendi') b.partial += amt;
-    else if (p.status === 'Bekliyor' || p.status === 'Gecikmiş') b.pending += amt;
-    else b.collected += amt; // "Ödendi", "Kapora Ödendi"
+    payByCurrency[cur][bucket] += parseFloat(p.amount||0);
   });
 
   // Reports Cleanup Phase: now built from the period-filtered fRes (same
@@ -21961,6 +21984,7 @@ function mapPayFromDB(r) {
     depositDate:r.paid_at?new Date(r.paid_at).toLocaleDateString('tr-TR',{day:'2-digit',month:'short',year:'numeric'}):'—',
     notes:r.notes||'', createdAt:r.created_at?r.created_at.split('T')[0]:'',
     customerName:r.customer?.full_name||'', resRef:r.reservation?.reservation_number||r.reservation_id||'',
+    resTour:r.reservation?.destination||'', paidAt:r.paid_at||null,
     _fromDB:true };
 }
 const _TP_DB={'Düşük':'low','Orta':'medium','Yüksek':'high','Acil':'urgent'};
@@ -22220,12 +22244,41 @@ const SupabaseReservationRepo = {
   async delete(id){const sb=getSB();if(!sb)return ReservationRepository.delete(id);const{error}=await sb.from('reservations').update({status:'cancelled',cancelled_at:new Date().toISOString()}).eq('id',id);if(error)throw new Error(error.message);return true;},
 };
 
+// TESTABLE:_reportPaymentBucket:start
+// Reports' payment bucket. payments.status 'cancelled' has no Turkish label
+// (_p2App passes it through raw), so it used to fall into the final
+// "collected" branch — a cancelled payment counted as money received.
+function _reportPaymentBucket(p) {
+  const raw = p && p.statusRaw;
+  if (raw === 'cancelled' || p.status === 'cancelled' || p.status === 'İptal') return 'cancelled';
+  if (raw === 'refunded' || p.status === 'İade Edildi') return 'refunded';
+  if (p.status === 'Kısmi Ödendi') return 'partial';
+  if (raw === 'pending' || raw === 'overdue' || p.status === 'Bekliyor' || p.status === 'Gecikmiş') return 'pending';
+  return 'collected'; // "Ödendi", "Kapora Ödendi"
+}
+// TESTABLE:_reportPaymentBucket:end
+
+// TESTABLE:_paymentTypeToDB:start
+// UI payment-type label → payments.payment_type CHECK value
+// ('deposit','balance','full','extra','refund'). "Ek Ödeme" used to fall
+// through to 'ek ödeme', which the CHECK rejects. An unknown label is an
+// explicit error, never a guessed or invalid value.
+const _PAYMENT_TYPE_TO_DB = { 'Kapora': 'deposit', 'Kalan Ödeme': 'balance', 'Tam Ödeme': 'full', 'İade': 'refund', 'Ek Ödeme': 'extra' };
+const _PAYMENT_TYPES_DB = ['deposit', 'balance', 'full', 'extra', 'refund'];
+function _paymentTypeToDB(label) {
+  if (_PAYMENT_TYPE_TO_DB[label]) return _PAYMENT_TYPE_TO_DB[label];
+  const raw = String(label || '').trim().toLowerCase();
+  if (_PAYMENT_TYPES_DB.includes(raw)) return raw;
+  throw new Error('Geçersiz ödeme türü: ' + label);
+}
+// TESTABLE:_paymentTypeToDB:end
+
 const SupabasePaymentRepo = {
   async getAll(f={}){const sb=getSB();if(!sb)return PaymentRepository.getAll(f);let q=sb.from('payments').select('*,customer:customers(id,full_name),reservation:reservations(id,reservation_number,destination)').order('created_at',{ascending:false});if(f.status)q=q.eq('status',f.status);if(f.customerId)q=q.eq('customer_id',f.customerId);if(f.resId)q=q.eq('reservation_id',f.resId);if(f.currency)q=q.eq('currency',f.currency);const{data,error}=await q;if(error)throw new Error(error.message);return(data||[]).map(mapPayFromDB);},
   async getById(id){const sb=getSB();if(!sb)return PaymentRepository.getById(id);const{data,error}=await sb.from('payments').select('*,customer:customers(*),reservation:reservations(*)').eq('id',id).maybeSingle();if(error)throw new Error(error.message);return mapPayFromDB(data);},
   async getByResId(rid){const sb=getSB();if(!sb)return PaymentRepository.getByResId(rid);const{data,error}=await sb.from('payments').select('*').eq('reservation_id',rid).order('created_at',{ascending:true});if(error)throw new Error(error.message);return(data||[]).map(mapPayFromDB);},
   async getByCustomerId(cid){const sb=getSB();if(!sb)return PaymentRepository.getAll({customerId:cid});const{data,error}=await sb.from('payments').select('*').eq('customer_id',cid).order('created_at',{ascending:false});if(error)throw new Error(error.message);return(data||[]).map(mapPayFromDB);},
-  async create(d){const sb=getSB();if(!sb)return PaymentRepository.create(d);let pn=`PAY-${String(Date.now()).slice(-6)}`;try{const{data:ref}=await sb.rpc('next_ref_number',{prefix:'PAY',table_name:'payments',number_col:'payment_number'});if(ref)pn=ref;}catch(_){}const amt=parseFloat(d.amount)||0;const sm={'Tam Ödeme':'paid','İade':'refunded','Kapora':'paid','Kalan Ödeme':'paid'};const tm={'Tam Ödeme':'full','İade':'refund','Kapora':'deposit','Kalan Ödeme':'balance'};const row={payment_number:pn,reservation_id:d.resId||d.reservationId||null,customer_id:d.customerId||null,payment_type:tm[d.paymentType]||d.paymentType?.toLowerCase()||'deposit',status:sm[d.paymentType]||'paid',amount:amt,currency:d.currency||'EUR',method:_mToDB(d.method),paid_at:new Date().toISOString(),notes:d.notes||null};const{data:c,error}=await sb.from('payments').insert(row).select().single();if(error)throw new Error(error.message);if(row.reservation_id)await _updateResPayStatus(sb,row.reservation_id);await _sbLog('payment',c.id,'payment_received',`Ödeme: ${d.currency==='TRY'?'₺':'€'}${amt.toLocaleString('tr-TR')}`);return mapPayFromDB(c);},
+  async create(d){const sb=getSB();if(!sb)return PaymentRepository.create(d);let pn=`PAY-${String(Date.now()).slice(-6)}`;try{const{data:ref}=await sb.rpc('next_ref_number',{prefix:'PAY',table_name:'payments',number_col:'payment_number'});if(ref)pn=ref;}catch(_){}const amt=parseFloat(d.amount)||0;const sm={'Tam Ödeme':'paid','İade':'refunded','Kapora':'paid','Kalan Ödeme':'paid','Ek Ödeme':'paid'};const tm={'Tam Ödeme':'full','İade':'refund','Kapora':'deposit','Kalan Ödeme':'balance'};const row={payment_number:pn,reservation_id:d.resId||d.reservationId||null,customer_id:d.customerId||null,payment_type:_paymentTypeToDB(d.paymentType||'Kapora'),status:sm[d.paymentType]||'paid',amount:amt,currency:d.currency||'EUR',method:_mToDB(d.method),paid_at:new Date().toISOString(),notes:d.notes||null};const{data:c,error}=await sb.from('payments').insert(row).select().single();if(error)throw new Error(error.message);if(row.reservation_id)await _updateResPayStatus(sb,row.reservation_id);await _sbLog('payment',c.id,'payment_received',`Ödeme: ${d.currency==='TRY'?'₺':'€'}${amt.toLocaleString('tr-TR')}`);return mapPayFromDB(c);},
   // Son Hareketler quality — a genuinely MISSING log until this phase:
   // _MobileDogrudanOdemelerView's markPaid() (and any other caller) hits
   // this exact method with a {status} patch, and until now nothing here
@@ -28105,6 +28158,17 @@ function DesktopTopBar({ leftOffset, theme, onToggleTheme }) {
 // — this used to be exactly that eager call, reading the non-reactive
 // getAuthContext() instead, which is what let this route guard evaluate a
 // stale/inconsistent auth snapshot independently of the rest of the UI.
+// TESTABLE:_LegacyRedirect:start
+// Replaces the current history entry (no extra Back step) and lets the
+// existing hashchange listener re-route.
+function _LegacyRedirect({ to }) {
+  useEffect(() => {
+    try { window.location.replace(window.location.pathname + window.location.search + '#' + to); } catch (_) {}
+  }, [to]);
+  return null;
+}
+// TESTABLE:_LegacyRedirect:end
+
 function PageRouter({ base, param, isMobile, navigate }) {
   const auth = useAuthContext();
   const role = auth.role;
@@ -28114,9 +28178,11 @@ function PageRouter({ base, param, isMobile, navigate }) {
   }
 
   if (base === "more") return <MobileMorePage navigate={navigate}/>;
-  // Finance Center (Phase D shell) — one responsive page for desktop and
-  // mobile. /payments keeps working unchanged until Phase F.
+  // Finance Center — one responsive page for desktop and mobile.
   if (base === "finance") return <FinancePage tab={param} navigate={navigate}/>;
+  // Phase F: the old Payments route is an alias of Finans → Tahsilatlar, so
+  // bookmarks and deep links keep working.
+  if (base === "payments") return <_LegacyRedirect to="/finance/tahsilatlar"/>;
 
   // ── Mobile: dedicated screens for every route reachable from daily
   // operations, list AND detail. Each one is its own information
@@ -28146,7 +28212,6 @@ function PageRouter({ base, param, isMobile, navigate }) {
     if (base === "agencies" && param) return <AcenteDetailPage agencyId={param} onBack={()=>navigate('/agencies')}/>;
     if (base === "agencies") return <AcentelerPage onSelect={id=>navigate('/agencies/'+id)}/>;
 
-    if (base === "payments") return <MobilePaymentsPage/>;
     if (base === "reminders") return <MobileTasksQueuePage/>;
     if (base === "activity") return <SonHareketlerPage onBack={()=>navigate('/dashboard')}/>;
   }
@@ -28189,7 +28254,6 @@ function PageRouter({ base, param, isMobile, navigate }) {
   if (base === "agencies")  return <AcentelerPage onSelect={id=>navigate('/agencies/'+id)}/>;
 
   if (base === "calendar")  return <CalendarPage/>;
-  if (base === "payments")  return <PaymentsPage/>;
   if (base === "reminders") return <RemindersPage/>;
   if (base === "reports")   return <ReportsPage/>;
   if (base === "settings")  return <SettingsPage/>;
@@ -28951,7 +29015,6 @@ function MobileMorePage({ navigate }) {
     { id:"tours",      label:"Turlar",         icon:"M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z M9 22V12h6v10" },
     { id:"guides",     label:"Rehberlerimiz",  icon:"M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2 M23 21v-2a4 4 0 00-3-3.87 M16 3.13a4 4 0 010 7.75 M12 11a4 4 0 100-8 4 4 0 000 8z" },
     { id:"finance",    label:"Finans",         icon:"M3 3v18h18 M7 15l4-4 3 3 5-6" },
-    { id:"payments",   label:"Ödemeler",       icon:"M2 9a2 2 0 012-2h16a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V9zM2 13h20" },
     { id:"reminders",  label:"Hatırlatmalar",  icon:"M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0" },
     { id:"agencies",   label:"Acenteler",      icon:"M3 21h18 M5 21V7l8-4v18 M19 21V11l-6-4" },
     { id:"activity",   label:"Son Hareketler", icon:"M12 8v4l3 3 M12 22a10 10 0 100-20 10 10 0 000 20z" },

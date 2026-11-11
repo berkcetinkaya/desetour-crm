@@ -110,7 +110,9 @@ test('[6] the RPC result literal \'paid\' is unchanged in the (unapplied) migrat
 
 test('[7] Direct Payments terminology is unaffected — neither _DogrudanOdemelerView nor its mobile counterpart gained any "Ödeme Alındı" wording, and the mobile "mark paid" button keeps its original "Ödendi Olarak İşaretle" label', () => {
   const desktop = componentBody('_DogrudanOdemelerView');
-  assert.match(desktop, /"Kısmi Ödendi"/, 'desktop direct-payments status tabs/filters are untouched');
+  // Finance Center Phase F replaced the never-produced reservation-status
+  // tabs ("Kısmi Ödendi"/"Tamamlandı") with real payment states.
+  assert.match(desktop, /const TABS = \["Tümü", "Bekliyor", "Ödendi", "İade"\];/, 'desktop direct-payments tabs follow real payment states');
   assert.doesNotMatch(desktop, /Ödeme Alındı/);
 
   const mobileStart = SOURCE.indexOf('function _MobileDogrudanOdemelerView(');

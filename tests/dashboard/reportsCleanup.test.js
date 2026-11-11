@@ -280,8 +280,13 @@ test('direct payment currencies are bucketed per-currency, never silently droppe
   assert.doesNotMatch(CRM_BODY, /fPays\.filter\(p=>p\.currency==="EUR"\)/);
 });
 
-test('direct payment status buckets are mutually exclusive (no payment can land in two buckets at once)', () => {
-  assert.match(CRM_BODY, /if \(p\.status === 'İade Edildi'\) b\.refunded \+= amt;\s*\n\s*else if \(p\.status === 'Kısmi Ödendi'\) b\.partial \+= amt;\s*\n\s*else if \(p\.status === 'Bekliyor' \|\| p\.status === 'Gecikmiş'\) b\.pending \+= amt;\s*\n\s*else b\.collected \+= amt;/);
+test('direct payment status buckets are mutually exclusive (no payment can land in two buckets at once) — one bucket per payment via _reportPaymentBucket; cancelled is never money (Finance Center Phase F)', () => {
+  assert.match(CRM_BODY, /const bucket = _reportPaymentBucket\(p\);\s*\n\s*if \(bucket === 'cancelled'\) return;/);
+  assert.match(CRM_BODY, /payByCurrency\[cur\]\[bucket\] \+= parseFloat\(p\.amount\|\|0\);/);
+});
+
+test('the old fall-through bucket chain (which counted cancelled payments as collected) is gone', () => {
+  assert.doesNotMatch(CRM_BODY, /if \(p\.status === 'İade Edildi'\) b\.refunded \+= amt;\s*\n\s*else if \(p\.status === 'Kısmi Ödendi'\) b\.partial \+= amt;\s*\n\s*else if \(p\.status === 'Bekliyor' \|\| p\.status === 'Gecikmiş'\) b\.pending \+= amt;\s*\n\s*else b\.collected \+= amt;/);
 });
 
 test('the four approved Doğrudan Ödemeler metrics render per currency with no fabricated combined total', () => {

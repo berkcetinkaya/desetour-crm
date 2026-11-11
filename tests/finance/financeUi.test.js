@@ -82,11 +82,11 @@ test('catalog separates internal costs from public references, which never drive
   assert.match(c, /rel="noopener noreferrer"/);
 });
 
-test('routing: /finance and /finance/:tab render FinancePage; /payments is unchanged until Phase F', () => {
+test('routing: /finance and /finance/:tab render FinancePage; Tahsilatlar embeds the existing Payments experience; /payments is an alias', () => {
   assert.match(SOURCE, /if \(base === "finance"\) return <FinancePage tab=\{param\} navigate=\{navigate\}\/>;/);
-  assert.match(SOURCE, /if \(base === "payments"\)  return <PaymentsPage\/>;/);
-  assert.match(SOURCE, /if \(base === "payments"\) return <MobilePaymentsPage\/>;/);
-  assert.match(body('FinancePage'), /navigate\("\/payments"\)/, 'Tahsilatlar hands off to the existing Payments page');
+  assert.match(SOURCE, /if \(base === "payments"\) return <_LegacyRedirect to="\/finance\/tahsilatlar"\/>;/);
+  assert.match(body('FinancePage'), /isMobile \? <MobilePaymentsPage\/> : <PaymentsPage\/>/);
+  assert.doesNotMatch(SOURCE, /return <PaymentsPage\/>;|return <MobilePaymentsPage\/>;/);
 });
 
 test('access: Finance mirrors Payments (Yönetici + Operasyon); Satış and Rehber cannot open it', () => {
@@ -98,7 +98,7 @@ test('access: Finance mirrors Payments (Yönetici + Operasyon); Satış and Rehb
 
 test('navigation: Finans in sidebar (role-gated on desktop), mobile drawer and More page', () => {
   assert.match(SOURCE, /const NAV_BOT = \[\s*\{ id:"finance",\s+label:"Finans"/);
-  assert.match(SOURCE, /NAV_BOT\.filter\(it => it\.id !== "finance" \|\| canAccess\(auth\.role, "finance"\)\)\.map/);
+  assert.match(SOURCE, /NAV_BOT\.filter\(it => canAccess\(auth\.role, it\.id\)\)\.map/);
   assert.match(SOURCE, /\{ id:"finance",\s+label:"Finans",\s+icon:/);
   assert.match(SOURCE, /finance:"Finans", payments:"Ödemeler"/);
 });

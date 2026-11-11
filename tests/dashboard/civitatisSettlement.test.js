@@ -355,10 +355,10 @@ test('Phase 1.3: the fixed-rate disclosure note is present but gated behind _civ
   assert.doesNotMatch(noteBlock, /fontWeight:700/);
 });
 
-test('"Hakedişleri Gör" navigates to the existing Payments page — no new route is introduced in Phase 1', () => {
+test('"Hakedişleri Gör" navigates to the Payments experience — now Finans → Tahsilatlar (Finance Center Phase F; /payments stays an alias)', () => {
   const body = _panelBody('CivitatisHakedisPanel');
   assert.match(body, /action="Hakedişleri Gör"/);
-  assert.match(body, /NAV_REF\.fn\(['"]\/payments['"]\)/);
+  assert.match(body, /NAV_REF\.fn\(['"]\/finance\/tahsilatlar['"]\)/);
 });
 
 test('the desktop panel contains NO requested/paid/edit/delete action — Phase 1 is informational only', () => {
