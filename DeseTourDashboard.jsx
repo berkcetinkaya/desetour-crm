@@ -13037,17 +13037,76 @@ function _FinBudget({ s }) {
         <span style={{ fontSize: 15, color: C.text }}><b>{_fmtFinanceMap(guide.planned)}</b> rehber bütçesi</span>
         {s.counts.unresolvedGuideServices > 0 && <span style={{ fontSize: 12, color: C.amber }}>{s.counts.unresolvedGuideServices} operasyon eksik veri nedeniyle ayrı sayıldı</span>}
       </div>
-      <_FinGuideLanguages s={s}/>
+      <_FinGuideTours s={s}/>
+      <_FinGuideSalary s={s}/>
       <_FinDataQuality s={s}/>
     </div>
   );
 }
 
-// "Dillere Göre Rehber Maliyeti": what the month costs in guides per
-// language, and — with a what-if monthly salary — whether one salaried guide
-// per language would be cheaper. Numbers come from buildGuideLanguageCosts;
-// the salary is a per-browser what-if, never stored in the database.
-function _FinGuideLanguages({ s }) {
+// "Turlara Göre Rehber Maliyeti": what the month costs in guides per tour
+// (one row per tour name, expandable into languages). Numbers come from
+// buildGuideTourCosts — nothing is computed here.
+function _FinGuideTours({ s }) {
+  const G = useMemo(() => buildGuideTourCosts(s), [s]);
+  const [open, setOpen] = useState(() => new Set());
+  const toggle = (k) => setOpen(prev => { const n = new Set(prev); n.has(k) ? n.delete(k) : n.add(k); return n; });
+  const th = { textAlign: "right", padding: "9px 12px", fontWeight: 600, color: C.textMuted, whiteSpace: "nowrap" };
+  const td = { padding: "9px 12px", color: C.text, textAlign: "right", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap", verticalAlign: "top" };
+  const tl = (v) => v == null ? "—" : `₺${Math.round(v).toLocaleString("tr-TR")}`;
+  const cells = (r) => (<>
+    <td style={td}>{r.operations}</td><td style={td}>{r.days}</td><td style={td}>{r.maxSameDay}</td>
+    <td style={td}><b>{_fmtFinanceMap(r.cost)}</b>{r.costTry != null && Object.keys(r.cost).some(c => c !== "TRY") && <div style={{ fontSize: 11, color: C.textMuted }}>≈ {tl(r.costTry)}</div>}</td>
+    <td style={td}>{tl(r.avgPerOperationTry)}</td>
+  </>);
+  return (
+    <_FinSection title="Turlara Göre Rehber Maliyeti">
+      <div style={{ overflowX: "auto", border: `1px solid ${C.border}`, borderRadius: T.radius, background: C.white }}>
+        <table data-testid="finance-guide-tours" style={{ width: "100%", borderCollapse: "collapse", fontFamily: "'Geist',sans-serif", fontSize: 12.5 }}>
+          <thead><tr style={{ background: C.ivory }}>
+            <th style={{ ...th, textAlign: "left" }}>Tur</th><th style={th}>Operasyon</th><th style={th}>Gün</th><th style={th}>Aynı gün en fazla</th>
+            <th style={th}>Rehberlere ödenecek</th><th style={th}>Operasyon başı</th>
+          </tr></thead>
+          <tbody>
+            {G.rows.length === 0 && <tr><td colSpan={6} style={{ ...td, textAlign: "left", color: C.textMuted }}>Bu ay rehber operasyonu yok.</td></tr>}
+            {G.rows.map(r => (
+              <React.Fragment key={r.tourLabel}>
+                <tr style={{ borderTop: `1px solid ${C.borderLight}` }}>
+                  <td style={{ ...td, textAlign: "left" }}>
+                    <button type="button" onClick={() => toggle(r.tourLabel)} aria-expanded={open.has(r.tourLabel)} style={{ display: "inline-flex", alignItems: "center", gap: 6, border: "none", background: "transparent", cursor: "pointer", color: C.text, fontSize: 12.5, fontWeight: 600, fontFamily: "'Geist',sans-serif", padding: 0, textAlign: "left" }}>
+                      <span aria-hidden="true" style={{ display: "inline-block", transform: open.has(r.tourLabel) ? "rotate(90deg)" : "none", transition: "transform .15s" }}>›</span>{r.tourLabel}
+                    </button>
+                  </td>
+                  {cells(r)}
+                </tr>
+                {open.has(r.tourLabel) && r.languages.map(l => (
+                  <tr key={l.language} data-testid="guide-tour-language-row" style={{ background: C.ivory, borderTop: `1px solid ${C.borderLight}` }}>
+                    <td style={{ ...td, textAlign: "left", paddingLeft: 30, color: C.textMid }}>{l.language}</td>
+                    {cells(l)}
+                  </tr>
+                ))}
+              </React.Fragment>
+            ))}
+            {G.rows.length > 1 && (
+              <tr style={{ borderTop: `1px solid ${C.border}`, background: C.ivory }}>
+                <td style={{ ...td, textAlign: "left", fontWeight: 600 }}>Toplam</td><td style={td}>{G.totalOperations}</td><td style={td}></td><td style={td}></td>
+                <td style={td}><b>{_fmtFinanceMap(G.totalCost)}</b>{G.totalCostTry != null && <div style={{ fontSize: 11, color: C.textMuted }}>≈ {tl(G.totalCostTry)}</div>}</td><td style={td}></td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+      <div style={{ marginTop: 8, fontSize: 11.5, color: C.textMuted, fontFamily: "'Geist',sans-serif" }}>
+        Rehberlere ödenecek: o turdaki her operasyonun rehber maliyeti (iptal edilen operasyonlar hariç, elle değiştirilen tutarlar dahil). Dillere ayırmak için tura tıklayın.
+      </div>
+    </_FinSection>
+  );
+}
+
+// "Maaşlı Rehber Karşılaştırması": a salaried guide works in ONE language,
+// so the what-if stays per language (buildGuideLanguageCosts); the salary is
+// a per-browser what-if, never stored in the database.
+function _FinGuideSalary({ s }) {
   const read = () => { try { return JSON.parse(localStorage.getItem("dese_fin_guide_salary") || "null"); } catch (_) { return null; } };
   const [salary, setSalary] = useState(() => read() || { amount: "", currency: "TRY" });
   useEffect(() => { try { localStorage.setItem("dese_fin_guide_salary", JSON.stringify(salary)); } catch (_) {} }, [salary]);
@@ -13058,51 +13117,41 @@ function _FinGuideLanguages({ s }) {
   const input = { boxSizing: "border-box", padding: "7px 9px", borderRadius: T.radiusSm, border: `1px solid ${C.border}`, background: C.white, color: C.text, fontSize: 12.5, fontFamily: "'Geist',sans-serif" };
   const has = !!L.salary;
   return (
-    <_FinSection title="Dillere Göre Rehber Maliyeti" right={
+    <_FinSection title="Maaşlı Rehber Karşılaştırması" right={
       <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: C.textMuted, fontFamily: "'Geist',sans-serif" }}>
-        Maaşlı rehber (aylık)
+        Aylık maaş
         <input data-testid="guide-salary-amount" inputMode="decimal" value={salary.amount} onChange={e => setSalary({ ...salary, amount: e.target.value })} placeholder="ör. 60000" style={{ ...input, width: 100 }}/>
         <select data-testid="guide-salary-currency" value={salary.currency} onChange={e => setSalary({ ...salary, currency: e.target.value })} style={input}>
           {["TRY", "EUR"].map(c => <option key={c} value={c}>{c}</option>)}
         </select>
       </span>}>
-      <div style={{ overflowX: "auto", border: `1px solid ${C.border}`, borderRadius: T.radius, background: C.white }}>
-        <table data-testid="finance-guide-languages" style={{ width: "100%", borderCollapse: "collapse", fontFamily: "'Geist',sans-serif", fontSize: 12.5 }}>
-          <thead><tr style={{ background: C.ivory }}>
-            <th style={{ ...th, textAlign: "left" }}>Dil</th><th style={th}>Operasyon</th><th style={th}>Gün</th><th style={th}>Aynı gün en fazla</th>
-            <th style={th}>Rehberlere ödenecek</th><th style={th}>Operasyon başı</th>
-            {has && <><th style={th}>Maaşlı rehberle</th><th style={th}>Fark</th><th style={{ ...th, textAlign: "left" }}>Daha uygun</th></>}
-          </tr></thead>
-          <tbody>
-            {L.rows.length === 0 && <tr><td colSpan={has ? 9 : 6} style={{ ...td, textAlign: "left", color: C.textMuted }}>Bu ay rehber operasyonu yok.</td></tr>}
-            {L.rows.map(r => (
-              <tr key={r.language} style={{ borderTop: `1px solid ${C.borderLight}` }}>
-                <td style={{ ...td, textAlign: "left", fontWeight: 600 }}>{r.language}</td>
-                <td style={td}>{r.operations}</td><td style={td}>{r.days}</td><td style={td}>{r.maxSameDay}</td>
-                <td style={td}><b>{_fmtFinanceMap(r.cost)}</b>{r.costTry != null && Object.keys(r.cost).some(c => c !== "TRY") && <div style={{ fontSize: 11, color: C.textMuted }}>≈ {tl(r.costTry)}</div>}</td>
-                <td style={td}>{tl(r.avgPerOperationTry)}</td>
-                {has && <>
+      {!has ? (
+        <div style={{ fontSize: 12.5, color: C.textMuted, fontFamily: "'Geist',sans-serif" }}>Bir dil için maaşlı rehber tutmanın bu ay serbest rehberlerden daha uygun olup olmadığını görmek için aylık maaşı (SGK ve diğer işveren maliyetleri dahil) girin.</div>
+      ) : (<>
+        <div style={{ overflowX: "auto", border: `1px solid ${C.border}`, borderRadius: T.radius, background: C.white }}>
+          <table data-testid="finance-guide-salary" style={{ width: "100%", borderCollapse: "collapse", fontFamily: "'Geist',sans-serif", fontSize: 12.5 }}>
+            <thead><tr style={{ background: C.ivory }}>
+              <th style={{ ...th, textAlign: "left" }}>Dil</th><th style={th}>Operasyon</th><th style={th}>Serbest rehberle</th><th style={th}>Maaşlı rehberle</th><th style={th}>Fark</th><th style={{ ...th, textAlign: "left" }}>Daha uygun</th>
+            </tr></thead>
+            <tbody>
+              {L.rows.map(r => (
+                <tr key={r.language} style={{ borderTop: `1px solid ${C.borderLight}` }}>
+                  <td style={{ ...td, textAlign: "left", fontWeight: 600 }}>{r.language}</td>
+                  <td style={td}>{r.operations}</td>
+                  <td style={td}>{tl(r.costTry)}</td>
                   <td style={td}>{tl(r.comparison.inHouseTry)}{r.extraOperations > 0 && <div style={{ fontSize: 11, color: C.textMuted }}>+ {r.extraOperations} ek operasyon serbest rehberle</div>}</td>
                   <td style={{ ...td, color: r.comparison.savingTry > 0 ? C.green : r.comparison.savingTry < 0 ? C.red : C.text }}>{r.comparison.savingTry == null ? "—" : (r.comparison.savingTry > 0 ? "maaşlı " : "serbest ") + tl(Math.abs(r.comparison.savingTry)) + " daha ucuz"}</td>
                   <td style={{ ...td, textAlign: "left" }}>{r.comparison.recommendation === "salaried" ? <b style={{ color: C.green }}>Maaşlı rehber</b> : r.comparison.recommendation === "freelance" ? "Serbest rehber" : "—"}
                     {r.comparison.breakEvenOperations != null && <div style={{ fontSize: 11, color: C.textMuted }}>başabaş: ayda ~{r.comparison.breakEvenOperations} operasyon</div>}</td>
-                </>}
-              </tr>
-            ))}
-            {L.rows.length > 1 && (
-              <tr style={{ borderTop: `1px solid ${C.border}`, background: C.ivory }}>
-                <td style={{ ...td, textAlign: "left", fontWeight: 600 }}>Toplam</td><td style={td}>{L.totalOperations}</td><td style={td}></td><td style={td}></td>
-                <td style={td}><b>{_fmtFinanceMap(L.totalCost)}</b>{L.totalCostTry != null && <div style={{ fontSize: 11, color: C.textMuted }}>≈ {tl(L.totalCostTry)}</div>}</td>
-                <td style={td}></td>{has && <><td style={td}></td><td style={td}></td><td style={td}></td></>}
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-      <div style={{ marginTop: 8, fontSize: 11.5, color: C.textMuted, fontFamily: "'Geist',sans-serif", lineHeight: 1.5 }}>
-        Rehberlere ödenecek: o dildeki her operasyonun rehber maliyeti (iptal edilen operasyonlar hariç, elle değiştirilen tutarlar dahil).
-        {" "}Maaşlı rehber karşılaştırması: o dil için tek bir maaşlı rehberin her gün bir operasyon yaptığı, aynı gündeki diğer operasyonların serbest rehberle yapıldığı varsayılır. Maaşa SGK ve diğer işveren maliyetlerini dahil edin; karar için birkaç ayı karşılaştırın.
-      </div>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div style={{ marginTop: 8, fontSize: 11.5, color: C.textMuted, fontFamily: "'Geist',sans-serif" }}>
+          Maaşlı rehber o dildeki tüm turlarda her gün bir operasyon yapar; aynı gündeki diğer operasyonlar serbest rehberle yapılır. Karar için birkaç ayı karşılaştırın.
+        </div>
+      </>)}
     </_FinSection>
   );
 }
@@ -20332,6 +20381,38 @@ function buildGuideLanguageCosts(summary, opts) {
     salary, salaryTry: salaryT && salaryT.complete ? salaryT.tryTotal : null };
 }
 
+// ── Guide cost by tour (Bütçe & Tahmin) ──────────────────────────────────
+// Same figures as by language, but per tour NAME (products of one tour sold
+// per language are shown together), each tour split into its languages.
+function buildGuideTourCosts(summary) {
+  const fx = { rates: summary.fx.rates, rateSourceError: summary.fx.rateSourceError };
+  const row = (ops) => {
+    const days = new Map();
+    for (const g of ops) days.set(g.date, (days.get(g.date) || 0) + 1);
+    const cost = _financeSumMaps(...ops.map(g => g.planned));
+    const t = _financeToTry(cost, fx);
+    return { operations: ops.length, days: days.size, maxSameDay: Math.max(...days.values()), cost,
+      costTry: t.complete ? t.tryTotal : null, avgPerOperationTry: t.complete && ops.length ? Math.round(t.tryTotal / ops.length) : null };
+  };
+  const byTour = new Map();
+  for (const g of summary.guideServices) {
+    const label = String(g.tourLabel || '—').trim();
+    const k = label.toLocaleLowerCase('tr-TR');
+    if (!byTour.has(k)) byTour.set(k, { tourLabel: label, ops: [] });
+    byTour.get(k).ops.push(g);
+  }
+  const rows = [...byTour.values()].map(({ tourLabel, ops }) => {
+    const byLang = new Map();
+    for (const g of ops) { const l = g.language || 'Dil belirtilmemiş'; if (!byLang.has(l)) byLang.set(l, []); byLang.get(l).push(g); }
+    const languages = [...byLang.entries()].map(([language, l]) => ({ language, ...row(l) }))
+      .sort((a, b) => (b.costTry || 0) - (a.costTry || 0) || a.language.localeCompare(b.language));
+    return { tourLabel, ...row(ops), languages };
+  }).sort((a, b) => (b.costTry || 0) - (a.costTry || 0) || a.tourLabel.localeCompare(b.tourLabel));
+  const totalCost = _financeSumMaps(...rows.map(r => r.cost));
+  const totalT = _financeToTry(totalCost, fx);
+  return { rows, totalOperations: rows.reduce((n, r) => n + r.operations, 0), totalCost, totalCostTry: totalT.complete ? totalT.tryTotal : null };
+}
+
 // ── Cost catalog revision ────────────────────────────────────────────────
 // Changing an amount from the screen. "from_today" keeps history: the
 // current row ends yesterday and a copy with the new amount starts today
@@ -20364,7 +20445,7 @@ function _financeDomain() {
   return { FINANCE_COST_CATEGORIES, FINANCE_EXPENSE_CATEGORIES, _istanbulISODate, _financeMonthRange,
     _financeCanonicalLanguage, _financeOperationGroupKey, buildGuideServices, attributeGuidePayments, _financePickCostItem, FINANCE_GUIDE_OPERATION_COST,
     _financeRevenueExpectation, _financeActualRevenue, _financeEarnedNetRevenue, _financeToTry, buildFinanceMonthSummary,
-    _financeAddDays, buildFinanceCashNeeds, buildGuideLanguageCosts, _financeCostItemRevisionPlan, FINANCE_PRACTICAL_GROUP_MAX };
+    _financeAddDays, buildFinanceCashNeeds, buildGuideLanguageCosts, _financeCostItemRevisionPlan, FINANCE_PRACTICAL_GROUP_MAX, buildGuideTourCosts };
 }
 // TESTABLE:_financeDomain:end
 

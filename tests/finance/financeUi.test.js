@@ -264,17 +264,20 @@ test('repos: extra sales validated by one payload, logged, and Finance keeps wor
 
 // ── Bütçe & Tahmin: language guide cost, no operations table / remaining budget ──
 
-test('Bütçe & Tahmin: headline + guide cost by language (+ salaried what-if) + data quality; no operations table, no remaining budget', () => {
+test('Bütçe & Tahmin: headline + guide cost by TOUR (expandable into languages) + separate salaried comparison + data quality', () => {
   const b = body('_FinBudget');
-  assert.match(b, /<_FinGuideLanguages s=\{s\}\/>/);
+  assert.match(b, /<_FinGuideTours s=\{s\}\/>\n\s+<_FinGuideSalary s=\{s\}\/>/);
   assert.match(b, /<_FinDataQuality s=\{s\}\/>/);
-  assert.doesNotMatch(b, /_FinGuideOperations|_FinCategoryTable|Kalan Bütçe|Turlara Göre/);
-  assert.doesNotMatch(SOURCE, /function _FinGuideOperations\(|function _FinCategoryTable\(/);
-  const g = body('_FinGuideLanguages');
-  assert.match(g, /buildGuideLanguageCosts\(s, \{ salary \}\)/);
-  for (const h of ['Dil', 'Operasyon', 'Gün', 'Aynı gün en fazla', 'Rehberlere ödenecek', 'Operasyon başı', 'Maaşlı rehberle', 'Fark', 'Daha uygun']) assert.ok(g.includes(h), h);
-  assert.match(g, /localStorage/, 'the salary is a per-browser what-if');
-  assert.doesNotMatch(g, /_financeToTry|buildGuideServices/);
+  assert.doesNotMatch(b, /_FinGuideOperations|_FinCategoryTable|Kalan Bütçe|Turlara Göre"|_FinGuideLanguages/);
+  assert.doesNotMatch(SOURCE, /function _FinGuideOperations\(|function _FinCategoryTable\(|function _FinGuideLanguages\(|Dillere Göre Rehber Maliyeti/);
+  const g = body('_FinGuideTours');
+  assert.match(g, /buildGuideTourCosts\(s\)/);
+  for (const h of ['Turlara Göre Rehber Maliyeti', 'Tur', 'Operasyon', 'Gün', 'Aynı gün en fazla', 'Rehberlere ödenecek', 'Operasyon başı', 'guide-tour-language-row']) assert.ok(g.includes(h), h);
+  const m = body('_FinGuideSalary');
+  assert.match(m, /buildGuideLanguageCosts\(s, \{ salary \}\)/);
+  for (const h of ['Maaşlı Rehber Karşılaştırması', 'Serbest rehberle', 'Maaşlı rehberle', 'Fark', 'Daha uygun']) assert.ok(m.includes(h), h);
+  assert.match(m, /localStorage/);
+  assert.doesNotMatch(g + m, /_financeToTry|buildGuideServices/);
 });
 
 test('data quality keeps every guide review item (the operations table is gone, the warnings are not)', () => {

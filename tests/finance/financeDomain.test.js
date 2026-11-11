@@ -1368,3 +1368,20 @@ test('identical costs on both language products → identical break-even (PT and
   assert.equal(a.economics.variablePerPaxTry, 25 * 50 + 340);
   assert.deepEqual([a.economics.breakEvenPax, a.economics.contributionPerPaxTry], [b.economics.breakEvenPax, b.economics.contributionPerPaxTry]);
 });
+
+test('guide cost by tour: one row per tour name (language products merged), split into languages; cancelled excluded', () => {
+  const s = summary({ reservations: [
+    res({ id: 'A', tourId: 'T-BOS-PT', tour: 'Bosforo', tourLanguage: 'Portekizce', checkIn: '2026-11-03' }),
+    res({ id: 'B', tourId: 'T-BOS-IT', tour: 'Bosforo', tourLanguage: 'İtalyanca', checkIn: '2026-11-14' }),
+    res({ id: 'C', tourId: 'T-BOS-IT', tour: 'Bosforo', tourLanguage: 'İtalyanca', checkIn: '2026-11-14', pax: 3 }),
+    res({ id: 'D', tourId: 'T-BOS-IT', tour: 'Bosforo', tourLanguage: 'İtalyanca', checkIn: '2026-11-21' }),
+    res({ id: 'E', tourId: 'T-GB', tour: 'Grand Bazaar', tourLanguage: 'İspanyolca', checkIn: '2026-11-05' }),
+    res({ id: 'X', tourId: 'T-GB', tour: 'Grand Bazaar', tourLanguage: 'İspanyolca', checkIn: '2026-11-06', opStatus: 'İptal', statusRaw: 'cancelled' }),
+  ] });
+  const G = F.buildGuideTourCosts(s);
+  assert.deepEqual(G.rows.map(r => [r.tourLabel, r.operations, r.days]), [['Bosforo', 3, 3], ['Grand Bazaar', 1, 1]]);
+  const b = G.rows[0];
+  assert.deepEqual(b.cost, { EUR: 450 }); assert.equal(b.avgPerOperationTry, 150 * 50);
+  assert.deepEqual(b.languages.map(l => [l.language, l.operations, l.days, l.maxSameDay]), [['İtalyanca', 2, 2, 1], ['Portekizce', 1, 1, 1]]);
+  assert.deepEqual(G.totalCost, { EUR: 600 }); assert.equal(G.totalOperations, 4);
+});
