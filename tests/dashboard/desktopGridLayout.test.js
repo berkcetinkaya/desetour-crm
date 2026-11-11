@@ -25,10 +25,12 @@ function fnBody(name, source) {
 
 // ── Section 2: KPI row — 5 equal columns ────────────────────────────────
 
-test('KpiRow renders 5 KPI cards on an equal-column grid with the dashboard-standard 16px gap', () => {
+test('KpiRow renders 5 KPI cards (6 with Tahmini Net Kâr for finance roles) on an equal-column grid with the dashboard-standard 16px gap', () => {
   const body = fnBody('KpiRow', SOURCE);
   assert.match(body, /className="dash-kpi-grid"/);
-  assert.match(body, /gridTemplateColumns:"repeat\(5,1fr\)"/);
+  assert.match(body, /gridTemplateColumns:`repeat\(\$\{showProfit \? 6 : 5\},1fr\)`/);
+  assert.match(body, /const showProfit = canAccess\(getAuthContext\(\)\.role, "finance"\);/);
+  assert.match(body, /\{showProfit && <_HomeProfitKpi\/>\}/);
   assert.match(body, /gap:16/);
 });
 

@@ -229,3 +229,14 @@ test('Tur Karlılığı explains the profit: cost with its TL equivalent and the
   assert.match(tt, /Beklenen net \{_fmtFinanceMap\(g\.pnl\.expectedNet\)\}/);
   assert.match(tt, /t\.totalPlannedTry/);
 });
+
+test('home: Tahmini Net Kâr next to the net income — finance roles only, picked from the Finance month summary', () => {
+  const h = body('useHomeProjectedProfit');
+  assert.match(h, /useFinanceMonth\(_istanbulISODate\(\)\.slice\(0, 7\)\)/);
+  assert.match(h, /s\.kpis\.projectedProfit/);
+  assert.match(h, /Net gelir \$\{_fmtFinanceTry\(s\.kpis\.expectedNet\)\} − tahmini gider \$\{_fmtFinanceTry\(s\.kpis\.projectedCost\)\}/);
+  assert.match(h, /TL karşılığı için kur verisi eksik/, 'no made-up number when FX is incomplete');
+  assert.doesNotMatch(h, /buildFinanceMonthSummary|buildGuideServices|_financeToTry|\b150\b/);
+  assert.match(body('RevenueGoalCard'), /canAccess\(getAuthContext\(\)\.role, "finance"\) \? <_HomeNetAndProfit net=\{net\}\/> : net/);
+  assert.match(body('_HomeNetAndProfit'), /Tahmini Net Kâr/);
+});

@@ -3325,6 +3325,7 @@ function KpiRow() {
   // Same normalized total as RevenueGoalCard — one shared hook, no parallel calculation.
   const { summary:rev, loading:revLoading } = useMonthlyRevenueSummary();
   const activeGuideCount = (repoGuides||[]).filter(g=>g.status==="Aktif").length;
+  const showProfit = canAccess(getAuthContext().role, "finance");
   const kpis = [
     {
       label:"Bugünkü Turlar",
@@ -3364,8 +3365,9 @@ function KpiRow() {
     },
   ];
   return (
-    <div className="dash-kpi-grid" style={{display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:16}}>
+    <div className="dash-kpi-grid" style={{display:"grid", gridTemplateColumns:`repeat(${showProfit ? 6 : 5},1fr)`, gap:16}}>
       {kpis.map((k,i)=><KpiCard key={i} kpi={k}/>)}
+      {showProfit && <_HomeProfitKpi/>}
     </div>
   );
 }
@@ -6119,6 +6121,52 @@ function _fmtFxRateDate(iso) {
 }
 // TESTABLE:_fmtFxRateDate:end
 
+// "Tahmini Net Kâr" next to the expected net income on the home page —
+// finance roles only. Picked from the SAME Finance month summary
+// (useFinanceMonth → buildFinanceMonthSummary): expected net income minus
+// the projected operating cost (one fixed guide cost per operation group,
+// entrance tickets, meals, transport / other; recorded actuals replace the
+// estimate). Nothing is recomputed here; incomplete FX → no number.
+function useHomeProjectedProfit() {
+  const { summary: s, loading, error } = useFinanceMonth(_istanbulISODate().slice(0, 7));
+  if (loading && !s) return { loading: true };
+  if (error || !s) return { loading: false, value: "—", sub: "Finans verisi yüklenemedi" };
+  const v = s.kpis.projectedProfit;
+  if (v == null) return { loading: false, value: "—", sub: "TL karşılığı için kur verisi eksik" };
+  return {
+    loading: false, negative: v < 0,
+    value: `${v < 0 ? "−" : ""}₺${Math.abs(Math.round(v)).toLocaleString("tr-TR")}`,
+    sub: `Net gelir ${_fmtFinanceTry(s.kpis.expectedNet)} − tahmini gider ${_fmtFinanceTry(s.kpis.projectedCost)}`,
+  };
+}
+// Net income (passed in, unchanged) and the projected profit side by side;
+// the profit explanation sits underneath at full width.
+function _HomeNetAndProfit({ net }) {
+  const p = useHomeProjectedProfit();
+  const label = { fontSize: 11, fontWeight: 600, letterSpacing: "0.12em", textTransform: "uppercase", color: C.textMuted, fontFamily: "'Geist',sans-serif" };
+  return (
+    <>
+      <div style={{ display: "flex", alignItems: "flex-end", gap: 22, flexWrap: "wrap" }}>
+        {net}
+        <div data-testid="home-projected-profit" style={{ paddingLeft: 22, borderLeft: `1px solid ${C.borderLight}`, minWidth: 0 }}>
+          <div style={label}>Tahmini Net Kâr</div>
+          <div style={{ fontSize: 32, fontWeight: 600, color: p.negative ? C.red : C.text, fontFamily: "'Geist',sans-serif", letterSpacing: "-0.02em", lineHeight: 1.05, marginTop: 6, fontVariantNumeric: "tabular-nums" }}>
+            {p.loading ? "…" : p.value}
+          </div>
+        </div>
+      </div>
+      {!p.loading && <div data-testid="home-projected-profit-note" style={{ fontSize: 11.5, color: C.textMuted, fontFamily: "'Geist',sans-serif", marginTop: 8, lineHeight: 1.45 }}>
+        Tahmini net kâr: {p.sub} (rehber, giriş biletleri, yemek ve diğer giderler)
+      </div>}
+    </>
+  );
+}
+function _HomeProfitKpi() {
+  const p = useHomeProjectedProfit();
+  return <KpiCard kpi={{ label: "Tahmini Net Kâr", value: p.loading ? "…" : p.value, sub: p.loading ? "Bu ay" : `Bu ay · ${p.sub}`,
+    icon: "M3 17l6-6 4 4 8-8M14 7h7v7", accent: false }}/>;
+}
+
 // "Bu Ay Beklenen Ciro" as the page's centerpiece: exactly the same
 // normalized total as the KPI card (useMonthlyRevenueSummary — TRY as-is,
 // EUR/USD/GBP at the newest fresh ECB rate, never payments, never a fixed
@@ -6220,12 +6268,17 @@ function RevenueGoalCard() {
               </span>
             )}
           </div>
-          <div style={{
-            fontSize:44, fontWeight:600, color:C.text, fontFamily:"'Geist',sans-serif",
-            letterSpacing:"-0.025em", lineHeight:1.05, marginTop:10, fontVariantNumeric:"tabular-nums",
-          }}>
-            {loading ? "…" : _fmtTRY(shown)}
-          </div>
+          {(() => {
+            const net = (
+              <div style={{
+                fontSize:44, fontWeight:600, color:C.text, fontFamily:"'Geist',sans-serif",
+                letterSpacing:"-0.025em", lineHeight:1.05, marginTop:10, fontVariantNumeric:"tabular-nums",
+              }}>
+                {loading ? "…" : _fmtTRY(shown)}
+              </div>
+            );
+            return canAccess(getAuthContext().role, "finance") ? <_HomeNetAndProfit net={net}/> : net;
+          })()}
 
           <div style={{display:"flex", alignItems:"baseline", gap:10, flexWrap:"wrap", marginTop:12, fontFamily:"'Geist',sans-serif"}}>
             <span style={{fontSize:13, color:C.textMid}}>
