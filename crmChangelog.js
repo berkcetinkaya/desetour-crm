@@ -101,6 +101,19 @@ const CRM_CHANGELOG_CATEGORIES = [
 // Newest first. See the release convention above before editing.
 const CRM_CHANGELOG = [
   {
+    version: '13.17',
+    date: '2026-11-12',
+    title: 'Ana Sayfada Sonraki Aylar',
+    summary: 'Ana sayfadaki Beklenen Net Gelir kartında ay değiştirilerek sonraki ve önceki ayların net geliri, tahmini kârı ve ek satışları görülebiliyor.',
+    categories: ['İyileştirme', 'Arayüz'],
+    highlights: [
+      'Beklenen Net Gelir kartında ay okları ve "Bu ay" düğmesi; Aralık, Ocak ve sonraki aylar görülebiliyor.',
+      'Tahmini net kâr ve ek satış seçilen aya göre hesaplanıyor; dövizli rezervasyonlar güncel ECB kuruyla çevriliyor.',
+      'Acente yanıtlarının e-postadan otomatik alınması, Gmail\'de silinmiş bir mesaj yüzünden durmayacak şekilde düzeltildi.',
+    ],
+    author: 'Berk',
+  },
+  {
     version: '13.16',
     date: '2026-11-11',
     title: 'Finans Merkezi, Kârlılık ve Ek Satışlar',
