@@ -100,7 +100,7 @@ function gmailMessage({ id = 'gm-1', threadId = 'th-1', headers = [], mimeType =
  * to simulate an expired/invalid cursor), /profile, and /messages/{id}.
  * `historyPages` is consumed strictly in call order, mirroring exactly
  * what a real sequence of listHistory calls would receive. */
-function makeGmailFetch({ historyPages = [], messagesById = {}, profile = { historyId: '9999' }, staleOnStartHistoryId = null, staleStatus = 404 } = {}) {
+function makeGmailFetch({ historyPages = [], messagesById = {}, profile = { historyId: '9999' }, staleOnStartHistoryId = null, staleStatus = 404, messageStatusById = {} } = {}) {
   let historyCallIndex = 0;
   const calls = [];
   const fetchFn = async (url) => {
@@ -125,6 +125,10 @@ function makeGmailFetch({ historyPages = [], messagesById = {}, profile = { hist
     }
     const messageMatch = parsed.pathname.match(/\/messages\/([^/]+)$/);
     if (messageMatch) {
+      if (messageStatusById[messageMatch[1]]) {
+        const status = messageStatusById[messageMatch[1]];
+        return { ok: false, status, text: async () => JSON.stringify({ error: { code: status, message: status === 404 ? 'Requested entity was not found.' : 'Backend Error' } }) };
+      }
       const msg = messagesById[messageMatch[1]];
       if (!msg) throw new Error('makeGmailFetch: no canned message for id ' + messageMatch[1]);
       return { ok: true, json: async () => msg };
@@ -1101,4 +1105,61 @@ test('processCandidateMessage: a genuinely new match logs an activity row with t
   assert.equal(logCall.payload.metadata.agency_name, AGENCIES.find(a => a.id === 'AGN-1').name);
   assert.equal(logCall.payload.metadata.subject, 'Re: Teklif');
   assert.match(logCall.payload.metadata.body_preview, /teşekkürler/i);
+}));
+
+// ═══════════════ H4. A listed message that no longer exists in Gmail ══
+
+test('isGmailMessageGoneError: only a 404 on a Gmail API request means "message gone"', () => {
+  assert.equal(sync.isGmailMessageGoneError(new gmailSendClient.GmailSendError('x', { stage: 'api_request', status: 404 })), true);
+  assert.equal(sync.isGmailMessageGoneError(new gmailSendClient.GmailSendError('x', { stage: 'api_request', status: 500 })), false);
+  assert.equal(sync.isGmailMessageGoneError(new gmailSendClient.GmailSendError('x', { stage: 'token_exchange', status: 404 })), false);
+  assert.equal(sync.isGmailMessageGoneError(new Error('Gmail API request failed (404)')), false, 'never pattern-matched from text');
+  assert.equal(sync.isGmailMessageGoneError(null), false);
+});
+
+test('syncAgencyMailbox: a listed message that Gmail now reports 404 (deleted) is skipped as "gone" — the run completes and the cursor advances (no endless 500 loop)', () => withGmailEnv(async () => {
+  const adminClient = makeFakeAdminClient({
+    agency_emails: [{ data: null, error: null }, { data: [], error: null }, { data: { id: 'AEM-ok' }, error: null }],
+    agencies: [{ data: AGENCIES, error: null }, { error: null }],
+    activity_logs: [{ error: null }],
+    settings: [{ data: { value: JSON.stringify({ historyId: '100' }) }, error: null }],
+  });
+  const msgOk = gmailMessage({ id: 'gm-ok', headers: [{ name: 'From', value: 'contact@acme.com' }] });
+  const gmailDeps = { fetch: makeGmailFetch({
+    historyPages: [{ history: [{ messagesAdded: [{ message: { id: '1a1cba59740e581a' } }, { message: { id: 'gm-ok' } }] }], historyId: '200', nextPageToken: null }],
+    messagesById: { 'gm-ok': msgOk },
+    messageStatusById: { '1a1cba59740e581a': 404 },
+  }) };
+  const result = await sync.syncAgencyMailbox({ adminClient, gmailDeps });
+  assert.equal(result.ok, true);
+  assert.equal(result.stage, 'synced');
+  assert.equal(result.gone, 1);
+  assert.equal(result.matched, 1, 'the next real reply is still imported');
+  assert.equal(result.processed, 2);
+  const upsertCall = adminClient._calls.find(c => c.table === 'settings' && c.method === 'upsert');
+  assert.equal(JSON.parse(upsertCall.payload.value).historyId, '200', 'cursor moves past the gone message');
+}));
+
+test('syncAgencyMailbox: any OTHER message fetch failure (e.g. Gmail 500) still aborts without moving the cursor — nothing is lost', () => withGmailEnv(async () => {
+  const adminClient = makeFakeAdminClient({
+    agency_emails: [{ data: null, error: null }, { data: [], error: null }],
+    agencies: [{ data: AGENCIES, error: null }],
+    settings: [{ data: { value: JSON.stringify({ historyId: '100' }) }, error: null }],
+  });
+  const gmailDeps = { fetch: makeGmailFetch({
+    historyPages: [{ history: [{ messagesAdded: [{ message: { id: 'gm-500' } }] }], historyId: '200', nextPageToken: null }],
+    messageStatusById: { 'gm-500': 500 },
+  }) };
+  await assert.rejects(() => sync.syncAgencyMailbox({ adminClient, gmailDeps }), /failed \(500\)/);
+  assert.ok(!adminClient._calls.some(c => c.table === 'settings' && c.method === 'upsert'));
+}));
+
+test('runBoundedBackfill also skips a gone message instead of failing', () => withGmailEnv(async () => {
+  const adminClient = makeFakeAdminClient({
+    agency_emails: [{ data: [], error: null }],
+    agencies: [{ data: AGENCIES, error: null }],
+  });
+  const gmailDeps = { fetch: makeGmailFetch({ messagesById: { 'gm-gone': null }, messageStatusById: { 'gm-gone': 404 } }) };
+  const result = await sync.runBoundedBackfill({ adminClient, gmailDeps, sinceUnixSeconds: 1 });
+  assert.equal(result.ok, true);
 }));

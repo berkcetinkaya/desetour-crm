@@ -601,8 +601,31 @@ async function logInboundReply({ adminClient, agencyId, agencyEmailId, agencyNam
  * duplicate database error, or a failed follow-up update) propagates to
  * the caller unchanged.
  */
+/**
+ * A Gmail message that the History API listed but that no longer exists
+ * when it is fetched (permanently deleted, removed by Gmail, …): Gmail
+ * answers that exact message request with 404 "Requested entity was not
+ * found." Retrying can never succeed, so holding the cursor for it would
+ * block every later reply forever. ONLY this explicit 404 on the message
+ * request counts — any other failure (network, auth, 5xx, rate limit)
+ * still aborts the run so nothing is lost.
+ */
+function isGmailMessageGoneError(err) {
+  return !!(err && err.name === 'GmailSendError' && err.status === 404 && err.stage === 'api_request');
+}
+
 async function processCandidateMessage({ adminClient, gmailDeps, gmailMessageId, indexes }) {
-  const gmailMessage = await gmailClient.fetchMessageFull(gmailMessageId, gmailDeps);
+  let gmailMessage;
+  try {
+    gmailMessage = await gmailClient.fetchMessageFull(gmailMessageId, gmailDeps);
+  } catch (err) {
+    if (isGmailMessageGoneError(err)) {
+      // Structural diagnostics only — a Gmail message id, never content.
+      console.warn('[agency-mailbox-sync] Gmail message no longer exists (404) — skipped:', gmailMessageId);
+      return 'gone';
+    }
+    throw err;
+  }
   const fields = extractMessageFields(gmailMessage);
   const classification = classifyInboundMessage(fields, indexes);
   if (!classification.matched) return 'skipped';
@@ -771,6 +794,7 @@ async function syncAgencyMailbox(deps = {}) {
 
   const indexes = await loadMatchingContext({ adminClient });
 
+  let goneCount = 0;
   let matchedCount = 0;
   let duplicateCount = 0;
   let skippedCount = 0;
@@ -802,6 +826,7 @@ async function syncAgencyMailbox(deps = {}) {
       const outcome = await processCandidateMessage({ adminClient, gmailDeps, gmailMessageId, indexes });
       if (outcome === 'matched') matchedCount += 1;
       else if (outcome === 'duplicate') duplicateCount += 1;
+      else if (outcome === 'gone') goneCount += 1;
       else skippedCount += 1;
       processedCount += 1;
     }
@@ -812,7 +837,7 @@ async function syncAgencyMailbox(deps = {}) {
       // The whole range is drained and every candidate in it succeeded —
       // only now is it safe to advance the stable cursor.
       await writeSyncCursor({ adminClient, historyId: targetHistoryId || baselineHistoryId, continuation: null });
-      return { ok: true, stage: 'synced', matched: matchedCount, duplicates: duplicateCount, skipped: skippedCount, processed: processedCount, pagesFetched: pagesFetchedThisRun };
+      return { ok: true, stage: 'synced', matched: matchedCount, duplicates: duplicateCount, skipped: skippedCount, gone: goneCount, processed: processedCount, pagesFetched: pagesFetchedThisRun };
     }
 
     if (pagesFetchedThisRun >= MAX_HISTORY_PAGES_PER_RUN || processedCount >= MAX_MESSAGES_PER_RUN) {
@@ -823,7 +848,7 @@ async function syncAgencyMailbox(deps = {}) {
         historyId: stableHistoryId,
         continuation: { baselineHistoryId, pageToken: page.nextPageToken, targetHistoryId },
       });
-      return { ok: true, stage: 'continuation_saved', matched: matchedCount, duplicates: duplicateCount, skipped: skippedCount, processed: processedCount, pagesFetched: pagesFetchedThisRun };
+      return { ok: true, stage: 'continuation_saved', matched: matchedCount, duplicates: duplicateCount, skipped: skippedCount, gone: goneCount, processed: processedCount, pagesFetched: pagesFetchedThisRun };
     }
 
     pageToken = page.nextPageToken;
@@ -864,17 +889,20 @@ async function runBoundedBackfill({ adminClient, gmailDeps = {}, sinceUnixSecond
   let matchedCount = 0;
   let duplicateCount = 0;
   let skippedCount = 0;
+  let goneCount = 0;
   for (const gmailMessageId of boundedIds) {
     const outcome = await processCandidateMessage({ adminClient, gmailDeps, gmailMessageId, indexes });
     if (outcome === 'matched') matchedCount += 1;
     else if (outcome === 'duplicate') duplicateCount += 1;
+    else if (outcome === 'gone') goneCount += 1;
     else skippedCount += 1;
   }
 
-  return { ok: true, stage: 'backfill_complete', matched: matchedCount, duplicates: duplicateCount, skipped: skippedCount, processed: boundedIds.length };
+  return { ok: true, stage: 'backfill_complete', matched: matchedCount, duplicates: duplicateCount, skipped: skippedCount, gone: goneCount, processed: boundedIds.length };
 }
 
 module.exports = {
+  isGmailMessageGoneError,
   SETTINGS_KEY_SYNC_CURSOR,
   MAX_MESSAGES_PER_RUN,
   MAX_HISTORY_PAGES_PER_RUN,
