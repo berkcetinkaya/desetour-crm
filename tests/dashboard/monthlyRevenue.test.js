@@ -299,11 +299,11 @@ test('no fixed EUR = 55 (or any hardcoded rate) fallback in the revenue normaliz
 // ── Wiring: one calculation for KPI + revenue card ───────────────────────
 
 test('KPI and RevenueGoalCard both read the one useMonthlyRevenueSummary hook — no parallel calculation', () => {
-  assert.match(SOURCE, /function useMonthlyRevenueSummary\(\) \{/);
-  assert.match(SOURCE, /summarizeMonthlyExpectedRevenue\(repoRes \|\| \[\], _TODAY_ISO, fxRows \|\| \[\], \{ rateSourceError, extraSales \}\)/);
+  assert.match(SOURCE, /function useMonthlyRevenueSummary\(monthISO\) \{/);
+  assert.match(SOURCE, /summarizeMonthlyExpectedRevenue\(repoRes \|\| \[\], _TODAY_ISO, fxRows \|\| \[\], \{ rateSourceError, extraSales, monthISO: month \}\)/);
   assert.match(SOURCE, /useRepo\("exchangeRate", "getLatestToTry"\)/);
   assert.match(SOURCE, /return \{ summary, loading: resLoading \|\| fxLoading \|\| \(financeRole && xsLoading\), extraSalesUnavailable: !!\(xs && xs\.unavailable\) \};/, 'loading until every read settles');
-  assert.match(SOURCE, /useRepo\("finance", "getExtraSalesForMonth", financeRole \? _TODAY_ISO\.slice\(0, 7\) : null\)/, 'extra sales only for finance roles');
+  assert.match(SOURCE, /useRepo\("finance", "getExtraSalesForMonth", financeRole \? month : null\)/, 'extra sales only for finance roles');
   const calls = SOURCE.match(/summarizeMonthlyExpectedRevenue\(/g) || [];
   assert.equal(calls.length, 2, 'one definition + one call site (inside the shared hook)');
   assert.doesNotMatch(SOURCE, /summarizeMonthlyTRYRevenue|computeMonthlyReservationRevenue\(/);
@@ -454,4 +454,28 @@ test('without extra sales (or for roles that cannot see them) the total is the t
   assert.equal(s.total, 5000);
   assert.equal(s.tourTotal, 5000);
   assert.equal(s.extraSalesTryTotal, 0);
+});
+
+// ── Home month picker ───────────────────────────────────────────────────
+
+test('another month can be summarized (December, January …) while FX freshness is still judged against today', () => {
+  const rs = [res({ checkIn: '2026-12-05', total: 7000 }), res({ checkIn: '2027-01-10', total: 100, currency: 'EUR' }), res({ checkIn: TODAY_ISO, total: 999 })];
+  const dec = summarize(rs, TODAY_ISO, FRESH_RATES, { monthISO: '2026-12' });
+  assert.equal(dec.total, 7000);
+  const jan = summarize(rs, TODAY_ISO, FRESH_RATES, { monthISO: '2027-01' });
+  assert.equal(jan.total, 100 * 40, 'converted with the rate that is fresh TODAY');
+  assert.equal(summarize(rs, TODAY_ISO, FRESH_RATES).total, 999, 'no monthISO → the current month as before');
+  assert.equal(summarize(rs, TODAY_ISO, FRESH_RATES, { monthISO: 'bad' }).total, 999);
+});
+
+test('home revenue card: ‹ › month picker + "Bu ay"; profit and extra sales follow the picked month; celebration only in the current month', () => {
+  const a = SOURCE.indexOf('function RevenueGoalCard(');
+  const b = SOURCE.slice(a, SOURCE.indexOf('\nfunction ', a + 10));
+  assert.match(b, /const \[monthISO, setMonthISO\] = useState\(currentMonth\);/);
+  assert.match(b, /data-testid="revenue-month-picker"/);
+  assert.match(b, /setMonthISO\(m => _financeShiftMonth\(m, -1\)\)/);
+  assert.match(b, /setMonthISO\(m => _financeShiftMonth\(m, 1\)\)/);
+  assert.match(b, />Bu ay<\/button>/);
+  assert.match(b, /<_HomeNetAndProfit net=\{net\} monthISO=\{monthISO\}/);
+  assert.match(SOURCE, /function _HomeNetAndProfit\(\{ net, revenue, monthISO \}\) \{\n  const p = useHomeProjectedProfit\(monthISO\);/);
 });

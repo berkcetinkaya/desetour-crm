@@ -201,12 +201,12 @@ test('Tur Karlılığı explains the profit: cost with its TL equivalent and the
 
 test('home: Tahmini Net Kâr next to the net income — finance roles only, picked from the Finance month summary', () => {
   const h = body('useHomeProjectedProfit');
-  assert.match(h, /useFinanceMonth\(_istanbulISODate\(\)\.slice\(0, 7\)\)/);
+  assert.match(h, /useFinanceMonth\(monthISO \|\| _istanbulISODate\(\)\.slice\(0, 7\)\)/);
   assert.match(h, /s\.kpis\.projectedProfit/);
   assert.match(h, /Net gelir \$\{_fmtFinanceTry\(s\.kpis\.expectedNet\)\} − tahmini gider \$\{_fmtFinanceTry\(s\.kpis\.projectedCost\)\}/);
   assert.match(h, /TL karşılığı için kur verisi eksik/, 'no made-up number when FX is incomplete');
   assert.doesNotMatch(h, /buildFinanceMonthSummary|buildGuideServices|_financeToTry|\b150\b/);
-  assert.match(body('RevenueGoalCard'), /canAccess\(getAuthContext\(\)\.role, "finance"\) \? <_HomeNetAndProfit net=\{net\} revenue=\{\{ summary, loading, extraSalesUnavailable \}\}\/> : net/);
+  assert.match(body('RevenueGoalCard'), /canAccess\(getAuthContext\(\)\.role, "finance"\) \? <_HomeNetAndProfit net=\{net\} monthISO=\{monthISO\} revenue=\{\{ summary, loading, extraSalesUnavailable \}\}\/> : net/);
   const h2 = body('_HomeNetAndProfit');
   assert.match(h2, /Tahmini Net Kâr/);
   assert.match(h2, /Ek Satış/);

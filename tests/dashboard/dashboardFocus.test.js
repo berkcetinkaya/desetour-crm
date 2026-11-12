@@ -81,7 +81,7 @@ test('celebration fires only for a step above 0 that is higher than the last one
 
 test('RevenueGoalCard uses the same normalized summary as the KPI (never payments, never a fixed rate)', () => {
   const b = body('RevenueGoalCard');
-  assert.match(b, /const \{ summary, loading, extraSalesUnavailable \} = useMonthlyRevenueSummary\(\);/);
+  assert.match(b, /const \{ summary, loading, extraSalesUnavailable \} = useMonthlyRevenueSummary\(monthISO\);/);
   assert.match(b, /const revenue = summary\.total;/);
   assert.doesNotMatch(b, /useRepo\(/, 'no separate data read — only the shared hook');
   assert.doesNotMatch(body('_HomeNetAndProfit'), /useRepo\(|summarizeMonthlyExpectedRevenue|buildFinanceMonthSummary/);
@@ -131,7 +131,7 @@ test('milestones and the celebration use only the normalized total shown to the 
   assert.match(b, /const prog = _revenueMilestoneProgress\(revenue, REVENUE_MILESTONE_STEP\);/);
   assert.match(b, /const shown = useCountUp\(loading \? 0 : revenue\);/, 'the displayed number is the same value');
   assert.match(b, /_shouldCelebrateMilestone\(prog\.milestone, last\)/);
-  assert.match(b, /const canCelebrate = _canCelebrateRevenue\(loading, summary\);/);
+  assert.match(b, /const canCelebrate = isCurrentMonth && _canCelebrateRevenue\(loading, summary\);/, 'only the current month celebrates');
   assert.match(b, /if \(!canCelebrate\) return;/);
   assert.match(b, /\}, \[canCelebrate, prog\.milestone, monthKey\]\);/);
   assert.doesNotMatch(b, /_CIVITATIS_FIXED_EUR_TO_TRY_RATE|excludedByCurrency\[[^\]]*\]\s*\*/);
@@ -145,7 +145,8 @@ test('premium card: no decorative disc and no gradients in the revenue card', ()
 
 test('celebrated step is remembered per month (YYYY-MM) and every localStorage access is guarded', () => {
   const b = body('RevenueGoalCard');
-  assert.match(b, /const monthKey = _TODAY_ISO\.slice\(0, 7\);/);
+  assert.match(b, /const currentMonth = _TODAY_ISO\.slice\(0, 7\);/);
+  assert.match(b, /const monthKey = monthISO;/);
   assert.match(b, /try \{ last = Number\(localStorage\.getItem\(REVENUE_MILESTONE_STORAGE_PREFIX \+ monthKey\)\) \|\| 0; \} catch \(_\) \{\}/);
   assert.match(b, /try \{ localStorage\.setItem\(REVENUE_MILESTONE_STORAGE_PREFIX \+ monthKey, String\(prog\.milestone\)\); \} catch \(_\) \{\}/);
   assert.match(b, /role="status"/, 'the congratulation is announced to screen readers');
@@ -364,7 +365,7 @@ test('the shared hook passes a failed exchange_rates read on as rateSourceError 
   const h = body('useMonthlyRevenueSummary');
   assert.match(h, /const \{ data:fxRows, loading:fxLoading, error:fxError \} = useRepo\("exchangeRate", "getLatestToTry"\);/);
   assert.match(h, /const rateSourceError = !!fxError;/);
-  assert.match(h, /summarizeMonthlyExpectedRevenue\(repoRes \|\| \[\], _TODAY_ISO, fxRows \|\| \[\], \{ rateSourceError, extraSales \}\)/);
+  assert.match(h, /summarizeMonthlyExpectedRevenue\(repoRes \|\| \[\], _TODAY_ISO, fxRows \|\| \[\], \{ rateSourceError, extraSales, monthISO: month \}\)/);
   assert.match(h, /return \{ summary, loading: resLoading \|\| fxLoading \|\| \(financeRole && xsLoading\), extraSalesUnavailable: !!\(xs && xs\.unavailable\) \};/);
   assert.match(body('KpiRow'), /rev\.fxUnresolved \? "Bu ay · kur verisine erişilemiyor"/);
 });

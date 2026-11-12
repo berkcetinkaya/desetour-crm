@@ -6091,18 +6091,19 @@ const _RING_C = 2 * Math.PI * _RING_R; // 301.59 — mirrored in @keyframes dash
 // produced from a half-loaded, pre-conversion total. A FAILED rate read is
 // passed on as rateSourceError — a distinct state from "the read worked
 // but no usable rate exists" — so the UI can say which one it is.
-function useMonthlyRevenueSummary() {
+function useMonthlyRevenueSummary(monthISO) {
+  const month = monthISO || _TODAY_ISO.slice(0, 7);
   const { data:repoRes, loading:resLoading } = useRepo("reservation", "getAll");
   const { data:fxRows, loading:fxLoading, error:fxError } = useRepo("exchangeRate", "getLatestToTry");
   const rateSourceError = !!fxError;
   // Extra sales are added to the expected net income for finance roles only
   // (the only roles RLS lets read them); other roles ask for nothing.
   const financeRole = canAccess(getAuthContext().role, "finance");
-  const { data:xs, loading:xsLoading } = useRepo("finance", "getExtraSalesForMonth", financeRole ? _TODAY_ISO.slice(0, 7) : null);
+  const { data:xs, loading:xsLoading } = useRepo("finance", "getExtraSalesForMonth", financeRole ? month : null);
   const extraSales = (xs && xs.sales) || [];
   const summary = useMemo(
-    () => summarizeMonthlyExpectedRevenue(repoRes || [], _TODAY_ISO, fxRows || [], { rateSourceError, extraSales }),
-    [repoRes, fxRows, rateSourceError, extraSales]
+    () => summarizeMonthlyExpectedRevenue(repoRes || [], _TODAY_ISO, fxRows || [], { rateSourceError, extraSales, monthISO: month }),
+    [repoRes, fxRows, rateSourceError, extraSales, month]
   );
   return { summary, loading: resLoading || fxLoading || (financeRole && xsLoading), extraSalesUnavailable: !!(xs && xs.unavailable) };
 }
@@ -6133,8 +6134,8 @@ function _fmtFxRateDate(iso) {
 // the projected operating cost (one fixed guide cost per operation group,
 // entrance tickets, meals, transport / other; recorded actuals replace the
 // estimate). Nothing is recomputed here; incomplete FX → no number.
-function useHomeProjectedProfit() {
-  const { summary: s, loading, error } = useFinanceMonth(_istanbulISODate().slice(0, 7));
+function useHomeProjectedProfit(monthISO) {
+  const { summary: s, loading, error } = useFinanceMonth(monthISO || _istanbulISODate().slice(0, 7));
   if (loading && !s) return { loading: true };
   if (error || !s) return { loading: false, value: "—", sub: "Finans verisi yüklenemedi" };
   const v = s.kpis.projectedProfit;
@@ -6147,8 +6148,8 @@ function useHomeProjectedProfit() {
 }
 // Net income (passed in, unchanged) and the projected profit side by side;
 // the profit explanation sits underneath at full width.
-function _HomeNetAndProfit({ net, revenue }) {
-  const p = useHomeProjectedProfit();
+function _HomeNetAndProfit({ net, revenue, monthISO }) {
+  const p = useHomeProjectedProfit(monthISO);
   const label = { fontSize: 11, fontWeight: 600, letterSpacing: "0.12em", textTransform: "uppercase", color: C.textMuted, fontFamily: "'Geist',sans-serif" };
   const cell = { paddingLeft: 22, borderLeft: `1px solid ${C.borderLight}`, minWidth: 0 };
   const big = { fontSize: 32, fontWeight: 600, fontFamily: "'Geist',sans-serif", letterSpacing: "-0.02em", lineHeight: 1.05, marginTop: 6, fontVariantNumeric: "tabular-nums" };
@@ -6188,15 +6189,20 @@ function _HomeProfitKpi() {
 // say how many foreign reservations were converted (with the ECB rate
 // date) and, separately, how many could not be included.
 function RevenueGoalCard() {
-  const { summary, loading, extraSalesUnavailable } = useMonthlyRevenueSummary();
+  const currentMonth = _TODAY_ISO.slice(0, 7);
+  // Month picker: look ahead (Aralık, Ocak, …) or back. Milestones and the
+  // celebration belong to the CURRENT month only.
+  const [monthISO, setMonthISO] = useState(currentMonth);
+  const isCurrentMonth = monthISO === currentMonth;
+  const { summary, loading, extraSalesUnavailable } = useMonthlyRevenueSummary(monthISO);
   const revenue = summary.total;
   const prog = _revenueMilestoneProgress(revenue, REVENUE_MILESTONE_STEP);
   const shown = useCountUp(loading ? 0 : revenue);
-  const monthKey = _TODAY_ISO.slice(0, 7);
-  const monthLabel = new Date(_TODAY_ISO + "T12:00:00").toLocaleDateString("tr-TR", { month:"long", year:"numeric" });
+  const monthKey = monthISO;
+  const monthLabel = new Date(monthISO + "-01T12:00:00").toLocaleDateString("tr-TR", { month:"long", year:"numeric" });
   const [celebrating, setCelebrating] = useState(null);
 
-  const canCelebrate = _canCelebrateRevenue(loading, summary);
+  const canCelebrate = isCurrentMonth && _canCelebrateRevenue(loading, summary);
   useEffect(() => {
     if (!canCelebrate) return;
     let last = 0;
@@ -6272,9 +6278,14 @@ function RevenueGoalCard() {
             <span style={{fontSize:11, fontWeight:600, letterSpacing:"0.12em", textTransform:"uppercase", color:C.goldText, fontFamily:"'Geist',sans-serif"}}>
               Beklenen Net Gelir
             </span>
-            <span style={{fontSize:11, color:C.textMuted, fontFamily:"'Geist',sans-serif", padding:"2px 8px", borderRadius:T.radiusPill, background:C.ivory, border:`1px solid ${C.borderLight}`}}>
-              {monthLabel}
+            <span data-testid="revenue-month-picker" style={{display:"inline-flex", alignItems:"center", gap:2, fontSize:11, color:C.textMuted, fontFamily:"'Geist',sans-serif", padding:"1px 4px", borderRadius:T.radiusPill, background:C.ivory, border:`1px solid ${C.borderLight}`}}>
+              <button type="button" aria-label="Önceki ay" onClick={() => setMonthISO(m => _financeShiftMonth(m, -1))} style={{border:"none", background:"transparent", color:C.textMid, cursor:"pointer", padding:"0 5px", fontSize:13, lineHeight:1}}>‹</button>
+              <span style={{padding:"0 2px", textTransform:"capitalize"}}>{monthLabel}</span>
+              <button type="button" aria-label="Sonraki ay" onClick={() => setMonthISO(m => _financeShiftMonth(m, 1))} style={{border:"none", background:"transparent", color:C.textMid, cursor:"pointer", padding:"0 5px", fontSize:13, lineHeight:1}}>›</button>
             </span>
+            {!isCurrentMonth && (
+              <button type="button" onClick={() => setMonthISO(currentMonth)} style={{fontSize:11, color:C.goldText, background:"transparent", border:"none", cursor:"pointer", fontFamily:"'Geist',sans-serif", padding:"2px 4px"}}>Bu ay</button>
+            )}
             {!loading && !summary.isComplete && (
               <span title="Bazı rezervasyonlar bu toplama dahil edilemedi" style={{fontSize:11, fontWeight:600, color:C.amber, fontFamily:"'Geist',sans-serif", padding:"2px 8px", borderRadius:T.radiusPill, background:C.amberBg, border:`1px solid ${C.amberBorder}`}}>
                 Eksik toplam
@@ -6290,7 +6301,7 @@ function RevenueGoalCard() {
                 {loading ? "…" : _fmtTRY(shown)}
               </div>
             );
-            return canAccess(getAuthContext().role, "finance") ? <_HomeNetAndProfit net={net} revenue={{ summary, loading, extraSalesUnavailable }}/> : net;
+            return canAccess(getAuthContext().role, "finance") ? <_HomeNetAndProfit net={net} monthISO={monthISO} revenue={{ summary, loading, extraSalesUnavailable }}/> : net;
           })()}
 
           <div style={{display:"flex", alignItems:"baseline", gap:10, flexWrap:"wrap", marginTop:12, fontFamily:"'Geist',sans-serif"}}>
@@ -19368,7 +19379,10 @@ function _selectLatestFxRatesToTry(rateRows, todayISO) {
 // Pure: only its parameters and Date — see tests/dashboard/monthlyRevenue.test.js.
 function summarizeMonthlyExpectedRevenue(reservations, todayISO, rateRows, options) {
   const rateSourceError = !!(options && options.rateSourceError);
-  const [y, moNum] = todayISO.split("-").map(Number);
+  // options.monthISO ("YYYY-MM") selects another month (home page month
+  // picker); the FX freshness rule always stays relative to TODAY.
+  const monthBase = options && /^\d{4}-\d{2}$/.test(String(options.monthISO || "")) ? options.monthISO + "-01" : todayISO;
+  const [y, moNum] = monthBase.split("-").map(Number);
   const startISO = `${y}-${String(moNum).padStart(2, "0")}-01`;
   const endDateObj = new Date(y, moNum, 0);
   const endISO = `${endDateObj.getFullYear()}-${String(endDateObj.getMonth() + 1).padStart(2, "0")}-${String(endDateObj.getDate()).padStart(2, "0")}`;
