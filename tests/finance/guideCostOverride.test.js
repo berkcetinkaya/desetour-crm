@@ -51,11 +51,26 @@ test('repo upserts by operation_key and logs; a missing table leaves the standar
   assert.match(repo, /guideCostOverrides: ov\.overrides, guideCostOverridesUnavailable: ov\.unavailable/);
 });
 
-test('editor: opened from a reservation, applies to the whole operation, can return to standard', () => {
-  const e = body('_GuideCostOverrideEditor');
-  assert.match(e, /mutate\("setGuideCostOverride", \{ operationKey: group\.key, tourDate: group\.date, tourId: group\.tourId, language: group\.language,/);
-  assert.match(e, /mutate\("clearGuideCostOverride", group\.key\)/);
-  assert.match(e, /Bu tutar operasyonun tamamına uygulanır/);
-  assert.match(e, /window\.confirm\(/);
-  assert.match(body('ReservationFinanceCard'), /<_GuideCostOverrideEditor r=\{r\} group=\{group\} unavailable=\{summary && summary\.guideCostOverridesUnavailable\}\/>/);
+test('fee editor (reservation Finance card): enter a missing fee or correct it with confirmation; always the whole operation', () => {
+  const e = body('_GuideFeeEditor');
+  assert.match(e, /mutate\("setGuideCostOverride", \{ operationKey: "fee\|" \+ group\.key, tourDate: group\.date, tourId: group\.tourId,/);
+  assert.match(e, /window\.confirm\(/, 'correcting an existing fee asks first');
+  assert.match(e, /Ücreti düzelt/); assert.match(e, /Rehber ücretini gir/);
+  assert.match(e, /aynı gün, aynı tur ve aynı rehberle yapılan tüm rezervasyonlar için tek seferdir/);
+});
+
+test('assignment modal: fee typed at assignment; an existing fee for the same guide, day and tour is shown greyed out and not saved again', () => {
+  const m = body('AssignGuideModal');
+  assert.match(m, /const feeLookup = useGuideFeeLookup\(r, guideId\);/);
+  assert.match(m, /<_GuideFeeInput lookup=\{feeLookup\} value=\{fee\} onChange=\{setFee\} error=\{feeErr\}\/>/);
+  assert.match(m, /const err = _guideFeeError\(feeLookup, guideId, fee\);/, 'validated before anything is saved');
+  assert.match(m, /_saveGuideFeeIfNew\(mutateFinance, feeLookup, r, fee\)/);
+  const inp = body('_GuideFeeInput');
+  assert.match(inp, /disabled=\{!!ex\}/);
+  assert.match(inp, /burada değiştirilemez\. Bu rezervasyon ikinci bir ücret eklemez\./);
+  assert.match(body('_saveGuideFeeIfNew'), /if \(!lookup\.key \|\| !lookup\.financeRole \|\| lookup\.existing\) return \{ error: null \};/);
+  assert.match(body('useGuideFeeLookup'), /_guideFeeKey\(res, guideId\)/);
+  assert.match(body('useGuideFeeLookup'), /useRepo\("finance", "getGuideFee", financeRole \? key : null\)/);
+  assert.match(body('NewReservationModal'), /<_GuideFeeInput lookup=\{guideFeeLookup\}/);
+  assert.match(body('GuideAssignCell'), /if \(guideId\) return openFeeModal\(guideId\);/);
 });

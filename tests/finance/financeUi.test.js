@@ -71,11 +71,12 @@ test('data-quality panel names each condition separately', () => {
   const d = body('_FinDataQuality');
   for (const t of ['dil belirtilmemiş', 'dil tanınmıyor', 'tur bilgisi eksik', 'yemek durumu belirsiz', 'maliyet girilmemiş', 'geçici maliyet',
     'bilet hazırlığı tamamlandı, gerçek harcama tutarı girilmemiş', 'eşleştirilmemiş rehber ödemesi', 'Kur verisine erişilemiyor',
-    'geçmiş rehber operasyonunun ödemesi tamamlanmamış', 'ödeme kaydı sabit maliyetle uyuşmuyor', 'rehber atanmamış', 'iptal edilmiş operasyonda rehber ödemesi var',
-    'rehber operasyonu maliyeti sabit kuraldan', 'hesaplamada kullanılmıyor', 'ödeme farklı para biriminde — açık bakiye incelemede']) {
+    'geçmiş rehber operasyonunun ödemesi tamamlanmamış', 'ödeme kaydı rehber ücretiyle uyuşmuyor', 'rehber atanmamış', 'iptal edilmiş operasyonda rehber ödemesi var',
+    'rehber atanmış ama rehber ücreti girilmemiş', 'ödeme farklı para biriminde — açık bakiye incelemede']) {
     assert.ok(d.includes(t), t);
   }
   assert.doesNotMatch(d, /rehber ödemesi kaydı yok/, 'a missing guide payment never makes the cost unknown');
+  assert.doesNotMatch(d, /Guide Service|sabit kural|Standart yerine/, 'no automatic guide cost any more');
 });
 
 test('budget view uses the operational guide concept, never "N × €150"', () => {
@@ -130,8 +131,11 @@ test('reservation finance is picked from the SAME month summary — never recomp
 test('Finance card: Admin/Operations only, shows shared guide cost as reporting share, never a payable', () => {
   assert.match(SOURCE, /\{canAccess\(auth\.role, "finance"\) && <ReservationFinanceCard r=\{r\}\/>\}/);
   const c = body('ReservationFinanceCard');
-  assert.match(c, /rezervasyon paylaşıyor\./);
+  assert.match(c, /rezervasyon için tek ücret\./);
   assert.match(c, /yalnızca raporlama içindir/);
+  assert.match(c, /Rehber atanmadı — rehber ücreti, rehber atanırken girilir\./);
+  assert.match(c, /Rehber ücreti girilmemiş/);
+  assert.match(c, /<_GuideFeeEditor r=\{r\} group=\{group\}/);
   assert.match(c, /İptal edilen rezervasyonlar finans hesaplarına dahil edilmez\./);
   assert.doesNotMatch(c, /ödeme kaydı yok/, 'guide cost is fixed; payment status is shown instead');
   assert.match(c, /_FIN_GUIDE_PAY_LABEL\[group\.guide\.paymentStatus\]/);
@@ -185,11 +189,6 @@ test('reservation mapping carries full created_at / cancelled_at timestamps for 
   assert.match(body('mapResFromDB'), /createdAtTs:r\.created_at\|\|null, cancelledAt:r\.cancelled_at\|\|null,/);
 });
 
-test('one combined catalog-reference notice in the data-quality panel (never one per catalog value)', () => {
-  const d = body('_FinDataQuality');
-  assert.equal((d.match(/Guide Service/g) || []).length, 1);
-  assert.doesNotMatch(d, /guideCatalogDiffers\.map\(d => \(\{/);
-});
 
 test('Tur Karlılığı explains the profit: cost with its TL equivalent and the expected net, per operation', () => {
   const tt = body('_FinTourTable');
@@ -282,8 +281,8 @@ test('Bütçe & Tahmin: headline + guide cost by TOUR (expandable into languages
 
 test('data quality keeps every guide review item (the operations table is gone, the warnings are not)', () => {
   const d = body('_FinDataQuality');
-  for (const t2 of ['geçmiş rehber operasyonunun ödemesi tamamlanmamış', 'ödeme kaydı sabit maliyetle uyuşmuyor', 'iptal edilmiş operasyonda rehber ödemesi var',
-    'ödeme farklı para biriminde — açık bakiye incelemede', 'yeniden açılan operasyonda önceki iptal operasyonun rehber ödemesi var', 'rehber operasyonunda maliyet elle değiştirildi']) assert.ok(d.includes(t2), t2);
+  for (const t2 of ['geçmiş rehber operasyonunun ödemesi tamamlanmamış', 'ödeme kaydı rehber ücretiyle uyuşmuyor', 'iptal edilmiş operasyonda rehber ödemesi var',
+    'ödeme farklı para biriminde — açık bakiye incelemede', 'yeniden açılan operasyonda önceki iptal operasyonun rehber ödemesi var', 'rehber ücreti girilmemiş']) assert.ok(d.includes(t2), t2);
 });
 
 test('catalog: amounts editable on screen (from today = versioned, or all dates); guide row is not edited here; tour names shown', () => {

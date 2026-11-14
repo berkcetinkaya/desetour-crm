@@ -21,7 +21,30 @@ function extractCombined(names) {
   return new Function(`${bodies.join('\n')}\nreturn ${names[names.length - 1]};`)();
 }
 const F = extractCombined(['_selectLatestFxRatesToTry', '_financeDomain'])();
-const { buildGuideServices, buildFinanceMonthSummary, attributeGuidePayments } = F;
+const { buildGuideServices, attributeGuidePayments } = F;
+// Owner rule 2026-11-14: the guide fee is entered at assignment, one per
+// tour date + tour + guide. Test reservations get a guide by default (res()),
+// and every operation gets a €150 fee "entered at assignment" unless the test
+// passes its own fee (or noAutoFees). A fee passed with a plain operation key
+// is treated as that operation's entered fee.
+const _realBuild = F.buildFinanceMonthSummary;
+function autoFees(input) {
+  if (input.noAutoFees) return [];
+  const given = new Set((input.guideCostOverrides || []).map(o => String(o.operationKey).replace(/^fee\|/, '')));
+  const out = new Map();
+  for (const r of (input.reservations || [])) {
+    if (!r || !r.checkIn) continue;
+    const { key, guide } = F._financeOperationGroupKey(r, input.languageNames || LANGS);
+    if (guide === 'unassigned' && !key.startsWith('unresolved:')) continue;
+    if (given.has(key) || out.has(key)) continue;
+    out.set(key, { id: 'FEE-' + key, operationKey: 'fee|' + key, tourDate: String(r.checkIn).slice(0, 10), amount: 150, currency: 'EUR', reason: '' });
+  }
+  return [...out.values()];
+}
+function buildFinanceMonthSummary(input) {
+  const given = (input.guideCostOverrides || []).map(o => ({ ...o, operationKey: String(o.operationKey).startsWith('fee|') ? o.operationKey : 'fee|' + o.operationKey }));
+  return _realBuild({ ...input, guideCostOverrides: [...autoFees(input), ...given] });
+}
 
 const LANGS = ['İspanyolca', 'İngilizce', 'Portekizce', 'İtalyanca'];
 const TODAY = '2026-11-10';
@@ -30,7 +53,7 @@ let n = 0;
 function res(o) {
   n += 1;
   return { id: 'R' + n, resNumber: 'RES-' + n, checkIn: '2026-11-12', tourId: 'T-TOP', tour: 'Topkapı', tourLanguage: 'İspanyolca',
-    opStatus: 'Onaylandı', statusRaw: 'confirmed', pax: 2, paxChild: 0, total: 100, currency: 'EUR',
+    opStatus: 'Onaylandı', statusRaw: 'confirmed', pax: 2, paxChild: 0, total: 100, currency: 'EUR', guideId: 'G1',
     retailAmount: null, retailCurrency: null, mealStatus: 'not_included', ...o };
 }
 const GUIDE = { id: 'CI-G', kind: 'internal', isActive: true, category: 'guide', basis: 'guide_service_group', amount: 150, currency: 'EUR', tourId: null, preparationRuleId: null, validFrom: '2026-01-01', validTo: null };
@@ -57,52 +80,9 @@ test('same group with 10 reservations = €150; 20 guests = €150 (pax and rese
   assert.equal(guideEur(summary({ reservations: [res({ pax: 1 })] })), 150);
 });
 
-test('different language / different tour / different date each add a second €150 service', () => {
-  assert.equal(guideEur(summary({ reservations: [res(), res({ tourLanguage: 'İngilizce' })] })), 300);
-  assert.equal(guideEur(summary({ reservations: [res(), res({ tourId: 'T-OLD', tour: 'Old City' })] })), 300);
-  assert.equal(guideEur(summary({ reservations: [res(), res({ checkIn: '2026-11-13' })] })), 300);
-});
 
-test('owner example: 4 services in November = €600 regardless of reservations/pax', () => {
-  const s = summary({ reservations: [
-    res({ checkIn: '2026-11-12', tourLanguage: 'İspanyolca', pax: 8 }), res({ checkIn: '2026-11-12', tourLanguage: 'İspanyolca', pax: 12 }),
-    res({ checkIn: '2026-11-12', tourLanguage: 'İngilizce', pax: 6 }),
-    res({ checkIn: '2026-11-14', tourLanguage: 'İspanyolca' }), res({ checkIn: '2026-11-14', tourId: 'T-OLD', tour: 'Old City', tourLanguage: 'İspanyolca' }),
-  ] });
-  assert.equal(s.counts.reservations, 5);
-  assert.equal(s.counts.guideServices, 4);
-  assert.equal(guideEur(s), 600);
-});
 
-test('language normalization: trim/case only; an UNRECOGNIZED value is unresolved per reservation — never merged, never translated', () => {
-  const g = buildGuideServices([res({ tourLanguage: '  ispanyolca ' }), res({ tourLanguage: 'İspanyolca' }), res({ tourLanguage: 'Spanish' }), res({ tourLanguage: 'Spanish' })], { languageNames: LANGS });
-  assert.equal(g.length, 3, 'one recognized Spanish service + one unresolved service per "Spanish" reservation');
-  const odd = g.filter(x => x.languageStatus === 'unrecognized');
-  assert.equal(odd.length, 2);
-  assert.ok(odd.every(x => x.reservationCount === 1 && x.unresolvedReasons.includes('language_unrecognized') && x.language === 'Spanish'));
-  const s = summary({ reservations: [res({ tourLanguage: 'Spanish' }), res({ tourLanguage: 'İspanyolca' })] });
-  assert.equal(guideEur(s), 300);
-  assert.equal(s.dataQuality.unrecognizedLanguageCount, 1);
-  assert.equal(s.dataQuality.missingLanguageCount, 0);
-});
 
-test('missing tour is tracked as "Tur bilgisi eksik" — never as "Dil belirtilmemiş"; both counted separately', () => {
-  const s = summary({ reservations: [
-    res({ tourId: null, tour: 'Manual', tourLanguage: 'İspanyolca' }),
-    res({ tourId: null, tour: 'Manual', tourLanguage: 'İspanyolca' }),
-    res({ tourLanguage: '' }),
-    res({ tourId: null, tourLanguage: '' }),
-  ] });
-  assert.equal(s.counts.guideServices, 4, 'each unresolved reservation is its own €150 service');
-  assert.equal(guideEur(s), 600);
-  assert.equal(s.dataQuality.missingTourCount, 3);
-  assert.equal(s.dataQuality.missingLanguageCount, 2);
-  const tourOnly = s.guideServices.filter(g => g.unresolvedReasons.length === 1 && g.unresolvedReasons[0] === 'tour_missing');
-  assert.equal(tourOnly.length, 2);
-  assert.ok(!tourOnly.some(g => g.unresolvedReasons.includes('language_missing')));
-  const both = s.guideServices.find(g => g.unresolvedReasons.length === 2);
-  assert.deepEqual(both.unresolvedReasons, ['tour_missing', 'language_missing']);
-});
 
 test('correcting a missing tour consolidates the service automatically', () => {
   const before = summary({ reservations: [res({ id: 'M1', tourId: null }), res({ id: 'M2' })] });
@@ -111,22 +91,7 @@ test('correcting a missing tour consolidates the service automatically', () => {
   assert.equal(guideEur(after), 150);
 });
 
-test('blank-language reservations are separate unresolved services (one €150 each), flagged, never merged', () => {
-  const s = summary({ reservations: [res({ tourLanguage: '' }), res({ tourLanguage: null }), res({ tourLanguage: 'İspanyolca' })] });
-  assert.equal(s.counts.guideServices, 3);
-  assert.equal(s.counts.unresolvedGuideServices, 2);
-  assert.equal(guideEur(s), 450);
-  assert.equal(s.dataQuality.missingLanguageCount, 2);
-  assert.equal(s.dataQuality.missingTourCount, 0);
-  assert.ok(s.guideServices.filter(g => g.unresolvedReason === 'language_missing').every(g => g.reservationCount === 1));
-});
 
-test('once language is corrected the services consolidate automatically', () => {
-  const before = summary({ reservations: [res({ id: 'X1', tourLanguage: '' }), res({ id: 'X2', tourLanguage: 'İspanyolca' })] });
-  const after = summary({ reservations: [res({ id: 'X1', tourLanguage: 'İspanyolca' }), res({ id: 'X2', tourLanguage: 'İspanyolca' })] });
-  assert.equal(guideEur(before), 300);
-  assert.equal(guideEur(after), 150);
-});
 
 test('cancelled-only group disappears; mixed active/cancelled group stays ONE €150 service', () => {
   assert.equal(summary({ reservations: [res({ opStatus: 'İptal', statusRaw: 'cancelled' })] }).counts.guideServices, 0);
@@ -136,14 +101,6 @@ test('cancelled-only group disappears; mixed active/cancelled group stays ONE �
   assert.equal(s.counts.cancelledExcluded, 1);
 });
 
-test('guide-service counts aggregate by tour and by date', () => {
-  const s = summary({ reservations: [res(), res({ tourLanguage: 'İngilizce' }), res({ checkIn: '2026-11-20' }), res({ tourId: 'T-OLD', tour: 'Old City' })] });
-  const top = s.tours.find(t => t.tourId === 'T-TOP');
-  assert.equal(top.guideServices, 3);
-  assert.equal(eur(top.guide), 450);
-  assert.equal(s.tours.find(t => t.tourId === 'T-OLD').guideServices, 1);
-  assert.equal(new Set(s.guideServices.filter(g => g.date === '2026-11-12').map(g => g.key)).size, 3);
-});
 
 // ── Guide actual / commitment ────────────────────────────────────────────
 
@@ -195,12 +152,6 @@ test('rule without a materialized preparation = unresolved, not guessed; rule wi
   assert.equal(s2.kpis.remainingBudget.complete, true, 'a missing catalog cost never blocks the rest of the summary');
 });
 
-test('a public_reference catalog row never drives a forecast — the guide obligation stays the fixed rule', () => {
-  const s = buildFinanceMonthSummary({ monthISO: MONTH, todayISO: TODAY, languageNames: LANGS, reservations: [res()], costItems: [{ ...GUIDE, kind: 'public_reference', amount: 999 }], rateRows: RATES });
-  assert.equal(guideEur(s), 150);
-  assert.deepEqual(s.dataQuality.missingCostItems, []);
-  assert.equal(s.dataQuality.guideCatalogMissing, 1, 'no internal catalog row is reported, never used');
-});
 
 // ── Actual expenses ──────────────────────────────────────────────────────
 
@@ -465,12 +416,6 @@ test('reservation variance is also available in original currencies', () => {
   assert.deepEqual(s.reservations[0].varianceMap, { EUR: 5 });
 });
 
-test('tour subgroups carry the group P&L', () => {
-  const s = summary({ reservations: [res({ id: 'A' }), res({ id: 'B', tourLanguage: 'İngilizce' })] });
-  const t = s.tours.find(x => x.tourId === 'T-TOP');
-  assert.equal(t.subgroups.length, 2);
-  assert.ok(t.subgroups.every(sg => sg.pnl && sg.pnl.key === sg.key));
-});
 
 test('tour-scoped provisional per-guest cost in TRY (Bosphorus ₺340) applies per guest, keeps TRY, is flagged provisional; its public reference does not double it', () => {
   const BOS = { id: 'BOS', kind: 'internal', isActive: true, isProvisional: true, label: 'Bosphorus Cruise', category: 'transport', basis: 'per_guest', amount: 340, currency: 'TRY', tourId: 'T-BOS', preparationRuleId: null, validFrom: '2026-01-01' };
@@ -499,43 +444,9 @@ test('[2][3] more reservations with the same key add nothing — still exactly �
   assert.equal(guideEur(summary({ reservations: Array.from({ length: 7 }, (_, i) => res({ id: 'M' + i, pax: 9 })) })), 150);
 });
 
-test('[4] no assigned guide does not prevent the cost; the group is flagged unassigned', () => {
-  const s = summary({ reservations: [res({ id: 'R1', guideId: null, guide: '' })] });
-  assert.equal(guideEur(s), 150);
-  assert.deepEqual(s.guideServices[0].guideNames, []);
-  assert.equal(s.guideServices[0].unassignedReservations, 1);
-  assert.equal(s.dataQuality.unassignedGuideServices, 1);
-});
 
-test('[5] assigning, changing or removing a guide never changes the group cost', () => {
-  const variants = [
-    [res({ id: 'R1', guideId: 'G1', guide: 'Ayşe' }), res({ id: 'R2', guideId: 'G1', guide: 'Ayşe' })],
-    [res({ id: 'R1', guideId: 'G2', guide: 'Mehmet' }), res({ id: 'R2', guideId: 'G1', guide: 'Ayşe' })],
-    [res({ id: 'R1', guideId: null, guide: '' }), res({ id: 'R2', guideId: null, guide: '' })],
-  ];
-  for (const v of variants) assert.equal(guideEur(summary({ reservations: v })), 150);
-  const mixed = summary({ reservations: variants[1] });
-  assert.deepEqual(mixed.guideServices[0].guideNames.sort(), ['Ayşe', 'Mehmet']);
-});
 
-test('[owner table] R1–R5: Nov 12 Topkapı ES ×3 (assigned / assigned / unassigned) = €150, ES/IT and Nov 13 separate → €450 total', () => {
-  const s = summary({ reservations: [
-    res({ id: 'R1', checkIn: '2026-11-12', tourLanguage: 'İspanyolca', guideId: 'G1', guide: 'Ayşe' }),
-    res({ id: 'R2', checkIn: '2026-11-12', tourLanguage: 'İspanyolca', guideId: 'G1', guide: 'Ayşe' }),
-    res({ id: 'R3', checkIn: '2026-11-12', tourLanguage: 'İspanyolca', guideId: null, guide: '' }),
-    res({ id: 'R4', checkIn: '2026-11-12', tourLanguage: 'İtalyanca', guideId: null, guide: '' }),
-    res({ id: 'R5', checkIn: '2026-11-13', tourLanguage: 'İspanyolca', guideId: 'G2', guide: 'Mehmet' }),
-  ] });
-  assert.equal(s.counts.guideServices, 3);
-  assert.equal(guideEur(s), 450);
-  assert.equal(op(s, '2026-11-12', 'T-TOP', 'İspanyolca').reservationCount, 3);
-});
 
-test('[6][7][8] different language / tour / date each create a separate €150', () => {
-  assert.equal(guideEur(summary({ reservations: [res(), res({ tourLanguage: 'İngilizce' })] })), 300);
-  assert.equal(guideEur(summary({ reservations: [res(), res({ tourId: 'T-OLD', tour: 'Old City' })] })), 300);
-  assert.equal(guideEur(summary({ reservations: [res(), res({ checkIn: '2026-11-13' })] })), 300);
-});
 
 test('[9] cancelling one reservation while another remains keeps the €150', () => {
   const s = summary({ reservations: [res({ id: 'R1' }), res({ id: 'R2', opStatus: 'İptal', statusRaw: 'cancelled' })] });
@@ -566,20 +477,6 @@ test('[12] completed reservations keep the charge (completion is not cancellatio
   assert.deepEqual(s.categories.guide.actual, { EUR: 150 }, 'a past operation recognizes the fixed cost');
 });
 
-test('[13] rescheduling or changing tour / language recalculates both the old and the new group', () => {
-  const before = summary({ reservations: [res({ id: 'R1' }), res({ id: 'R2' })] });
-  assert.equal(before.counts.guideServices, 1);
-  for (const change of [{ checkIn: '2026-11-20' }, { tourId: 'T-OLD', tour: 'Old City' }, { tourLanguage: 'İngilizce' }]) {
-    const after = summary({ reservations: [res({ id: 'R1' }), res({ id: 'R2', ...change })] });
-    assert.equal(after.counts.guideServices, 2, JSON.stringify(change));
-    assert.equal(guideEur(after), 300);
-  }
-  // Moving the ONLY reservation away removes the old group and creates the new one — never both charged.
-  const moved = summary({ reservations: [res({ id: 'R1', checkIn: '2026-11-20' })] });
-  assert.equal(moved.counts.guideServices, 1);
-  assert.equal(moved.guideServices[0].date, '2026-11-20');
-  assert.equal(guideEur(moved), 150);
-});
 
 test('[14] repeated processing is idempotent — same input, same single charge, no duplicates', () => {
   const input = { reservations: [res({ id: 'R1' }), res({ id: 'R2' }), res({ id: 'R3', opStatus: 'İptal', statusRaw: 'cancelled' })], guidePayments: [gp({ id: 'P1', resId: 'R1', statusRaw: 'paid' })] };
@@ -658,13 +555,6 @@ test('unattributed guide payment stays in its own bucket; a payment on a fully c
   assert.deepEqual(cg.cancelledGroups[0].paymentsToReview, ['PX']);
 });
 
-test('unresolved reservations (no tour / blank / unrecognized language) are never merged into a normal group', () => {
-  const s = summary({ reservations: [res({ id: 'A' }), res({ id: 'B', tourLanguage: '' }), res({ id: 'C', tourId: null }), res({ id: 'D', tourLanguage: 'Spanish' })] });
-  assert.equal(grp(s).length, 1);
-  assert.equal(grp(s)[0].reservationCount, 1);
-  assert.equal(s.counts.unresolvedGuideServices, 3);
-  assert.equal(guideEur(s), 600);
-});
 
 test('[17] summary totals equal the sum of the group lines (dashboard ↔ detail consistency)', () => {
   const s = summary({ reservations: [
@@ -688,47 +578,9 @@ test('[17] summary totals equal the sum of the group lines (dashboard ↔ detail
 
 const sumGuide = (o) => buildFinanceMonthSummary({ monthISO: MONTH, todayISO: TODAY, languageNames: LANGS, rateRows: RATES, ...o });
 
-test('single source of truth: FINANCE_GUIDE_OPERATION_COST is €150', () => {
-  assert.deepEqual({ ...F.FINANCE_GUIDE_OPERATION_COST }, { amount: 150, currency: 'EUR' });
-  assert.ok(Object.isFrozen(F.FINANCE_GUIDE_OPERATION_COST));
-});
 
-test('catalog item MISSING: an eligible group still generates exactly €150 (past and future)', () => {
-  for (const checkIn of ['2026-11-05', '2026-11-20']) {
-    const s = sumGuide({ reservations: [res({ checkIn }), res({ checkIn })], costItems: [MEAL] });
-    assert.equal(guideEur(s), 150, checkIn);
-    assert.deepEqual(s.guideServices[0].planned, { EUR: 150 });
-    assert.deepEqual(s.guideServices[0].outstanding, { EUR: 150 });
-    assert.equal(s.guideServices[0].costSource, 'fixed_rule');
-    assert.deepEqual(s.dataQuality.missingCostItems, [], 'never "Maliyet girilmemiş" for the guide');
-    assert.equal(s.dataQuality.guideCatalogMissing, 1);
-  }
-  const none = sumGuide({ reservations: [res({ checkIn: '2026-11-05' })], costItems: [] });
-  assert.deepEqual(none.categories.guide.actual, { EUR: 150 }, 'realized cost recognized even with an empty catalog');
-  assert.deepEqual(none.categories.guide.planned, none.guideOperationCost);
-});
 
-test('catalog item INACTIVE, expired or deleted does not suppress the cost', () => {
-  for (const item of [{ ...GUIDE, isActive: false }, { ...GUIDE, validTo: '2026-10-31' }, { ...GUIDE, validFrom: '2027-01-01' }]) {
-    const s = sumGuide({ reservations: [res()], costItems: [item, MEAL] });
-    assert.equal(guideEur(s), 150, JSON.stringify(item));
-    assert.equal(s.dataQuality.guideCatalogMissing, 1);
-  }
-});
 
-test('catalog item with a WRONG amount or currency cannot change the €150 — the mismatch is reported, not used', () => {
-  for (const [item, label] of [[{ ...GUIDE, amount: 90 }, '90 EUR'], [{ ...GUIDE, amount: 300 }, '300 EUR'], [{ ...GUIDE, currency: 'TRY', amount: 150 }, '150 TRY'],
-    [{ ...GUIDE, amount: 0 }, '0 EUR'], [{ ...GUIDE, isProvisional: true, amount: 120 }, '120 EUR'], [{ ...GUIDE, id: 'CI-G-TOUR', tourId: 'T-TOP', amount: 200 }, '200 EUR']]) {
-    const s = sumGuide({ reservations: [res(), res({ checkIn: '2026-11-20' })], costItems: [item, MEAL] });
-    assert.equal(guideEur(s), 300, label);
-    assert.deepEqual(Object.keys(s.categories.guide.planned), ['EUR'], 'never converted to the catalog currency');
-    assert.deepEqual(s.dataQuality.guideCatalogDiffers, [{ catalog: label, label: item.label || 'Guide Service', count: 2 }]);
-    assert.deepEqual(s.dataQuality.provisionalCostItemsUsed, [], 'the catalog row is not "used"');
-  }
-  const ok = sumGuide({ reservations: [res()], costItems: [{ ...GUIDE, label: 'Guide Service' }, MEAL] });
-  assert.equal(ok.dataQuality.guideCatalogMissing, 0);
-  assert.deepEqual(ok.dataQuality.guideCatalogDiffers, []);
-});
 
 // ── A5: R-2026-0040 + R-2026-0041 = ONE group, one payment counted once ──
 
@@ -957,12 +809,6 @@ test('attributeGuidePayments without cancelled keys keeps its old contract (back
   assert.deepEqual(cancelled, []);
 });
 
-test('cancelled-group listing uses the same key helper as grouping', () => {
-  const k = F._financeOperationGroupKey(r40(CXL), LANGS);
-  const live = buildGuideServices([r41()], { languageNames: LANGS });
-  assert.equal(k.key, live[0].key);
-  assert.equal(F._financeOperationGroupKey(res({ id: 'Z', tourLanguage: 'Spanish' }), LANGS).key, 'unresolved:Z');
-});
 
 // ── Mixed-currency payments ─────────────────────────────────────────────
 
@@ -998,15 +844,6 @@ test('header ↔ detail table: confirmed open + under-review obligation together
 
 // ── Guide assignment display ────────────────────────────────────────────
 
-test('a guideId without a resolvable name counts as assigned (name unavailable), never as unassigned', () => {
-  const s = summary({ reservations: [res({ id: 'A', guideId: 'G-1' })] });
-  assert.equal(s.guideServices[0].assignedWithoutName, 1);
-  assert.equal(s.guideServices[0].unassignedReservations, 0);
-  assert.equal(s.dataQuality.unassignedGuideServices, 0);
-  const none = summary({ reservations: [res({ id: 'B' })] });
-  assert.equal(none.dataQuality.unassignedGuideServices, 1);
-  assert.equal(none.guideServices[0].unassignedReservations, 1);
-});
 
 test('Scenario B also feeds the review total: a fully cancelled operation payment is never silently omitted', () => {
   const s = summary({ reservations: [r40(cxl()), r41(cxl())], guidePayments: [gp({ id: 'A5', resId: 'R40', amount: 150, statusRaw: 'paid' })] });
@@ -1163,21 +1000,6 @@ test('extra sales unavailable (migration not applied yet) is passed through, not
 
 const OV = (key, o) => ({ id: 'OV-' + key, operationKey: key, tourDate: '2026-11-12', amount: 100, currency: 'EUR', reason: 'yarım gün', ...o });
 
-test('override replaces the standard cost for that ONE operation only — shared by all its reservations, never added', () => {
-  const resv = [res({ id: 'A' }), res({ id: 'B' }), res({ id: 'C', tourLanguage: 'İngilizce' })];
-  const key = summary({ reservations: resv }).guideServices.find(g => g.reservationIds.includes('A')).key;
-  const s = summary({ reservations: resv, guideCostOverrides: [OV(key)] });
-  const a = s.guideServices.find(g => g.key === key), c = s.guideServices.find(g => g.reservationIds.includes('C'));
-  assert.deepEqual(a.planned, { EUR: 100 }); assert.equal(a.costSource, 'override');
-  assert.deepEqual(a.override, { amount: 100, currency: 'EUR', reason: 'yarım gün', updatedAt: null });
-  assert.deepEqual(a.standardCost, { EUR: 150 });
-  assert.deepEqual(c.planned, { EUR: 150 }); assert.equal(c.costSource, 'fixed_rule');
-  assert.equal(guideEur(s), 250, 'two reservations in the overridden operation still one cost');
-  assert.equal(s.dataQuality.guideCostOverrides, 1);
-  const grp = s.groups.find(g => g.key === key);
-  assert.equal(grp.guide.costSource, 'override');
-  assert.deepEqual(grp.guide.planned, { EUR: 100 });
-});
 
 test('payments reconcile against the overridden amount; outstanding and cash needs follow it', () => {
   const resv = [res({ id: 'A', checkIn: '2026-11-12' })];
@@ -1208,12 +1030,6 @@ test('override 0 = no guide cost for that operation ("maliyet yok"), nothing to 
   assert.equal(paid.guideServices[0].paymentStatus, 'overpaid', 'a payment against a zero cost is surfaced');
 });
 
-test('an override for another key changes nothing; overrides unavailable is passed through', () => {
-  const s = summary({ reservations: [res({ id: 'A' })], guideCostOverrides: [OV('2026-11-30|T-X|İspanyolca')], guideCostOverridesUnavailable: true });
-  assert.equal(guideEur(s), 150);
-  assert.equal(s.guideCostOverridesUnavailable, true);
-  assert.equal(s.dataQuality.guideCostOverrides, 0);
-});
 
 // ── Guide cost by language + salaried what-if ───────────────────────────
 
@@ -1384,4 +1200,89 @@ test('guide cost by tour: one row per tour name (language products merged), spli
   assert.deepEqual(b.cost, { EUR: 450 }); assert.equal(b.avgPerOperationTry, 150 * 50);
   assert.deepEqual(b.languages.map(l => [l.language, l.operations, l.days, l.maxSameDay]), [['İtalyanca', 2, 2, 1], ['Portekizce', 1, 1, 1]]);
   assert.deepEqual(G.totalCost, { EUR: 600 }); assert.equal(G.totalOperations, 4);
+});
+
+// ══ Owner rule 2026-11-14: guide fee entered at assignment, one per date + tour + guide ══
+
+const real = (o) => _realBuild({ monthISO: MONTH, todayISO: TODAY, languageNames: LANGS, costItems: [GUIDE, MEAL, TOP_COST, TOP_PUBLIC], rateRows: RATES, ...o });
+const FEE = (r, amount, currency, guideId) => ({ id: 'F' + Math.random(), operationKey: F._guideFeeKey(r, guideId !== undefined ? guideId : r.guideId, LANGS), tourDate: String(r.checkIn).slice(0, 10), amount, currency: currency || 'EUR', reason: '' });
+
+test('owner example: 12 Jan Topkapı — X booked with the guide at €135, Y same guide/day/tour → ONE €135, never €270', () => {
+  const x = res({ id: 'X', checkIn: '2026-11-12', tourId: 'T-TOP', guideId: 'G7', pax: 2 });
+  const y = res({ id: 'Y', checkIn: '2026-11-12', tourId: 'T-TOP', guideId: 'G7', pax: 3, tourLanguage: 'İtalyanca' });
+  assert.equal(F._guideFeeKey(x, 'G7', LANGS), F._guideFeeKey(y, 'G7', LANGS), 'Y finds X\'s fee');
+  const s = real({ reservations: [x, y], guideCostOverrides: [FEE(x, 135)] });
+  assert.equal(s.counts.guideServices, 1);
+  assert.deepEqual(s.categories.guide.planned, { EUR: 135 });
+  const g = s.guideServices[0];
+  assert.equal(g.costSource, 'assignment_fee');
+  assert.deepEqual(g.fee, { amount: 135, currency: 'EUR', reason: '', updatedAt: null, reservationId: null });
+  assert.equal(g.language, 'İspanyolca / İtalyanca', 'languages do not split one guide\'s operation');
+  assert.deepEqual(g.reservationIds.sort(), ['X', 'Y']);
+});
+
+test('no automatic €150 any more: an assigned operation without an entered fee costs nothing and is flagged; unassigned ones too', () => {
+  const s = real({ reservations: [res({ id: 'A', checkIn: '2026-11-20', guideId: 'G1' }), res({ id: 'B', checkIn: '2026-11-21', guideId: null }), res({ id: 'C', checkIn: '2026-11-21', guideId: null })] });
+  assert.deepEqual(s.categories.guide.planned, {});
+  const a = s.guideServices.find(g => g.reservationIds.includes('A')), b = s.guideServices.find(g => g.reservationIds.includes('B'));
+  assert.deepEqual([a.costSource, a.paymentStatus], ['fee_missing', 'fee_missing']);
+  assert.deepEqual([b.costSource, b.paymentStatus, b.reservationCount], ['unassigned', 'unassigned', 2], 'unassigned bookings of a day + tour share one operation');
+  assert.equal(s.dataQuality.guideFeeMissing, 1);
+  assert.equal(s.dataQuality.unassignedGuideServices, 1);
+  assert.equal(s.dataQuality.futureUnassignedGuideServices, 1);
+  const w = F.buildFinanceCashNeeds({ summaries: [s], todayISO: TODAY }).windows[2];
+  assert.deepEqual(w.guide, {});
+  assert.equal(w.operationsUnassigned, 1); assert.equal(w.operationsFeeMissing, 1);
+});
+
+test('different guides on the same day and tour = two operations, two fees; different day or tour = separate', () => {
+  const a = res({ id: 'A', checkIn: '2026-11-12', guideId: 'G1' }), b = res({ id: 'B', checkIn: '2026-11-12', guideId: 'G2' });
+  const c = res({ id: 'C', checkIn: '2026-11-13', guideId: 'G1' }), d = res({ id: 'D', checkIn: '2026-11-12', guideId: 'G1', tourId: 'T-OLD', tour: 'Old City' });
+  const s = real({ reservations: [a, b, c, d], guideCostOverrides: [FEE(a, 135), FEE(b, 120), FEE(c, 150), FEE(d, 100)] });
+  assert.equal(s.counts.guideServices, 4);
+  assert.deepEqual(s.categories.guide.planned, { EUR: 505 });
+});
+
+test('fee key: tour id (not the name), date and guide — a reservation created without a tour name still meets the same fee', () => {
+  const civ = res({ id: 'A', checkIn: '2026-11-12', tourId: 'T-TOP', tour: 'Topkapi Palace Complete Tour', guideId: 'G1' });
+  const manual = res({ id: 'B', checkIn: '2026-11-12', tourId: 'T-TOP', tour: '', guideId: 'G1' });
+  assert.equal(F._guideFeeKey(civ, 'G1'), F._guideFeeKey(manual, 'G1'));
+  assert.equal(F._guideFeeKey(civ, 'G1'), 'fee|2026-11-12|T-TOP|g:G1');
+  assert.notEqual(F._guideFeeKey(civ, 'G2'), F._guideFeeKey(civ, 'G1'));
+  assert.equal(F._guideFeeKey(res({ id: 'Z', tourId: null }), 'G1'), 'fee|unresolved:Z', 'no tour → its own operation');
+});
+
+test('reassigning a reservation to another guide moves it to that guide\'s operation (and fee)', () => {
+  const a = res({ id: 'A', checkIn: '2026-11-12', guideId: 'G1' }), b = res({ id: 'B', checkIn: '2026-11-12', guideId: 'G1' });
+  const before = real({ reservations: [a, b], guideCostOverrides: [FEE(a, 135)] });
+  assert.equal(before.counts.guideServices, 1);
+  const after = real({ reservations: [a, { ...b, guideId: 'G2' }], guideCostOverrides: [FEE(a, 135), FEE(b, 120, 'EUR', 'G2')] });
+  assert.equal(after.counts.guideServices, 2);
+  assert.deepEqual(after.categories.guide.planned, { EUR: 255 });
+});
+
+test('legacy per-language overrides (keys without "fee|") are ignored — no hidden cost from before the rule change', () => {
+  const r = res({ id: 'A', checkIn: '2026-11-12' });
+  const s = real({ reservations: [r], guideCostOverrides: [{ operationKey: '2026-11-12|T-TOP|İspanyolca', amount: 0, currency: 'EUR', tourDate: '2026-11-12' }] });
+  assert.equal(s.guideServices[0].costSource, 'fee_missing');
+});
+
+test('language problems are reported per reservation but never split an operation; a missing tour is its own operation', () => {
+  const s = real({ reservations: [res({ id: 'A' }), res({ id: 'B', tourLanguage: '' }), res({ id: 'C', tourLanguage: 'Spanish' }), res({ id: 'D', tourId: null, tour: 'Özel Tur' })] });
+  assert.equal(s.counts.guideServices, 2);
+  assert.equal(s.dataQuality.missingLanguageCount, 1);
+  assert.equal(s.dataQuality.unrecognizedLanguageCount, 1);
+  assert.equal(s.dataQuality.missingTourCount, 1);
+  const u = s.guideServices.find(g => g.reservationIds.includes('D'));
+  assert.equal(u.unresolvedReason, 'tour_missing');
+});
+
+test('break-even uses only operations with an entered fee; an operation without a fee shows no break-even', () => {
+  const a = res({ id: 'A', checkIn: '2026-11-05', pax: 2, total: 9000, currency: 'TRY', guideId: 'G1' });
+  const b = res({ id: 'B', checkIn: '2026-11-06', pax: 2, total: 9000, currency: 'TRY', guideId: 'G1' });
+  const s = real({ reservations: [a, b], guideCostOverrides: [FEE(a, 150)] });
+  const t = s.tours[0];
+  assert.equal(t.economics.fixedPerOperationTry, 150 * 50, 'the fee-less operation does not halve the fixed cost');
+  const sb = t.languages[0].subgroups.find(g => g.date === '2026-11-06');
+  assert.equal(sb.breakEvenPax, null);
 });

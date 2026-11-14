@@ -178,8 +178,15 @@ test('7. Quick Actions opens the EXACT SAME AssignGuideModal instance/state as O
   // And there is only ONE <AssignGuideModal> render site in the whole file
   // (Operasyon Bilgileri's), which is what showAssignGuide/onAssignGuide
   // both ultimately control — proving there is no second modal instance.
-  const modalRenders = (SOURCE.match(/<AssignGuideModal /g) || []).length;
-  assert.equal(modalRenders, 1, 'there must be exactly one <AssignGuideModal> render site — Quick Actions must reuse it, never render its own');
+  // One render site inside Reservation Detail (shared by Quick Actions and
+  // Operasyon Bilgileri); the list's inline popover opens its own instance
+  // of the SAME component so the guide fee can be entered there too.
+  const detail = SOURCE.slice(SOURCE.indexOf('function ReservationDetailPage'), SOURCE.indexOf('\n\nconst AuthContext'));
+  assert.equal((detail.match(/<AssignGuideModal /g) || []).length, 1, 'Quick Actions must reuse the detail page\'s one modal, never render its own');
+  const cellStart = SOURCE.indexOf('function GuideAssignCell(');
+  const cell = SOURCE.slice(cellStart, SOURCE.indexOf('\nfunction ', cellStart + 10));
+  assert.equal((cell.match(/<AssignGuideModal /g) || []).length, 1);
+  assert.equal((SOURCE.match(/<AssignGuideModal /g) || []).length, 2);
 });
 
 test('7. because both entry points render the same r (from the same useRepo("reservation","getById",resId) call), a successful assignment is reflected in Operasyon Bilgileri, Quick Actions\' own label, and the header alike without any separate local state to keep in sync', () => {
