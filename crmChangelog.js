@@ -101,6 +101,20 @@ const CRM_CHANGELOG_CATEGORIES = [
 // Newest first. See the release convention above before editing.
 const CRM_CHANGELOG = [
   {
+    version: '13.18',
+    date: '2026-11-14',
+    title: 'Rehber Ücreti Atamada Giriliyor',
+    summary: 'Rehber maliyeti artık otomatik hesaplanmıyor: rehber atanırken rehbere ödenecek ücret giriliyor ve aynı gün, aynı tur ve aynı rehber için tek ücret sayılıyor.',
+    categories: ['Operasyon', 'İyileştirme'],
+    highlights: [
+      'Rehber atama ekranında rehbere ödenecek ücret giriliyor; tüm finans hesapları bu tutarı kullanıyor.',
+      'Aynı rehber aynı gün aynı tura başka bir rezervasyon için atanınca ilk girilen ücret silik ve değiştirilemez görünüyor; ikinci ücret oluşmuyor.',
+      'Rehber atanmamış ya da ücreti girilmemiş operasyonlar maliyete sayılmıyor ve uyarıyla gösteriliyor.',
+      'Eksik ücret rezervasyonun Finans kartından girilebiliyor; Yönetici ve Operasyon yanlış girilen ücreti onayla düzeltebiliyor.',
+    ],
+    author: 'Berk',
+  },
+  {
     version: '13.17',
     date: '2026-11-12',
     title: 'Ana Sayfada Sonraki Aylar',
@@ -262,19 +276,6 @@ const CRM_CHANGELOG = [
       'Çok sayıda aday içeren araştırmalar için çıktı kapasitesi artırıldı',
       'Araştırma başarısız olduğunda kullanıcıya teknik detaylar yerine anlaşılır bir Türkçe uyarı gösteriliyor',
       'Uygunluk, kanıt ve kaynak kuralları değiştirilmedi',
-    ],
-    author: 'Berk',
-  },
-  {
-    version: '12.43',
-    date: '2026-10-20',
-    title: 'Pazar Araştırmasında Zaman Aşımı Sorunu Giderildi',
-    summary: 'Acenteler modülündeki pazar araştırması, çok adaylı veya kapsamlı aramalarda bazen zaman aşımına uğrayıp hata veriyordu. Bu sorun giderildi; araştırma artık daha uzun süren aramalarda da güvenilir şekilde tamamlanıyor.',
-    categories: ['Altyapı', 'İyileştirme'],
-    highlights: [
-      'Pazar araştırması artık daha uzun süren veya çok adaylı aramalarda zaman aşımına uğramıyor',
-      'Zaman aşımı durumunda kullanıcıya anlaşılır bir Türkçe bilgi mesajı gösteriliyor',
-      'Araştırma kalitesi, kanıt zorunluluğu ve uygunluk değerlendirmesi hiçbir şekilde değişmedi',
     ],
     author: 'Berk',
   },
