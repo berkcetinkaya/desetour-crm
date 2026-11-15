@@ -101,6 +101,19 @@ const CRM_CHANGELOG_CATEGORIES = [
 // Newest first. See the release convention above before editing.
 const CRM_CHANGELOG = [
   {
+    version: '13.19',
+    date: '2026-11-15',
+    title: 'Aylık Harcamalar ve PDF Aylık Rapor',
+    summary: 'Finans\'a ay seçilerek elle girilen aylık harcamalar (Meta reklam, Higgsfield gibi) eklendi; Raporlar sayfasından seçilen ayın detaylı raporu tek tıkla PDF olarak indiriliyor.',
+    categories: ['Yeni Özellik', 'Operasyon'],
+    highlights: [
+      'Finans → Aylık Harcamalar: ay seçip harcama adı ve tutar yazarak (ör. Ekim · Meta Reklam · ₺10.000) istediğiniz aya gider ekleyebiliyorsunuz; harcamalar o ayın kârından düşülüyor.',
+      'Raporlar → Aylık Detaylı Rapor: tur ve rezervasyon sayıları, en çok satan tur, tur ve dil bazında katılım, rehberler ve hakedişleri, gelir–gider–kâr ve aylık harcamalar grafiklerle PDF\'te.',
+      'Raporun son bölümü CRM\'de unutulan kayıtları (rehber atanmamış tur, girilmemiş ücret, belirsiz yemek durumu…) raporu nasıl etkilediği ve ne yapılması gerektiğiyle listeliyor.',
+    ],
+    author: 'Berk',
+  },
+  {
     version: '13.18',
     date: '2026-11-14',
     title: 'Rehber Ücreti Atamada Giriliyor',
@@ -261,21 +274,6 @@ const CRM_CHANGELOG = [
       'Operasyonel CRM erişimi doğrulanmış güvenli oturum gerektiriyor',
       'Yetkisiz veya devre dışı bırakılmış kullanıcıların doğrudan veri erişimi ek olarak sınırlandırıldı',
       'Kullanıcıların kendi yetki veya aktiflik durumlarını değiştirebilmesine karşı veritabanı koruması eklendi',
-    ],
-    author: 'Berk',
-  },
-  {
-    version: '12.44',
-    date: '2026-10-20',
-    title: 'Acente Araştırma Sonuçları Daha Güvenilir Hale Getirildi',
-    summary: 'Acenteler modülündeki pazar araştırması sonuçlarının işlenmesi güçlendirildi. Uzun ve kapsamlı aramalarda oluşabilen sonuç işleme hataları giderildi; araştırma başarısız olduğunda kullanıcıya anlaşılır bir Türkçe uyarı gösteriliyor.',
-    categories: ['Altyapı', 'İyileştirme'],
-    highlights: [
-      'Uzun ve kapsamlı pazar araştırmalarında oluşabilen sonuç işleme hataları giderildi',
-      'Araştırma sonuçlarının farklı yanıt biçimlerinde güvenilir şekilde okunabilmesi sağlandı',
-      'Çok sayıda aday içeren araştırmalar için çıktı kapasitesi artırıldı',
-      'Araştırma başarısız olduğunda kullanıcıya teknik detaylar yerine anlaşılır bir Türkçe uyarı gösteriliyor',
-      'Uygunluk, kanıt ve kaynak kuralları değiştirilmedi',
     ],
     author: 'Berk',
   },

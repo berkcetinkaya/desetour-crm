@@ -12665,6 +12665,7 @@ const FINANCE_TABS = [
   { key: "butce",       label: "Bütçe & Tahmin" },
   { key: "turlar",      label: "Tur Karlılığı" },
   { key: "ek-satislar", label: "Ek Satışlar" },
+  { key: "harcamalar",  label: "Aylık Harcamalar" },
   { key: "tahsilatlar", label: "Tahsilatlar" },
   { key: "katalog",     label: "Maliyet Kataloğu" },
 ];
@@ -13048,6 +13049,126 @@ function _ExtraSaleForm({ reservationId, defaultDate, onDone }) {
     </form>
   );
 }
+// ── Aylık Harcamalar ─────────────────────────────────────────────────────
+// Business expenses of a month that belong to no reservation (Meta ads,
+// Higgsfield, …), typed in by hand for ANY month — usually at month end.
+// They reduce that month's profit and appear in the monthly report.
+// Totals come from the month summary; nothing is computed here.
+const _MONTHLY_EXPENSE_SUGGESTIONS = ["Meta Reklam", "Higgsfield", "Google Ads", "Yazılım / abonelik", "Ofis", "Muhasebe"];
+const _FIN_MONTHLY_UNAVAILABLE = "Aylık harcama kaydı henüz etkin değil — supabase_migration_finance_monthly_expenses.sql çalıştırılmalı.";
+function _finMonthOptions(centerISO) {
+  const out = [];
+  for (let d = -18; d <= 2; d++) out.push(_financeShiftMonth(centerISO, d));
+  return out.reverse();
+}
+function _MonthlyExpenseForm({ defaultMonth, onDone, onSaved }) {
+  const { mutate, mutating } = useRepoMutation("finance");
+  const today = _istanbulISODate().slice(0, 7);
+  const [f, setF] = useState({ month: defaultMonth || today, label: "", amount: "", currency: "TRY", notes: "" });
+  const input = { width: "100%", boxSizing: "border-box", padding: "8px 10px", borderRadius: T.radiusSm, border: `1px solid ${C.border}`, background: C.white, color: C.text, fontSize: 13, fontFamily: "'Geist',sans-serif" };
+  const lbl = { fontSize: 11.5, color: C.textMuted, fontFamily: "'Geist',sans-serif", display: "flex", flexDirection: "column", gap: 4 };
+  async function save(e) {
+    e.preventDefault();
+    let row;
+    try { row = _financeMonthlyExpensePayload(f); } catch (err) { showToast(err.message); return; }
+    const { error } = await mutate("createMonthlyExpense", f);
+    if (error) { showToast("Hata: " + error); return; }
+    showToast(`${row.label} · ${_fmtFinanceMap({ [row.currency]: row.amount })} — ${_financeMonthLabel(f.month)} harcamalarına eklendi.`);
+    onSaved && onSaved(f.month);
+    setF({ ...f, label: "", amount: "", notes: "" });
+  }
+  return (
+    <form onSubmit={save} data-testid="monthly-expense-form" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10, padding: 14, border: `1px solid ${C.border}`, borderRadius: T.radius, background: C.white }}>
+      <label style={lbl}>Ay
+        <select data-testid="monthly-expense-month" value={f.month} onChange={e => setF({ ...f, month: e.target.value })} style={input}>
+          {_finMonthOptions(today).map(m => <option key={m} value={m}>{_financeMonthLabel(m)}</option>)}
+        </select></label>
+      <label style={{ ...lbl, gridColumn: "span 2" }}>Harcama
+        <input data-testid="monthly-expense-label" list="monthly-expense-suggestions" value={f.label} onChange={e => setF({ ...f, label: e.target.value })} required placeholder="ör. Meta Reklam, Higgsfield" style={input}/>
+        <datalist id="monthly-expense-suggestions">{_MONTHLY_EXPENSE_SUGGESTIONS.map(x => <option key={x} value={x}/>)}</datalist></label>
+      <label style={lbl}>Tutar
+        <input data-testid="monthly-expense-amount" inputMode="decimal" value={f.amount} onChange={e => setF({ ...f, amount: e.target.value })} required placeholder="ör. 10.000" style={input}/></label>
+      <label style={lbl}>Para birimi
+        <select value={f.currency} onChange={e => setF({ ...f, currency: e.target.value })} style={input}>
+          {["TRY", "EUR", "USD", "GBP"].map(c => <option key={c} value={c}>{c}</option>)}
+        </select></label>
+      <div style={{ gridColumn: "1 / -1", display: "flex", gap: 6, flexWrap: "wrap" }}>
+        {_MONTHLY_EXPENSE_SUGGESTIONS.slice(0, 3).map(x => (
+          <button key={x} type="button" onClick={() => setF({ ...f, label: x })} style={{ padding: "4px 10px", borderRadius: T.radiusPill, border: `1px solid ${f.label === x ? C.gold : C.border}`, background: f.label === x ? C.goldPale : C.white, color: C.text, cursor: "pointer", fontSize: 12, fontFamily: "'Geist',sans-serif" }}>{x}</button>
+        ))}
+      </div>
+      <label style={{ ...lbl, gridColumn: "1 / -1" }}>Not (isteğe bağlı)
+        <input value={f.notes} onChange={e => setF({ ...f, notes: e.target.value })} placeholder="ör. Ekim kampanyası, fatura no" style={input}/></label>
+      <div style={{ gridColumn: "1 / -1", display: "flex", justifyContent: "flex-end", gap: 8 }}>
+        <button type="button" onClick={() => onDone && onDone()} style={{ padding: "8px 14px", borderRadius: T.radiusSm, border: `1px solid ${C.border}`, background: "transparent", color: C.textMid, cursor: "pointer", fontSize: 13, fontFamily: "'Geist',sans-serif" }}>Kapat</button>
+        <button type="submit" data-testid="monthly-expense-save" disabled={mutating} style={{ padding: "8px 16px", borderRadius: T.radiusSm, border: "none", background: C.navy, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600, fontFamily: "'Geist',sans-serif" }}>{mutating ? "…" : "Kaydet"}</button>
+      </div>
+    </form>
+  );
+}
+function _FinMonthlyExpenses({ s, onMonth }) {
+  const { mutate, mutating } = useRepoMutation("finance");
+  const [open, setOpen] = useState(false);
+  const mx = s.monthlyExpenses;
+  const th = { textAlign: "left", padding: "9px 12px", fontWeight: 600, color: C.textMuted, whiteSpace: "nowrap" };
+  const td = { padding: "9px 12px", color: C.text, verticalAlign: "top" };
+  async function remove(x) {
+    if (!window.confirm(`${x.label} (${_fmtFinanceMap({ [x.currency]: x.amount })}) silinsin mi?`)) return;
+    const { error } = await mutate("deleteMonthlyExpense", x.id);
+    showToast(error ? "Hata: " + error : "Harcama silindi.");
+  }
+  const has = Object.keys(mx.total).length > 0;
+  const total = _finValue(s.kpis.monthlyExpenses, mx.total);
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+      <_FinGrid min={220}>
+        <_FinKpi testId="kpi-monthly-expenses" label={`${_financeMonthLabel(s.monthISO)} harcamaları`} value={has ? total.value : "₺0"} sub={`${mx.items.length} kayıt${has ? " · " + total.sub : ""}`}/>
+        <_FinKpi testId="kpi-tour-profit" label="Turlardan tahmini kâr" {..._finProfit(s.kpis.projectedProfit, "Kur verisi eksik")}/>
+        <_FinKpi testId="kpi-profit-after-expenses" label="Harcamalar sonrası net kâr" {..._finProfit(s.kpis.profitAfterMonthlyExpenses, "Kur verisi eksik")}/>
+      </_FinGrid>
+      {mx.unavailable ? (
+        <div data-testid="monthly-expenses-unavailable" style={{ padding: "10px 12px", borderRadius: T.radiusSm, background: C.amberBg, border: `1px solid ${C.borderLight}`, fontSize: 12.5, color: C.text, fontFamily: "'Geist',sans-serif" }}>{_FIN_MONTHLY_UNAVAILABLE}</div>
+      ) : (
+        <_FinSection title="Harcama Ekle" right={!open && <button type="button" data-testid="monthly-expense-open" onClick={() => setOpen(true)}
+          style={{ padding: "6px 14px", borderRadius: T.radiusSm, border: "none", background: C.navy, color: "#fff", cursor: "pointer", fontSize: 12.5, fontWeight: 600, fontFamily: "'Geist',sans-serif" }}>+ Harcama Ekle</button>}>
+          {open ? <_MonthlyExpenseForm defaultMonth={s.monthISO} onDone={() => setOpen(false)} onSaved={(m) => { if (m !== s.monthISO && onMonth) onMonth(m); }}/>
+            : <div style={{ fontSize: 12.5, color: C.textMuted, fontFamily: "'Geist',sans-serif" }}>Reklam, yapay zekâ aracı, abonelik gibi bir rezervasyona ait olmayan giderleri ay seçerek girin (ör. Ekim · Meta Reklam · ₺10.000). Seçtiğiniz ayın kârından düşülür ve aylık raporda görünür.</div>}
+        </_FinSection>
+      )}
+      <_FinSection title={`${_financeMonthLabel(s.monthISO)} Harcamaları`}>
+        <div style={{ overflowX: "auto", border: `1px solid ${C.border}`, borderRadius: T.radius, background: C.white }}>
+          <table data-testid="finance-monthly-expenses" style={{ width: "100%", borderCollapse: "collapse", fontFamily: "'Geist',sans-serif", fontSize: 12.5 }}>
+            <thead><tr style={{ background: C.ivory }}>
+              <th style={th}>Harcama</th><th style={th}>Not</th><th style={{ ...th, textAlign: "right" }}>Tutar</th><th style={th}></th>
+            </tr></thead>
+            <tbody>
+              {mx.items.length === 0 && <tr><td colSpan={4} style={{ ...td, color: C.textMuted }}>Bu ay için harcama girilmemiş.</td></tr>}
+              {mx.items.map(x => (
+                <tr key={x.id} style={{ borderTop: `1px solid ${C.borderLight}` }}>
+                  <td style={{ ...td, fontWeight: 600 }}>{x.label}</td>
+                  <td style={{ ...td, color: C.textMuted }}>{x.notes || "—"}</td>
+                  <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap", fontWeight: 600 }}>{_fmtFinanceMap({ [x.currency]: x.amount })}</td>
+                  <td style={{ ...td, textAlign: "right" }}>
+                    <button type="button" aria-label="Harcamayı sil" onClick={() => remove(x)} disabled={mutating} style={{ border: "none", background: "transparent", color: C.textFaint, cursor: "pointer", padding: 2 }}>
+                      <RIc d="M18 6L6 18M6 6l12 12" size={12} sw={2}/>
+                    </button>
+                  </td>
+                </tr>
+              ))}
+              {mx.byLabel.length > 0 && mx.items.length > mx.byLabel.length && mx.byLabel.map(g => (
+                <tr key={"g" + g.label} style={{ borderTop: `1px solid ${C.borderLight}`, background: C.ivory }}>
+                  <td style={{ ...td, color: C.textMuted }} colSpan={2}>Toplam · {g.label} ({g.count})</td>
+                  <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{_fmtFinanceMap(g.total)}</td><td/>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </_FinSection>
+    </div>
+  );
+}
+
 function _FinExtraSales({ s }) {
   const { mutate, mutating } = useRepoMutation("finance");
   const [open, setOpen] = useState(false);
@@ -13386,6 +13507,8 @@ function FinancePage({ tab, navigate }) {
         <_FinBudget s={s}/>
       ) : current === "ek-satislar" ? (
         <_FinExtraSales s={s}/>
+      ) : current === "harcamalar" ? (
+        <_FinMonthlyExpenses s={s} onMonth={setMonthISO}/>
       ) : current === "turlar" ? (
         <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
           <_FinSection title="Turlara Göre Tahmini Karlılık"><_FinTourTable s={s} mode="profit"/></_FinSection>
@@ -19857,6 +19980,7 @@ function buildFinanceMonthSummary(input) {
     guidePayments = [], payments = [], settlementItems = [], rateRows = [], rateSourceError = false,
     extraSales = [], extraSalesUnavailable = false,
     guideCostOverrides = [], guideCostOverridesUnavailable = false,
+    monthlyExpenses = [], monthlyExpensesUnavailable = false,
     monthISO, todayISO, languageNames = [] } = input || {};
   // Guide fees entered at guide assignment, one per operation
   // (operation_key "fee|" + date|tour|guide). Rows with any other key are
@@ -20255,7 +20379,20 @@ function buildFinanceMonthSummary(input) {
   cashFlow.inflow = received;
   const unattributedAmount = {}; unattributed.forEach(p => _financeAdd(unattributedAmount, p.currency, p.amount));
   const T = (m) => _financeToTry(m, fx);
-  const kp = { remainingBudget: T(remainingBudget), expectedNet: T(expectedNet), projectedCost: T(projectedOperatingCost), actualSpend: T(actualSpend), received: T(received), gross: T(gross), plannedCost: T(plannedOperatingCost),
+  // Aylık harcamalar: expenses of the month that belong to no reservation
+  // (Meta ads, Higgsfield, …). Grouped by name (case-insensitive); they
+  // reduce the month's profit AFTER the tour profit.
+  const mxItems = (monthlyExpenses || []).filter(x => x && String(x.month || '').slice(0, 7) === String(monthISO).slice(0, 7));
+  const mxTotal = {}; mxItems.forEach(x => _financeAdd(mxTotal, x.currency, x.amount));
+  const mxGroups = new Map();
+  for (const x of mxItems) {
+    const k = String(x.label || '').trim().toLocaleLowerCase('tr-TR');
+    if (!mxGroups.has(k)) mxGroups.set(k, { label: String(x.label || '').trim(), count: 0, total: {} });
+    const g = mxGroups.get(k); g.count += 1; _financeAdd(g.total, x.currency, x.amount);
+  }
+  const monthlyExpenseByLabel = [...mxGroups.values()].map(g => { const t = T(g.total); return { ...g, totalTry: t.complete ? t.tryTotal : null }; })
+    .sort((a, b) => (b.totalTry || 0) - (a.totalTry || 0) || a.label.localeCompare(b.label, 'tr'));
+  const kp = { monthlyExpenses: T(mxTotal), remainingBudget: T(remainingBudget), expectedNet: T(expectedNet), projectedCost: T(projectedOperatingCost), actualSpend: T(actualSpend), received: T(received), gross: T(gross), plannedCost: T(plannedOperatingCost),
     tourNet: T(tourNet), extraSales: T(extraSalesTotal) };
   const diff = (a, b) => a.complete && b.complete ? Math.round((a.tryTotal - b.tryTotal) * 100) / 100 : null;
   // ── Realized ("Gerçekleşen") view — tours that already took place
@@ -20368,7 +20505,12 @@ function buildFinanceMonthSummary(input) {
       unavailable: !!extraSalesUnavailable, onCancelledReservations: extraSalesOnCancelled,
     },
     guideCostOverridesUnavailable: !!guideCostOverridesUnavailable,
+    monthlyExpenses: { items: mxItems.slice().sort((a, b) => String(a.createdAt || '').localeCompare(String(b.createdAt || ''))),
+      byLabel: monthlyExpenseByLabel, total: mxTotal, unavailable: !!monthlyExpensesUnavailable },
     kpis: {
+      monthlyExpenses: kp.monthlyExpenses,
+      // Tour profit minus the month's own expenses (Meta, Higgsfield, …).
+      profitAfterMonthlyExpenses: (() => { const p = diff(kp.expectedNet, kp.projectedCost); return p == null || !kp.monthlyExpenses.complete ? null : Math.round((p - kp.monthlyExpenses.tryTotal) * 100) / 100; })(),
       remainingBudget: kp.remainingBudget, expectedNet: kp.expectedNet, gross: kp.gross, tourNet: kp.tourNet, extraSales: kp.extraSales,
       projectedProfit: diff(kp.expectedNet, kp.projectedCost), actualSpend: kp.actualSpend,
       plannedCost: kp.plannedCost, projectedCost: kp.projectedCost,
@@ -20558,7 +20700,131 @@ function _financeDomain() {
   return { FINANCE_COST_CATEGORIES, FINANCE_EXPENSE_CATEGORIES, _istanbulISODate, _financeMonthRange,
     _financeCanonicalLanguage, _financeOperationGroupKey, buildGuideServices, attributeGuidePayments, _financePickCostItem, _guideFeeKey, _financeTourKey, _financeGuideKey,
     _financeRevenueExpectation, _financeActualRevenue, _financeEarnedNetRevenue, _financeToTry, buildFinanceMonthSummary,
-    _financeAddDays, buildFinanceCashNeeds, buildGuideLanguageCosts, _financeCostItemRevisionPlan, FINANCE_PRACTICAL_GROUP_MAX, buildGuideTourCosts };
+    _financeAddDays, buildFinanceCashNeeds, buildGuideLanguageCosts, _financeCostItemRevisionPlan, FINANCE_PRACTICAL_GROUP_MAX, buildGuideTourCosts, buildMonthlyReport };
+}
+// ── Monthly detailed report (Raporlar → PDF) ─────────────────────────────
+// Everything comes from the month summary (buildFinanceMonthSummary) — the
+// same numbers Finance shows — plus the full reservation list for "booked
+// this month" (by creation date) and status checks. Pure; no I/O.
+const _REPORT_GAP_TEXT = {
+  unassigned: ['Rehber ataması yapılmamış operasyon', 'Bu operasyonların rehber maliyeti rapora girmedi; rehber sıralaması eksik kalır.', 'Rehberi atayın ve ücretini girin (rezervasyon → Rehber Ata).'],
+  feeMissing: ['Rehber atanmış ama ücreti girilmemiş operasyon', 'Rehber maliyeti 0 sayıldı — kâr olduğundan yüksek görünür.', 'Rezervasyonun Finans kartında “Rehber ücretini gir”.'],
+  pastNotCompleted: ['Tur tarihi geçmiş ama durumu "Tamamlandı" yapılmamış rezervasyon', 'Tamamlanan tur sayısı ve operasyon akışı eksik görünür.', 'Tur bittiğinde rezervasyon durumunu “Tamamlandı” yapın.'],
+  missingLanguage: ['Tur dili girilmemiş rezervasyon', 'Dil dağılımında "Dil belirtilmemiş" olarak sayıldı.', 'Rezervasyonda tur dilini seçin.'],
+  missingTour: ['Tur bilgisi eksik rezervasyon', 'Tur bazlı satış ve kârlılık tablosunda ayrı sayıldı.', 'Rezervasyonu doğru tura bağlayın.'],
+  unknownMeal: ['Yemek durumu belirsiz rezervasyon', 'Yemek maliyeti hesaplanamadı — maliyet eksik olabilir.', 'Rezervasyonda yemek durumunu (dahil / dahil değil) işaretleyin.'],
+  missingCostItems: ['Maliyet kataloğunda tutarı olmayan kalem', 'Bu kalemlerin maliyeti hesaba girmedi — kâr olduğundan yüksek görünebilir.', 'Maliyet Kataloğu’nda bu kalemlerin tutarını girin.'],
+  notMaterialized: ['Oluşmamış bilet / hazırlık görevi', 'Bu rezervasyonların bilet maliyeti hesaplanamadı.', 'Tur hazırlık kurallarını kontrol edin.'],
+  ticketWithoutExpense: ['Bilet alındı ama gideri girilmemiş', 'Gerçek bilet harcaması yerine katalog tutarı kullanıldı.', 'Rezervasyonda “Gider Ekle” ile gerçek bilet tutarını girin.'],
+  unpaidPastGuide: ['Geçmiş operasyonda rehber ödemesi kaydedilmemiş', 'Rehberlere ödenen tutar eksik görünür.', 'Ödeme yapıldıysa rehberin sayfasında “Rehber Ödemesi Ekle” ile kaydedin.'],
+  guideDiscrepancy: ['Rehber ödemesi ücretle uyuşmuyor', 'Rehber ödemesi ile girilen ücret arasında fark var; kontrol edilmeli.', 'Rehber ödemesini veya ücretini düzeltin.'],
+  commissionUnresolved: ['Komisyonu / net geliri belirsiz rezervasyon', 'Net gelir eksik hesaplanmış olabilir.', 'Rezervasyon tutarını ve satış kanalını kontrol edin.'],
+  noMonthlyExpenses: ['Bu ay için aylık harcama girilmemiş', 'Meta, Higgsfield gibi giderler girilmediği için net kâr olduğundan yüksek görünür.', 'Finans → Aylık Harcamalar’dan bu ayın giderlerini ekleyin.'],
+  monthlyExpensesUnavailable: ['Aylık harcama tablosu henüz kurulmamış', 'Aylık harcamalar rapora eklenemedi.', 'Aylık harcama SQL’ini Supabase’de çalıştırın.'],
+  fxIncomplete: ['Döviz kuru bulunamayan tutar', 'Bazı yabancı para tutarları TL toplamlarına çevrilemedi.', 'Döviz kuru güncellemesini kontrol edin.'],
+};
+function buildMonthlyReport({ summary: s, allReservations = [], todayISO }) {
+  const fx = { rates: s.fx.rates, rateSourceError: s.fx.rateSourceError };
+  const T = (m) => { const t = _financeToTry(m || {}, fx); return t.complete ? Math.round(t.tryTotal) : Math.round(t.tryTotal); };
+  const month = String(s.monthISO).slice(0, 7);
+  const rows = s.reservations;
+  const pax = rows.reduce((n, x) => n + x.pax.total, 0);
+  // Operations = guide services (tour date + tour + guide); a tour run with
+  // no guide assigned is still one operation.
+  const ops = s.guideServices;
+  const svcByKey = new Map(ops.map(g => [g.key, g]));
+  // Tours, best seller first.
+  const tours = s.tours.map(t => ({
+    label: t.tourLabel, reservations: t.reservations, pax: t.pax, operations: t.guideServices,
+    netTry: T(t.expectedNet), costTry: t.totalPlannedTry, profitTry: t.projectedProfit,
+    languages: t.languages.map(l => ({ language: l.language, reservations: l.reservations, pax: l.pax, operations: l.guideServices })),
+  })).sort((a, b) => b.reservations - a.reservations || b.pax - a.pax || String(a.label).localeCompare(String(b.label), 'tr'));
+  // Languages across all tours.
+  const langMap = new Map();
+  for (const x of rows) {
+    const l = x.language || 'Dil belirtilmemiş';
+    if (!langMap.has(l)) langMap.set(l, { language: l, reservations: 0, pax: 0, ops: new Set(), tours: new Set() });
+    const g = langMap.get(l); g.reservations += 1; g.pax += x.pax.total; g.tours.add(x.tourLabel);
+    if (x.guideAllocation) g.ops.add(x.guideAllocation.serviceKey);
+  }
+  const languages = [...langMap.values()].map(g => ({ language: g.language, reservations: g.reservations, pax: g.pax, operations: g.ops.size, tours: g.tours.size }))
+    .sort((a, b) => b.reservations - a.reservations || b.pax - a.pax);
+  // Guides: what each earned (entered fees) and what was paid.
+  const gMap = new Map();
+  for (const g of ops) {
+    if (g.guideKey === 'unassigned') continue;
+    if (!gMap.has(g.guideKey)) gMap.set(g.guideKey, { name: String((g.guideNames && g.guideNames[0]) || 'İsimsiz rehber').trim(), operations: 0, pax: 0, fee: {}, paid: {}, feeMissing: 0, tours: new Set() });
+    const r = gMap.get(g.guideKey);
+    r.operations += 1; r.pax += g.pax; r.tours.add(g.tourLabel);
+    if (g.costSource === 'assignment_fee') _financeAdd(r.fee, g.fee.currency, g.fee.amount); else r.feeMissing += 1;
+    for (const [c, v] of Object.entries(g.cashPaid || {})) _financeAdd(r.paid, c, v);
+  }
+  const guides = [...gMap.values()].map(r => ({ name: r.name, operations: r.operations, pax: r.pax, tours: [...r.tours], feeMissing: r.feeMissing,
+    fee: r.fee, feeTry: T(r.fee), paid: r.paid, paidTry: T(r.paid) }))
+    .sort((a, b) => b.feeTry - a.feeTry || b.operations - a.operations || a.name.localeCompare(b.name, 'tr'));
+  const unassignedOps = ops.filter(g => g.guideKey === 'unassigned').map(g => ({ date: g.date, tour: g.tourLabel, language: g.language, pax: g.pax, reservations: g.reservationCount }));
+  // Guests per day of the month.
+  const [y, m] = month.split('-').map(Number);
+  const days = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  const daily = Array.from({ length: days }, (_, i) => ({ day: i + 1, pax: 0, reservations: 0 }));
+  for (const x of rows) { const d = Number(String(x.date).slice(8, 10)); if (daily[d - 1]) { daily[d - 1].pax += x.pax.total; daily[d - 1].reservations += 1; } }
+  const weekdayNames = ['Pazar', 'Pazartesi', 'Salı', 'Çarşamba', 'Perşembe', 'Cuma', 'Cumartesi'];
+  const weekdays = weekdayNames.map((name, i) => ({ name, pax: 0, operations: 0, idx: i }));
+  for (const g of ops) { const wd = new Date(g.date + 'T12:00:00Z').getUTCDay(); weekdays[wd].operations += 1; weekdays[wd].pax += g.pax; }
+  // Bookings made this month (sale date), whatever their tour date.
+  const inMonth = (iso) => iso && String(iso).slice(0, 7) === month;
+  const booked = allReservations.filter(r => inMonth(r.createdAtTs || r.createdAt));
+  const bookedCancelled = booked.filter(r => r.statusRaw === 'cancelled' || r.opStatus === 'İptal').length;
+  const cancelledInMonth = allReservations.filter(r => inMonth(r.cancelledAt)).length;
+  // Money (TL, latest rates).
+  const best = (cat) => _financeSumMaps(...rows.map(x => x.best[cat]));
+  const costs = [
+    { key: 'guide', label: 'Rehberler', try: T(s.categories.guide.best || s.categories.guide.planned) },
+    { key: 'ticket', label: 'Giriş biletleri', try: T(best('ticket')) },
+    { key: 'meal', label: 'Yemekler', try: T(best('meal')) },
+    { key: 'transport', label: 'Ulaşım', try: T(best('transport')) },
+    { key: 'other', label: 'Diğer', try: T(best('other')) },
+  ].filter(c => c.try > 0);
+  const grossTry = s.kpis.gross.tryTotal, tourNetTry = s.kpis.tourNet.tryTotal, extraTry = s.kpis.extraSales.tryTotal;
+  const netTry = s.kpis.expectedNet.tryTotal, costTry = s.kpis.projectedCost.tryTotal;
+  const tourProfitTry = Math.round(netTry - costTry);
+  const mx = s.monthlyExpenses || { byLabel: [], items: [], total: {}, unavailable: false };
+  const monthlyTry = Math.round(s.kpis.monthlyExpenses ? s.kpis.monthlyExpenses.tryTotal : 0);
+  const finalProfitTry = tourProfitTry - monthlyTry;
+  const finance = {
+    grossTry: Math.round(grossTry), commissionTry: Math.max(0, Math.round(grossTry - tourNetTry)), tourNetTry: Math.round(tourNetTry), extraSalesTry: Math.round(extraTry),
+    extraSalesCount: s.extraSales.items.length, netTry: Math.round(netTry), costTry: Math.round(costTry), costs,
+    tourProfitTry, monthlyExpenses: mx.byLabel.map(g => ({ label: g.label, count: g.count, total: g.total, totalTry: g.totalTry })),
+    monthlyExpensesTry: monthlyTry, finalProfitTry, margin: netTry > 0 ? finalProfitTry / netTry : null,
+    receivedTry: Math.round(s.kpis.cashReceived.tryTotal),
+    guidesFeeTry: guides.reduce((n, g) => n + g.feeTry, 0), guidesPaidTry: guides.reduce((n, g) => n + g.paidTry, 0),
+    fxNote: s.fx.incomplete ? 'Bazı döviz tutarları çevrilemedi.' : null,
+  };
+  // Data gaps: what was forgotten in the CRM and what it did to this report.
+  const dq = s.dataQuality;
+  const pastNotCompleted = rows.filter(x => x.date < todayISO && x.opStatus !== 'Tamamlandı').length;
+  const missingCostCount = (dq.missingCostItems || []).reduce((n, x) => n + x.count, 0);
+  const gapCounts = {
+    unassigned: unassignedOps.length, feeMissing: dq.guideFeeMissing, pastNotCompleted,
+    missingLanguage: dq.missingLanguageCount, missingTour: dq.missingTourCount, unknownMeal: dq.unknownMealReservations,
+    missingCostItems: missingCostCount, notMaterialized: dq.notMaterializedPreparations, ticketWithoutExpense: dq.completedTicketWithoutExpense,
+    unpaidPastGuide: dq.unpaidPastGuideServices, guideDiscrepancy: dq.guidePaymentDiscrepancies,
+    commissionUnresolved: (dq.commissionUnresolved || 0) + (dq.earnedRevenueUnresolved || 0),
+    noMonthlyExpenses: !mx.unavailable && mx.items.length === 0 ? 1 : 0, monthlyExpensesUnavailable: mx.unavailable ? 1 : 0,
+    fxIncomplete: s.fx.incomplete ? 1 : 0,
+  };
+  const gaps = Object.entries(gapCounts).filter(([, n]) => n > 0).map(([key, count]) => ({ key, count, title: _REPORT_GAP_TEXT[key][0], impact: _REPORT_GAP_TEXT[key][1], action: _REPORT_GAP_TEXT[key][2],
+    detail: key === 'missingCostItems' ? dq.missingCostItems.map(x => `${x.label} (${x.count})`).join(', ')
+      : key === 'unassigned' ? unassignedOps.map(o => `${o.date.slice(8, 10)}.${o.date.slice(5, 7)} ${o.tour}`).join(', ') : null }));
+  return {
+    month, generatedAt: todayISO,
+    headline: { operations: ops.length, reservations: rows.length, pax, cancelled: s.counts.cancelledExcluded,
+      avgGroup: ops.length ? Math.round((pax / ops.length) * 10) / 10 : 0, tours: tours.length, languages: languages.filter(l => l.language !== 'Dil belirtilmemiş').length,
+      guides: guides.length, unassignedOperations: unassignedOps.length, bookedInMonth: booked.length, bookedInMonthCancelled: bookedCancelled, cancelledInMonth,
+      operationDays: new Set(ops.map(g => g.date)).size },
+    topTour: tours[0] || null, topGuide: guides.find(g => g.feeTry > 0) || null, topLanguage: languages[0] || null,
+    tours, languages, guides, unassignedOps, daily, weekdays: [1, 2, 3, 4, 5, 6, 0].map(i => weekdays[i]), finance, gaps,
+  };
 }
 // TESTABLE:_financeDomain:end
 
@@ -20702,6 +20968,236 @@ function _fmtByCurrency(amount, cur) {
   return sym ? `${sym}${num}` : `${num} ${cur}`;
 }
 
+// ── Aylık Detaylı Rapor (PDF) ────────────────────────────────────────────
+// Raporlar → month → "PDF Raporu İndir". The report object comes from
+// buildMonthlyReport (finance domain); this part only lays it out as an A4
+// document (HTML → html2canvas → jsPDF, the same libraries the proposal PDF
+// uses) and paginates between blocks so no table or chart is cut in half.
+// TESTABLE:_monthlyReportHtml:start
+function _monthlyReportHtml(rep, opts) {
+  const o = opts || {};
+  const NAV = '#1B2D4F', GOLD = '#B8913A', IVO = '#FAF7F2', MUT = '#7A7064', LINE = '#E8E2D9', GRN = '#2E7D52', RED = '#B4442F', AMB = '#B7791F';
+  const esc = (v) => String(v == null ? '' : v).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const tl = (n) => n == null ? '—' : (n < 0 ? '−' : '') + '₺' + Math.abs(Math.round(n)).toLocaleString('tr-TR');
+  const num = (n) => Number(n || 0).toLocaleString('tr-TR');
+  const pct = (a, b) => b > 0 ? Math.round((a / b) * 100) : 0;
+  const monthLabel = new Date(rep.month + '-01T12:00:00Z').toLocaleDateString('tr-TR', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+  const ddmm = (iso) => `${String(iso).slice(8, 10)}.${String(iso).slice(5, 7)}`;
+  const H = rep.headline, F = rep.finance;
+  const PALETTE = [NAV, GOLD, '#4A7A9C', '#8C6BB1', GRN, '#C0703C', '#5C8A8A', '#A35D7A'];
+  const section = (title, sub, body) => `<div class="blk sec"><div class="sh"><h2>${esc(title)}</h2>${sub ? `<span>${esc(sub)}</span>` : ''}</div>${body}</div>`;
+  const tile = (label, value, sub, tone) => `<div class="tile"><div class="tl">${esc(label)}</div><div class="tv" style="color:${tone || NAV}">${value}</div>${sub ? `<div class="ts">${sub}</div>` : ''}</div>`;
+  const hbars = (items, valueOf, labelOf, fmt, color) => {
+    const max = Math.max(1, ...items.map(valueOf));
+    return `<div class="bars">${items.map((it, i) => `<div class="br"><div class="bl">${esc(labelOf(it))}</div><div class="bt"><div class="bf" style="width:${valueOf(it) > 0 ? Math.max(2, (valueOf(it) / max) * 100) : 0}%;background:${typeof color === 'function' ? color(it, i) : color}"></div></div><div class="bv">${fmt(it)}</div></div>`).join('')}</div>`;
+  };
+  // ── Page 1: headline
+  const highlights = [];
+  if (rep.topTour) highlights.push(`<b>En çok satan tur:</b> ${esc(rep.topTour.label)} — ${rep.topTour.reservations} rezervasyon, ${rep.topTour.pax} misafir`);
+  if (rep.topGuide) highlights.push(`<b>En çok kazanan rehber:</b> ${esc(rep.topGuide.name)} — ${tl(rep.topGuide.feeTry)} (${rep.topGuide.operations} operasyon)`);
+  if (rep.topLanguage) highlights.push(`<b>En çok tur düzenlenen dil:</b> ${esc(rep.topLanguage.language)} — ${rep.topLanguage.reservations} rezervasyon, ${rep.topLanguage.pax} misafir`);
+  if (F.monthlyExpenses.length) highlights.push(`<b>Aylık harcamalar:</b> ${F.monthlyExpenses.map(m => `${esc(m.label)} ${m.totalTry != null ? tl(m.totalTry) : ''}`).join(' · ')}`);
+  highlights.push(H.unassignedOperations ? `<b style="color:${RED}">${H.unassignedOperations} operasyona CRM'de rehber atanmamış.</b>` : `<b style="color:${GRN}">Tüm operasyonlara rehber atanmış.</b>`);
+  if (rep.gaps.length) highlights.push(`<b style="color:${AMB}">${rep.gaps.length} farklı eksik kayıt türü var</b> — son bölümde ayrıntılar.`);
+  const cover = `<div class="blk cover">
+    <div class="brand">DESETOUR <span>·</span> OPERASYON MERKEZİ</div>
+    <h1>${esc(monthLabel.charAt(0).toLocaleUpperCase('tr-TR') + monthLabel.slice(1))} Raporu</h1>
+    <div class="cs">Aylık operasyon, satış ve finans özeti · Oluşturma: ${esc(ddmm(rep.generatedAt))}.${esc(String(rep.generatedAt).slice(0, 4))}${o.author ? ' · ' + esc(o.author) : ''}</div>
+  </div>
+  <div class="blk"><div class="tiles">
+    ${tile('Tur operasyonu', num(H.operations), `${H.operationDays} farklı günde`)}
+    ${tile('Rezervasyon', num(H.reservations), H.cancelled ? `${H.cancelled} iptal hariç` : 'iptal yok')}
+    ${tile('Misafir', num(H.pax), `operasyon başı ort. ${String(H.avgGroup).replace('.', ',')}`)}
+    ${tile('Çalışılan rehber', num(H.guides), H.unassignedOperations ? `<span style="color:${RED}">${H.unassignedOperations} operasyon rehbersiz</span>` : 'tüm operasyonlar atanmış')}
+    ${tile('Net gelir', tl(F.netTry), 'komisyon sonrası, ek satış dahil')}
+    ${tile('Operasyon maliyeti', tl(F.costTry), 'rehber, bilet, yemek, ulaşım')}
+    ${tile('Aylık harcamalar', tl(F.monthlyExpensesTry), F.monthlyExpenses.length ? F.monthlyExpenses.map(m => esc(m.label)).join(', ') : 'girilmemiş')}
+    ${tile('Net kâr', tl(F.finalProfitTry), F.margin != null ? (F.finalProfitTry >= 0 ? `kâr marjı %${Math.round(F.margin * 100)}` : 'bu ay zarar') : '', F.finalProfitTry >= 0 ? GRN : RED)}
+  </div></div>
+  <div class="blk box"><div class="bh">Öne çıkanlar</div><ul>${highlights.map(h => `<li>${h}</li>`).join('')}</ul>
+    <div class="note">Bu ay alınan yeni rezervasyon (satış tarihi ${esc(monthLabel)}): <b>${num(H.bookedInMonth)}</b>${H.bookedInMonthCancelled ? ` (${H.bookedInMonthCancelled} tanesi sonradan iptal)` : ''} · Bu ay iptal edilen: <b>${num(H.cancelledInMonth)}</b></div></div>`;
+  // ── Finance
+  const costTotal = F.costs.reduce((n, c) => n + c.try, 0);
+  const stack = costTotal > 0 ? `<div class="stack">${F.costs.map((c, i) => `<div style="width:${(c.try / costTotal) * 100}%;background:${PALETTE[i % PALETTE.length]}"></div>`).join('')}</div>
+    <div class="legend">${F.costs.map((c, i) => `<span><i style="background:${PALETTE[i % PALETTE.length]}"></i>${esc(c.label)} ${tl(c.try)} (%${pct(c.try, costTotal)})</span>`).join('')}</div>` : '<div class="muted">Bu ay operasyon maliyeti hesaplanmadı.</div>';
+  const line = (label, v, opt) => `<tr class="${opt && opt.cls || ''}"><td>${label}</td><td class="r">${v}</td></tr>`;
+  const fin = section('Finans Özeti', 'Tutarlar TL (yabancı paralar güncel kurla çevrildi)', `
+    <table class="fin">
+      ${line('Brüt satış (müşterinin ödediği)', tl(F.grossTry))}
+      ${line('Satış kanalı komisyonu', F.commissionTry ? '− ' + tl(F.commissionTry) : '—', { cls: 'sub' })}
+      ${line('Tur net geliri', tl(F.tourNetTry))}
+      ${line(`Ek satışlar (${F.extraSalesCount})`, F.extraSalesTry ? '+ ' + tl(F.extraSalesTry) : '—', { cls: 'sub' })}
+      ${line('<b>Net gelir</b>', `<b>${tl(F.netTry)}</b>`, { cls: 'tot' })}
+      ${F.costs.map(c => line(c.label, '− ' + tl(c.try), { cls: 'sub' })).join('')}
+      ${line('<b>Turlardan kâr</b>', `<b>${tl(F.tourProfitTry)}</b>`, { cls: 'tot' })}
+      ${F.monthlyExpenses.length ? F.monthlyExpenses.map(m => line(`${esc(m.label)}${m.count > 1 ? ` (${m.count} kayıt)` : ''}`, '− ' + (m.totalTry != null ? tl(m.totalTry) : '?'), { cls: 'sub' })).join('') : line('Aylık harcamalar', '<span style="color:' + AMB + '">girilmemiş</span>', { cls: 'sub' })}
+      ${line('<b>Net kâr</b>', `<b style="color:${F.finalProfitTry >= 0 ? GRN : RED}">${tl(F.finalProfitTry)}</b>`, { cls: 'grand' })}
+    </table>
+    <div class="h3">Operasyon maliyetinin dağılımı</div>${stack}
+    <div class="note">Tahsil edilen nakit: <b>${tl(F.receivedTry)}</b> · Rehberlere hakediş: <b>${tl(F.guidesFeeTry)}</b> · Rehberlere ödendi olarak kaydedilen: <b>${tl(F.guidesPaidTry)}</b>${F.fxNote ? ' · ' + esc(F.fxNote) : ''}</div>`);
+  // ── Tours
+  const tourRows = rep.tours.map((t, i) => `<tr><td><b>${i + 1}.</b> ${esc(t.label)}<div class="sm">${t.languages.map(l => `${esc(l.language)}: ${l.reservations} rez · ${l.pax} kişi`).join(' · ')}</div></td>
+    <td class="r">${t.operations}</td><td class="r">${t.reservations}</td><td class="r">${t.pax}</td><td class="r">${t.operations ? String(Math.round((t.pax / t.operations) * 10) / 10).replace('.', ',') : '—'}</td><td class="r">${tl(t.netTry)}</td><td class="r" style="color:${t.profitTry == null ? MUT : t.profitTry >= 0 ? GRN : RED}">${t.profitTry == null ? '—' : tl(t.profitTry)}</td></tr>`).join('');
+  const tours = section('Turlar', `${rep.tours.length} farklı tur · en çok satandan aza`, `
+    ${hbars(rep.tours, t => t.reservations, t => t.label, t => `${t.reservations} rez · ${t.pax} kişi`, (t, i) => i === 0 ? GOLD : NAV)}
+    <table class="tbl"><thead><tr><th>Tur</th><th class="r">Operasyon</th><th class="r">Rezervasyon</th><th class="r">Misafir</th><th class="r">Ort. grup</th><th class="r">Net gelir</th><th class="r">Kâr</th></tr></thead><tbody>${tourRows || '<tr><td colspan="7" class="muted">Bu ay tur yok.</td></tr>'}</tbody></table>`);
+  // ── Languages
+  const langs = section('Dillere Göre', `${H.languages} dilde tur düzenlendi`, `
+    ${hbars(rep.languages, l => l.reservations, l => l.language, l => `${l.reservations} rez · ${l.pax} kişi · ${l.operations} operasyon`, (l, i) => PALETTE[i % PALETTE.length])}`);
+  // ── Guides
+  const guideRows = rep.guides.map((g, i) => `<tr><td>${i === 0 && g.feeTry > 0 ? '★ ' : ''}<b>${esc(g.name)}</b><div class="sm">${g.tours.map(esc).join(', ')}</div></td><td class="r">${g.operations}</td><td class="r">${g.pax}</td>
+    <td class="r">${g.feeTry ? tl(g.feeTry) : '—'}${g.feeMissing ? `<div class="sm" style="color:${AMB}">${g.feeMissing} ops. ücretsiz</div>` : ''}</td><td class="r">${g.paidTry ? tl(g.paidTry) : '—'}</td></tr>`).join('');
+  const guides = section('Rehberler', `${rep.guides.length} farklı rehberle çalışıldı`, `
+    ${rep.guides.length ? hbars(rep.guides, g => g.feeTry, g => g.name, g => `${tl(g.feeTry)} · ${g.operations} ops.`, (g, i) => i === 0 ? GOLD : '#4A7A9C') : ''}
+    <table class="tbl"><thead><tr><th>Rehber</th><th class="r">Operasyon</th><th class="r">Misafir</th><th class="r">Hakediş (ücret)</th><th class="r">Ödendi kaydı</th></tr></thead><tbody>${guideRows || '<tr><td colspan="5" class="muted">Bu ay rehber ataması yok.</td></tr>'}</tbody>
+    <tfoot><tr><td><b>Toplam</b></td><td class="r"><b>${rep.guides.reduce((n, g) => n + g.operations, 0)}</b></td><td class="r"><b>${rep.guides.reduce((n, g) => n + g.pax, 0)}</b></td><td class="r"><b>${tl(F.guidesFeeTry)}</b></td><td class="r"><b>${tl(F.guidesPaidTry)}</b></td></tr></tfoot></table>
+    ${rep.unassignedOps.length ? `<div class="warn"><b>Rehber ataması yapılmamış ${rep.unassignedOps.length} operasyon:</b> ${rep.unassignedOps.map(u => `${ddmm(u.date)} ${esc(u.tour)}${u.language ? ' (' + esc(u.language) + ')' : ''} · ${u.pax} kişi`).join(' · ')}</div>` : ''}`);
+  // ── Calendar
+  const maxDay = Math.max(1, ...rep.daily.map(d => d.pax));
+  const cal = section('Takvim', 'Günlere göre misafir sayısı', `
+    <div class="cols">${rep.daily.map(d => `<div class="col"><div class="cv">${d.pax || ''}</div><div class="cb" style="height:${(d.pax / maxDay) * 110}px"></div><div class="cd">${d.day}</div></div>`).join('')}</div>
+    <div class="h3">Haftanın günlerine göre</div>
+    ${hbars(rep.weekdays, w => w.pax, w => w.name, w => `${w.operations} ops · ${w.pax} kişi`, '#4A7A9C')}`);
+  // ── Gaps
+  const gapCards = rep.gaps.map(g => `<div class="gap"><div class="gc">${g.count}</div><div><div class="gt">${esc(g.title)}</div><div class="gi">${esc(g.impact)}</div>${g.detail ? `<div class="gd">${esc(g.detail)}</div>` : ''}${g.action ? `<div class="ga">→ ${esc(g.action)}</div>` : ''}</div></div>`).join('');
+  const gaps = section('CRM\'de Eksik Kalanlar', 'Raporu etkileyen boşluklar — gelecek ay dikkat edilecekler', rep.gaps.length ? gapCards
+    : `<div class="ok">Bu ay raporu etkileyen eksik kayıt bulunmadı. 👏</div>`);
+  const css = `*{box-sizing:border-box;margin:0;padding:0}body{background:#fff;font-family:'Geist',Arial,sans-serif;color:${NAV};-webkit-font-smoothing:antialiased}
+  #rep{width:794px;padding:0 44px}.blk{padding-top:18px}
+  .cover{padding-top:34px;border-bottom:3px solid ${GOLD};padding-bottom:16px}.brand{font-size:10.5px;letter-spacing:.18em;color:${GOLD};font-weight:600}.brand span{color:${MUT}}
+  h1{font-family:'Geist',Arial,sans-serif;font-weight:700;letter-spacing:-.02em;font-size:36px;margin-top:6px;color:${NAV}}.cs{font-size:12px;color:${MUT};margin-top:4px}
+  .tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.tile{border:1px solid ${LINE};border-radius:10px;padding:12px 12px;background:${IVO}}
+  .tl{font-size:10.5px;color:${MUT}}.tv{font-size:21px;font-weight:700;margin-top:4px;letter-spacing:-.01em}.ts{font-size:10px;color:${MUT};margin-top:3px;line-height:1.35}
+  .box{}.box ul{list-style:none;border:1px solid ${LINE};border-radius:10px;padding:10px 14px}.box li{font-size:12.5px;padding:5px 0;border-bottom:1px dashed ${LINE};line-height:1.45}.box li:last-child{border:none}
+  .bh,.h3{font-size:12px;font-weight:700;color:${NAV};margin:0 0 8px;text-transform:uppercase;letter-spacing:.08em}.h3{margin-top:14px;font-size:10.5px;color:${MUT}}
+  .sec{padding-top:24px}.sh{display:flex;align-items:baseline;justify-content:space-between;border-bottom:1.5px solid ${NAV};padding-bottom:6px;margin-bottom:12px}
+  .sh h2{font-family:'Geist',Arial,sans-serif;font-weight:700;font-size:20px;letter-spacing:-.01em}.sh span{font-size:10.5px;color:${MUT}}
+  .bars{display:flex;flex-direction:column;gap:6px;margin-bottom:12px}.br{display:grid;grid-template-columns:190px 1fr 170px;align-items:center;gap:10px;font-size:11.5px}
+  .bl{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.bt{height:14px;background:${IVO};border-radius:4px;overflow:hidden}.bf{height:100%;border-radius:4px}.bv{color:${MUT};font-size:10.5px;text-align:right}
+  table{width:100%;border-collapse:collapse;font-size:11.5px}.tbl th{text-align:left;font-size:10px;color:${MUT};font-weight:600;padding:6px 6px;border-bottom:1px solid ${LINE};background:${IVO}}
+  .tbl td{padding:7px 6px;border-bottom:1px solid ${LINE};vertical-align:top}.tbl tfoot td{border-top:1.5px solid ${NAV};border-bottom:none}.r{text-align:right;white-space:nowrap}.sm{font-size:9.5px;color:${MUT};margin-top:2px;line-height:1.35}
+  .fin td{padding:6px 4px;border-bottom:1px solid ${LINE};font-size:12.5px}.fin .sub td{color:${MUT};font-size:11.5px;padding-left:16px}.fin .tot td{background:${IVO}}.fin .grand td{background:${NAV};color:#fff;font-size:14px}.fin .grand b{color:#fff!important}
+  .stack{display:flex;height:22px;border-radius:6px;overflow:hidden}.legend{display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:8px;font-size:10.5px;color:${MUT}}.legend i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+  .note{font-size:11px;color:${MUT};margin-top:10px;line-height:1.5}.muted{color:${MUT};font-size:11.5px}
+  .warn{margin-top:10px;padding:9px 12px;border-radius:8px;background:#FBEDEA;color:${RED};font-size:11px;line-height:1.5}
+  .cols{display:flex;align-items:flex-end;gap:3px;height:150px;border-bottom:1px solid ${LINE}}.col{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end}
+  .cb{width:100%;background:${NAV};border-radius:3px 3px 0 0;min-height:0}.cv{font-size:8.5px;color:${MUT};margin-bottom:2px}.cd{font-size:8.5px;color:${MUT};margin-top:3px;height:12px}
+  .gap{display:flex;gap:12px;padding:10px 12px;border:1px solid ${LINE};border-left:4px solid ${AMB};border-radius:8px;margin-bottom:8px}
+  .gc{font-size:22px;font-weight:700;color:${AMB};min-width:34px;text-align:center}.gt{font-size:12.5px;font-weight:600}.gi{font-size:11px;color:${MUT};margin-top:2px}.gd{font-size:10px;color:${MUT};margin-top:4px;line-height:1.4}.ga{font-size:10.5px;color:${NAV};margin-top:4px;font-weight:600}
+  .ok{padding:12px;border-radius:8px;background:#EAF4EE;color:${GRN};font-size:12.5px}.end{height:30px}`;
+  return `<!doctype html><html lang="tr"><head><meta charset="utf-8"><link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap" rel="stylesheet"><style>${css}</style></head>
+  <body><div id="rep">${cover}${fin}${tours}${langs}${guides}${cal}${gaps}<div class="blk end"></div></div></body></html>`;
+}
+// TESTABLE:_monthlyReportHtml:end
+// Greedy page breaks between blocks (CSS px). A block taller than a page is
+// split; otherwise a block never straddles two pages.
+// TESTABLE:_reportPageBreaks:start
+function _reportPageBreaks(blocks, pageH, totalH) {
+  const starts = [0];
+  let start = 0;
+  for (const b of blocks) {
+    const bottom = b.top + b.height;
+    if (bottom - start <= pageH) continue;
+    if (b.top > start) { start = b.top; starts.push(start); }
+    while (bottom - start > pageH) { start += pageH; starts.push(start); }
+  }
+  return starts.filter(st => st < totalH - 1).map((st, i, arr) => ({ start: st, end: Math.min(totalH, i + 1 < arr.length ? arr[i + 1] : totalH) }));
+}
+// TESTABLE:_reportPageBreaks:end
+async function _downloadMonthlyReportPdf(rep, opts) {
+  await PDFService._ensureLibs();
+  if (!window.html2canvas || !window.jspdf?.jsPDF) throw new Error('PDF kütüphanesi yüklenemedi.');
+  const iframe = document.createElement('iframe');
+  iframe.style.cssText = 'position:fixed;left:-10000px;top:0;width:794px;height:1200px;border:none;';
+  document.body.appendChild(iframe);
+  try {
+    const doc = iframe.contentDocument;
+    doc.open(); doc.write(_monthlyReportHtml(rep, opts)); doc.close();
+    await new Promise(r => { const check = () => doc.readyState === 'complete' ? r() : setTimeout(check, 50); check(); });
+    try { await doc.fonts.ready; } catch (_) {}
+    await new Promise(r => setTimeout(r, 400));
+    const root = doc.getElementById('rep');
+    iframe.style.height = root.scrollHeight + 'px';
+    const scale = 2, W = 794, PAGE_H = Math.round(W * 297 / 210), M_TOP = 36, M_BOT = 44, CONTENT_H = PAGE_H - M_TOP - M_BOT;
+    const rootTop = root.getBoundingClientRect().top;
+    const blocks = [...root.querySelectorAll('.blk')].map(el => { const r = el.getBoundingClientRect(); return { top: r.top - rootTop, height: r.height }; });
+    const totalH = root.scrollHeight;
+    const canvas = await window.html2canvas(root, { scale, backgroundColor: '#FFFFFF', width: W, height: totalH, windowWidth: W, useCORS: true, logging: false });
+    const pages = _reportPageBreaks(blocks, CONTENT_H, totalH);
+    const { jsPDF } = window.jspdf;
+    const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+    const monthLabel = new Date(rep.month + '-01T12:00:00Z').toLocaleDateString('tr-TR', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+    pages.forEach((pg, i) => {
+      const pc = document.createElement('canvas');
+      pc.width = W * scale; pc.height = PAGE_H * scale;
+      const ctx = pc.getContext('2d');
+      ctx.fillStyle = '#FFFFFF'; ctx.fillRect(0, 0, pc.width, pc.height);
+      const h = pg.end - pg.start;
+      ctx.drawImage(canvas, 0, pg.start * scale, W * scale, h * scale, 0, M_TOP * scale, W * scale, h * scale);
+      ctx.fillStyle = '#7A7064'; ctx.font = `${10 * scale}px Geist, Arial, sans-serif`;
+      ctx.fillText(`DeseTour · ${monthLabel} Raporu`, 44 * scale, (PAGE_H - 20) * scale);
+      const t = `${i + 1} / ${pages.length}`; ctx.fillText(t, (W - 44) * scale - ctx.measureText(t).width, (PAGE_H - 20) * scale);
+      ctx.fillStyle = '#E8E2D9'; ctx.fillRect(44 * scale, (PAGE_H - 34) * scale, (W - 88) * scale, 1 * scale);
+      if (i > 0) pdf.addPage();
+      pdf.addImage(pc.toDataURL('image/jpeg', 0.92), 'JPEG', 0, 0, 210, 297, '', 'FAST');
+    });
+    pdf.setProperties({ title: `DeseTour ${monthLabel} Raporu`, author: 'DeseTour', creator: 'DeseTour CRM' });
+    const filename = `DeseTour-Rapor-${rep.month}.pdf`;
+    pdf.save(filename);
+    return { filename, pages: pages.length };
+  } finally {
+    document.body.removeChild(iframe);
+  }
+}
+async function _loadMonthlyReport(monthISO) {
+  const todayISO = _istanbulISODate();
+  const [data, allReservations] = await Promise.all([
+    getActiveRepo('finance').getMonthData(monthISO),
+    getActiveRepo('reservation').getAll(),
+  ]);
+  const summary = buildFinanceMonthSummary({ ...data, monthISO, todayISO, languageNames: LANGUAGES.map(l => l[1]) });
+  return buildMonthlyReport({ summary, allReservations: allReservations || [], todayISO });
+}
+function MonthlyReportCard() {
+  const auth = useAuthContext();
+  const today = _istanbulISODate().slice(0, 7);
+  const [month, setMonth] = useState(() => _financeShiftMonth(today, -1));
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+  if (!canAccess(auth.role, "finance")) return null;
+  async function generate() {
+    setBusy(true); setErr(null);
+    try {
+      const rep = await _loadMonthlyReport(month);
+      const r = await _downloadMonthlyReportPdf(rep, { author: auth.staff?.full_name || auth.staff?.fullName || '' });
+      showToast(`${_financeMonthLabel(month)} raporu indirildi (${r.pages} sayfa).`);
+    } catch (e) {
+      console.error('[MonthlyReport]', e);
+      setErr(e.message || 'Rapor oluşturulamadı.');
+    } finally { setBusy(false); }
+  }
+  const input = { padding: "8px 10px", borderRadius: 8, border: `1px solid ${C.border}`, background: C.white, color: C.text, fontSize: 13, fontFamily: "'Geist',sans-serif" };
+  return (
+    <div data-testid="monthly-report-card" style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 12, padding: "18px 22px", display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 14 }}>
+      <div style={{ minWidth: 240, flex: 1 }}>
+        <div style={{ fontSize: 15, fontWeight: 700, color: C.text, fontFamily: "'Geist',sans-serif" }}>Aylık Detaylı Rapor (PDF)</div>
+        <div style={{ fontSize: 12.5, color: C.textMuted, fontFamily: "'Geist',sans-serif", marginTop: 3, lineHeight: 1.5 }}>
+          Turlar, katılım, diller, rehberler ve ödemeleri, gelir–gider–kâr, aylık harcamalar (Meta, Higgsfield…) ve CRM'de eksik kalan kayıtlar — grafiklerle tek dosyada.
+        </div>
+        {err && <div style={{ fontSize: 12, color: C.red, marginTop: 6, fontFamily: "'Geist',sans-serif" }}>{err}</div>}
+      </div>
+      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+        <select data-testid="monthly-report-month" value={month} onChange={e => setMonth(e.target.value)} style={input}>
+          {_finMonthOptions(today).map(m => <option key={m} value={m}>{_financeMonthLabel(m)}</option>)}
+        </select>
+        <button type="button" data-testid="monthly-report-download" onClick={generate} disabled={busy} style={{ padding: "9px 16px", borderRadius: 8, border: "none", background: C.navy, color: "#fff", cursor: busy ? "default" : "pointer", fontSize: 13, fontWeight: 600, fontFamily: "'Geist',sans-serif", opacity: busy ? .7 : 1 }}>
+          {busy ? "Rapor hazırlanıyor…" : "PDF Raporu İndir"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function ReportsPage() {
   const auth = useAuthContext();
   const civitatisEligible = ["Yönetici","Operasyon"].includes(auth.role);
@@ -20792,6 +21288,7 @@ function ReportsPage() {
         </div>
       </div>
 
+      <MonthlyReportCard/>
       {}
       <div className="rsp-stat-grid-1" style={{display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))", gap:12}}>
         <RpKpiCard label="Rezervasyon"             value={kpi.reservations}                      icon="M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"                              color={C.blue}  bg={C.blueBg}   sub={`${period} döneminde`}/>
@@ -22968,6 +23465,14 @@ function mapExtraSaleFromDB(r) {
     notes: r.notes || '', createdBy: r.created_by || null, createdAt: r.created_at || null, updatedAt: r.updated_at || null, _fromDB: true,
   };
 }
+function mapMonthlyExpenseFromDB(r) {
+  if (!r) return null;
+  return {
+    id: r.id, month: r.month ? String(r.month).slice(0, 7) : null, label: r.label || '',
+    amount: r.amount != null ? parseFloat(r.amount) : 0, currency: r.currency || 'TRY',
+    notes: r.notes || '', createdBy: r.created_by || null, createdAt: r.created_at || null, updatedAt: r.updated_at || null, _fromDB: true,
+  };
+}
 function mapPreparationRuleFromDB(r) {
   if (!r) return null;
   return { id: r.id, tourId: r.tour_id || null, preparationType: r.preparation_type || null, label: r.label || '',
@@ -24107,6 +24612,31 @@ function _financeExtraSalePayload(d) {
   return { reservation_id: reservationId, description, amount, currency, sale_date: saleDate, notes: String(d.notes || '').trim() };
 }
 // TESTABLE:_financeExtraSalePayload:end
+// TESTABLE:_financeMonthlyExpensePayload:start
+// Aylık harcama: a business expense of a MONTH that belongs to no
+// reservation (Meta ads, Higgsfield, …). Typed in by hand for any month.
+// Amounts accept Turkish writing: "10.000" = ten thousand, "1.250,50".
+function _financeParseAmount(v) {
+  if (typeof v === 'number') return v;
+  let t = String(v == null ? '' : v).trim().replace(/\s|₺|TL|€|\$/gi, '');
+  if (!t) return NaN;
+  if (t.includes(',')) t = t.replace(/\./g, '').replace(',', '.');
+  else if (/^\d{1,3}(\.\d{3})+$/.test(t)) t = t.replace(/\./g, '');
+  return Number(t);
+}
+function _financeMonthlyExpensePayload(d) {
+  const month = String((d && d.month) || '').slice(0, 7);
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) throw new Error('Ayı seçin.');
+  const label = String((d && d.label) || '').trim();
+  if (!label) throw new Error('Harcamanın adını yazın (ör. Meta Reklam).');
+  if (label.length > 120) throw new Error('Harcama adı çok uzun.');
+  const amount = Math.round(_financeParseAmount(d.amount) * 100) / 100;
+  if (!Number.isFinite(amount) || amount <= 0) throw new Error('Tutar sıfırdan büyük olmalı.');
+  const currency = String(d.currency || '').trim().toUpperCase();
+  if (!['TRY', 'EUR', 'USD', 'GBP'].includes(currency)) throw new Error('Geçersiz para birimi.');
+  return { month: month + '-01', label, amount, currency, notes: String(d.notes || '').trim() };
+}
+// TESTABLE:_financeMonthlyExpensePayload:end
 // TESTABLE:_financeGuideCostOverridePayload:start
 // Optional per-OPERATION replacement of the standard guide operation cost.
 // The key is the operation (tour date + tour + language) the reservation
@@ -24128,6 +24658,7 @@ function _financeGuideCostOverridePayload(d) {
 // TESTABLE:_financeGuideCostOverridePayload:end
 const _mockGuideCostOverrides = [];
 const _mockFinanceExtraSales = [];
+const _mockMonthlyExpenses = [];
 // Mock/demo mode: expenses live in memory only (validated by the SAME
 // _financeExpensePayload as the Supabase repo — a guide expense is refused
 // here too); no FX is frozen without a database.
@@ -24141,7 +24672,22 @@ const FinanceRepository = {
     return { reservations, preparations: [], rules: [], costItems: [], expenses: _mockFinanceExpenses.filter(e => ids.has(e.reservationId)),
       extraSales: _mockFinanceExtraSales.filter(x => ids.has(x.reservationId)), extraSalesUnavailable: false,
       guideCostOverrides: _mockGuideCostOverrides.filter(o => o.tourDate >= startISO && o.tourDate < endISO), guideCostOverridesUnavailable: false,
+      monthlyExpenses: _mockMonthlyExpenses.filter(x => x.month === String(monthISO).slice(0, 7)), monthlyExpensesUnavailable: false,
       guidePayments: [], payments: [], settlementItems: [], rateRows: [], rateSourceError: false };
+  },
+  async getMonthlyExpenses(monthISO) {
+    return { items: _mockMonthlyExpenses.filter(x => !monthISO || x.month === String(monthISO).slice(0, 7)), unavailable: false };
+  },
+  async createMonthlyExpense(d) {
+    const row = _financeMonthlyExpensePayload(d);
+    const x = mapMonthlyExpenseFromDB({ ...row, id: 'MX-' + (_mockMonthlyExpenses.length + 1) + '-' + Date.now(), created_at: new Date().toISOString() });
+    _mockMonthlyExpenses.push(x);
+    return x;
+  },
+  async deleteMonthlyExpense(id) {
+    const i = _mockMonthlyExpenses.findIndex(x => x.id === id);
+    if (i >= 0) _mockMonthlyExpenses.splice(i, 1);
+    return true;
   },
   async getExtraSalesForMonth(monthISO) {
     if (!monthISO) return { sales: [], unavailable: false };
@@ -24222,8 +24768,10 @@ const SupabaseFinanceRepo = {
     try { rateRows = await SupabaseExchangeRateRepo.getLatestToTry(); } catch (_) { rateSourceError = true; }
     const xs = await SupabaseFinanceRepo._extraSalesByIds(sb, ids);
     const ov = await SupabaseFinanceRepo._guideCostOverrides(sb, startISO, endISO);
+    const mx = await SupabaseFinanceRepo._monthlyExpenses(sb, monthISO);
     return {
       reservations, extraSales: xs.sales, extraSalesUnavailable: xs.unavailable,
+      monthlyExpenses: mx.items, monthlyExpensesUnavailable: mx.unavailable,
       guideCostOverrides: ov.overrides, guideCostOverridesUnavailable: ov.unavailable,
       preparations: must(preps).map(mapPreparationFromDB),
       rules: must(rules).map(mapPreparationRuleFromDB),
@@ -24243,6 +24791,32 @@ const SupabaseFinanceRepo = {
     const { data, error } = await sb.from('reservation_extra_sales').select('*').in('reservation_id', ids);
     if (error) return { sales: [], unavailable: true };
     return { sales: (data || []).map(mapExtraSaleFromDB), unavailable: false };
+  },
+  // Monthly expenses (aylık harcamalar) of one month. Missing table (the
+  // migration is not applied yet) → empty + unavailable; Finance keeps working.
+  async _monthlyExpenses(sb, monthISO) {
+    const { data, error } = await sb.from('finance_monthly_expenses').select('*').eq('month', String(monthISO).slice(0, 7) + '-01').order('created_at');
+    if (error) return { items: [], unavailable: true };
+    return { items: (data || []).map(mapMonthlyExpenseFromDB), unavailable: false };
+  },
+  async getMonthlyExpenses(monthISO) {
+    const sb = getSB(); if (!sb) return FinanceRepository.getMonthlyExpenses(monthISO);
+    return SupabaseFinanceRepo._monthlyExpenses(sb, monthISO);
+  },
+  async createMonthlyExpense(d) {
+    const sb = getSB(); if (!sb) throw new Error('Supabase bağlantısı yok.');
+    const row = { ..._financeMonthlyExpensePayload(d), created_by: _authCache?.session?.user?.id || null };
+    const { data, error } = await sb.from('finance_monthly_expenses').insert(row).select().single();
+    if (error) throw new Error(/finance_monthly_expenses/.test(error.message) && /exist|schema cache/i.test(error.message) ? 'Aylık harcama tablosu henüz kurulmamış (SQL çalıştırılmalı).' : error.message);
+    await _sbLog('finance_monthly_expense', data.id, 'created', `Aylık harcama: ${row.label} · ${row.amount} ${row.currency} (${row.month.slice(0, 7)})`, { month: row.month, label: row.label, amount: row.amount, currency: row.currency });
+    return mapMonthlyExpenseFromDB(data);
+  },
+  async deleteMonthlyExpense(id) {
+    const sb = getSB(); if (!sb) throw new Error('Supabase bağlantısı yok.');
+    const { data, error } = await sb.from('finance_monthly_expenses').delete().eq('id', id).select().single();
+    if (error) throw new Error(error.message);
+    await _sbLog('finance_monthly_expense', id, 'deleted', `Aylık harcama silindi: ${data.label} · ${data.amount} ${data.currency} (${String(data.month).slice(0, 7)})`, { month: data.month });
+    return true;
   },
   // Home page: this month's extra sales (finance roles only — RLS gives
   // other roles nothing anyway, so they never even ask).

@@ -33,7 +33,9 @@ test('one summary per month, built only by the canonical layer, with Istanbul da
   assert.match(h, /const todayISO = _istanbulISODate\(\);/);
   assert.match(h, /buildFinanceMonthSummary\(\{\s*\.\.\.data, monthISO, todayISO, languageNames: LANGUAGES\.map\(l => l\[1\]\),\s*\}\)/);
   const calls = SOURCE.match(/buildFinanceMonthSummary\(/g) || [];
-  assert.equal(calls.length, 2, 'one definition + one UI call site');
+  assert.equal(calls.length, 3, 'one definition + the Finance UI + the monthly PDF report');
+  // The monthly report builds the SAME summary (same inputs) — no second calculation.
+  assert.match(body('_loadMonthlyReport'), /buildFinanceMonthSummary\(\{ \.\.\.data, monthISO, todayISO, languageNames: LANGUAGES\.map\(l => l\[1\]\) \}\)/);
 });
 
 test('Finance UI components never compute money themselves', () => {
@@ -43,7 +45,7 @@ test('Finance UI components never compute money themselves', () => {
 });
 
 test('approved tabs, in order; Genel Bakış shows only the cash to prepare (7 / 15 / 30 days) — no realized or remaining-budget KPIs', () => {
-  assert.match(SOURCE, /\{ key: "genel",\s+label: "Genel Bakış" \},\s+\{ key: "butce",\s+label: "Bütçe & Tahmin" \},\s+\{ key: "turlar",\s+label: "Tur Karlılığı" \},\s+\{ key: "ek-satislar", label: "Ek Satışlar" \},\s+\{ key: "tahsilatlar", label: "Tahsilatlar" \},\s+\{ key: "katalog",\s+label: "Maliyet Kataloğu" \},/);
+  assert.match(SOURCE, /\{ key: "genel",\s+label: "Genel Bakış" \},\s+\{ key: "butce",\s+label: "Bütçe & Tahmin" \},\s+\{ key: "turlar",\s+label: "Tur Karlılığı" \},\s+\{ key: "ek-satislar", label: "Ek Satışlar" \},\s+\{ key: "harcamalar",\s+label: "Aylık Harcamalar" \},\s+\{ key: "tahsilatlar", label: "Tahsilatlar" \},\s+\{ key: "katalog",\s+label: "Maliyet Kataloğu" \},/);
   const o = body('_FinOverview');
   assert.match(o, /useFinanceCashNeeds\(\)/);
   assert.match(o, /Hazırlanması Gereken Para · bugünden itibaren/);
