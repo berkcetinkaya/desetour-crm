@@ -4,16 +4,27 @@
  * phone through the WhatsApp Business Cloud API. Returns a normalized
  * result; never throws for an API error (the worker decides on retry).
  */
-const { TEMPLATES, templateParams } = require('./templates');
+const { TEMPLATES, templateParams, templateLanguage } = require('./templates');
 
-async function sendTemplate({ config, to, templateKey, payload, fetchImpl }) {
+function graphUrl(config) { return `https://graph.facebook.com/${config.graphVersion}/${config.phoneNumberId}/messages`; }
+
+// lang: language for multi-language templates (survey); buttonPayloads:
+// quick-reply payload per button index.
+async function sendTemplate({ config, to, templateKey, payload, lang, buttonPayloads, fetchImpl }) {
   const t = TEMPLATES[templateKey];
-  const body = {
-    messaging_product: 'whatsapp', recipient_type: 'individual', to, type: 'template',
-    template: { name: t.name, language: { code: t.language },
-      components: [{ type: 'body', parameters: templateParams(templateKey, payload).map(text => ({ type: 'text', text })) }] },
-  };
-  const url = `https://graph.facebook.com/${config.graphVersion}/${config.phoneNumberId}/messages`;
+  const components = [{ type: 'body', parameters: templateParams(templateKey, payload).map(text => ({ type: 'text', text })) }];
+  (buttonPayloads || []).forEach((p, i) => components.push({ type: 'button', sub_type: 'quick_reply', index: String(i), parameters: [{ type: 'payload', payload: p }] }));
+  return post(config, { messaging_product: 'whatsapp', recipient_type: 'individual', to, type: 'template',
+    template: { name: t.name, language: { code: templateLanguage(templateKey, lang) }, components } }, fetchImpl);
+}
+
+// Free-form text — only allowed within 24 h of the recipient's last message.
+async function sendText({ config, to, text, fetchImpl }) {
+  return post(config, { messaging_product: 'whatsapp', recipient_type: 'individual', to, type: 'text', text: { preview_url: true, body: String(text).slice(0, 4000) } }, fetchImpl);
+}
+
+async function post(config, body, fetchImpl) {
+  const url = graphUrl(config);
   let res, json;
   try {
     res = await (fetchImpl || fetch)(url, { method: 'POST', headers: { Authorization: `Bearer ${config.accessToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -31,4 +42,4 @@ async function sendTemplate({ config, to, templateKey, payload, fetchImpl }) {
   return { ok: false, retryable, error: `${res.status} ${err.code || ''} ${err.message || 'unknown error'}`.trim().slice(0, 500) };
 }
 
-module.exports = { sendTemplate };
+module.exports = { sendTemplate, sendText };

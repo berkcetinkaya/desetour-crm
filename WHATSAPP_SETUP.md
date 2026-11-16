@@ -37,6 +37,20 @@ Merhaba {{1}}, {{2}} tarihindeki {{3}} turunuzun bilgileri:
 ```
 Örnek: Yarın (21 Kasım 2026 Cumartesi): 2 operasyon, 7 misafir · 1) 10:00 Topkapı (İspanyolca) 5 kişi · Rehber: Ayşe
 
+**`desetour_tur_sonrasi_anket`** (tur sonrası anket)
+
+Tek şablon adıyla **5 dilde** oluşturun: Spanish, Portuguese (BR), Italian, English, Turkish. Kategori: Utility. Her dilde **3 "Quick reply" butonu** ekleyin; buton sırası aşağıdaki gibi olmalı.
+
+| Dil | Metin | Butonlar (sırayla) |
+|---|---|---|
+| Spanish (es) | ¡Hola {{1}}! Gracias por hacer el tour {{2}} con DeseTour. ¿Qué te ha parecido? | 😍 Excelente · 🙂 Bien · 😕 Mejorable |
+| Portuguese BR (pt_BR) | Olá {{1}}! Obrigado por fazer o passeio {{2}} com a DeseTour. O que você achou? | 😍 Excelente · 🙂 Bom · 😕 Pode melhorar |
+| Italian (it) | Ciao {{1}}! Grazie per aver fatto il tour {{2}} con DeseTour. Com'è andata? | 😍 Ottimo · 🙂 Bene · 😕 Migliorabile |
+| English (en) | Hi {{1}}! Thank you for joining the {{2}} tour with DeseTour. How was your experience? | 😍 Excellent · 🙂 Good · 😕 Could be better |
+| Turkish (tr) | Merhaba {{1}}! {{2}} turunu DeseTour ile yaptığınız için teşekkürler. Nasıldı? | 😍 Harika · 🙂 İyi · 😕 Geliştirilebilir |
+
+Örnek değerler: Maria · Bosforo y Barrio Sultanahmet
+
 ## 3. Erişim anahtarı
 Meta Business Settings → **System users** → bir sistem kullanıcısı oluşturun → WhatsApp hesabına erişim verin → **kalıcı token** üretin. İzinler:
 
@@ -73,7 +87,12 @@ Bunlar eklenince iki görev çalışır:
 - Her gün **18:05**'te yarının operasyon özeti operasyon listesine gider.
 - **15 dakikada bir** gönderilemeyen mesajlar yeniden denenir.
 
-## 7. CRM'de
+## 7. Anket için CRM'de
+- **Puanlama linki:** Turlar → tur → kanal ayarları → "Puanlama linki (WhatsApp anketi)". "Harika" ya da "İyi" diyen müşteriye bu link gider. Link yoksa sadece teşekkür mesajı gider.
+- **Müşteri telefonu:** Rezervasyon sayfası → WhatsApp kartı → "Telefon ekle". Numarayı Civitatis panelinden ülke koduyla girin (ör. +34 612 345 678).
+- **Zamanlama:** Anket tur günü **19:05**'te otomatik gider. GitHub görevi: `post-tour-surveys`.
+
+## 8. CRM'de
 **Ayarlar → WhatsApp**:
 
 - "Meta bağlantısı: Hazır ✓" yazısını görün.

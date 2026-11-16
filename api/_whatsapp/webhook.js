@@ -22,7 +22,8 @@ function verifySignature(rawBody, header, appSecret) {
 
 const RANK = { queued: 0, processing: 0, sent: 1, delivered: 2, read: 3, failed: 4 };
 
-async function processWebhook(payload, db) {
+async function processWebhook(payload, db, opts = {}) {
+  const { handleSurveyInbound } = require('./survey');
   const out = { statuses: 0, inbound: 0 };
   for (const entry of (payload && payload.entry) || []) {
     for (const change of entry.changes || []) {
@@ -48,12 +49,18 @@ async function processWebhook(payload, db) {
         const contextId = m.context ? m.context.id : null;
         let related = null;
         if (contextId) { const { data } = await db.from('whatsapp_messages').select('id').eq('provider_message_id', contextId).maybeSingle(); related = data ? data.id : null; }
-        await db.from('whatsapp_inbound_messages').upsert({
+        const inbound = {
           provider_message_id: m.id, from_phone: m.from, profile_name: names.get(m.from) || null, message_type: m.type || null,
           text: text ? String(text).slice(0, 4000) : null, button_payload: buttonPayload, context_message_id: contextId, related_message_id: related,
           received_at: m.timestamp ? new Date(Number(m.timestamp) * 1000).toISOString() : new Date().toISOString(),
-        }, { onConflict: 'provider_message_id', ignoreDuplicates: true });
+        };
+        const { data: fresh } = await db.from('whatsapp_inbound_messages').upsert(inbound, { onConflict: 'provider_message_id', ignoreDuplicates: true }).select('id');
         out.inbound += 1;
+        // Meta may deliver the same message twice: act only on the first.
+        if ((fresh || []).length && opts.config) {
+          const r = await handleSurveyInbound({ db, config: opts.config, fetchImpl: opts.fetchImpl, inbound });
+          if (r.handled) out.survey = (out.survey || 0) + 1;
+        }
       }
     }
   }

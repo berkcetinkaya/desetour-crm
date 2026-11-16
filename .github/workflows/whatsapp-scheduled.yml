@@ -4,6 +4,8 @@
 #   • every day 15:05 UTC (18:05 Istanbul) → ?action=daily-summary:
 #     tomorrow's operations (tour, time, language, guests, guide or
 #     "REHBER ATANMADI") to the WhatsApp operations list, then sends.
+#   • every day 16:05 UTC (19:05 Istanbul) → ?action=post-tour-surveys:
+#     today's tours → survey to customers whose phone is recorded.
 #   • every 15 minutes → ?action=worker: retries queued / failed-retryable
 #     messages.
 # Needs repository variable WHATSAPP_ENDPOINT_URL
@@ -16,11 +18,12 @@ name: WhatsApp Scheduled Jobs
 on:
   schedule:
     - cron: '5 15 * * *'
+    - cron: '5 16 * * *'
     - cron: '*/15 * * * *'
   workflow_dispatch:
     inputs:
       action:
-        description: 'worker or daily-summary'
+        description: 'worker, daily-summary or post-tour-surveys'
         required: true
         default: 'worker'
 
@@ -51,7 +54,8 @@ jobs:
           ACTION="worker"
           if [ "${EVENT_NAME}" = "workflow_dispatch" ]; then ACTION="${INPUT_ACTION}"; fi
           if [ "${SCHEDULE}" = "5 15 * * *" ]; then ACTION="daily-summary"; fi
-          case "${ACTION}" in worker|daily-summary) ;; *) echo "::error::Unknown action ${ACTION}"; exit 1;; esac
+          if [ "${SCHEDULE}" = "5 16 * * *" ]; then ACTION="post-tour-surveys"; fi
+          case "${ACTION}" in worker|daily-summary|post-tour-surveys) ;; *) echo "::error::Unknown action ${ACTION}"; exit 1;; esac
           http_status=$(curl -sS -o response.json -w '%{http_code}' --max-time 50 -X POST \
             -H "Authorization: Bearer ${SCHEDULER_SECRET}" "${ENDPOINT_URL}?action=${ACTION}")
           echo "Action: ${ACTION} · HTTP ${http_status}"

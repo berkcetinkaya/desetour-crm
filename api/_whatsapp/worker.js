@@ -24,7 +24,8 @@ async function runWorker({ db, config, limit = 25, ids = null, fetchImpl, now = 
     let r;
     if (!to) r = { ok: false, retryable: false, error: 'Geçersiz veya boş telefon numarası' };
     else if (!TEMPLATES[row.template_key]) r = { ok: false, retryable: false, error: `Bilinmeyen şablon: ${row.template_key}` };
-    else r = await sendTemplate({ config, to, templateKey: row.template_key, payload: row.payload || {}, fetchImpl });
+    else r = await sendTemplate({ config, to, templateKey: row.template_key, payload: row.payload || {}, lang: row.language, fetchImpl,
+      buttonPayloads: row.template_key === 'post_tour_survey' ? TEMPLATES.post_tour_survey.ratings.map(x => 'svy:' + x) : null });
     const t = now();
     let patch;
     if (r.ok) { patch = { status: 'sent', provider_message_id: r.providerMessageId, sent_at: t.toISOString(), last_error: null, next_attempt_at: null }; out.sent += 1; }

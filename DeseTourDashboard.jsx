@@ -10088,6 +10088,91 @@ function PickupEditModal({ res, onClose }) {
 // "Rehbere WhatsApp Gönder": the operation's details (all bookings of the
 // same date + tour + guide) go to the guide as the approved template. The
 // server builds the final text; this preview shows the same template.
+// Reservation page — WhatsApp: the customer's phone (Civitatis does not
+// send it; it is typed in from the Civitatis panel), the post-tour survey
+// (sent automatically on the tour day at 19:05, or by hand here) and its
+// answer, and every WhatsApp message of this reservation.
+function _ResWhatsAppCard({ r, customer }) {
+  const { role } = useAuthContext();
+  const allowed = ["Yönetici", "Operasyon"].includes(role);
+  const { data, reload } = useRepo("whatsapp", "getReservationWhatsApp", allowed ? r.id : null);
+  const { mutate: mutCust, mutating: savingPhone } = useRepoMutation("customer");
+  const { mutate, mutating } = useRepoMutation("whatsapp");
+  const [phone, setPhone] = useState("");
+  const [editing, setEditing] = useState(false);
+  if (!allowed) return null;
+  const msgs = (data && data.messages) || [];
+  const survey = msgs.find(m => m.eventType === "post_tour_survey");
+  const fb = data && data.feedback;
+  const hasPhone = !!(customer && customer.phone && String(customer.phone).replace(/\D/g, "").length >= 8);
+  const firstName = String(r.name || "").trim().split(/\s+/)[0] || "";
+  const preview = _whatsappSurveyPreview(r.tourLanguage, [firstName, r.tour]);
+  async function savePhone(e) {
+    e.preventDefault();
+    if (String(phone).replace(/\D/g, "").length < 8) { showToast("Geçerli bir telefon numarası girin (ülke koduyla, ör. +34 612 345 678)."); return; }
+    const { error } = await mutCust("update", customer.id, { phone: phone.trim() });
+    if (error) { showToast("Hata: " + error); return; }
+    showToast("Telefon kaydedildi ✓"); setEditing(false); setPhone("");
+  }
+  async function sendSurvey() {
+    if (!window.confirm("Müşteriye tur sonrası anket WhatsApp ile gönderilsin mi?\n\n" + preview)) return;
+    const { data: out, error } = await mutate("sendSurvey", { reservationId: r.id });
+    if (error) { showToast("Hata: " + error); return; }
+    showToast(_waSendResultText(out, "Anket")); reload && reload();
+  }
+  const line = { fontSize: 12.5, color: C.text, fontFamily: "'Geist',sans-serif" };
+  const muted = { fontSize: 12, color: C.textMuted, fontFamily: "'Geist',sans-serif", lineHeight: 1.5 };
+  const btn = { padding: "6px 12px", borderRadius: 8, border: `1px solid ${C.border}`, background: C.white, color: C.text, cursor: "pointer", fontSize: 12.5, fontFamily: "'Geist',sans-serif" };
+  return (
+    <RCard>
+      <RCardHead title="WhatsApp" right={<span style={{ fontSize: 10.5, color: C.textFaint, fontFamily: "'Geist',sans-serif" }}>{msgs.length ? `${msgs.length} mesaj` : ""}</span>}/>
+      <div data-testid="res-whatsapp" style={{ padding: "12px 20px 16px", display: "flex", flexDirection: "column", gap: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <span style={line}><span style={{ color: C.textMuted }}>Müşteri telefonu: </span>{hasPhone ? customer.phone : <span style={{ color: C.amber, fontWeight: 600 }}>girilmemiş</span>}</span>
+          {customer && !editing && <button type="button" onClick={() => { setEditing(true); setPhone(customer.phone || ""); }} style={btn}>{hasPhone ? "Değiştir" : "Telefon ekle"}</button>}
+        </div>
+        {editing && (
+          <form onSubmit={savePhone} style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <input data-testid="res-wa-phone" autoFocus value={phone} onChange={e => setPhone(e.target.value)} inputMode="tel" placeholder="+34 612 345 678 (Civitatis panelindeki numara)"
+              style={{ flex: "1 1 200px", padding: "7px 10px", borderRadius: 8, border: `1px solid ${C.border}`, background: C.white, color: C.text, fontSize: 13, fontFamily: "'Geist',sans-serif" }}/>
+            <button type="submit" disabled={savingPhone} style={{ ...btn, background: C.navy, color: "#fff", border: "none" }}>Kaydet</button>
+            <button type="button" onClick={() => setEditing(false)} style={btn}>Vazgeç</button>
+          </form>
+        )}
+        {!customer && <div style={muted}>Bu rezervasyona bağlı müşteri kaydı yok; telefon girilemiyor.</div>}
+        {customer && !hasPhone && !editing && <div style={muted}>Civitatis müşteri telefonunu e-postada göndermiyor; Civitatis panelinden kopyalayıp girin. Telefon girilince tur günü akşamı anket otomatik gider.</div>}
+        <div style={{ borderTop: `1px solid ${C.borderLight}`, paddingTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
+          <span style={{ ...line, fontWeight: 600 }}>Tur sonrası anket</span>
+          {fb ? (
+            <div data-testid="res-wa-feedback" style={line}>
+              <span style={{ fontSize: 16 }}>{_WA_RATING[fb.rating].icon}</span> <b>{_WA_RATING[fb.rating].label}</b>
+              <span style={{ color: C.textMuted }}> · {new Date(fb.answeredAt).toLocaleString("tr-TR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}</span>
+              {fb.comment && <div style={{ marginTop: 4, padding: "6px 10px", background: C.ivory, borderRadius: 8 }}>“{fb.comment}”</div>}
+            </div>
+          ) : survey ? (
+            <span style={muted}>Gönderildi ({_WA_STATUS_LABEL[survey.status] || survey.status}) — müşterinin yanıtı bekleniyor.</span>
+          ) : (
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <span style={muted}>Henüz gönderilmedi{hasPhone ? " — tur günü 19:05'te otomatik gider." : "."}</span>
+              {hasPhone && <button type="button" data-testid="res-wa-survey" onClick={sendSurvey} disabled={mutating} style={btn}>Anketi şimdi gönder</button>}
+            </div>
+          )}
+        </div>
+        {msgs.length > 0 && (
+          <div style={{ borderTop: `1px solid ${C.borderLight}`, paddingTop: 8, display: "flex", flexDirection: "column", gap: 4 }}>
+            {msgs.slice(0, 6).map(m => (
+              <div key={m.id} style={{ ...muted, display: "flex", justifyContent: "space-between", gap: 8 }}>
+                <span>{new Date(m.createdAt).toLocaleString("tr-TR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })} · {_WA_EVENT_LABEL[m.eventType] || m.eventType} → {m.recipientName || m.recipientPhone || "—"}</span>
+                <span style={{ color: m.status === "failed" ? C.red : C.textMuted, whiteSpace: "nowrap" }}>{_WA_STATUS_LABEL[m.status] || m.status}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </RCard>
+  );
+}
+
 function GuideWhatsAppModal({ res, onClose }) {
   const { mutate, mutating } = useRepoMutation("whatsapp");
   const [meetingPoint, setMeetingPoint] = useState(res?.pickup || "");
@@ -10776,6 +10861,8 @@ function ReservationDetailPage({ resId, onBack }) {
             <_ResMetaRow label="E-posta"  value={resCustomer?.email||"—"} mono/>
             <_ResMetaRow label="Ülke"     value={resCustomer?.country||"—"}/>
           </_ResOpenSection>
+
+          <_ResWhatsAppCard r={r} customer={resCustomer}/>
 
           {}
           <RCard>
@@ -15595,7 +15682,7 @@ function TourDetailPage({ tourId, onBack }) {
       setChannels((orig.channels||[]).map(c => ({
         sourceId: c.sourceId, externalProductId: c.externalProductId,
         price: c.price!=null ? String(c.price) : "", currency: c.currency || "EUR",
-        isActive: c.isActive, listingUrl: c.listingUrl, bookingLanguage: c.bookingLanguage,
+        isActive: c.isActive, listingUrl: c.listingUrl, reviewUrl: c.reviewUrl || "", bookingLanguage: c.bookingLanguage,
       })));
       setMeetingInstructionsTr(orig.meetingInstructionsTr || "");
       setEndPointTr(orig.endPointTr || "");
@@ -15635,7 +15722,7 @@ function TourDetailPage({ tourId, onBack }) {
     setChannels((orig.channels||[]).map(c => ({
       sourceId: c.sourceId, externalProductId: c.externalProductId,
       price: c.price!=null ? String(c.price) : "", currency: c.currency || "EUR",
-      isActive: c.isActive, listingUrl: c.listingUrl, bookingLanguage: c.bookingLanguage,
+      isActive: c.isActive, listingUrl: c.listingUrl, reviewUrl: c.reviewUrl || "", bookingLanguage: c.bookingLanguage,
     })));
     setMeetingInstructionsTr(orig.meetingInstructionsTr || ""); setEndPointTr(orig.endPointTr || "");
     setAccessibilityInfoTr(orig.accessibilityInfoTr || ""); setPetsPolicyTr(orig.petsPolicyTr || "");
@@ -25281,6 +25368,22 @@ const _WA_TEMPLATE_BODIES = {
   guide_tour_brief: 'Merhaba {{1}}, {{2}} tarihindeki {{3}} turunuzun bilgileri:\n🕘 Başlangıç: {{4}}\n🗣 Dil: {{5}}\n👥 Misafir: {{6}}\n📍 Buluşma: {{7}}\n📝 Not: {{8}}\nİyi turlar! — DeseTour Operasyon',
   operations_notice: '📣 DeseTour Operasyon — {{1}}\n{{2}}',
 };
+// Post-tour survey: same template in the booking's language (server:
+// api/_whatsapp/templates.js) — preview only.
+// TESTABLE:_whatsappSurveyPreview:start
+const _WA_SURVEY_BODIES = {
+  es: '¡Hola {{1}}! Gracias por hacer el tour {{2}} con DeseTour. ¿Qué te ha parecido?',
+  pt_BR: 'Olá {{1}}! Obrigado por fazer o passeio {{2}} com a DeseTour. O que você achou?',
+  it: "Ciao {{1}}! Grazie per aver fatto il tour {{2}} con DeseTour. Com'è andata?",
+  en: 'Hi {{1}}! Thank you for joining the {{2}} tour with DeseTour. How was your experience?',
+  tr: 'Merhaba {{1}}! {{2}} turunu DeseTour ile yaptığınız için teşekkürler. Nasıldı?',
+};
+const _WA_LANG_CODE = { 'İspanyolca': 'es', 'Portekizce': 'pt_BR', 'İtalyanca': 'it', 'İngilizce': 'en', 'Türkçe': 'tr' };
+function _whatsappSurveyPreview(tourLanguage, params) {
+  const lang = _WA_LANG_CODE[String(tourLanguage || '').trim()] || 'en';
+  return String(_WA_SURVEY_BODIES[lang]).replace(/\{\{(\d+)\}\}/g, (_, n) => String((params || [])[Number(n) - 1] || '').trim() || '—');
+}
+// TESTABLE:_whatsappSurveyPreview:end
 function _whatsappTemplatePreview(key, params) {
   return String(_WA_TEMPLATE_BODIES[key] || '').replace(/\{\{(\d+)\}\}/g, (_, n) => {
     const v = String((params || [])[Number(n) - 1] == null ? '' : params[Number(n) - 1]).replace(/[\r\n\t]+/g, ' · ').trim();
@@ -25289,7 +25392,8 @@ function _whatsappTemplatePreview(key, params) {
 }
 // TESTABLE:_whatsappTemplatePreview:end
 const _WA_STATUS_LABEL = { queued: 'Sırada', processing: 'Gönderiliyor', sent: 'Gönderildi', delivered: 'İletildi', read: 'Okundu', failed: 'Gönderilemedi' };
-const _WA_EVENT_LABEL = { guide_tour_brief: 'Rehber tur bilgisi', operations_notice: 'Ekip mesajı', daily_operations_summary: 'Yarının özeti' };
+const _WA_EVENT_LABEL = { guide_tour_brief: 'Rehber tur bilgisi', operations_notice: 'Ekip mesajı', daily_operations_summary: 'Yarının özeti', post_tour_survey: 'Tur sonrası anket', survey_reply: 'Anket yanıtı' };
+const _WA_RATING = { great: { label: 'Harika', icon: '😍' }, good: { label: 'İyi', icon: '🙂' }, poor: { label: 'Geliştirilebilir', icon: '😕' } };
 async function _whatsappApi(action, body) {
   const sb = getSB();
   let token = null;
@@ -25314,6 +25418,8 @@ const WhatsAppRepository = {
   async getInbound() { return []; },
   async sendGuideBrief(d) { _mockWa.messages.push({ id: 'WM-' + Date.now(), eventType: 'guide_tour_brief', recipientName: 'Rehber', status: 'queued', createdAt: new Date().toISOString(), reservationId: d.reservationId }); return { ok: true, sendingConfigured: false, preview: null }; },
   async sendOperationsNotice() { return { ok: true, sendingConfigured: false, recipients: _mockWa.recipients.filter(r => r.isActive).length }; },
+  async getReservationWhatsApp(resId) { return { messages: _mockWa.messages.filter(m => m.reservationId === resId).reverse(), feedback: null, feedbackUnavailable: false }; },
+  async sendSurvey(d) { _mockWa.messages.push({ id: 'WM-' + Date.now(), eventType: 'post_tour_survey', recipientName: 'Müşteri', status: 'queued', createdAt: new Date().toISOString(), reservationId: d.reservationId }); return { ok: true, sendingConfigured: false }; },
 };
 const _mapWaMessage = (m) => ({ id: m.id, eventType: m.event_type, audience: m.audience_type, recipientName: m.recipient_display_name || null, recipientPhone: m.recipient_phone || null,
   status: m.status, lastError: m.last_error || null, createdAt: m.created_at, sentAt: m.sent_at, reservationId: m.reservation_id || null, attemptCount: m.attempt_count || 0, payload: m.payload || {} });
@@ -25357,6 +25463,17 @@ const SupabaseWhatsAppRepo = {
   },
   async sendGuideBrief(d) { return _whatsappApi('enqueue', { kind: 'guide_brief', reservationId: d.reservationId, note: d.note || '', meetingPoint: d.meetingPoint || '', requestId: d.requestId }); },
   async sendOperationsNotice(d) { return _whatsappApi('enqueue', { kind: 'operations_notice', title: d.title, details: d.details, requestId: d.requestId }); },
+  async sendSurvey(d) { return _whatsappApi('enqueue', { kind: 'survey', reservationId: d.reservationId, requestId: 'svy-' + d.reservationId }); },
+  // WhatsApp messages + survey answer of one reservation (reservation page).
+  async getReservationWhatsApp(resId) {
+    const sb = getSB(); if (!sb || !resId) return WhatsAppRepository.getReservationWhatsApp(resId);
+    const [m, f] = await Promise.all([
+      sb.from('whatsapp_messages').select('*').eq('reservation_id', resId).order('created_at', { ascending: false }),
+      sb.from('reservation_feedback').select('*').eq('reservation_id', resId).maybeSingle(),
+    ]);
+    return { messages: m.error ? [] : (m.data || []).map(_mapWaMessage), feedbackUnavailable: !!f.error,
+      feedback: f.data ? { rating: f.data.rating, comment: f.data.comment || null, answeredAt: f.data.answered_at, commentAt: f.data.comment_at } : null };
+  },
 };
 function _waSendResultText(r, what) {
   if (!r) return '';
@@ -27552,7 +27669,7 @@ function TourTypeChips({ value, onChange }) {
 function TourChannelRows({ channels, setChannels, sources, srcLoading }) {
   function updateRow(i, patch) { setChannels(prev => prev.map((c,j) => j===i ? {...c, ...patch} : c)); }
   function removeRow(i) { setChannels(prev => prev.filter((_,j)=>j!==i)); }
-  function addRow() { setChannels(prev => [...prev, { sourceId:"", externalProductId:"", price:"", currency:"EUR", isActive:true, listingUrl:"", bookingLanguage:"" }]); }
+  function addRow() { setChannels(prev => [...prev, { sourceId:"", externalProductId:"", price:"", currency:"EUR", isActive:true, listingUrl:"", reviewUrl:"", bookingLanguage:"" }]); }
 
   if (!srcLoading && (sources||[]).length === 0) {
     return (
@@ -27607,6 +27724,10 @@ function TourChannelRows({ channels, setChannels, sources, srcLoading }) {
                 <div style={{fontSize:10.5, fontWeight:600, color:C.textFaint, textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:5, fontFamily:"'Geist',sans-serif"}}>Listing URL</div>
                 <FText value={c.listingUrl} onChange={v=>updateRow(i,{listingUrl:v})} placeholder="https://…"/>
               </div>
+            </div>
+            <div style={{marginBottom:10}}>
+              <div style={{fontSize:10.5, fontWeight:600, color:C.textFaint, textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:5, fontFamily:"'Geist',sans-serif"}}>Puanlama linki (WhatsApp anketi)</div>
+              <FText value={c.reviewUrl||""} onChange={v=>updateRow(i,{reviewUrl:v})} placeholder="Memnun müşteriye gönderilecek değerlendirme linki"/>
             </div>
             <div style={{marginBottom:6}}>
               <div style={{fontSize:10.5, fontWeight:600, color:C.textFaint, textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:5, fontFamily:"'Geist',sans-serif"}}>Rezervasyon Dili</div>
@@ -28260,6 +28381,7 @@ function mapTourChannelFromDB(c) {
     currency: c.currency || null,
     isActive: c.is_active !== false,
     listingUrl: c.listing_url || '',
+    reviewUrl: c.review_url || '',
     notes: c.notes || '',
     // Empty = generic mapping (matches this external product regardless
     // of booking language) — see supabase_migration_tour_channels_v2_
@@ -28429,6 +28551,7 @@ async function _syncTourChannels(sb, tourId, channels) {
       currency: hasPrice ? (c.currency || 'EUR') : null,
       is_active: c.isActive !== false,
       listing_url: c.listingUrl || null,
+      review_url: c.reviewUrl || null,
       notes: c.notes || null,
       // NULL = generic mapping — see mapTourChannelFromDB above.
       booking_language: c.bookingLanguage || null,

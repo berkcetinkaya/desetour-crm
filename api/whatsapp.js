@@ -11,11 +11,14 @@
  *   GET  ?action=status                CRM staff: is Meta configured?
  *   POST ?action=worker                scheduler (Bearer WHATSAPP_SCHEDULER_SECRET): send due messages
  *   POST ?action=daily-summary         scheduler: tomorrow's operations → operations list, then send
+ *   POST ?action=post-tour-surveys     scheduler: today's tours → customer survey, then send
+ *        (enqueue also takes { kind:'survey', reservationId } for a manual survey)
  */
 const { getWhatsAppConfig } = require('./_whatsapp/config');
 const { verifyHandshake, verifySignature, processWebhook } = require('./_whatsapp/webhook');
 const { runWorker } = require('./_whatsapp/worker');
 const { enqueueGuideBrief, enqueueOperationsNotice, enqueueDailySummary } = require('./_whatsapp/enqueue');
+const { enqueueSurvey, enqueueDailySurveys } = require('./_whatsapp/survey');
 const { requireStaffRole } = require('./_shared/authorize');
 const { getAdminDb } = require('./_whatsapp/db');
 
@@ -42,13 +45,14 @@ function createHandler(deps = {}) {
         const raw = await readRaw(req);
         if (!verifySignature(raw, req.headers['x-hub-signature-256'], cfg.appSecret)) return res.status(401).json({ error: 'Invalid signature.' });
         let payload; try { payload = JSON.parse(raw.toString('utf8')); } catch (_) { return res.status(400).json({ error: 'Bad JSON.' }); }
-        const out = await processWebhook(payload, db());
+        const out = await processWebhook(payload, db(), { config: cfg, fetchImpl: deps.fetchImpl });
         return res.status(200).json(out);
       }
-      if (action === 'worker' || action === 'daily-summary') {
+      if (action === 'worker' || action === 'daily-summary' || action === 'post-tour-surveys') {
         if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed.' });
         if (!isScheduler(req, cfg)) return res.status(401).json({ error: 'Unauthorized.' });
-        const summary = action === 'daily-summary' ? await enqueueDailySummary({ db: db() }) : null;
+        const summary = action === 'daily-summary' ? await enqueueDailySummary({ db: db() })
+          : action === 'post-tour-surveys' ? await enqueueDailySurveys({ db: db() }) : null;
         const worker = await runWorker({ db: db(), config: cfg, fetchImpl: deps.fetchImpl });
         return res.status(200).json({ summary, worker });
       }
@@ -66,7 +70,8 @@ function createHandler(deps = {}) {
           const title = String(body.title || '').trim(), details = String(body.details || '').trim();
           if (!title || !details) return res.status(400).json({ error: 'Başlık ve mesaj gerekli.' });
           r = await enqueueOperationsNotice({ db: db(), eventType: 'operations_notice', title, details, key: `operations_notice:${requestId}` });
-        } else return res.status(400).json({ error: 'Bilinmeyen mesaj türü.' });
+        } else if (body.kind === 'survey') r = await enqueueSurvey({ db: db(), reservationId: body.reservationId });
+        else return res.status(400).json({ error: 'Bilinmeyen mesaj türü.' });
         if (!r.ok) return res.status(r.status).json({ error: r.error });
         const worker = r.ids.length ? await runWorker({ db: db(), config: cfg, ids: r.ids, fetchImpl: deps.fetchImpl }) : null;
         return res.status(200).json({ ...r, sendingConfigured: cfg.sendingConfigured, worker });
