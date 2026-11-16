@@ -101,6 +101,20 @@ const CRM_CHANGELOG_CATEGORIES = [
 // Newest first. See the release convention above before editing.
 const CRM_CHANGELOG = [
   {
+    version: '13.21',
+    date: '2026-11-16',
+    title: 'WhatsApp: Rehber, Ekip ve Müşteri Anketi',
+    summary: 'CRM artık DeseTour WhatsApp numarasından rehberlere tur bilgisi, operasyon ekibine günlük özet ve müşterilere tur sonrası anket gönderebiliyor; rezervasyonlarda turun Civitatis sayfası görünüyor.',
+    categories: ['Yeni Özellik', 'Otomasyon'],
+    highlights: [
+      'Rezervasyonda "Rehbere WhatsApp Gönder": tarih, saat, dil, misafir sayısı ve buluşma noktası tek mesajda rehbere gidiyor.',
+      'Ayarlar → WhatsApp: operasyon ekibi numaraları, ekibe mesaj ve her akşam yarının turlarının özeti (rehbersiz turlar uyarıyla).',
+      'Tur günü akşamı müşteriye kendi dilinde anket; memnun olana turun Civitatis sayfası, olmayana "ne geliştirebiliriz?" sorusu gidiyor, cevaplar rezervasyonda.',
+      'Rezervasyon sayfasında "Tur Sayfası" linki ve müşteri telefonu girişi.',
+    ],
+    author: 'Berk',
+  },
+  {
     version: '13.20',
     date: '2026-11-16',
     title: 'Civitatis Değişiklikleri Görünür',
@@ -257,21 +271,6 @@ const CRM_CHANGELOG = [
       'En son oluşturulan taslak otomatik olarak açılıyor',
       'Gönderilmiş e-postalar değiştirilemiyor ve geçmiş kayıtlar korunuyor',
       'Taslak oluşturma ve güncelleme işlemlerinin kayıt sistemi iyileştirildi',
-    ],
-    author: 'Berk',
-  },
-  {
-    version: '12.46',
-    date: '2026-10-21',
-    title: 'Acentelere CRM Üzerinden E-posta Gönderimi Eklendi',
-    summary: 'Acenteler modülünde hazırlanan ilk temas e-postaları artık CRM içinden insan onayıyla hello@desetour.com adresinden gönderilebiliyor. Gönderim sonrası iletişim durumu ve ilgili acente bilgileri otomatik olarak güncelleniyor.',
-    categories: ['Yeni Özellik', 'İyileştirme'],
-    highlights: [
-      'Hazırlanan acente e-posta taslakları gönderim öncesinde son kez incelenebiliyor',
-      'Onaylanan e-postalar hello@desetour.com üzerinden gönderiliyor',
-      'Aynı e-postanın yanlışlıkla birden fazla kez gönderilmesine karşı koruma eklendi',
-      'Başarılı gönderim sonrası son iletişim zamanı ve acente durumu otomatik güncelleniyor',
-      'Acentelerle ilgili işlem kayıtları daha güvenilir hale getirildi',
     ],
     author: 'Berk',
   },
