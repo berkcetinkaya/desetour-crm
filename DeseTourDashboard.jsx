@@ -4367,7 +4367,7 @@ const MAX_VISIBLE_IMPORTANT_ALERTS = 3;
 // TESTABLE:_filterImportantAlerts:start
 function _filterImportantAlerts(list, locallyReadIds) {
   const skip = locallyReadIds || new Set();
-  return (list || []).filter(n => n.action === 'cancelled' && !n.isRead && !skip.has(n.id));
+  return (list || []).filter(n => (n.action === 'cancelled' || n.alertType === 'civitatis_modified') && !n.isRead && !skip.has(n.id));
 }
 // TESTABLE:_filterImportantAlerts:end
 
@@ -4389,6 +4389,14 @@ function _paginateImportantAlerts(alerts, max) {
 // metadata doesn't have it, rather than showing an invented fallback.
 // TESTABLE:_cancellationAlertViewModel:start
 function _cancellationAlertViewModel(alert, compact) {
+  if (alert.alertType === 'civitatis_modified') {
+    const rows = [];
+    if (alert.tourName) rows.push({ key:'tour', label:'Tur', value:alert.tourName });
+    (alert.changes || []).forEach(c => rows.push({ key:'chg-' + c.field, label:c.label, value:`${c.from} → ${c.to}` }));
+    if (alert.externalBookingId) rows.push({ key:'civitatis', label:'Civitatis', value:alert.externalBookingId });
+    if (alert.guideAssigned) rows.push({ key:'guide', label:'Rehber', value:`${alert.guideName || 'atanmış'} — değişikliği rehbere iletin` });
+    return { title: 'Rezervasyon Değişikliği', subtitle: 'Civitatis rezervasyonu değiştirildi', reservationNumber: alert.reservationNumber || null, rows, tone: 'amber' };
+  }
   const dateLabel = alert.tourDate
     ? new Date(alert.tourDate).toLocaleDateString('tr-TR', { day:'2-digit', month: compact ? 'short' : 'long', year:'numeric' })
     : null;
@@ -4402,6 +4410,7 @@ function _cancellationAlertViewModel(alert, compact) {
     subtitle: 'Civitatis rezervasyonu iptal edildi',
     reservationNumber: alert.reservationNumber || null,
     rows,
+    tone: 'red',
   };
 }
 // TESTABLE:_cancellationAlertViewModel:end
@@ -4438,7 +4447,7 @@ function CancellationAlertBody({ alert, compact }) {
     <>
       <span style={{
         fontSize: compact ? 10 : 10.5, fontWeight:700, letterSpacing:"0.08em", textTransform:"uppercase",
-        color:C.red, fontFamily:"'Geist',sans-serif",
+        color: vm.tone === 'amber' ? C.amber : C.red, fontFamily:"'Geist',sans-serif",
       }}>{vm.title}</span>
       {vm.reservationNumber && (
         <div style={{ fontSize: compact ? 14 : 15, fontWeight:700, color:C.text, fontFamily:"'Geist',sans-serif", marginTop:4 }}>
@@ -4460,7 +4469,7 @@ function CancellationAlertBody({ alert, compact }) {
 function CancellationAlertCard({ alert, onView, onMarkRead }) {
   return (
     <div style={{
-      background:C.ivory, border:`1px solid ${C.border}`, borderLeft:`3px solid ${C.red}`,
+      background:C.ivory, border:`1px solid ${C.border}`, borderLeft:`3px solid ${alert.alertType === 'civitatis_modified' ? C.amber : C.red}`,
       borderRadius:T.radiusSm, padding:"16px 18px",
       display:"flex", flexDirection:"column",
     }}>
@@ -5919,6 +5928,7 @@ function _classifyLiveSignal(n) {
   if (n.entityType === 'agency_email') return 'message';
   if (n.source === 'civitatis_message') return 'message';
   if (n.action === 'cancelled') return 'cancellation';
+  if (n.alertType === 'civitatis_modified') return 'modification';
   if (n.action === 'created') return 'reservation';
   return null;
 }
@@ -5926,7 +5936,7 @@ function _classifyLiveSignal(n) {
 
 // TESTABLE:_groupLiveSignals:start
 function _groupLiveSignals(notifications) {
-  const groups = { reservation: [], message: [], cancellation: [] };
+  const groups = { reservation: [], message: [], cancellation: [], modification: [] };
   (notifications || []).forEach(n => {
     if (!n || n.isRead) return;
     const kind = _classifyLiveSignal(n);
@@ -6376,12 +6386,15 @@ const LIVE_SIGNAL_DEFS = [
     icon:"M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" },
   { kind:"cancellation", label:"İptal",            empty:"Okunmamış iptal yok",            tone:"red",
     icon:"M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" },
+  { kind:"modification", label:"Değişiklik",       empty:"Okunmamış Civitatis değişikliği yok", tone:"amber",
+    icon:"M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7 M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" },
 ];
 
 const _LIVE_TONES = {
   green: { color:C.green, bg:C.greenBg, border:C.greenBorder },
   blue:  { color:C.blue,  bg:C.blueBg,  border:C.blueBorder },
   red:   { color:C.red,   bg:C.redBg,   border:C.redBorder },
+  amber: { color:C.amber, bg:C.amberBg, border:C.amberBorder },
 };
 
 // Unread new reservations / messages / cancellations, each as a tile with
@@ -6477,8 +6490,8 @@ function LiveSignalTile({ def, items, loading, open, onToggle, onOpenItem, onMar
       <div className="dash-section__body" style={{gridTemplateRows: expanded ? "1fr" : "0fr", opacity: expanded ? 1 : 0}} aria-hidden={!expanded}>
         <div style={{minHeight:0, overflow:"hidden"}}>
           <div style={{borderTop:`1px solid ${C.borderLight}`, padding:"6px 10px 10px", display:"flex", flexDirection:"column", gap:6}}>
-            {items.slice(0, LIVE_SIGNAL_MAX_ITEMS).map(n => def.kind === "cancellation" ? (
-              <div key={n.id} style={{padding:"10px 10px 12px", borderRadius:T.radiusSm, background:C.redBg, border:`1px solid ${C.redBorder}`}}>
+            {items.slice(0, LIVE_SIGNAL_MAX_ITEMS).map(n => def.kind === "cancellation" || def.kind === "modification" ? (
+              <div key={n.id} style={{padding:"10px 10px 12px", borderRadius:T.radiusSm, background:tone.bg, border:`1px solid ${tone.border}`}}>
                 <CancellationAlertBody alert={n} compact/>
                 <div style={{display:"flex", gap:8, flexWrap:"wrap", marginTop:10}}>
                   <button type="button" tabIndex={tab} onClick={() => onOpenItem(n)} style={{..._liveActionBtn, border:"none", background:C.navy, color:C.onDarkSolid}}>Rezervasyonu Gör</button>
@@ -10443,6 +10456,47 @@ function _ResSummaryChip({ icon, label, tone }) {
     </span>
   );
 }
+// Civitatis "Booking modified" changes applied to this reservation (one
+// activity row per modification email that really changed something —
+// written by the ingestion RPC with metadata.changes), newest first.
+// TESTABLE:_civitatisChangesFromActivity:start
+function _civitatisChangesFromActivity(activity) {
+  return (activity || []).filter(a => a && a.metadata && a.metadata.alert_type === 'civitatis_modified' && Array.isArray(a.metadata.changes))
+    .map(a => ({ id: a.id, at: a.createdAt || null, changes: a.metadata.changes, guideAssigned: a.metadata.guide_assigned === true, externalBookingId: a.metadata.external_booking_id || null }))
+    .sort((x, y) => String(y.at || '').localeCompare(String(x.at || '')));
+}
+// TESTABLE:_civitatisChangesFromActivity:end
+function _ResCivitatisChanges({ activity, r }) {
+  const list = _civitatisChangesFromActivity(activity);
+  if (!list.length) return null;
+  const hasGuide = !!(r.guideId || r.guide);
+  return (
+    <div data-testid="res-civitatis-changes" style={{ background:C.white, border:`1px solid ${C.border}`, borderLeft:`3px solid ${C.amber}`, borderRadius:T.radiusSm, padding:"14px 18px", display:"flex", flexDirection:"column", gap:10 }}>
+      <div style={{ display:"flex", alignItems:"baseline", justifyContent:"space-between", gap:10, flexWrap:"wrap" }}>
+        <span style={{ fontSize:11, fontWeight:700, letterSpacing:"0.08em", textTransform:"uppercase", color:C.amber, fontFamily:"'Geist',sans-serif" }}>Civitatis Değişiklikleri</span>
+        <span style={{ fontSize:11.5, color:C.textMuted, fontFamily:"'Geist',sans-serif" }}>Civitatis'ten gelen değişiklik mailleri otomatik uygulandı</span>
+      </div>
+      {list.map(m => (
+        <div key={m.id} style={{ display:"flex", gap:14, flexWrap:"wrap", alignItems:"flex-start", paddingTop:8, borderTop:`1px solid ${C.borderLight}` }}>
+          <span style={{ fontSize:11.5, color:C.textFaint, fontFamily:"'Geist',sans-serif", minWidth:110 }}>
+            {m.at ? new Date(m.at).toLocaleString("tr-TR", { day:"2-digit", month:"short", year:"numeric", hour:"2-digit", minute:"2-digit" }) : "—"}
+          </span>
+          <div style={{ display:"flex", flexDirection:"column", gap:3, flex:1, minWidth:200 }}>
+            {m.changes.map((c, i) => (
+              <span key={i} style={{ fontSize:13, color:C.text, fontFamily:"'Geist',sans-serif" }}>
+                <span style={{ color:C.textMuted }}>{c.label}: </span>
+                <span style={{ textDecoration:"line-through", color:C.textFaint }}>{c.from}</span>{"  →  "}<b>{c.to}</b>
+              </span>
+            ))}
+          </div>
+        </div>
+      ))}
+      {hasGuide && (
+        <div style={{ fontSize:12, color:C.amber, fontFamily:"'Geist',sans-serif" }}>Bu rezervasyona rehber atanmış — değişikliği rehbere ilettiğinizden emin olun.</div>
+      )}
+    </div>
+  );
+}
 function _ResOperationalSummary({ r, hasMissingPassengerNames, hasUnreadCivitatisMessage, pendingPrepCount }) {
   const hasGuide = !!(r.guideId || r.guide);
   const hasPickup = !!r.pickup;
@@ -10669,6 +10723,7 @@ function ReservationDetailPage({ resId, onBack }) {
         hasUnreadCivitatisMessage={hasUnreadCivitatisMessage}
         pendingPrepCount={pendingPrepCount}
       />
+      <_ResCivitatisChanges activity={resActivity} r={r}/>
 
       {}
       <div className="rsp-split" style={{ display:"grid", gridTemplateColumns:"1fr 1fr 272px", gap:18, alignItems:"start" }}>
@@ -24342,7 +24397,7 @@ const SupabaseActivityRepo = {
   // (reservationId, action==='cancelled', etc.) are unaffected. RLS still
   // decides which rows a given staff member actually gets back — see the
   // method's own doc-comment above for how that scoping works per role.
-  async getReservationNotifications(){const sb=getSB();if(!sb)return ActivityRepository.getReservationNotifications?ActivityRepository.getReservationNotifications():[];const{data,error}=await sb.from('activity_logs').select('id,entity_id,entity_type,action,description,metadata,created_at,activity_log_reads(id)').in('entity_type',['reservation','agency_email']).eq('metadata->>auto_ingested','true').order('created_at',{ascending:false}).limit(30);if(error)throw new Error(error.message);return(data||[]).map(l=>({id:l.id,entityType:l.entity_type,reservationId:l.entity_type==='reservation'?l.entity_id:null,agencyEmailId:l.entity_type==='agency_email'?l.entity_id:null,agencyId:l.metadata?.agency_id||null,agencyName:l.metadata?.agency_name||null,subject:l.metadata?.subject||null,bodyPreview:l.metadata?.body_preview||null,action:l.action,description:l.description,source:l.metadata?.source||null,externalBookingId:l.metadata?.external_booking_id||null,reservationNumber:l.metadata?.reservation_number||null,customerName:l.metadata?.customer_name||null,tourName:l.metadata?.tour_name||null,tourDate:l.metadata?.tour_date||null,createdAt:l.created_at,isRead:(l.activity_log_reads||[]).length>0}));},
+  async getReservationNotifications(){const sb=getSB();if(!sb)return ActivityRepository.getReservationNotifications?ActivityRepository.getReservationNotifications():[];const{data,error}=await sb.from('activity_logs').select('id,entity_id,entity_type,action,description,metadata,created_at,activity_log_reads(id)').in('entity_type',['reservation','agency_email']).eq('metadata->>auto_ingested','true').order('created_at',{ascending:false}).limit(30);if(error)throw new Error(error.message);return(data||[]).map(l=>({id:l.id,entityType:l.entity_type,reservationId:l.entity_type==='reservation'?l.entity_id:null,agencyEmailId:l.entity_type==='agency_email'?l.entity_id:null,agencyId:l.metadata?.agency_id||null,agencyName:l.metadata?.agency_name||null,subject:l.metadata?.subject||null,bodyPreview:l.metadata?.body_preview||null,action:l.action,description:l.description,source:l.metadata?.source||null,externalBookingId:l.metadata?.external_booking_id||null,reservationNumber:l.metadata?.reservation_number||null,customerName:l.metadata?.customer_name||null,tourName:l.metadata?.tour_name||null,tourDate:l.metadata?.tour_date||null,alertType:l.metadata?.alert_type||null,changes:Array.isArray(l.metadata?.changes)?l.metadata.changes:null,guideAssigned:l.metadata?.guide_assigned===true,guideName:l.metadata?.guide_name||null,createdAt:l.created_at,isRead:(l.activity_log_reads||[]).length>0}));},
   // Per-staff read receipt — INSERT only, staff_id must equal auth.uid()
   // (enforced by "activity_log_reads: staff insert own"), and the table's
   // own UNIQUE(activity_log_id, staff_id) constraint makes a repeat click

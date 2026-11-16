@@ -172,11 +172,14 @@ test('only UNREAD notifications become live signals, grouped by kind in the orde
     { id: 5, entityType: 'reservation', action: 'note_added', source: 'civitatis_message', isRead: false },
     { id: 6, entityType: 'reservation', action: 'note_added', isRead: false },
     { id: 7, entityType: 'reservation', action: 'created', isRead: false },
+    { id: 8, entityType: 'reservation', action: 'updated', alertType: 'civitatis_modified', isRead: false },
+    { id: 9, entityType: 'reservation', action: 'updated', alertType: 'civitatis_modified', isRead: true },
   ]);
   assert.deepEqual(g.reservation.map(n => n.id), [1, 7]);
   assert.deepEqual(g.message.map(n => n.id), [4, 5]);
   assert.deepEqual(g.cancellation.map(n => n.id), [3]);
-  assert.deepEqual(group(null), { reservation: [], message: [], cancellation: [] });
+  assert.deepEqual(g.modification.map(n => n.id), [8], 'Civitatis changes get their own "Değişiklik" signal');
+  assert.deepEqual(group(null), { reservation: [], message: [], cancellation: [], modification: [] });
 });
 
 test('LiveSignalsPanel reuses the shared notification hook (same role filter + read/navigate as the bell) and is hidden for Rehber', () => {

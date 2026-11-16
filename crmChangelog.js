@@ -101,6 +101,19 @@ const CRM_CHANGELOG_CATEGORIES = [
 // Newest first. See the release convention above before editing.
 const CRM_CHANGELOG = [
   {
+    version: '13.20',
+    date: '2026-11-16',
+    title: 'Civitatis Değişiklikleri Görünür',
+    summary: 'Civitatis\'ten gelen rezervasyon değişikliği mailleri (tarih, saat, kişi sayısı, dil, tutar) artık neyin neye değiştiğiyle rezervasyon sayfasında, bildirimlerde ve ana sayfada gösteriliyor.',
+    categories: ['Otomasyon', 'Operasyon'],
+    highlights: [
+      'Rezervasyon sayfasında "Civitatis Değişiklikleri" bölümü: ör. Tarih 19.11.2026 → 20.11.2026, ne zaman uygulandığıyla.',
+      'Ana sayfada yeni "Değişiklik" kutusu ve bildirim zilinde uyarı; rehber atanmış turlarda "değişikliği rehbere iletin" hatırlatması.',
+      'Değişiklik mailleri eskiden olduğu gibi otomatik uygulanıyor; içeriği aynı olan bir mail yeni uyarı oluşturmuyor.',
+    ],
+    author: 'Berk',
+  },
+  {
     version: '13.19',
     date: '2026-11-15',
     title: 'Aylık Harcamalar ve PDF Aylık Rapor',
@@ -259,21 +272,6 @@ const CRM_CHANGELOG = [
       'Aynı e-postanın yanlışlıkla birden fazla kez gönderilmesine karşı koruma eklendi',
       'Başarılı gönderim sonrası son iletişim zamanı ve acente durumu otomatik güncelleniyor',
       'Acentelerle ilgili işlem kayıtları daha güvenilir hale getirildi',
-    ],
-    author: 'Berk',
-  },
-  {
-    version: '12.45',
-    date: '2026-10-21',
-    title: 'CRM Güvenliği İki Aşamalı Doğrulama ile Güçlendirildi',
-    summary: 'DeseTour CRM giriş güvenliği güçlendirildi. Kullanıcılar artık e-posta ve şifre ile giriş yaptıktan sonra kimlik doğrulama uygulamasındaki tek kullanımlık kodla oturumlarını doğruluyor. Yetkili CRM işlemleri ve operasyon verileri ek güvenlik katmanlarıyla korunuyor.',
-    categories: ['Altyapı', 'İyileştirme'],
-    highlights: [
-      'CRM girişlerine iki aşamalı doğrulama eklendi',
-      'Google Authenticator ve standart TOTP uygulamaları destekleniyor',
-      'Operasyonel CRM erişimi doğrulanmış güvenli oturum gerektiriyor',
-      'Yetkisiz veya devre dışı bırakılmış kullanıcıların doğrudan veri erişimi ek olarak sınırlandırıldı',
-      'Kullanıcıların kendi yetki veya aktiflik durumlarını değiştirebilmesine karşı veritabanı koruması eklendi',
     ],
     author: 'Berk',
   },
