@@ -10048,6 +10048,7 @@ function ResTimeline({ r }) {
 
 const RES_ACTIONS = [
   { label:"Rehber Ata",                      icon:"M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2 M23 21v-2a4 4 0 00-3-3.87 M16 3.13a4 4 0 010 7.75", primary:true },
+  { label:"Rehbere WhatsApp Gönder",         icon:"M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z M8 9h8 M8 13h5" },
   { label:"Pickup Bilgisi Ekle",             icon:"M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z M12 10a1 1 0 100-2 1 1 0 000 2z" },
   { label:"Ödeme Kaydı Ekle",               icon:"M2 9a2 2 0 012-2h16a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V9zM2 13h20" },
   { label:"Hatırlatma Oluştur",             icon:"M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0" },
@@ -10084,11 +10085,44 @@ function PickupEditModal({ res, onClose }) {
   );
 }
 
+// "Rehbere WhatsApp Gönder": the operation's details (all bookings of the
+// same date + tour + guide) go to the guide as the approved template. The
+// server builds the final text; this preview shows the same template.
+function GuideWhatsAppModal({ res, onClose }) {
+  const { mutate, mutating } = useRepoMutation("whatsapp");
+  const [meetingPoint, setMeetingPoint] = useState(res?.pickup || "");
+  const [note, setNote] = useState("");
+  const [requestId] = useState(() => 'gb-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8));
+  const guideName = res?.guide || res?.assignedGuideName || "Rehber";
+  const dateLabel = res?.checkIn ? new Date(String(res.checkIn).slice(0, 10) + "T12:00:00").toLocaleDateString("tr-TR", { day: "numeric", month: "long", year: "numeric", weekday: "long" }) : res?.date;
+  const preview = _whatsappTemplatePreview("guide_tour_brief", [String(guideName).split(" ")[0], dateLabel, res?.tour, res?.time ? String(res.time).slice(0, 5) : "", res?.tourLanguage,
+    "aynı gün ve turdaki tüm rezervasyonlar toplanır", meetingPoint || "Operasyondan iletilecek", note]);
+  async function handleSubmit() {
+    const { data, error } = await mutate("sendGuideBrief", { reservationId: res.id, meetingPoint, note, requestId });
+    if (error) { showToast("Hata: " + error); return; }
+    showToast(_waSendResultText(data, `${guideName} için tur bilgisi`));
+    onClose();
+  }
+  return (
+    <Modal title="Rehbere WhatsApp Gönder" onClose={onClose} onSubmit={handleSubmit} submitLabel={mutating ? "Gönderiliyor…" : "Gönder"}>
+      <FRow label="Buluşma noktası">
+        <FText value={meetingPoint} onChange={setMeetingPoint} placeholder="ör. Sultanahmet Meydanı, Alman Çeşmesi önü"/>
+      </FRow>
+      <FRow label="Not (isteğe bağlı)">
+        <FTextArea value={note} onChange={setNote} rows={2} placeholder="ör. Misafirlerden biri tekerlekli sandalye kullanıyor"/>
+      </FRow>
+      <div data-testid="guide-wa-preview" style={{ whiteSpace: "pre-wrap", background: "#E7F8EE", border: "1px solid #BFE6CD", borderRadius: 10, padding: "10px 12px", fontSize: 12.5, color: "#1F2D1F", fontFamily: "'Geist',sans-serif", lineHeight: 1.5 }}>{preview}</div>
+      <div style={{ fontSize: 11.5, color: C.textMuted, fontFamily: "'Geist',sans-serif", marginTop: 6 }}>Misafir sayısı ve rezervasyon numaraları gönderirken bu rehberin aynı gün ve aynı turdaki tüm rezervasyonlarından hesaplanır.</div>
+    </Modal>
+  );
+}
+
 function ResQuickActions({ res, onAssignGuide }) {
   const [opStatus, setOpStatus] = useState(res?.opStatus || "Hazırlanıyor");
   const [showPickup, setShowPickup] = useState(false);
   const [showReminder, setShowReminder] = useState(false);
   const [showPayment, setShowPayment] = useState(false);
+  const [showGuideWa, setShowGuideWa] = useState(false);
   const { role } = useAuthContext();
 
   async function handleTamamlandi() {
@@ -10112,6 +10146,7 @@ function ResQuickActions({ res, onAssignGuide }) {
   const visibleActions = RES_ACTIONS.filter(a => {
     if (a.label === "Hatırlatma Oluştur") return canAccess(role, "reminders");
     if (a.label === "Ödeme Kaydı Ekle")   return canAccess(role, "payments");
+    if (a.label === "Rehbere WhatsApp Gönder") return !!res?.guideId && ["Yönetici", "Operasyon"].includes(role);
     return true;
   });
 
@@ -10123,6 +10158,7 @@ function ResQuickActions({ res, onAssignGuide }) {
           const isOdeme = a.label === "Ödeme Kaydı Ekle";
           const isPickup = a.label === "Pickup Bilgisi Ekle";
           const isHatirlatma = a.label === "Hatırlatma Oluştur";
+          const isGuideWa = a.label === "Rehbere WhatsApp Gönder";
           const isTamamlandi = a.green;
           // "Rehber Ata" invokes the EXACT SAME guide-assignment UI already
           // used by Operasyon Bilgileri — onAssignGuide is the parent's
@@ -10134,6 +10170,7 @@ function ResQuickActions({ res, onAssignGuide }) {
             : isPickup ? () => setShowPickup(true)
             : isOdeme ? () => setShowPayment(true)
             : isHatirlatma ? () => setShowReminder(true)
+            : isGuideWa ? () => setShowGuideWa(true)
             : isTamamlandi ? handleTamamlandi
             : undefined;
           return (
@@ -10160,6 +10197,7 @@ function ResQuickActions({ res, onAssignGuide }) {
         })}
       </div>
       {showPickup && <PickupEditModal res={res} onClose={()=>setShowPickup(false)}/>}
+      {showGuideWa && <GuideWhatsAppModal res={res} onClose={()=>setShowGuideWa(false)}/>}
       {showReminder && (
         <NewReminderModal
           resId={res?.id} customerId={res?.customerId} customerName={res?.customer||res?.name}
@@ -18590,7 +18628,110 @@ function SaveBtn({ saved, onClick }) {
   );
 }
 
+// Ayarlar → WhatsApp: Meta connection state, the operations recipient
+// list (daily "tomorrow" summary + team notices go to these numbers), a
+// manual team notice and the latest messages with their delivery state.
+function WhatsAppSettings() {
+  const { data: st, error: stErr } = useRepo("whatsapp", "getStatus");
+  const { data: ops, loading: opsLoading, reload } = useRepo("whatsapp", "getOperationsList");
+  const { data: msgs } = useRepo("whatsapp", "getRecentMessages");
+  const { data: inbound } = useRepo("whatsapp", "getInbound");
+  const { mutate, mutating } = useRepoMutation("whatsapp");
+  const [rcp, setRcp] = useState({ displayName: "", phone: "" });
+  const [notice, setNotice] = useState({ title: "", details: "" });
+  const [noticeReq, setNoticeReq] = useState(() => 'on-' + Date.now().toString(36));
+  const box = { border: `1px solid ${C.border}`, borderRadius: 10, background: C.white, padding: "14px 16px", display: "flex", flexDirection: "column", gap: 10 };
+  const h = { fontSize: 13.5, fontWeight: 700, color: C.text, fontFamily: "'Geist',sans-serif" };
+  const sub = { fontSize: 12, color: C.textMuted, fontFamily: "'Geist',sans-serif", lineHeight: 1.5 };
+  const input = { padding: "8px 10px", borderRadius: 8, border: `1px solid ${C.border}`, background: C.white, color: C.text, fontSize: 13, fontFamily: "'Geist',sans-serif", minWidth: 0 };
+  const btn = { padding: "8px 14px", borderRadius: 8, border: "none", background: C.navy, color: "#fff", cursor: "pointer", fontSize: 12.5, fontWeight: 600, fontFamily: "'Geist',sans-serif" };
+  const ready = !!(st && st.sendingConfigured);
+  async function addRecipient(e) {
+    e.preventDefault();
+    if (!rcp.phone.trim()) { showToast("Telefon numarası girin."); return; }
+    const { error } = await mutate("addRecipient", { destinationId: ops.destination.id, phone: rcp.phone, displayName: rcp.displayName });
+    if (error) { showToast("Hata: " + error); return; }
+    setRcp({ displayName: "", phone: "" }); reload && reload();
+  }
+  async function sendNotice(e) {
+    e.preventDefault();
+    if (!notice.title.trim() || !notice.details.trim()) { showToast("Başlık ve mesaj yazın."); return; }
+    const { data, error } = await mutate("sendOperationsNotice", { ...notice, requestId: noticeReq });
+    if (error) { showToast("Hata: " + error); return; }
+    showToast(_waSendResultText(data, `Ekip mesajı (${data.recipients || 0} kişi)`));
+    setNotice({ title: "", details: "" }); setNoticeReq('on-' + Date.now().toString(36));
+  }
+  const statusColor = (s) => s === "failed" ? C.red : s === "read" || s === "delivered" ? C.green : s === "sent" ? C.blue : C.amber;
+  return (
+    <div data-testid="whatsapp-settings" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      <div style={{ ...box, borderLeft: `3px solid ${ready ? C.green : C.amber}` }}>
+        <div style={h}>Meta bağlantısı: {stErr ? "kontrol edilemedi" : !st ? "…" : ready ? "Hazır ✓" : "Henüz kurulmadı"}</div>
+        <div style={sub}>
+          {ready ? "Mesajlar DeseTour WhatsApp numarasından gönderiliyor." + (st.webhookConfigured ? " İletildi / okundu bilgisi geliyor." : " İletildi/okundu bilgisi için webhook henüz kurulmadı.")
+            : "Meta Business'ta numara doğrulanıp erişim anahtarları sunucuya eklenince mesajlar gönderilmeye başlar. O zamana kadar gönderdiğiniz mesajlar sırada bekler, kaybolmaz."}
+        </div>
+      </div>
+      <div style={box}>
+        <div style={h}>Operasyon ekibi listesi</div>
+        <div style={sub}>Her akşam 18:00'de yarının turları (saat, tur, dil, kişi sayısı, rehber; rehbersiz operasyonlar uyarıyla) ve aşağıdan yazdığınız ekip mesajları bu numaralara gider.</div>
+        {opsLoading && !ops ? <div style={sub}>Yükleniyor…</div> : ops && ops.unavailable ? (
+          <div style={{ ...sub, color: C.amber }}>WhatsApp tabloları henüz kurulmamış — supabase_migration_whatsapp_phase2_sending.sql çalıştırılmalı.</div>
+        ) : (<>
+          {(ops?.recipients || []).length === 0 && <div style={sub}>Henüz kimse eklenmedi.</div>}
+          {(ops?.recipients || []).map(r => (
+            <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 0", borderTop: `1px solid ${C.borderLight}`, fontFamily: "'Geist',sans-serif", fontSize: 13, color: C.text, opacity: r.isActive ? 1 : .55 }}>
+              <span style={{ flex: 1, minWidth: 0 }}><b>{r.displayName || "—"}</b> <span style={{ color: C.textMuted }}>{r.phone}</span></span>
+              <button type="button" onClick={async () => { await mutate("setRecipientActive", r.id, !r.isActive); reload && reload(); }} style={{ ...btn, background: "transparent", color: C.textMid, border: `1px solid ${C.border}`, fontWeight: 500 }}>{r.isActive ? "Durdur" : "Etkinleştir"}</button>
+              <button type="button" aria-label="Kaldır" onClick={async () => { if (!window.confirm(`${r.displayName || r.phone} listeden çıkarılsın mı?`)) return; await mutate("removeRecipient", r.id); reload && reload(); }} style={{ ...btn, background: "transparent", color: C.red, border: `1px solid ${C.border}`, fontWeight: 500 }}>Kaldır</button>
+            </div>
+          ))}
+          <form onSubmit={addRecipient} style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <input data-testid="wa-rcp-name" value={rcp.displayName} onChange={e => setRcp({ ...rcp, displayName: e.target.value })} placeholder="Ad (ör. Berk)" style={{ ...input, flex: "1 1 140px" }}/>
+            <input data-testid="wa-rcp-phone" value={rcp.phone} onChange={e => setRcp({ ...rcp, phone: e.target.value })} placeholder="Telefon (ör. 0532 123 45 67)" inputMode="tel" style={{ ...input, flex: "1 1 180px" }}/>
+            <button type="submit" disabled={mutating} style={btn}>Ekle</button>
+          </form>
+        </>)}
+      </div>
+      <form onSubmit={sendNotice} style={box}>
+        <div style={h}>Ekibe mesaj gönder</div>
+        <input value={notice.title} onChange={e => setNotice({ ...notice, title: e.target.value })} placeholder="Başlık (ör. Yarın Topkapı kapalı)" style={input}/>
+        <textarea value={notice.details} onChange={e => setNotice({ ...notice, details: e.target.value })} rows={3} placeholder="Mesaj" style={{ ...input, resize: "vertical" }}/>
+        <div style={{ display: "flex", justifyContent: "flex-end" }}><button type="submit" disabled={mutating} style={btn}>{mutating ? "Gönderiliyor…" : "Gönder"}</button></div>
+      </form>
+      <div style={box}>
+        <div style={h}>Son mesajlar</div>
+        {(msgs || []).length === 0 ? <div style={sub}>Henüz WhatsApp mesajı yok.</div> : (
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5, fontFamily: "'Geist',sans-serif" }}>
+              <thead><tr style={{ color: C.textMuted, textAlign: "left" }}><th style={{ padding: "6px 8px" }}>Tarih</th><th style={{ padding: "6px 8px" }}>Alıcı</th><th style={{ padding: "6px 8px" }}>Mesaj</th><th style={{ padding: "6px 8px" }}>Durum</th></tr></thead>
+              <tbody>{msgs.map(m => (
+                <tr key={m.id} style={{ borderTop: `1px solid ${C.borderLight}`, color: C.text, verticalAlign: "top" }}>
+                  <td style={{ padding: "6px 8px", whiteSpace: "nowrap" }}>{new Date(m.createdAt).toLocaleString("tr-TR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}</td>
+                  <td style={{ padding: "6px 8px" }}>{m.recipientName || m.recipientPhone || "—"}</td>
+                  <td style={{ padding: "6px 8px" }}>{_WA_EVENT_LABEL[m.eventType] || m.eventType}{m.payload && m.payload.title ? ` · ${m.payload.title}` : ""}</td>
+                  <td style={{ padding: "6px 8px", color: statusColor(m.status), fontWeight: 600 }}>{_WA_STATUS_LABEL[m.status] || m.status}{m.lastError ? <div style={{ fontWeight: 400, color: C.textMuted, fontSize: 11 }}>{m.lastError}</div> : null}</td>
+                </tr>))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+      {(inbound || []).length > 0 && (
+        <div style={box}>
+          <div style={h}>Gelen mesajlar</div>
+          {inbound.map(m => (
+            <div key={m.id} style={{ fontSize: 12.5, color: C.text, fontFamily: "'Geist',sans-serif", borderTop: `1px solid ${C.borderLight}`, paddingTop: 6 }}>
+              <span style={{ color: C.textMuted }}>{new Date(m.at).toLocaleString("tr-TR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })} · {m.name || m.from}: </span>{m.text || "(medya)"}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SettingsPage() {
+  const auth = useAuthContext();
   const [hov, setHov] = useState(false);
   const [activeSection, setActiveSection] = useState("sirket");
   // Phase 6 — the 220px vertical section sidebar used to simply stack
@@ -18654,6 +18795,7 @@ function SettingsPage() {
     { id:"durumlar",  label:"Durum Ayarları",      icon:"M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" },
     { id:"bildirimler",label:"Bildirim Ayarları",  icon:"M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" },
     { id:"otomasyon", label:"Otomasyon Kuralları", icon:"M13 10V3L4 14h7v7l9-11h-7z" },
+    ...(["Yönetici", "Operasyon"].includes(auth?.role) ? [{ id:"whatsapp", label:"WhatsApp", icon:"M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" }] : []),
   ];
 
   return (
@@ -19092,6 +19234,11 @@ function SettingsPage() {
           )}
 
           {}
+          {activeSection==="whatsapp" && (
+            <SSection id="whatsapp" title="WhatsApp" desc="Rehberlere ve operasyon ekibine otomatik mesajlar" icon="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z">
+              <WhatsAppSettings/>
+            </SSection>
+          )}
           {activeSection==="otomasyon" && (
             <SSection id="otomasyon" title="Otomasyon Kuralları" desc="Tetiklenen sistem eylemleri" icon="M13 10V3L4 14h7v7l9-11h-7z">
               <div style={{
@@ -25114,6 +25261,7 @@ function getActiveRepo(entity) {
   if(entity==='reservationPreparation') return useReal ? SupabaseReservationPreparationRepo : { getByReservation: async () => [], getUpcomingPending: async () => [], getRecentCompleted: async () => [], complete: async () => ({ ok:false, reason:'invalid' }), reopen: async () => ({ ok:false, reason:'invalid' }) };
   if(entity==='exchangeRate') return useReal ? SupabaseExchangeRateRepo : ExchangeRateRepository;
   if(entity==='finance') return useReal ? SupabaseFinanceRepo : FinanceRepository;
+  if(entity==='whatsapp') return useReal ? SupabaseWhatsAppRepo : WhatsAppRepository;
   if(entity==='civitatisSettlement') return useReal ? SupabaseCivitatisSettlementRepo : {
     getSummary: async () => _buildCivitatisSettlementSummary([], _TODAY_ISO),
     getDetailed: async () => ({ summary: _buildCivitatisSettlementSummary([], _TODAY_ISO), periods: [] }),
@@ -25121,6 +25269,102 @@ function getActiveRepo(entity) {
     markPeriodPaid: async () => ({ result: 'no_actionable_items', affectedCount: 0, settlementPeriod: null }),
   };
   return null;
+}
+
+// ── WhatsApp (Meta Cloud API) — CRM side ───────────────────────────────
+// Sending happens ONLY on the server (api/whatsapp.js): the browser asks it
+// to queue + send a message with the staff session token. Settings
+// (operations recipient list) are edited directly under RLS
+// (admin + operations); message history is read-only here.
+// TESTABLE:_whatsappTemplatePreview:start
+const _WA_TEMPLATE_BODIES = {
+  guide_tour_brief: 'Merhaba {{1}}, {{2}} tarihindeki {{3}} turunuzun bilgileri:\n🕘 Başlangıç: {{4}}\n🗣 Dil: {{5}}\n👥 Misafir: {{6}}\n📍 Buluşma: {{7}}\n📝 Not: {{8}}\nİyi turlar! — DeseTour Operasyon',
+  operations_notice: '📣 DeseTour Operasyon — {{1}}\n{{2}}',
+};
+function _whatsappTemplatePreview(key, params) {
+  return String(_WA_TEMPLATE_BODIES[key] || '').replace(/\{\{(\d+)\}\}/g, (_, n) => {
+    const v = String((params || [])[Number(n) - 1] == null ? '' : params[Number(n) - 1]).replace(/[\r\n\t]+/g, ' · ').trim();
+    return v || '—';
+  });
+}
+// TESTABLE:_whatsappTemplatePreview:end
+const _WA_STATUS_LABEL = { queued: 'Sırada', processing: 'Gönderiliyor', sent: 'Gönderildi', delivered: 'İletildi', read: 'Okundu', failed: 'Gönderilemedi' };
+const _WA_EVENT_LABEL = { guide_tour_brief: 'Rehber tur bilgisi', operations_notice: 'Ekip mesajı', daily_operations_summary: 'Yarının özeti' };
+async function _whatsappApi(action, body) {
+  const sb = getSB();
+  let token = null;
+  if (sb) { const { data } = await sb.auth.getSession(); token = data?.session?.access_token || null; }
+  const resp = await fetch('/api/whatsapp?action=' + action, {
+    method: body ? 'POST' : 'GET',
+    headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const payload = await resp.json().catch(() => ({}));
+  if (!resp.ok) throw new Error(payload.error || `WhatsApp isteği başarısız (${resp.status})`);
+  return payload;
+}
+const _mockWa = { recipients: [], messages: [] };
+const WhatsAppRepository = {
+  async getStatus() { return { sendingConfigured: false, webhookConfigured: false, mock: true }; },
+  async getOperationsList() { return { destination: { id: 'WA-OPS', displayName: 'DeseTour Operasyon Ekibi' }, recipients: _mockWa.recipients.slice(), unavailable: false }; },
+  async addRecipient({ phone, displayName }) { const r = { id: 'WR-' + Date.now(), phone, displayName, isActive: true }; _mockWa.recipients.push(r); return r; },
+  async setRecipientActive(id, isActive) { const r = _mockWa.recipients.find(x => x.id === id); if (r) r.isActive = isActive; return true; },
+  async removeRecipient(id) { const i = _mockWa.recipients.findIndex(x => x.id === id); if (i >= 0) _mockWa.recipients.splice(i, 1); return true; },
+  async getRecentMessages() { return _mockWa.messages.slice().reverse(); },
+  async getInbound() { return []; },
+  async sendGuideBrief(d) { _mockWa.messages.push({ id: 'WM-' + Date.now(), eventType: 'guide_tour_brief', recipientName: 'Rehber', status: 'queued', createdAt: new Date().toISOString(), reservationId: d.reservationId }); return { ok: true, sendingConfigured: false, preview: null }; },
+  async sendOperationsNotice() { return { ok: true, sendingConfigured: false, recipients: _mockWa.recipients.filter(r => r.isActive).length }; },
+};
+const _mapWaMessage = (m) => ({ id: m.id, eventType: m.event_type, audience: m.audience_type, recipientName: m.recipient_display_name || null, recipientPhone: m.recipient_phone || null,
+  status: m.status, lastError: m.last_error || null, createdAt: m.created_at, sentAt: m.sent_at, reservationId: m.reservation_id || null, attemptCount: m.attempt_count || 0, payload: m.payload || {} });
+const SupabaseWhatsAppRepo = {
+  async getStatus() { return _whatsappApi('status'); },
+  async getOperationsList() {
+    const sb = getSB(); if (!sb) return WhatsAppRepository.getOperationsList();
+    const { data: dest, error } = await sb.from('whatsapp_destinations').select('id,display_name,is_active').eq('destination_key', 'operations').maybeSingle();
+    if (error || !dest) return { destination: null, recipients: [], unavailable: true };
+    const { data, error: e2 } = await sb.from('whatsapp_destination_recipients').select('*').eq('destination_id', dest.id).order('sort_order').order('created_at');
+    if (e2) throw new Error(e2.message);
+    return { destination: { id: dest.id, displayName: dest.display_name }, recipients: (data || []).map(r => ({ id: r.id, phone: r.phone, displayName: r.display_name || '', isActive: r.is_active })), unavailable: false };
+  },
+  async addRecipient({ destinationId, phone, displayName }) {
+    const sb = getSB(); if (!sb) throw new Error('Supabase bağlantısı yok.');
+    const { data, error } = await sb.from('whatsapp_destination_recipients').insert({ destination_id: destinationId, phone: String(phone).trim(), display_name: String(displayName || '').trim() || null }).select().single();
+    if (error) throw new Error(error.message);
+    return data;
+  },
+  async setRecipientActive(id, isActive) {
+    const sb = getSB(); const { error } = await sb.from('whatsapp_destination_recipients').update({ is_active: !!isActive }).eq('id', id);
+    if (error) throw new Error(error.message); return true;
+  },
+  async removeRecipient(id) {
+    const sb = getSB(); const { error } = await sb.from('whatsapp_destination_recipients').delete().eq('id', id);
+    if (error) throw new Error(error.message); return true;
+  },
+  async getRecentMessages(f) {
+    const sb = getSB(); if (!sb) return [];
+    let q = sb.from('whatsapp_messages').select('*').order('created_at', { ascending: false }).limit(60);
+    if (f && f.reservationId) q = q.eq('reservation_id', f.reservationId);
+    const { data, error } = await q;
+    if (error) return [];
+    return (data || []).map(_mapWaMessage);
+  },
+  async getInbound() {
+    const sb = getSB(); if (!sb) return [];
+    const { data, error } = await sb.from('whatsapp_inbound_messages').select('*').order('received_at', { ascending: false }).limit(40);
+    if (error) return [];
+    return (data || []).map(m => ({ id: m.id, from: m.from_phone, name: m.profile_name, text: m.text, at: m.received_at }));
+  },
+  async sendGuideBrief(d) { return _whatsappApi('enqueue', { kind: 'guide_brief', reservationId: d.reservationId, note: d.note || '', meetingPoint: d.meetingPoint || '', requestId: d.requestId }); },
+  async sendOperationsNotice(d) { return _whatsappApi('enqueue', { kind: 'operations_notice', title: d.title, details: d.details, requestId: d.requestId }); },
+};
+function _waSendResultText(r, what) {
+  if (!r) return '';
+  const w = r.worker;
+  if (!r.sendingConfigured) return `${what} sıraya alındı. Meta bağlantısı kurulunca otomatik gönderilecek.`;
+  if (w && w.sent > 0) return `${what} WhatsApp ile gönderildi ✓`;
+  if (w && w.failed > 0) return `${what} gönderilemedi: ${(w.results.find(x => x.error) || {}).error || 'bilinmeyen hata'}`;
+  return `${what} sıraya alındı, birkaç dakika içinde tekrar denenecek.`;
 }
 
 function useRepo(entity, method, arg) {

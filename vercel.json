@@ -35,6 +35,10 @@
     "api/agency-mailbox-sync.js": {
       "maxDuration": 60,
       "memory": 512
+    },
+    "api/whatsapp.js": {
+      "maxDuration": 60,
+      "memory": 512
     }
   },
   "rewrites": [

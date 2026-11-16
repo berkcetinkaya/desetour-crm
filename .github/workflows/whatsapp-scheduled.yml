@@ -1,0 +1,62 @@
+# WhatsApp Scheduled Jobs
+# ─────────────────────────────────────────────────────────────────────────
+# Calls the protected api/whatsapp.js endpoint (no logic here):
+#   • every day 15:05 UTC (18:05 Istanbul) → ?action=daily-summary:
+#     tomorrow's operations (tour, time, language, guests, guide or
+#     "REHBER ATANMADI") to the WhatsApp operations list, then sends.
+#   • every 15 minutes → ?action=worker: retries queued / failed-retryable
+#     messages.
+# Needs repository variable WHATSAPP_ENDPOINT_URL
+# (https://<production-domain>/api/whatsapp) and secret
+# WHATSAPP_SCHEDULER_SECRET (same value as the Vercel env var). Until both
+# exist the job only prints a notice and succeeds — WhatsApp is optional.
+# ─────────────────────────────────────────────────────────────────────────
+name: WhatsApp Scheduled Jobs
+
+on:
+  schedule:
+    - cron: '5 15 * * *'
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'worker or daily-summary'
+        required: true
+        default: 'worker'
+
+permissions: {}
+
+concurrency:
+  group: whatsapp-scheduled
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Call the protected WhatsApp endpoint
+        env:
+          SCHEDULER_SECRET: ${{ secrets.WHATSAPP_SCHEDULER_SECRET }}
+          ENDPOINT_URL: ${{ vars.WHATSAPP_ENDPOINT_URL }}
+          EVENT_NAME: ${{ github.event_name }}
+          SCHEDULE: ${{ github.event.schedule }}
+          INPUT_ACTION: ${{ github.event.inputs.action }}
+        run: |
+          set -euo pipefail
+          if [ -z "${ENDPOINT_URL}" ] || [ -z "${SCHEDULER_SECRET}" ]; then
+            echo "::notice::WhatsApp is not activated yet (WHATSAPP_ENDPOINT_URL / WHATSAPP_SCHEDULER_SECRET missing) — nothing to do."
+            exit 0
+          fi
+          ACTION="worker"
+          if [ "${EVENT_NAME}" = "workflow_dispatch" ]; then ACTION="${INPUT_ACTION}"; fi
+          if [ "${SCHEDULE}" = "5 15 * * *" ]; then ACTION="daily-summary"; fi
+          case "${ACTION}" in worker|daily-summary) ;; *) echo "::error::Unknown action ${ACTION}"; exit 1;; esac
+          http_status=$(curl -sS -o response.json -w '%{http_code}' --max-time 50 -X POST \
+            -H "Authorization: Bearer ${SCHEDULER_SECRET}" "${ENDPOINT_URL}?action=${ACTION}")
+          echo "Action: ${ACTION} · HTTP ${http_status}"
+          cat response.json
+          if [ "${http_status}" -lt 200 ] || [ "${http_status}" -ge 300 ]; then
+            echo "::error::WhatsApp endpoint returned ${http_status}"
+            exit 1
+          fi
