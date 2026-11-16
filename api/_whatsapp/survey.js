@@ -67,12 +67,15 @@ async function enqueueDailySurveys({ db, todayISO = istanbulISODate() }) {
 
 async function reviewUrlFor(db, reservation) {
   if (!reservation || !reservation.tour_id) return null;
-  const { data } = await db.from('tour_channels').select('review_url,booking_language,source_id,is_active').eq('tour_id', reservation.tour_id);
-  const rows = (data || []).filter(c => c.review_url && c.is_active !== false);
+  // The channel's own review link, otherwise its tour page (listing_url —
+  // the Civitatis page desetour.com links to), same language first.
+  const { data } = await db.from('tour_channels').select('review_url,listing_url,booking_language,source_id,is_active').eq('tour_id', reservation.tour_id);
+  const rows = (data || []).filter(c => (c.review_url || c.listing_url) && c.is_active !== false);
   const pick = rows.find(c => c.source_id === reservation.source_id && c.booking_language === reservation.tour_language)
+    || rows.find(c => c.booking_language === reservation.tour_language)
     || rows.find(c => c.source_id === reservation.source_id && !c.booking_language)
-    || rows.find(c => c.booking_language === reservation.tour_language) || rows[0];
-  return pick ? pick.review_url : null;
+    || rows.find(c => !c.booking_language) || rows[0];
+  return pick ? (pick.review_url || pick.listing_url) : null;
 }
 
 async function reply({ db, config, fetchImpl, to, text, original, inboundId }) {

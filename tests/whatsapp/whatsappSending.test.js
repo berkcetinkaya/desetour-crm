@@ -247,3 +247,26 @@ test('worker sends the survey in the booking language with one payload per butto
   const prev = extractTestableFn('_whatsappSurveyPreview');
   assert.equal(prev('İtalyanca', ['Gio', 'Topkapı']), renderPreview('post_tour_survey', { customerName: 'Gio', tourName: 'Topkapı' }, 'it'));
 });
+
+test('tour page: the Civitatis page of the booking language (listing URL) is shown and sent with the survey; a review link wins for the survey', async () => {
+  const tp = extractTestableFn('_reservationTourPage');
+  const ch = [
+    { sourceName: 'Civitatis', bookingLanguage: 'İspanyolca', listingUrl: 'https://www.civitatis.com/es/estambul/tour-gran-bazar', isActive: true },
+    { sourceName: 'Civitatis', bookingLanguage: '', listingUrl: 'https://www.civitatis.com/it/istanbul/tour-grande-bazar', isActive: true },
+  ];
+  assert.deepEqual(tp(ch, 'İspanyolca'), { pageUrl: 'https://www.civitatis.com/es/estambul/tour-gran-bazar', channel: 'Civitatis', surveyUrl: 'https://www.civitatis.com/es/estambul/tour-gran-bazar' });
+  assert.equal(tp(ch, 'İtalyanca').pageUrl, 'https://www.civitatis.com/it/istanbul/tour-grande-bazar', 'generic channel as fallback');
+  assert.equal(tp([{ ...ch[0], reviewUrl: 'https://g.page/r/x' }], 'İspanyolca').surveyUrl, 'https://g.page/r/x');
+  assert.equal(tp([], 'İspanyolca').pageUrl, null);
+  const db = fakeDb({ tour_channels: [
+    { tour_id: 'T1', source_id: 'CIV', booking_language: 'Portekizce', listing_url: 'https://www.civitatis.com/pt/istambul/visita-guiada-istambul', is_active: true },
+    { tour_id: 'T1', source_id: 'CIV', booking_language: 'İtalyanca', listing_url: 'https://it', review_url: null, is_active: true }] });
+  assert.equal(await reviewUrlFor(db, { tour_id: 'T1', source_id: 'CIV', tour_language: 'Portekizce' }), 'https://www.civitatis.com/pt/istambul/visita-guiada-istambul');
+});
+
+test('data SQL: fills only empty listing URLs, each guarded by its channel id + tour + language, with the desetour.com links', () => {
+  const sql = fs.readFileSync(path.join(__dirname, '..', '..', 'tour_channels_civitatis_urls_from_website.sql'), 'utf8');
+  assert.match(sql, /AND \(c\.listing_url IS NULL OR btrim\(c\.listing_url\) = ''\)/);
+  assert.match(sql, /WHERE c\.id = v\.id AND c\.tour_id = v\.tour_id AND c\.booking_language = v\.lang/);
+  for (const u of ['it/istanbul/tour-grande-bazar', 'it/istanbul/crociera-bosforo-sultanahmet', 'pt/istambul/cruzeiro-bosforo-sultanahmet', 'pt/istambul/visita-guiada-istambul', 'es/estambul/visita-palacio-topkapi-haren-santa-irene-231294']) assert.ok(sql.includes(u), u);
+});

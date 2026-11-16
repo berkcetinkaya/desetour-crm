@@ -88,7 +88,7 @@ Bunlar eklenince iki görev çalışır:
 - **15 dakikada bir** gönderilemeyen mesajlar yeniden denenir.
 
 ## 7. Anket için CRM'de
-- **Puanlama linki:** Turlar → tur → kanal ayarları → "Puanlama linki (WhatsApp anketi)". "Harika" ya da "İyi" diyen müşteriye bu link gider. Link yoksa sadece teşekkür mesajı gider.
+- **Puanlama linki:** "Harika" ya da "İyi" diyen müşteriye turun Civitatis sayfası gider. Bu, turun kanal ayarlarındaki **Listing URL**'dir; rezervasyon sayfasında "Tur Sayfası" olarak da görünür. Farklı bir link gönderilecekse Turlar → tur → kanal ayarları → "Puanlama linki (WhatsApp anketi)" alanına yazın. İkisi de boşsa müşteriye sadece teşekkür mesajı gider.
 - **Müşteri telefonu:** Rezervasyon sayfası → WhatsApp kartı → "Telefon ekle". Numarayı Civitatis panelinden ülke koduyla girin (ör. +34 612 345 678).
 - **Zamanlama:** Anket tur günü **19:05**'te otomatik gider. GitHub görevi: `post-tour-surveys`.
 

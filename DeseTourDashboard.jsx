@@ -10092,6 +10092,41 @@ function PickupEditModal({ res, onClose }) {
 // send it; it is typed in from the Civitatis panel), the post-tour survey
 // (sent automatically on the tour day at 19:05, or by hand here) and its
 // answer, and every WhatsApp message of this reservation.
+// The tour's sales page for this booking's language (tour_channels:
+// listing_url, the Civitatis page desetour.com links to) — and the link
+// the survey sends back (a channel's own review link wins there).
+// TESTABLE:_reservationTourPage:start
+function _reservationTourPage(channels, tourLanguage) {
+  const rows = (channels || []).filter(c => c && c.isActive !== false && (c.listingUrl || c.reviewUrl));
+  const pick = rows.find(c => c.bookingLanguage === tourLanguage && c.listingUrl)
+    || rows.find(c => !c.bookingLanguage && c.listingUrl) || rows.find(c => c.listingUrl) || null;
+  const review = rows.find(c => c.bookingLanguage === tourLanguage && c.reviewUrl) || rows.find(c => !c.bookingLanguage && c.reviewUrl) || null;
+  return { pageUrl: pick ? pick.listingUrl : null, channel: pick ? (pick.sourceName || 'Satış kanalı') : null,
+    surveyUrl: review ? review.reviewUrl : (pick ? pick.listingUrl : null) };
+}
+// TESTABLE:_reservationTourPage:end
+function _ResTourPageLink({ r }) {
+  const { data: tour } = useRepo("tour", "getById", r.tourId || null);
+  const tp = _reservationTourPage(tour && tour.channels, r.tourLanguage);
+  if (!r.tourId) return null;
+  async function copy() {
+    try { await navigator.clipboard.writeText(tp.pageUrl); showToast("Link kopyalandı ✓"); } catch (_) { showToast(tp.pageUrl); }
+  }
+  return (
+    <_ResOpenSection title="Tur Sayfası">
+      <div data-testid="res-tour-page" style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", fontFamily: "'Geist',sans-serif", fontSize: 12.5 }}>
+        {tp.pageUrl ? (<>
+          <span style={{ color: C.textMuted }}>{tp.channel}{r.tourLanguage ? ` · ${r.tourLanguage}` : ""}:</span>
+          <a href={tp.pageUrl} target="_blank" rel="noopener noreferrer" style={{ color: C.goldText, wordBreak: "break-all" }}>{tp.pageUrl.replace(/^https?:\/\/(www\.)?/, "")}</a>
+          <button type="button" onClick={copy} style={{ padding: "4px 10px", borderRadius: 8, border: `1px solid ${C.border}`, background: C.white, color: C.text, cursor: "pointer", fontSize: 12 }}>Kopyala</button>
+        </>) : (
+          <span style={{ color: C.textFaint }}>{tour ? "Bu turun bu dildeki satış sayfası girilmemiş (Turlar → kanal ayarları → Listing URL)." : "…"}</span>
+        )}
+      </div>
+    </_ResOpenSection>
+  );
+}
+
 function _ResWhatsAppCard({ r, customer }) {
   const { role } = useAuthContext();
   const allowed = ["Yönetici", "Operasyon"].includes(role);
@@ -10861,6 +10896,8 @@ function ReservationDetailPage({ resId, onBack }) {
             <_ResMetaRow label="E-posta"  value={resCustomer?.email||"—"} mono/>
             <_ResMetaRow label="Ülke"     value={resCustomer?.country||"—"}/>
           </_ResOpenSection>
+
+          <_ResTourPageLink r={r}/>
 
           <_ResWhatsAppCard r={r} customer={resCustomer}/>
 
@@ -27727,7 +27764,7 @@ function TourChannelRows({ channels, setChannels, sources, srcLoading }) {
             </div>
             <div style={{marginBottom:10}}>
               <div style={{fontSize:10.5, fontWeight:600, color:C.textFaint, textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:5, fontFamily:"'Geist',sans-serif"}}>Puanlama linki (WhatsApp anketi)</div>
-              <FText value={c.reviewUrl||""} onChange={v=>updateRow(i,{reviewUrl:v})} placeholder="Memnun müşteriye gönderilecek değerlendirme linki"/>
+              <FText value={c.reviewUrl||""} onChange={v=>updateRow(i,{reviewUrl:v})} placeholder="Boş bırakılırsa Listing URL (tur sayfası) gönderilir"/>
             </div>
             <div style={{marginBottom:6}}>
               <div style={{fontSize:10.5, fontWeight:600, color:C.textFaint, textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:5, fontFamily:"'Geist',sans-serif"}}>Rezervasyon Dili</div>
