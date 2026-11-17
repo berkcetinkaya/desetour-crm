@@ -16471,6 +16471,23 @@ function computeGuideRatingStats(reviews) {
 }
 // TESTABLE:computeGuideRatingStats:end
 
+// TESTABLE:computeGuideFeedbackStats:start
+// WhatsApp geri bildirimi (müşterinin tur sonrası verdiği 1–5 puanlar) →
+// rehber profili. Yalnızca rehber puanı verilmiş yanıtlar sayılır; platform
+// değerlendirmelerinden (reservation_reviews) ayrı tutulur, onlara karışmaz.
+function computeGuideFeedbackStats(rows) {
+  const list = (rows || []).filter(x => Number(x.guideScore) >= 1 && Number(x.guideScore) <= 5);
+  if (!list.length) return { count: 0, avgGuide: null, avgTour: null, low: 0 };
+  const tours = list.filter(x => Number(x.tourScore) >= 1);
+  return {
+    count: list.length,
+    avgGuide: list.reduce((s, x) => s + Number(x.guideScore), 0) / list.length,
+    avgTour: tours.length ? tours.reduce((s, x) => s + Number(x.tourScore), 0) / tours.length : null,
+    low: list.filter(x => Number(x.guideScore) <= 3).length,
+  };
+}
+// TESTABLE:computeGuideFeedbackStats:end
+
 // TESTABLE:formatGuideRatingLabel:start
 // Turkish-locale display for computeGuideRatingStats()'s output — "4,8"/
 // "5,0" (comma decimal, one place), never "0,0" for a guide with no
@@ -18310,6 +18327,7 @@ function GuideDetailPage({ guideId, onBack }) {
   // list, and every metric derived from it below, stays correct even after
   // a reservation is later reassigned to a different guide.
   const { data:repoReviews } = useRepo("review", "getByGuide", guideId);
+  const { data: repoWaFeedback } = useRepo("whatsapp", "getGuideFeedback", guideId);
   const { data:repoCustomers } = useRepo("customer", "getAll");
   const { sources } = useSources();
   const [showEdit, setShowEdit]               = useState(false);
@@ -18363,6 +18381,8 @@ function GuideDetailPage({ guideId, onBack }) {
   const perfTours  = completedRes.length;
   const perfGuests = completedRes.reduce((s,r)=>s+(r.pax||0)+(r.paxChild||0),0);
   const reviews = repoReviews || [];
+  const waFeedback = repoWaFeedback || [];
+  const waStats = computeGuideFeedbackStats(waFeedback);
   const reviewedTourCount = new Set(reviews.map(rv=>rv.resId).filter(Boolean)).size;
   // Same shared helper the Guides list ("Ortalama Puan" column) uses — see
   // computeGuideRatingStats — so this page and that list can never diverge.
@@ -18503,6 +18523,26 @@ function GuideDetailPage({ guideId, onBack }) {
                 </div>
               ))
             )}
+          </GuideSectionCard>
+
+          <GuideSectionCard title={`WhatsApp Geri Bildirim Puanları (${waStats.count})`}>
+            {waStats.count===0 ? <EmptyRow text="Henüz müşteri geri bildirimi yok. Tur sonrası rezervasyondan 'Geri bildirim iste' ile gönderilen mesaja verilen rehber puanları buraya işlenir."/> : (<>
+              <div data-testid="guide-wa-feedback" style={{display:"flex", gap:22, flexWrap:"wrap", padding:"4px 0 12px", borderBottom:`1px solid ${C.borderLight}`, fontFamily:"'Geist',sans-serif"}}>
+                <div><div style={{fontSize:11, color:C.textFaint}}>Rehber puanı ortalaması</div><div style={{fontSize:20, fontWeight:700, color:C.text}}><span style={{color:C.gold}}>★</span> {waStats.avgGuide.toLocaleString('tr-TR',{minimumFractionDigits:1,maximumFractionDigits:1})}<span style={{fontSize:12, fontWeight:500, color:C.textMuted}}> / 5 · {waStats.count} yanıt</span></div></div>
+                {waStats.avgTour!=null && <div><div style={{fontSize:11, color:C.textFaint}}>Bu rehberin turlarına verilen puan</div><div style={{fontSize:20, fontWeight:700, color:C.text}}>{waStats.avgTour.toLocaleString('tr-TR',{minimumFractionDigits:1,maximumFractionDigits:1})}<span style={{fontSize:12, fontWeight:500, color:C.textMuted}}> / 5</span></div></div>}
+                {waStats.low>0 && <div><div style={{fontSize:11, color:C.textFaint}}>3 ve altı</div><div style={{fontSize:20, fontWeight:700, color:C.amber}}>{waStats.low}</div></div>}
+              </div>
+              {waFeedback.filter(x=>x.guideScore!=null).map(x=>(
+                <div key={x.resId} style={{padding:"10px 0", borderBottom:`1px solid ${C.borderLight}`, fontFamily:"'Geist',sans-serif"}}>
+                  <div style={{display:"flex", alignItems:"center", justifyContent:"space-between", gap:8}}>
+                    <span style={{fontSize:12.5, color:C.text}}>Rehber <b style={{color:x.guideScore<=3?C.amber:C.text}}>{x.guideScore}/5</b>{x.tourScore!=null ? <span style={{color:C.textMuted}}> · Tur {x.tourScore}/5</span> : null}</span>
+                    <span style={{fontSize:11, color:C.textFaint}}>{x.answeredAt ? new Date(x.answeredAt).toLocaleDateString("tr-TR",{day:"2-digit",month:"short",year:"numeric"}) : "—"}</span>
+                  </div>
+                  <div style={{fontSize:12, color:C.textMid, marginTop:2, display:"flex", gap:8, alignItems:"center", flexWrap:"wrap"}}>{x.tourName || "—"}{x.tourDate ? ` · ${x.tourDate}` : ""} <IDLink id={x.resId} type="reservation"/></div>
+                  {x.comment && <div style={{fontSize:12.5, color:C.textMid, lineHeight:1.55, marginTop:3}}>“{x.comment}”</div>}
+                </div>
+              ))}
+            </>)}
           </GuideSectionCard>
 
           <GuideSectionCard title={`Misafir Geçmişi (${passengerHistory.length})`}>
@@ -25791,6 +25831,7 @@ const WhatsAppRepository = {
   async sendOperationsNotice() { return { ok: true, sendingConfigured: false, recipients: _mockWa.recipients.filter(r => r.isActive).length }; },
   async translateToTurkish(items) { return { ok: true, language: 'es', translations: Object.fromEntries((items || []).map(x => [x.id, '[TR] ' + x.text])) }; },
   async translateReply(d) { return { ok: true, language: d.language || 'es', text: '[' + (d.language || 'es') + '] ' + d.text }; },
+  async getGuideFeedback() { return (_mockWa.guideFeedback || []).slice(); },
   async getTelegramGroups() { return { ok: true, groups: [] }; },
   async connectTelegramGroup() { return { ok: true }; },
   async disconnectTelegram() { return { ok: true }; },
@@ -25842,6 +25883,18 @@ const SupabaseWhatsAppRepo = {
   },
   async sendGuideBrief(d) { return _whatsappApi('enqueue', { kind: 'guide_brief', reservationId: d.reservationId, note: d.note || '', meetingPoint: d.meetingPoint || '', requestId: d.requestId }); },
   async sendOperationsNotice(d) { return _whatsappApi('enqueue', { kind: 'operations_notice', title: d.title, details: d.details, requestId: d.requestId }); },
+  // Customer scores for one guide: feedback of the reservations this guide
+  // is assigned to (RLS: admin + operations; others see none).
+  async getGuideFeedback(guideId) {
+    const sb = getSB(); if (!sb) return WhatsAppRepository.getGuideFeedback(guideId);
+    const { data: res, error } = await sb.from('reservations').select('id,reservation_number,destination,check_in').eq('guide_id', guideId).limit(2000);
+    if (error || !(res || []).length) return [];
+    const byId = new Map(res.map(r => [r.id, r]));
+    const { data: fb, error: e2 } = await sb.from('reservation_feedback').select('reservation_id,tour_score,guide_score,comment,answered_at').in('reservation_id', [...byId.keys()]).not('guide_score', 'is', null).order('answered_at', { ascending: false });
+    if (e2) return [];
+    return (fb || []).map(f => { const r = byId.get(f.reservation_id) || {}; return { resId: f.reservation_id, resNumber: r.reservation_number, tourName: r.destination, tourDate: r.check_in,
+      tourScore: f.tour_score == null ? null : Number(f.tour_score), guideScore: Number(f.guide_score), comment: f.comment || null, answeredAt: f.answered_at }; });
+  },
   async translateToTurkish(items) { return _whatsappApi('enqueue', { kind: 'translate', direction: 'to_turkish', items, requestId: 'tr-' + Date.now().toString(36) }); },
   async translateReply(d) { return _whatsappApi('enqueue', { kind: 'translate', direction: 'to_customer', text: d.text, language: d.language || null, sample: d.sample || '', requestId: 'tr-' + Date.now().toString(36) }); },
   async getTelegramGroups() { return _whatsappApi('enqueue', { kind: 'telegram_groups', requestId: 'tg-' + Date.now().toString(36) }); },

@@ -505,3 +505,10 @@ test('telegram: events and the team notice use the group when connected, the Wha
   r = res(); await h2({ method: 'POST', query: { action: 'enqueue' }, headers: {}, rawBody: JSON.stringify({ kind: 'telegram_groups', requestId: 'q2' }) }, r);
   assert.equal(r.code, 409);
 });
+
+test('guide profile: WhatsApp guide scores are averaged per guide; answers without a guide score are not counted', () => {
+  const stats = extractTestableFn('computeGuideFeedbackStats');
+  assert.deepEqual(stats([]), { count: 0, avgGuide: null, avgTour: null, low: 0 });
+  const s = stats([{ guideScore: 5, tourScore: 4 }, { guideScore: 3, tourScore: 5 }, { guideScore: null, tourScore: 1 }, { guideScore: 4, tourScore: null }]);
+  assert.deepEqual([s.count, s.avgGuide, s.avgTour, s.low], [3, 4, 4.5, 1]);
+});

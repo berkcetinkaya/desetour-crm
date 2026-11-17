@@ -101,6 +101,19 @@ const CRM_CHANGELOG_CATEGORIES = [
 // Newest first. See the release convention above before editing.
 const CRM_CHANGELOG = [
   {
+    version: '13.26',
+    date: '2026-11-17',
+    title: 'Müşteri Puanları Rehber Profilinde',
+    summary: 'Müşterilerin WhatsApp geri bildiriminde rehbere verdiği 1–5 puanlar artık rehberin CRM profiline işleniyor.',
+    categories: ['Yeni Özellik'],
+    highlights: [
+      'Rehber profilinde "WhatsApp Geri Bildirim Puanları": rehber puanı ortalaması, yanıt sayısı ve 3 ve altı puan sayısı.',
+      'Her yanıt tur, tarih, rehber ve tur puanı, müşteri yorumu ve rezervasyon bağlantısıyla listeleniyor.',
+      'Bu puanlar platform değerlendirmelerinden (Civitatis vb.) ayrı tutuluyor; mevcut ortalama puan değişmiyor.',
+    ],
+    author: 'Berk',
+  },
+  {
     version: '13.25',
     date: '2026-11-17',
     title: 'WhatsApp: Türkçe Çeviri, Rehber Otomasyonu ve Puanlı Geri Bildirim',
@@ -236,22 +249,6 @@ const CRM_CHANGELOG = [
     ],
     author: 'Berk',
     technicalNote: 'Bütçe & Tahmin turlara göre rehber maliyetini ve dil bazında maaşlı rehber karşılaştırmasını gösteriyor. Maliyet kataloğundaki tutarlar ekrandan bugünden itibaren ya da tüm tarihler için güncellenebiliyor. Topkapı biletleri kişi başı €40, Ayasofya €25 ve Boğaz turu ₺340 olarak planlanıyor. Takvimde rezervasyona tıklayınca hızlı görünüm açılıyor; mobil rezervasyon detayında da Finans kartı var. İptal edilen operasyonlar maliyet taşımıyor; farklı para birimindeki veya iptal edilmiş operasyona ait ödemeler inceleme için ayrıca gösteriliyor.',
-  },
-  {
-    version: '13.02',
-    date: '2026-11-05',
-    title: 'CRM Arayüz ve Kullanıcı Deneyimi Yenilendi',
-    summary: 'DeseTour CRM\'in masaüstü, tablet ve mobil arayüzleri kapsamlı olarak yenilendi. Operasyonel bilgi hiyerarşisi, rezervasyon ekranları, mobil kullanım, navigasyon, erişilebilirlik ve karanlık mod deneyimi daha hızlı ve daha tutarlı bir kullanım için yeniden düzenlendi.',
-    categories: ['Arayüz', 'İyileştirme'],
-    highlights: [
-      'Ana Sayfa operasyon önceliklerine göre yeniden düzenlendi; bugünkü turlar, yaklaşan operasyonlar ve dikkat gerektiren işler daha görünür hale getirildi.',
-      'Rezervasyon listesi ve rezervasyon detay ekranları sadeleştirildi; operasyon durumu, rehber, pickup, ödeme, hazırlıklar ve Civitatis mesajları daha hızlı taranabilir hale getirildi.',
-      'Sol navigasyon ve uygulama genelindeki görsel sistem yenilendi; açık tema daha hafif bir sidebar yapısına geçirildi ve aktif/hover durumları DeseTour marka renkleriyle standartlaştırıldı.',
-      'Mobil CRM deneyimi kapsamlı şekilde iyileştirildi; dokunma alanları, kartlar, navigasyon, raporlar, ayarlar ve operasyon ekranları küçük ekranlar için optimize edildi.',
-      'Dashboard ve uygulama genelindeki responsive yapı desktop, tablet ve mobil ekranlarda yeniden test edildi ve yatay taşma problemleri giderildi.',
-    ],
-    author: 'Berk',
-    technicalNote: 'Light ve Dark Mode genelinde renk, yüzey, kontrast, shadow, radius ve motion sistemi standartlaştırıldı. Klavye erişimi, focus durumları, aria etiketleri, switch ve accordion davranışları dahil olmak üzere erişilebilirlik iyileştirmeleri yapıldı. Tours, Guides, Payments, Agencies, Messages, Reminders, Reports ve Settings ekranları ortak UI sistemiyle uyumlu hale getirildi. CRM artık QITEOS platform imzasını uygulama footer\'ında gösteriyor.',
   },
 ];
 
