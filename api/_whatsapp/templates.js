@@ -35,7 +35,7 @@ const TEMPLATES = {
   // 24-hour window the customer's answer opens.
   post_tour_survey: {
     name: 'desetour_tur_geri_bildirim', category: 'UTILITY', params: ['customerName', 'tourName'],
-    buttons: ['1', '2', '3', '4', '5'],
+    buttons: ['5', '4', '3', '2', '1'], // WhatsApp shows the first buttons and folds the rest: best scores first
     languages: {
       es: { body: '¡Hola {{1}}! Gracias por participar en nuestro tour {{2}}. ¿Qué tal fue el tour? Puntúalo del 1 (muy mal) al 5 (excelente).' },
       pt_BR: { body: 'Olá {{1}}! Obrigado por participar do nosso passeio {{2}}. Como foi o passeio? Dê uma nota de 1 (muito ruim) a 5 (excelente).' },

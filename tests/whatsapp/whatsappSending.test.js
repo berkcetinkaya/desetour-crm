@@ -259,12 +259,12 @@ test('feedback flow: tour 1–5 → guide 1–5 → free comment → thanks; tea
   assert.match(rem.details, /geri bildirim istenebilecek: R-10/); assert.match(rem.details, /yorum\/puan istenebilir: R-09 \(tur 5\/5, rehber 5\/5\)/);
 });
 
-test('worker sends the feedback request in the booking language with one payload per button (1…5)', async () => {
+test('worker sends the feedback request in the booking language with one payload per button (5…1)', async () => {
   const db = fakeDb({ whatsapp_messages: [{ id: 'q', status: 'queued', attempt_count: 0, recipient_phone: '34600111222', template_key: 'post_tour_survey', language: 'it', payload: { customerName: 'Gio', tourName: 'Topkapı' } }] }, claimAll);
   const calls = []; await runWorker({ db, config: CFG, fetchImpl: metaOk(calls) });
   const t = calls[0].body.template;
   assert.equal(t.name, 'desetour_tur_geri_bildirim'); assert.equal(t.language.code, 'it');
-  assert.deepEqual(t.components.slice(1).map(c => c.parameters[0].payload), ['svy:1', 'svy:2', 'svy:3', 'svy:4', 'svy:5']);
+  assert.deepEqual(t.components.slice(1).map(c => c.parameters[0].payload), ['svy:5', 'svy:4', 'svy:3', 'svy:2', 'svy:1']);
   const prev = extractTestableFn('_whatsappSurveyPreview');
   for (const [name, code] of [['İtalyanca', 'it'], ['İspanyolca', 'es'], ['Portekizce', 'pt_BR'], ['İngilizce', 'en'], ['Türkçe', 'tr']])
     assert.equal(prev(name, ['Gio', 'Topkapı']), renderPreview('post_tour_survey', { customerName: 'Gio', tourName: 'Topkapı' }, code));
