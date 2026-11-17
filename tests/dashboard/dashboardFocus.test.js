@@ -305,9 +305,13 @@ test('section open/closed state: stored value wins, otherwise the default; "0" k
 
 test('MobileHomePage is untouched by the focus layout (no new dashboard pieces inside it)', () => {
   const b = body('MobileHomePage');
-  for (const m of ['DashboardPulse', 'RevenueGoalCard', 'LiveSignalsPanel', 'DashboardSection']) {
+  for (const m of ['DashboardPulse', 'RevenueGoalCard', 'DashboardSection']) {
     assert.ok(!b.includes(m), `${m} leaked into MobileHomePage`);
   }
+  // Phone home shows unread live signals only when there are some
+  // (onlyLive) — never the always-visible desktop tile column.
+  assert.match(b, /<LiveSignalsPanel onlyLive\/>/);
+  assert.equal((b.match(/LiveSignalsPanel/g) || []).length, 1);
 });
 
 test('the Bugün row stacks below 1400px so Acil İşler is never pushed out of view by the Bugünkü Turlar table', () => {

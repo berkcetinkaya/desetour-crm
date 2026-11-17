@@ -186,7 +186,11 @@ test('7. Quick Actions opens the EXACT SAME AssignGuideModal instance/state as O
   const cellStart = SOURCE.indexOf('function GuideAssignCell(');
   const cell = SOURCE.slice(cellStart, SOURCE.indexOf('\nfunction ', cellStart + 10));
   assert.equal((cell.match(/<AssignGuideModal /g) || []).length, 1);
-  assert.equal((SOURCE.match(/<AssignGuideModal /g) || []).length, 2);
+  // Third site: the phone reservation page opens the SAME modal (guide +
+  // fee) from its own action buttons — still one component, one mutation.
+  const mob = SOURCE.slice(SOURCE.indexOf('function MobileReservationDetailPage'), SOURCE.indexOf('MOBILE MESSAGES'));
+  assert.equal((mob.match(/<AssignGuideModal /g) || []).length, 1);
+  assert.equal((SOURCE.match(/<AssignGuideModal /g) || []).length, 3);
 });
 
 test('7. because both entry points render the same r (from the same useRepo("reservation","getById",resId) call), a successful assignment is reflected in Operasyon Bilgileri, Quick Actions\' own label, and the header alike without any separate local state to keep in sync', () => {

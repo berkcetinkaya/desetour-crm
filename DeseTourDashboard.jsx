@@ -6406,7 +6406,7 @@ const _LIVE_TONES = {
 // Hidden for roles the bell is hidden for. Cancellations live ONLY here on
 // Ana Sayfa (with the old alert card's details and both of its actions) —
 // Önemli Uyarılar skips anything a live signal already shows.
-function LiveSignalsPanel() {
+function LiveSignalsPanel({ onlyLive }) {
   const auth = useAuthContext();
   const { notifications, loading, select, markRead } = useOperationalNotifications();
   const [locallyRead, setLocallyRead] = useState(() => new Set());
@@ -6424,9 +6424,12 @@ function LiveSignalsPanel() {
   async function handleOpen(n) { hideLocally(n.id); await select(n); }
   async function handleMarkRead(n) { hideLocally(n.id); await markRead(n.id); }
 
+  // Phone home page: tiles with nothing unread are left out entirely.
+  const defs = onlyLive ? LIVE_SIGNAL_DEFS.filter(d => (groups[d.kind] || []).length > 0) : LIVE_SIGNAL_DEFS;
+  if (onlyLive && (loading || defs.length === 0)) return null;
   return (
     <div className="dash-signals" style={{display:"flex", flexDirection:"column", gap:10}}>
-      {LIVE_SIGNAL_DEFS.map(def => (
+      {defs.map(def => (
         <LiveSignalTile key={def.kind} def={def} items={groups[def.kind]} loading={loading}
           open={openKind === def.kind}
           onToggle={() => setOpenKind(k => (k === def.kind ? null : def.kind))}
@@ -13032,6 +13035,7 @@ const _finShortDate = (iso) => new Date(iso + "T12:00:00").toLocaleDateString("t
 const _finCashValue = (w) => !Object.keys(w.total).length ? "₺0" : w.totalTry && w.totalTry.complete ? _fmtFinanceTry(w.totalTry) : _fmtFinanceMap(w.total);
 
 function _FinOverview() {
+  const { isMobile } = useBreakpoint();
   const { needs, loading, error, reload } = useFinanceCashNeeds();
   if (error) return <ErrorState message="Finans verileri yüklenemedi." onRetry={reload}/>;
   if (loading || !needs) return <LoadingState label="Hazırlanacak tutarlar hesaplanıyor…"/>;
@@ -13057,6 +13061,33 @@ function _FinOverview() {
         </div>
       </_FinSection>
       <_FinSection title="Önümüzdeki 7 gün · operasyon bazında">
+        {/* Phone: one card per operation — the 8-column table does not fit. */}
+        {isMobile ? (
+          <div data-testid="finance-cash-week-cards" style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {ops.length === 0 && <div style={{ padding: 14, border: `1px solid ${C.border}`, borderRadius: T.radius, background: C.white, fontSize: 12.5, color: C.textMuted, fontFamily: "'Geist',sans-serif" }}>Önümüzdeki 7 günde operasyon yok.</div>}
+            {ops.map(o => {
+              const guideWarn = o.guideCostSource === "unassigned" ? "rehber atanmadı" : o.guideCostSource === "fee_missing" ? "rehber ücreti girilmemiş" : null;
+              return (
+                <div key={o.key} style={{ padding: "12px 14px", border: `1px solid ${C.border}`, borderLeft: `3px solid ${guideWarn ? C.amber : C.border}`, borderRadius: T.radius, background: C.white, fontFamily: "'Geist',sans-serif" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "baseline" }}>
+                    <span style={{ fontSize: 13.5, fontWeight: 600, color: C.text, minWidth: 0 }}>{_finShortDate(o.date)} · {o.tourLabel}</span>
+                    <span style={{ fontSize: 14, fontWeight: 700, color: C.text, whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>{_fmtFinanceMap(o.total)}</span>
+                  </div>
+                  <div style={{ fontSize: 11.5, color: C.textMuted, marginTop: 3 }}>
+                    {o.pax} kişi · {o.reservations} rezervasyon{o.language ? ` · ${o.language}` : ""}{o.guideNames.length ? ` · ${o.guideNames.join(", ")}` : ""}
+                    {o.totalTry.complete && Object.keys(o.total).some(c => c !== "TRY") ? ` · ${_fmtFinanceTry(o.totalTry)}` : ""}
+                  </div>
+                  <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 6, fontSize: 12, color: C.textMid }}>
+                    <span>Rehber: {Object.keys(o.guide).length ? _fmtFinanceMap(o.guide) : guideWarn ? <b style={{ color: C.amber }}>{guideWarn}</b> : <span style={{ color: C.green }}>ödendi</span>}</span>
+                    <span>Bilet: {_fmtFinanceMap(o.tickets)}</span>
+                    {Object.keys(o.other).length > 0 && <span>Diğer: {_fmtFinanceMap(o.other)}</span>}
+                  </div>
+                  {o.costGaps.length > 0 && <div style={{ fontSize: 11, color: C.amber, marginTop: 4 }}>Tutarı bilinmeyen: {[...new Set(o.costGaps.map(g => g.label))].join(", ")}</div>}
+                </div>
+              );
+            })}
+          </div>
+        ) : (
         <div style={{ overflowX: "auto", border: `1px solid ${C.border}`, borderRadius: T.radius, background: C.white }}>
           <table data-testid="finance-cash-week" style={{ width: "100%", borderCollapse: "collapse", fontFamily: "'Geist',sans-serif", fontSize: 12.5 }}>
             <thead><tr style={{ background: C.ivory }}>
@@ -13086,6 +13117,7 @@ function _FinOverview() {
             </tbody>
           </table>
         </div>
+        )}
       </_FinSection>
       {(last.operationsUnassigned > 0 || last.operationsFeeMissing > 0) && (
         <div data-testid="finance-cash-guide-unknown" style={{ padding: "10px 12px", borderRadius: T.radiusSm, background: C.amberBg, border: `1px solid ${C.borderLight}`, fontSize: 12.5, color: C.text, fontFamily: "'Geist',sans-serif" }}>
@@ -23716,7 +23748,7 @@ function mapResFromDB(r) {
     date:r.check_in?new Date(r.check_in).toLocaleDateString('tr-TR',{day:'2-digit',month:'short',year:'numeric'}):'—',
     checkIn:r.check_in||null, checkOut:r.check_out||null, time:r.check_in_time||null,
     pax:r.pax_adult||1, paxChild:r.pax_child||0,
-    guide:r.guide_name||'', guideId:r.guide_id||null, assignedGuideName:r.guide?.full_name||'', vehicle:r.vehicle_info||'', driver:r.driver_name||'',
+    guide:r.guide_name||'', guideId:r.guide_id||null, assignedGuideName:r.guide?.full_name||'', guidePhone:r.guide?.phone||'', vehicle:r.vehicle_info||'', driver:r.driver_name||'',
     pickup:r.pickup_location||'', pickupTime:r.pickup_time||'—',
     tourLanguage:r.tour_language||'',
     opStatus:_r2App(r.status), statusRaw:r.status||null, payStatus:_p2App(r.payment_status),
@@ -31164,9 +31196,27 @@ function _MobileTourDayCard({ t, navigate, prepPending }) {
    reachable, respecting the home-indicator safe area and (when the
    bottom tab bar is also present) sitting above it. */
 function MobileActionBar({ children, aboveTabBar }) {
+  // Pinned just above the bottom tab bar. (It used to be position:sticky,
+  // which never engaged: the page scrolls on the window, while the nearest
+  // overflow ancestor is <main> — so the bar only showed at the very end
+  // of the page.) A spacer keeps the last content clear of the bar.
+  if (aboveTabBar) return (
+    <>
+      <div aria-hidden="true" style={{ height:62 }}/>
+      {/* Portal to <body>: an ancestor with a transform (the page's mount
+          animation) would otherwise turn position:fixed into absolute. */}
+      {ReactDOM.createPortal(
+        <div data-testid="mobile-action-bar" style={{
+          position:"fixed", left:0, right:0, bottom:"calc(53px + env(safe-area-inset-bottom, 0px))",
+          background:"var(--bottomnav-bg)", backdropFilter:"blur(8px)",
+          borderTop:`1px solid ${C.borderLight}`,
+          padding:"10px 16px", display:"flex", gap:10, zIndex:240,
+        }}>{children}</div>, document.body)}
+    </>
+  );
   return (
     <div style={{
-      position:"sticky", bottom: aboveTabBar ? 58 : 0, left:0, right:0,
+      position:"sticky", bottom:0, left:0, right:0,
       background:"rgba(248,245,238,0.92)", backdropFilter:"blur(8px)",
       borderTop:`1px solid ${C.borderLight}`,
       padding:`10px 16px calc(10px + env(safe-area-inset-bottom, 0px))`,
@@ -31383,6 +31433,43 @@ function MobileMorePage({ navigate }) {
    needs attention, what should I do next. Same data hooks as desktop
    (useRepo/computeUrgent/etc.) — only the presentation is different.
    ══════════════════════════════════════════════════════════════════════ */
+// Phone home: this month's expected net income + projected profit with
+// month arrows. Numbers come from the SAME hooks as the desktop home card
+// (useMonthlyRevenueSummary / useHomeProjectedProfit) — nothing computed here.
+function _MobileMonthMoney({ navigate }) {
+  const today = _istanbulISODate().slice(0, 7);
+  const [monthISO, setMonthISO] = useState(today);
+  const { summary, loading } = useMonthlyRevenueSummary(monthISO);
+  const p = useHomeProjectedProfit(monthISO);
+  const arrow = { width:36, height:36, borderRadius:10, border:`1px solid ${C.border}`, background:C.white, color:C.textMid, fontSize:16, cursor:"pointer", flexShrink:0 };
+  const label = { fontSize:10.5, fontWeight:600, letterSpacing:"0.1em", textTransform:"uppercase", color:C.textMuted, fontFamily:"'Geist',sans-serif" };
+  const big = { fontSize:22, fontWeight:700, fontFamily:"'Geist',sans-serif", letterSpacing:"-0.02em", marginTop:4, fontVariantNumeric:"tabular-nums" };
+  return (
+    <MobileSection title="Bu Ay" action="Finans" onAction={()=>navigate('/finance')}>
+      <MobileEntityCard>
+        <div data-testid="mob-month-money" style={{ display:"flex", alignItems:"center", gap:8, marginBottom:12 }}>
+          <button type="button" aria-label="Önceki ay" onClick={()=>setMonthISO(m=>_financeShiftMonth(m,-1))} style={arrow}>‹</button>
+          <span style={{ flex:1, textAlign:"center", fontSize:14, fontWeight:600, color:C.text, fontFamily:"'Geist',sans-serif" }}>{_financeMonthLabel(monthISO)}</span>
+          <button type="button" aria-label="Sonraki ay" onClick={()=>setMonthISO(m=>_financeShiftMonth(m,1))} style={arrow}>›</button>
+        </div>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+          <div>
+            <div style={label}>Beklenen net gelir</div>
+            <div style={{ ...big, color:C.text }}>{loading ? "…" : _fmtTRY(summary.total || 0)}</div>
+          </div>
+          <div style={{ paddingLeft:12, borderLeft:`1px solid ${C.borderLight}` }}>
+            <div style={label}>Tahmini net kâr</div>
+            <div style={{ ...big, color: p.negative ? C.red : C.text }}>{p.loading ? "…" : p.value}</div>
+          </div>
+        </div>
+        {!loading && (summary.extraSalesTryTotal || 0) > 0 && (
+          <div style={{ fontSize:11.5, color:C.textMuted, fontFamily:"'Geist',sans-serif", marginTop:8 }}>Ek satış dahil: {_fmtTRY(summary.extraSalesTryTotal)}</div>
+        )}
+      </MobileEntityCard>
+    </MobileSection>
+  );
+}
+
 function MobileHomePage({ navigate }) {
   const auth = useAuthContext();
   // Önemli Uyarılar / Dikkat Gerekenler are deliberately NOT rendered on
@@ -31434,6 +31521,11 @@ function MobileHomePage({ navigate }) {
   return (
     <div style={{ display:"flex", flexDirection:"column", gap:18 }}>
 
+      {/* 0. Unread live signals (new booking / message / cancellation /
+          Civitatis change) — only the ones that have something, so an
+          ordinary day shows nothing here. Same panel + data as desktop. */}
+      <LiveSignalsPanel onlyLive/>
+
       {/* 1. Bugünkü Turlar — first content below the header, nothing
           else above it. Instrument Serif title (via MobileSection's
           `prominent`) gives it the highest visual priority on the page. */}
@@ -31458,6 +31550,10 @@ function MobileHomePage({ navigate }) {
           <_MobileTourDayCard key={t.id||i} t={t} navigate={navigate} prepPending={prepPendingReservationIds.has(t.id)}/>
         ))}
       </MobileSection>
+
+      {/* 2b. The month in money (finance roles): expected net income and
+          projected profit — the same numbers as the desktop home card. */}
+      {canAccess(auth.role, "finance") && <_MobileMonthMoney navigate={navigate}/>}
 
       {/* 3. Yaklaşan Rezervasyonlar — next 5 (today/tomorrow excluded,
           they have their own sections above), existing /reservations
@@ -31595,8 +31691,41 @@ const MOBILE_RESERVATIONS_FILTER_EMPTY_TEXT = {
   "İptal": "İptal edilmiş rezervasyon bulunmuyor.",
 };
 
+// Phone reservation list helpers: free-text search (guest, R-number,
+// Civitatis code with or without the leading A, tour, guide, language)
+// and a day heading per tour date ("Bugün", "Yarın", "20 Kasım Cuma").
+// TESTABLE:_mobileResListHelpers:start
+function _mobileResMatches(r, query) {
+  const q = String(query || '').trim().toLocaleLowerCase('tr-TR');
+  if (!q) return true;
+  const code = r.externalBookingId ? String(r.externalBookingId) : '';
+  const hay = [r.name, r.resNumber, code, code ? 'a' + code : '', r.tour, r.guide, r.tourLanguage]
+    .filter(Boolean).join(' ').toLocaleLowerCase('tr-TR');
+  return q.split(/\s+/).every(w => hay.includes(w));
+}
+function _mobileResDayLabel(iso, todayISO) {
+  if (!iso) return 'Tarih yok';
+  const d = String(iso).slice(0, 10);
+  const day = (x) => new Date(x + 'T12:00:00Z');
+  const diff = Math.round((day(d) - day(todayISO)) / 86400000);
+  const long = day(d).toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', weekday: 'long', timeZone: 'UTC', ...(d.slice(0, 4) !== String(todayISO).slice(0, 4) ? { year: 'numeric' } : {}) });
+  return diff === 0 ? `Bugün · ${long}` : diff === 1 ? `Yarın · ${long}` : diff === -1 ? `Dün · ${long}` : long;
+}
+function _mobileResGroupByDay(list, todayISO) {
+  const groups = [];
+  for (const r of list) {
+    const key = r.checkIn ? String(r.checkIn).slice(0, 10) : '';
+    let g = groups[groups.length - 1];
+    if (!g || g.key !== key) { g = { key, label: _mobileResDayLabel(key, todayISO), items: [], pax: 0 }; groups.push(g); }
+    g.items.push(r); g.pax += (Number(r.pax) || 0) + (Number(r.paxChild) || 0);
+  }
+  return groups;
+}
+// TESTABLE:_mobileResListHelpers:end
+
 function MobileReservationsPage({ onSelect }) {
   const [filter, setFilter] = useState("Aktif Rezervasyonlar");
+  const [query, setQuery] = useState("");
   const { data:repoRes, loading } = useRepo("reservation", "getAll");
   const [showNew, setShowNew] = useState(false);
 
@@ -31617,6 +31746,7 @@ function MobileReservationsPage({ onSelect }) {
     // rule the desktop page uses, see _isActiveOperationalReservation.
     return _isActiveOperationalReservation(r);
   })
+    .filter(r => _mobileResMatches(r, query))
     // Same fix as the desktop page's Tamamlanan Turlar tab: newest
     // completed tour first, never oldest-first. Every other filter keeps
     // the repo's own check-in-ascending order, unchanged.
@@ -31641,6 +31771,13 @@ function MobileReservationsPage({ onSelect }) {
         </button>
       </div>
 
+      <div style={{ position:"relative" }}>
+        <input data-testid="mob-res-search" value={query} onChange={e=>setQuery(e.target.value)} type="text" inputMode="search" enterKeyHint="search"
+          placeholder="Misafir, R-no, Civitatis kodu, tur veya rehber ara…"
+          style={{ width:"100%", boxSizing:"border-box", padding:"11px 36px 11px 14px", borderRadius:12, border:`1px solid ${C.border}`, background:C.white, color:C.text, fontSize:16, fontFamily:"'Geist',sans-serif", WebkitAppearance:"none" }}/>
+        {query && <button type="button" aria-label="Aramayı temizle" onClick={()=>setQuery("")} style={{ position:"absolute", right:4, top:4, width:36, height:36, border:"none", background:"transparent", color:C.textMuted, fontSize:18, cursor:"pointer" }}>×</button>}
+      </div>
+
       <div className="rsp-scroll-x" style={{ display:"flex", gap:8 }}>
         {FILTERS.map(f=>(
           <button key={f} onClick={()=>setFilter(f)} style={{
@@ -31661,7 +31798,12 @@ function MobileReservationsPage({ onSelect }) {
         </MobileEntityCard>
       ) : (
         <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
-          {filtered.map(r=>(
+          {_mobileResGroupByDay(filtered, _TODAY_ISO).map(g => (<React.Fragment key={g.key || 'none'}>
+            <div data-testid="mob-res-day" style={{ display:"flex", justifyContent:"space-between", alignItems:"baseline", gap:8, padding:"6px 2px 0", fontFamily:"'Geist',sans-serif" }}>
+              <span style={{ fontSize:12.5, fontWeight:700, color:C.text }}>{g.label}</span>
+              <span style={{ fontSize:11.5, color:C.textMuted }}>{g.items.length} rez · {g.pax} kişi</span>
+            </div>
+          {g.items.map(r=>(
             <MobileEntityCard key={r.id} onClick={()=>onSelect(r.id)}
               style={{ borderLeft: !r.guide||r.payStatus==="Bekliyor" ? `3px solid ${C.red}` : `3px solid ${C.green}` }}>
               <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:8, marginBottom:6 }}>
@@ -31671,7 +31813,7 @@ function MobileReservationsPage({ onSelect }) {
                 <MobileStatusChip label={r.opStatus||"—"} tone={OP_TONE[r.opStatus]||"neutral"}/>
               </div>
               <div style={{ fontSize:14, fontWeight:600, color:C.text, fontFamily:"'Geist',sans-serif" }}>{r.name || "—"}</div>
-              <div style={{ fontSize:12.5, color:C.textMuted, fontFamily:"'Geist',sans-serif", marginTop:2 }}>{r.tour || "—"} · {r.pax||1} kişi</div>
+              <div style={{ fontSize:12.5, color:C.textMuted, fontFamily:"'Geist',sans-serif", marginTop:2 }}>{r.tour || "—"} · {r.pax||1} kişi{r.tourLanguage ? ` · ${r.tourLanguage}` : ""}</div>
               <div style={{ display:"flex", alignItems:"center", gap:6, marginTop:9, flexWrap:"wrap" }}>
                 <MobileStatusChip label={r.guide ? r.guide : "Rehber Atanmadı"} tone={r.guide ? "good" : "bad"}/>
                 <MobileStatusChip label={r.payStatus||"—"} tone={PAY_TONE[r.payStatus]||"neutral"}/>
@@ -31679,6 +31821,7 @@ function MobileReservationsPage({ onSelect }) {
               </div>
             </MobileEntityCard>
           ))}
+          </React.Fragment>))}
         </div>
       )}
 
@@ -32690,6 +32833,9 @@ function MobileQuoteDetailPage({ quoteId, onBack }) {
    so they surface as a red warning card above everything else rather
    than as a dot buried in a corner.
    ══════════════════════════════════════════════════════════════════════ */
+const _mobActBtn = { display:"flex", alignItems:"center", justifyContent:"center", minHeight:44, padding:"11px 10px", borderRadius:10, border:`1px solid ${C.border}`, background:C.white, color:C.text, fontSize:13, fontWeight:600, fontFamily:"'Geist',sans-serif", cursor:"pointer", boxSizing:"border-box", textAlign:"center" };
+const _mobActBtnPrimary = { background:C.navy, borderColor:C.navy, color:"#fff" };
+const _MOB_RES_STATUSES = ["Hazırlanıyor", "Onaylandı", "Tur Günü", "Tamamlandı"];
 function MobileReservationDetailPage({ resId, onBack }) {
   const _sp = safeParam(resId);
   if (_sp.invalid) return <NotFoundCard entityType="Rezervasyon" entityId={resId} onBack={onBack}/>;
@@ -32739,6 +32885,20 @@ function MobileReservationDetailPage({ resId, onBack }) {
   // section below.
   const { unread: mobUnreadNotifications } = useOperationalNotifications();
   const mobHasUnreadCivitatisMessage = _reservationHasUnreadCivitatisMessage(mobUnreadNotifications, resId);
+  // Mobile actions — the SAME modals / mutations the desktop page uses
+  // (AssignGuideModal with the guide fee, PickupEditModal, NewPaymentModal,
+  // NewReminderModal, GuideWhatsAppModal); only the entry points differ.
+  const { data:mobGuests } = useRepo("reservation", "getGuests", resId);
+  const { mutate:mutResMobile, mutating:mobResSaving } = useRepoMutation("reservation");
+  const [mobSheet, setMobSheet] = useState(null); // 'assign' | 'pickup' | 'wa' | 'payment' | 'reminder' | 'status' | 'more'
+  const mobCanAct = !!mobAuth.role && mobAuth.role !== "Rehber";
+  const mobCanWa = ["Yönetici", "Operasyon"].includes(mobAuth.role);
+  async function mobSetStatus(next) {
+    setMobSheet(null);
+    if (!r || next === r.opStatus) return;
+    const { error:e } = await mutResMobile("update", r.id, { opStatus: next });
+    showToast(e ? "Hata: " + e : `Durum: ${next} ✓`);
+  }
 
   if (loading) return <LoadingState label="Rezervasyon yükleniyor…"/>;
   if (error)   return <ErrorState message={error} onRetry={()=>{}}/>;
@@ -32758,7 +32918,14 @@ function MobileReservationDetailPage({ resId, onBack }) {
 
   return (
     <div style={{ display:"flex", flexDirection:"column", gap:18 }}>
-      <MobileDetailHeader onBack={onBack} chip={<MobileStatusChip label={r.opStatus} tone={OP_TONE[r.opStatus]||"neutral"}/>}/>
+      <MobileDetailHeader onBack={onBack} chip={mobCanAct && r.opStatus !== "İptal" ? (
+        <button type="button" data-testid="mob-res-status" onClick={()=>setMobSheet('status')} style={{ border:"none", background:"transparent", padding:"8px 0 8px 8px", cursor:"pointer", display:"flex", alignItems:"center", gap:4 }}>
+          <MobileStatusChip label={r.opStatus} tone={OP_TONE[r.opStatus]||"neutral"}/>
+          <GIc d="M6 9l6 6 6-6" size={13} sw={2.2} color={C.textMuted}/>
+        </button>
+      ) : <MobileStatusChip label={r.opStatus} tone={OP_TONE[r.opStatus]||"neutral"}/>}/>
+
+      <_ResCivitatisChanges activity={mobResActivity} r={r}/>
 
       {warnings.length>0 && (
         <MobileEntityCard style={{ borderLeft:`3px solid ${C.red}`, background:C.redBg }}>
@@ -32800,12 +32967,38 @@ function MobileReservationDetailPage({ resId, onBack }) {
       <MobileSection title="Operasyon">
         <MobileEntityCard>
           <MobileInfoLine label="Rehber" value={r.guide || "Atanmadı"} warn={!r.guide}/>
+          {r.tourLanguage && <MobileInfoLine label="Dil" value={r.tourLanguage}/>}
           <MobileInfoLine label="Araç" value={r.vehicle || "—"}/>
           <MobileInfoLine label="Şoför" value={r.driver || "—"}/>
           <MobileInfoLine label="Pickup" value={r.pickup || "Belirtilmedi"} warn={!r.pickup}/>
           <MobileInfoLine label="Pickup Saati" value={r.pickupTime || "—"}/>
+          {mobCanAct && (
+            <div data-testid="mob-res-actions" style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, marginTop:12 }}>
+              <button type="button" data-testid="mob-res-assign" onClick={()=>setMobSheet('assign')} style={{ ..._mobActBtn, ...(r.guideId ? {} : _mobActBtnPrimary), gridColumn: r.guideId ? "auto" : "1 / -1" }}>{r.guideId ? "Rehberi Değiştir" : "Rehber Ata"}</button>
+              {r.guideId && mobCanWa && <button type="button" data-testid="mob-res-guide-wa" onClick={()=>setMobSheet('wa')} style={{ ..._mobActBtn, background:"#E7F8EE", borderColor:"#BFE6CD", color:"#1B6B3A" }}>Rehbere Tur Bilgisi</button>}
+              {r.guideId && r.guidePhone && <a href={`tel:${r.guidePhone}`} style={{ ..._mobActBtn, textDecoration:"none" }}>Rehberi Ara</a>}
+              <button type="button" onClick={()=>setMobSheet('pickup')} style={_mobActBtn}>{r.pickup ? "Pickup Düzenle" : "Pickup Ekle"}</button>
+              <button type="button" onClick={()=>setMobSheet('more')} style={_mobActBtn}>Diğer İşlemler</button>
+            </div>
+          )}
         </MobileEntityCard>
       </MobileSection>
+
+      {(mobGuests||[]).length > 0 && (
+        <MobileSection title={`Yolcular (${mobGuests.length})`}>
+          <MobileEntityCard>
+            {mobGuests.map((g, i) => (
+              <div key={g.id || i} style={{ display:"flex", alignItems:"center", gap:10, padding:"7px 0", borderTop: i ? `1px solid ${C.borderLight}` : "none", fontSize:13.5, color:C.text, fontFamily:"'Geist',sans-serif" }}>
+                <span style={{ width:22, height:22, borderRadius:"50%", background:C.ivory, color:C.textMuted, fontSize:11, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>{i + 1}</span>
+                {g.fullName || g.full_name || g.name || "—"}
+              </div>
+            ))}
+          </MobileEntityCard>
+        </MobileSection>
+      )}
+
+      <_ResTourPageLink r={r}/>
+      <_ResWhatsAppCard r={r} customer={cust}/>
 
       {/* Phase 4 — Civitatis Mesajları moved up from the bottom of the
           page (it used to sit after Notlar, last) to right after guide/
@@ -32951,6 +33144,28 @@ function MobileReservationDetailPage({ resId, onBack }) {
         <MobileSection title="Notlar — Personel">
           <MobileEntityCard><div style={{ fontSize:13, color:C.textMid, fontFamily:"'Geist',sans-serif", lineHeight:1.6 }}>{r.opNotes}</div></MobileEntityCard>
         </MobileSection>
+      )}
+
+      {mobCanAct && r.opStatus !== "İptal" && r.opStatus !== "Tamamlandı" && (
+        <MobileActionBar aboveTabBar>
+          {!r.guideId
+            ? <button type="button" onClick={()=>setMobSheet('assign')} style={{ ..._mobActBtn, ..._mobActBtnPrimary, flex:1 }}>Rehber Ata</button>
+            : <button type="button" data-testid="mob-res-complete" disabled={mobResSaving} onClick={()=>{ if (window.confirm("Tur tamamlandı olarak işaretlensin mi?")) mobSetStatus("Tamamlandı"); }} style={{ ..._mobActBtn, flex:1, background:C.greenBg, borderColor:C.greenBorder, color:C.green }}>✓ Tamamlandı İşaretle</button>}
+          <button type="button" onClick={()=>setMobSheet('more')} style={{ ..._mobActBtn, flex:"0 0 auto", padding:"11px 16px" }}>•••</button>
+        </MobileActionBar>
+      )}
+
+      {mobSheet === 'assign' && <AssignGuideModal r={r} onClose={()=>setMobSheet(null)}/>}
+      {mobSheet === 'pickup' && <PickupEditModal res={r} onClose={()=>setMobSheet(null)}/>}
+      {mobSheet === 'wa' && <GuideWhatsAppModal res={r} onClose={()=>setMobSheet(null)}/>}
+      {mobSheet === 'payment' && <NewPaymentModal resId={r.id} customerId={r.customerId} customerName={r.name} onClose={()=>setMobSheet(null)}/>}
+      {mobSheet === 'reminder' && <NewReminderModal resId={r.id} customerId={r.customerId} customerName={r.name} onClose={()=>setMobSheet(null)}/>}
+      {mobSheet === 'status' && <MobileStatusSheet title="Rezervasyon durumu" current={r.opStatus} options={_MOB_RES_STATUSES} onSelect={mobSetStatus} onClose={()=>setMobSheet(null)}/>}
+      {mobSheet === 'more' && (
+        <MobileStatusSheet title="İşlemler" current={null} onClose={()=>setMobSheet(null)}
+          options={[r.guideId ? "Rehberi Değiştir" : "Rehber Ata", ...(r.guideId && mobCanWa ? ["Rehbere Tur Bilgisi Gönder"] : []), r.pickup ? "Pickup Düzenle" : "Pickup Ekle", "Durumu Değiştir",
+            ...(canAccess(mobAuth.role, "payments") ? ["Ödeme Kaydı Ekle"] : []), ...(canAccess(mobAuth.role, "reminders") ? ["Hatırlatma Oluştur"] : [])]}
+          onSelect={(o)=>setMobSheet(o.startsWith("Rehberi") || o === "Rehber Ata" ? 'assign' : o.startsWith("Rehbere") ? 'wa' : o.startsWith("Pickup") ? 'pickup' : o.startsWith("Durum") ? 'status' : o.startsWith("Ödeme") ? 'payment' : 'reminder')}/>
       )}
     </div>
   );
