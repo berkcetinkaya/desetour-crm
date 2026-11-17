@@ -101,6 +101,20 @@ const CRM_CHANGELOG_CATEGORIES = [
 // Newest first. See the release convention above before editing.
 const CRM_CHANGELOG = [
   {
+    version: '13.22',
+    date: '2026-11-17',
+    title: 'Telefonda CRM: İşlem Yapılabilir Rezervasyonlar',
+    summary: 'Telefondaki CRM artık yalnızca okumak için değil: rehber atama, rehbere WhatsApp, pickup, durum değiştirme ve arama telefondan yapılabiliyor; ana sayfada okunmamış uyarılar ve ayın gelir–kâr özeti var.',
+    categories: ['İyileştirme', 'Arayüz'],
+    highlights: [
+      'Telefonda rezervasyon sayfası: Rehber Ata / Değiştir (ücretiyle), Rehbere Tur Bilgisi, Rehberi Ara, pickup, durum ve "Tamamlandı" — altta sabit işlem çubuğuyla.',
+      'Rezervasyonda yolcular, Civitatis değişiklikleri, tur sayfası linki ve WhatsApp kartı telefonda da görünüyor.',
+      'Rezervasyon listesinde arama (misafir, R-no, Civitatis kodu, tur, rehber) ve gün başlıkları: Bugün, Yarın, tarih.',
+      'Telefon ana sayfasında okunmamış uyarılar ve "Bu Ay" net gelir / tahmini kâr; Finans Genel Bakış telefonda kart görünümünde.',
+    ],
+    author: 'Berk',
+  },
+  {
     version: '13.21',
     date: '2026-11-16',
     title: 'WhatsApp: Rehber, Ekip ve Müşteri Anketi',
@@ -256,21 +270,6 @@ const CRM_CHANGELOG = [
       'Aynı belirsiz rezervasyon için tekrarlanan otomatik kontrollerde gereksiz tekrar kayıt oluşturulmuyor',
       'Operasyon ekibi, şüpheli bir müşteri eşleşmesini inceleyip mevcut müşteriyle mi yoksa yeni bir müşteriyle mi ilişkilendirileceğine açıkça karar verebiliyor',
       'Hiçbir müşteri kaydı otomatik olarak birleştirilmiyor veya varsayılan olarak eşleştirilmiyor',
-    ],
-    author: 'Berk',
-  },
-  {
-    version: '12.47',
-    date: '2026-10-21',
-    title: 'Acente E-posta Taslak Akışı İyileştirildi',
-    summary: 'Acenteler için oluşturulan ilk temas e-posta taslakları artık oluşturuldukları anda CRM\'e kaydediliyor. Taslaklar gönderim öncesinde düzenlenebiliyor, kaydedilebiliyor ve geçmiş e-postalar korunuyor.',
-    categories: ['İyileştirme'],
-    highlights: [
-      'Oluşturulan e-posta taslakları artık otomatik olarak CRM\'e kaydediliyor',
-      'Konu ve mesaj içeriği gönderim öncesinde düzenlenip kaydedilebiliyor',
-      'En son oluşturulan taslak otomatik olarak açılıyor',
-      'Gönderilmiş e-postalar değiştirilemiyor ve geçmiş kayıtlar korunuyor',
-      'Taslak oluşturma ve güncelleme işlemlerinin kayıt sistemi iyileştirildi',
     ],
     author: 'Berk',
   },
