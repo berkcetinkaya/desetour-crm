@@ -35,7 +35,7 @@
 <script>
   var APP_ID = '1355919366619458';
   var out = document.getElementById('out'), go = document.getElementById('go'), cfg = document.getElementById('cfg');
-  var q = new URLSearchParams(location.search); if (q.get('config_id')) cfg.value = q.get('config_id');
+  var q = new URLSearchParams(location.search); cfg.value = q.get('config_id') || '1180045971119804';
   function log(line, cls) { var s = document.createElement('div'); if (cls) s.className = cls; s.textContent = line; out.appendChild(s); }
   window.fbAsyncInit = function () {
     FB.init({ appId: APP_ID, autoLogAppEvents: true, xfbml: true, version: 'v24.0' });
