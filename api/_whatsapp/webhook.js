@@ -51,6 +51,18 @@ async function processWebhook(payload, db, opts = {}) {
         await db.from('whatsapp_messages').update(patch).eq('id', row.id);
         out.statuses += 1;
       }
+      // Messages the team sent from the WhatsApp Business app on the phone
+      // (coexistence): kept so the CRM thread shows both sides.
+      for (const e of v.message_echoes || []) {
+        const body = e.text ? e.text.body : e.type ? `(${e.type})` : null;
+        if (!e.id || !e.to || !body) continue;
+        const ts = e.timestamp ? new Date(Number(e.timestamp) * 1000).toISOString() : new Date().toISOString();
+        await db.from('whatsapp_messages').upsert({
+          event_type: 'app_echo', audience_type: 'customer', template_key: 'free_text', language: 'und', idempotency_key: `app_echo:${e.id}`,
+          recipient_phone: String(e.to), payload: { text: String(body).slice(0, 4000) }, status: 'sent', provider_message_id: e.id, sent_at: ts, attempt_count: 0,
+        }, { onConflict: 'idempotency_key', ignoreDuplicates: true });
+        out.echoes = (out.echoes || 0) + 1;
+      }
       const names = new Map((v.contacts || []).map(c => [c.wa_id, c.profile && c.profile.name]));
       for (const m of v.messages || []) {
         const text = m.text ? m.text.body : m.button ? m.button.text : m.interactive ? ((m.interactive.button_reply || m.interactive.list_reply || {}).title || null) : null;

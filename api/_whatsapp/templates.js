@@ -36,6 +36,18 @@ const TEMPLATES = {
       tr: { body: 'Merhaba {{1}}! {{2}} turunu DeseTour ile yaptığınız için teşekkürler. Nasıldı?', buttons: ['Harika', 'İyi', 'Geliştirilebilir'] },
     },
   },
+  // Yorum ve puan isteği: the tour's own page (Civitatis) sent straight to
+  // the customer after the tour, from the reservation page.
+  review_request: {
+    name: 'desetour_yorum_istegi', category: 'UTILITY', params: ['customerName', 'tourName', 'reviewUrl'],
+    languages: {
+      es: { body: '¡Hola {{1}}! Gracias por elegir DeseTour para el tour {{2}}. Tu opinión es muy importante para nosotros y nos ayuda muchísimo: ¿podrías dejarnos una reseña y tu puntuación aquí? {{3}} ¡Muchas gracias!' },
+      pt_BR: { body: 'Olá {{1}}! Obrigado por escolher a DeseTour para o passeio {{2}}. Sua opinião é muito importante para nós e nos ajuda muito: você poderia deixar uma avaliação e a sua nota aqui? {{3}} Muito obrigado!' },
+      it: { body: 'Ciao {{1}}! Grazie per aver scelto DeseTour per il tour {{2}}. La tua opinione è molto importante per noi e ci aiuta tantissimo: potresti lasciarci una recensione e il tuo voto qui? {{3}} Grazie mille!' },
+      en: { body: 'Hi {{1}}! Thank you for choosing DeseTour for the {{2}} tour. Your opinion is very important to us and helps us a lot: could you leave a review and your rating here? {{3}} Thank you so much!' },
+      tr: { body: "Merhaba {{1}}! {{2}} turu için DeseTour'u seçtiğiniz için teşekkürler. Görüşünüz bizim için çok önemli ve bize çok yardımcı oluyor: buradan yorum ve puan bırakabilir misiniz? {{3}} Çok teşekkürler!" },
+    },
+  },
 };
 
 // Free-form replies, sent inside the 24-hour window the customer's

@@ -10138,9 +10138,12 @@ function _ResWhatsAppCard({ r, customer }) {
   const { mutate, mutating } = useRepoMutation("whatsapp");
   const [phone, setPhone] = useState("");
   const [editing, setEditing] = useState(false);
+  const { data: tourForLink } = useRepo("tour", "getById", allowed && r.tourId ? r.tourId : null);
   if (!allowed) return null;
   const msgs = (data && data.messages) || [];
   const survey = msgs.find(m => m.eventType === "post_tour_survey");
+  const review = msgs.find(m => m.eventType === "review_request");
+  const reviewUrl = _reservationTourPage(tourForLink && tourForLink.channels, r.tourLanguage).surveyUrl;
   const fb = data && data.feedback;
   const hasPhone = !!(customer && customer.phone && String(customer.phone).replace(/\D/g, "").length >= 8);
   const firstName = String(r.name || "").trim().split(/\s+/)[0] || "";
@@ -10151,6 +10154,13 @@ function _ResWhatsAppCard({ r, customer }) {
     const { error } = await mutCust("update", customer.id, { phone: phone.trim() });
     if (error) { showToast("Hata: " + error); return; }
     showToast("Telefon kaydedildi ✓"); setEditing(false); setPhone("");
+  }
+  async function sendReview() {
+    const text = _whatsappReviewPreview(r.tourLanguage, [firstName, r.tour, reviewUrl]);
+    if (!window.confirm("Müşteriye yorum ve puan isteği WhatsApp ile gönderilsin mi?\n\n" + text)) return;
+    const { data: out, error } = await mutate("sendReviewRequest", { reservationId: r.id });
+    if (error) { showToast("Hata: " + error); return; }
+    showToast(_waSendResultText(out, "Yorum isteği")); reload && reload();
   }
   async function sendSurvey() {
     if (!window.confirm("Müşteriye tur sonrası anket WhatsApp ile gönderilsin mi?\n\n" + preview)) return;
@@ -10193,6 +10203,21 @@ function _ResWhatsAppCard({ r, customer }) {
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
               <span style={muted}>Henüz gönderilmedi{hasPhone ? " — tur günü 19:05'te otomatik gider." : "."}</span>
               {hasPhone && <button type="button" data-testid="res-wa-survey" onClick={sendSurvey} disabled={mutating} style={btn}>Anketi şimdi gönder</button>}
+            </div>
+          )}
+        </div>
+        <div style={{ borderTop: `1px solid ${C.borderLight}`, paddingTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
+          <span style={{ ...line, fontWeight: 600 }}>Yorum ve puan isteği</span>
+          {review ? (
+            <span data-testid="res-wa-review-state" style={muted}>Gönderildi ({_WA_STATUS_LABEL[review.status] || review.status}) — tur sayfası linkiyle birlikte.</span>
+          ) : !hasPhone ? (
+            <span style={muted}>Müşteri telefonu girilince gönderilebilir.</span>
+          ) : !reviewUrl ? (
+            <span style={{ ...muted, color: C.amber }}>Bu turun sayfa linki girilmemiş (Turlar → kanal ayarları → Listing URL).</span>
+          ) : (
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <span style={muted}>Turun sayfasını gönderip yorum ve puan ister; bizim için çok önemli olduğunu belirtir.</span>
+              <button type="button" data-testid="res-wa-review" onClick={sendReview} disabled={mutating} style={{ ...btn, background: C.navy, color: "#fff", border: "none" }}>Yorum ve puan iste</button>
             </div>
           )}
         </div>
@@ -23255,6 +23280,106 @@ function ConvContext({ conv }) {
   );
 }
 
+// ── WhatsApp penceresi (Mesajlar) ────────────────────────────────────────
+// The CRM's live WhatsApp window: conversations with customers, guides and
+// the team on the DeseTour number — what they wrote, what the CRM sent and
+// what was written from the phone app — with a reply box. WhatsApp only
+// allows a free reply within 24 hours of the other side's last message.
+function WhatsAppInbox() {
+  const { isMobile } = useBreakpoint();
+  const { role } = useAuthContext();
+  const allowed = ["Yönetici", "Operasyon"].includes(role);
+  const { data, loading, reload } = useRepo("whatsapp", "getInbox", allowed ? "inbox" : null);
+  const { mutate, mutating } = useRepoMutation("whatsapp");
+  const [selected, setSelected] = useState(null);
+  const [q, setQ] = useState("");
+  const [draft, setDraft] = useState("");
+  const endRef = useRef(null);
+  useEffect(() => { if (!allowed) return; const t = setInterval(() => { reload && reload(); }, 25000); return () => clearInterval(t); }, [allowed]);
+  const threads = useMemo(() => _buildWhatsAppThreads(data && data.inbound, data && data.outbound, Date.now()), [data]);
+  const shown = threads.filter(t => { const k = q.trim().toLocaleLowerCase("tr-TR"); return !k || (t.name || "").toLocaleLowerCase("tr-TR").includes(k) || t.phone.includes(k.replace(/\D/g, "") || "~"); });
+  const cur = threads.find(t => t.phone === selected) || null;
+  useEffect(() => { if (endRef.current) endRef.current.scrollIntoView({ block: "end" }); }, [selected, cur && cur.messages.length]);
+  const fmtAt = (iso) => iso ? new Date(iso).toLocaleString("tr-TR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "";
+  const AUD = { guide: "Rehber", operations: "Ekip", customer: "Müşteri" };
+  async function send(e) {
+    e.preventDefault();
+    const text = draft.trim(); if (!text || !cur) return;
+    const { error } = await mutate("sendReply", { phone: cur.phone, text, requestId: 'r-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7) });
+    if (error) { showToast("Hata: " + error); return; }
+    setDraft(""); reload && reload();
+  }
+  const shell = { background: C.white, border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden", height: isMobile ? "calc(100vh - 130px)" : "calc(100vh - 80px)", display: "flex", fontFamily: "'Geist',sans-serif" };
+  if (!allowed) return <div style={{ ...shell, alignItems: "center", justifyContent: "center", color: C.textMuted, fontSize: 13.5 }}>WhatsApp mesajlarını Yönetici ve Operasyon rolleri görebilir.</div>;
+  const List = (
+    <div data-testid="wa-inbox-list" style={{ width: isMobile ? "100%" : 320, flexShrink: 0, borderRight: isMobile ? "none" : `1px solid ${C.border}`, display: "flex", flexDirection: "column", minHeight: 0 }}>
+      <div style={{ padding: "14px 14px 10px", borderBottom: `1px solid ${C.borderLight}` }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+          <span style={{ fontSize: 16, fontWeight: 700, color: C.text }}>WhatsApp</span>
+          <button type="button" onClick={() => reload && reload()} style={{ border: `1px solid ${C.border}`, background: C.white, color: C.textMid, borderRadius: 8, padding: "5px 10px", fontSize: 12, cursor: "pointer" }}>Yenile</button>
+        </div>
+        <input value={q} onChange={e => setQ(e.target.value)} placeholder="İsim veya numara ara…" style={{ width: "100%", boxSizing: "border-box", marginTop: 10, padding: "8px 10px", borderRadius: 8, border: `1px solid ${C.border}`, background: C.ivory, color: C.text, fontSize: isMobile ? 16 : 13 }}/>
+      </div>
+      <div style={{ flex: 1, overflowY: "auto" }}>
+        {loading && !data ? <div style={{ padding: 16, fontSize: 13, color: C.textMuted }}>Yükleniyor…</div>
+          : data && data.unavailable ? <div style={{ padding: 16, fontSize: 13, color: C.amber }}>WhatsApp tabloları okunamadı.</div>
+          : shown.length === 0 ? <div style={{ padding: 16, fontSize: 13, color: C.textMuted, lineHeight: 1.5 }}>Henüz WhatsApp yazışması yok. DeseTour numarasına gelen ve CRM'den giden mesajlar burada görünür.</div>
+          : shown.map(t => (
+            <button key={t.phone} type="button" data-testid="wa-thread" onClick={() => setSelected(t.phone)} style={{ width: "100%", textAlign: "left", border: "none", borderBottom: `1px solid ${C.borderLight}`, background: selected === t.phone ? C.goldPale : "transparent", padding: "11px 14px", cursor: "pointer", display: "block" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "baseline" }}>
+                <span style={{ fontSize: 13.5, fontWeight: 600, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.name || "+" + t.phone}</span>
+                <span style={{ fontSize: 11, color: C.textFaint, flexShrink: 0 }}>{fmtAt(t.lastAt)}</span>
+              </div>
+              <div style={{ fontSize: 12, color: C.textMuted, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {t.audience && <span style={{ color: C.goldText, fontWeight: 600 }}>{AUD[t.audience] || ""} · </span>}{t.lastDir === "out" ? "Siz: " : ""}{t.lastText}
+              </div>
+            </button>
+          ))}
+      </div>
+    </div>
+  );
+  const Thread = cur && (
+    <div data-testid="wa-inbox-thread" style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", minHeight: 0 }}>
+      <div style={{ padding: "12px 16px", borderBottom: `1px solid ${C.borderLight}`, display: "flex", alignItems: "center", gap: 10 }}>
+        {isMobile && <button type="button" onClick={() => setSelected(null)} style={{ border: "none", background: "transparent", color: C.text, fontSize: 14, cursor: "pointer", padding: "6px 6px 6px 0" }}>‹ Geri</button>}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 14.5, fontWeight: 700, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{cur.name || "+" + cur.phone}</div>
+          <div style={{ fontSize: 11.5, color: C.textMuted }}>+{cur.phone}{cur.audience ? " · " + (AUD[cur.audience] || "") : ""}</div>
+        </div>
+        <a href={`https://wa.me/${cur.phone}`} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: C.goldText, textDecoration: "none", border: `1px solid ${C.border}`, borderRadius: 8, padding: "5px 10px", whiteSpace: "nowrap" }}>WhatsApp'ta aç</a>
+      </div>
+      <div style={{ flex: 1, overflowY: "auto", padding: "14px 14px 6px", background: C.ivory }}>
+        {cur.messages.map(m => (
+          <div key={m.id} style={{ display: "flex", justifyContent: m.dir === "out" ? "flex-end" : "flex-start", marginBottom: 9 }}>
+            <div style={{ maxWidth: "82%" }}>
+              <div style={{ padding: "9px 12px", borderRadius: m.dir === "out" ? "12px 12px 2px 12px" : "12px 12px 12px 2px", background: m.dir === "out" ? "#DCF4E4" : C.white, border: `1px solid ${m.dir === "out" ? "#BFE6CD" : C.border}`, fontSize: 13.5, lineHeight: 1.5, color: "#1F2D1F", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{m.text}</div>
+              <div style={{ fontSize: 10.5, color: m.status === "failed" ? C.red : C.textFaint, marginTop: 2, textAlign: m.dir === "out" ? "right" : "left" }}>
+                {fmtAt(m.at)}{m.dir === "out" ? ` · ${m.fromApp ? "telefondan" : (m.label || "CRM")}${m.status && !m.fromApp ? " · " + (_WA_STATUS_LABEL[m.status] || m.status) : ""}` : ""}{m.error ? ` · ${m.error}` : ""}
+              </div>
+            </div>
+          </div>
+        ))}
+        <div ref={endRef}/>
+      </div>
+      <form onSubmit={send} style={{ padding: 10, borderTop: `1px solid ${C.borderLight}`, display: "flex", gap: 8, alignItems: "flex-end", background: C.white }}>
+        {cur.canReply ? (<>
+          <textarea data-testid="wa-reply" value={draft} onChange={e => setDraft(e.target.value)} rows={isMobile ? 1 : 2} placeholder="Mesaj yazın…" onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey && !isMobile) send(e); }}
+            style={{ flex: 1, resize: "none", padding: "9px 11px", borderRadius: 10, border: `1px solid ${C.border}`, background: C.white, color: C.text, fontSize: isMobile ? 16 : 13.5, fontFamily: "'Geist',sans-serif" }}/>
+          <button type="submit" disabled={mutating || !draft.trim()} style={{ padding: "10px 16px", borderRadius: 10, border: "none", background: C.navy, color: "#fff", fontSize: 13.5, fontWeight: 600, cursor: "pointer", opacity: mutating || !draft.trim() ? .6 : 1 }}>Gönder</button>
+        </>) : (
+          <div data-testid="wa-reply-closed" style={{ flex: 1, fontSize: 12, color: C.textMuted, lineHeight: 1.5 }}>Bu kişi son 24 saatte yazmadığı için WhatsApp buradan serbest mesaja izin vermiyor. Telefondaki WhatsApp'tan yazabilirsiniz ("WhatsApp'ta aç"); karşı taraf yazınca buradan da cevap verebilirsiniz.</div>
+        )}
+      </form>
+    </div>
+  );
+  return (
+    <div data-testid="wa-inbox" style={shell}>
+      {(!isMobile || !cur) && List}
+      {isMobile ? Thread : (Thread || <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: C.textFaint, fontSize: 13.5, background: C.ivory }}>Bir konuşma seçin</div>)}
+    </div>
+  );
+}
+
 function MessagesPage() {
   const { isMobile } = useBreakpoint();
   const [activeFilter, setActiveFilter] = useState("Tümü");
@@ -25453,6 +25578,58 @@ function _whatsappSurveyPreview(tourLanguage, params) {
   return String(_WA_SURVEY_BODIES[lang]).replace(/\{\{(\d+)\}\}/g, (_, n) => String((params || [])[Number(n) - 1] || '').trim() || '—');
 }
 // TESTABLE:_whatsappSurveyPreview:end
+// Review request (server: api/_whatsapp/templates.js review_request) — preview only.
+// TESTABLE:_whatsappReviewPreview:start
+const _WA_REVIEW_BODIES = {
+  es: '¡Hola {{1}}! Gracias por elegir DeseTour para el tour {{2}}. Tu opinión es muy importante para nosotros y nos ayuda muchísimo: ¿podrías dejarnos una reseña y tu puntuación aquí? {{3}} ¡Muchas gracias!',
+  pt_BR: 'Olá {{1}}! Obrigado por escolher a DeseTour para o passeio {{2}}. Sua opinião é muito importante para nós e nos ajuda muito: você poderia deixar uma avaliação e a sua nota aqui? {{3}} Muito obrigado!',
+  it: 'Ciao {{1}}! Grazie per aver scelto DeseTour per il tour {{2}}. La tua opinione è molto importante per noi e ci aiuta tantissimo: potresti lasciarci una recensione e il tuo voto qui? {{3}} Grazie mille!',
+  en: 'Hi {{1}}! Thank you for choosing DeseTour for the {{2}} tour. Your opinion is very important to us and helps us a lot: could you leave a review and your rating here? {{3}} Thank you so much!',
+  tr: "Merhaba {{1}}! {{2}} turu için DeseTour'u seçtiğiniz için teşekkürler. Görüşünüz bizim için çok önemli ve bize çok yardımcı oluyor: buradan yorum ve puan bırakabilir misiniz? {{3}} Çok teşekkürler!",
+};
+function _whatsappReviewPreview(langOrTourLanguage, params) {
+  const code = _WA_REVIEW_BODIES[langOrTourLanguage] ? langOrTourLanguage : ({ 'İspanyolca': 'es', 'Portekizce': 'pt_BR', 'İtalyanca': 'it', 'İngilizce': 'en', 'Türkçe': 'tr' }[String(langOrTourLanguage || '').trim()] || 'en');
+  return String(_WA_REVIEW_BODIES[code]).replace(/\{\{(\d+)\}\}/g, (_, n) => String((params || [])[Number(n) - 1] || '').trim() || '—');
+}
+// TESTABLE:_whatsappReviewPreview:end
+// CRM WhatsApp window: one thread per phone number from the messages
+// received (webhook), the ones the CRM sent, and the ones the team sent
+// from the WhatsApp Business app on the phone. Pure — no I/O.
+// TESTABLE:_buildWhatsAppThreads:start
+const _WA_REPLY_WINDOW_MS = 24 * 3600 * 1000;
+function _waDigits(p) { return String(p || '').replace(/\D/g, ''); }
+function _buildWhatsAppThreads(inbound, outbound, nowMs) {
+  const threads = new Map();
+  const get = (phone) => { const k = _waDigits(phone); if (!k) return null; if (!threads.has(k)) threads.set(k, { phone: k, name: null, audience: null, messages: [], lastInboundAt: null }); return threads.get(k); };
+  for (const m of inbound || []) {
+    const t = get(m.from); if (!t) continue;
+    t.messages.push({ id: 'in-' + m.id, dir: 'in', text: m.text || '(medya)', at: m.at });
+    if (m.name && !t.name) t.name = m.name;
+    if (!t.lastInboundAt || String(m.at) > String(t.lastInboundAt)) t.lastInboundAt = m.at;
+  }
+  for (const m of outbound || []) {
+    const t = get(m.recipientPhone); if (!t) continue;
+    t.messages.push({ id: 'out-' + m.id, dir: 'out', text: m.text || '', at: m.sentAt || m.createdAt, status: m.status, error: m.lastError || null, fromApp: m.eventType === 'app_echo', label: m.label || null });
+    if (m.recipientName && !t.name) t.name = m.recipientName;
+    if (!t.audience && m.audience) t.audience = m.audience;
+  }
+  return [...threads.values()].map(t => {
+    t.messages.sort((a, b) => String(a.at || '').localeCompare(String(b.at || '')));
+    const last = t.messages[t.messages.length - 1];
+    return { ...t, lastAt: last ? last.at : null, lastText: last ? last.text : '', lastDir: last ? last.dir : null,
+      canReply: !!t.lastInboundAt && (nowMs - new Date(t.lastInboundAt).getTime()) <= _WA_REPLY_WINDOW_MS };
+  }).sort((a, b) => String(b.lastAt || '').localeCompare(String(a.lastAt || '')));
+}
+// TESTABLE:_buildWhatsAppThreads:end
+const _WA_TEMPLATE_PARAMS = { guide_tour_brief: ['guideName', 'dateLabel', 'tourName', 'time', 'language', 'guests', 'meetingPoint', 'note'], operations_notice: ['title', 'details'] };
+function _waOutboundText(m) {
+  const p = m.payload || {};
+  if (p.text) return p.text;
+  if (_WA_TEMPLATE_PARAMS[m.templateKey]) return _whatsappTemplatePreview(m.templateKey, _WA_TEMPLATE_PARAMS[m.templateKey].map(k => p[k]));
+  if (m.templateKey === 'post_tour_survey') return String(_WA_SURVEY_BODIES[m.language] || _WA_SURVEY_BODIES.en).replace('{{1}}', p.customerName || '—').replace('{{2}}', p.tourName || '—');
+  if (m.templateKey === 'review_request') return _whatsappReviewPreview(m.language, [p.customerName, p.tourName, p.reviewUrl]);
+  return _WA_EVENT_LABEL[m.eventType] || m.eventType || '';
+}
 function _whatsappTemplatePreview(key, params) {
   return String(_WA_TEMPLATE_BODIES[key] || '').replace(/\{\{(\d+)\}\}/g, (_, n) => {
     const v = String((params || [])[Number(n) - 1] == null ? '' : params[Number(n) - 1]).replace(/[\r\n\t]+/g, ' · ').trim();
@@ -25461,7 +25638,8 @@ function _whatsappTemplatePreview(key, params) {
 }
 // TESTABLE:_whatsappTemplatePreview:end
 const _WA_STATUS_LABEL = { queued: 'Sırada', processing: 'Gönderiliyor', sent: 'Gönderildi', delivered: 'İletildi', read: 'Okundu', failed: 'Gönderilemedi' };
-const _WA_EVENT_LABEL = { guide_tour_brief: 'Rehber tur bilgisi', operations_notice: 'Ekip mesajı', daily_operations_summary: 'Yarının özeti', post_tour_survey: 'Tur sonrası anket', survey_reply: 'Anket yanıtı' };
+const _WA_EVENT_LABEL = { guide_tour_brief: 'Rehber tur bilgisi', operations_notice: 'Ekip mesajı', daily_operations_summary: 'Yarının özeti', post_tour_survey: 'Tur sonrası anket', survey_reply: 'Anket yanıtı',
+  review_request: 'Yorum ve puan isteği', crm_reply: 'CRM yanıtı', app_echo: 'Telefondan gönderildi', crm_event_created: 'Yeni rezervasyon bildirimi', crm_event_cancelled: 'İptal bildirimi', crm_event_modified: 'Değişiklik bildirimi', crm_event_message: 'Yeni mesaj bildirimi' };
 const _WA_RATING = { great: { label: 'Harika', icon: '😍' }, good: { label: 'İyi', icon: '🙂' }, poor: { label: 'Geliştirilebilir', icon: '😕' } };
 async function _whatsappApi(action, body) {
   const sb = getSB();
@@ -25489,8 +25667,11 @@ const WhatsAppRepository = {
   async sendOperationsNotice() { return { ok: true, sendingConfigured: false, recipients: _mockWa.recipients.filter(r => r.isActive).length }; },
   async getReservationWhatsApp(resId) { return { messages: _mockWa.messages.filter(m => m.reservationId === resId).reverse(), feedback: null, feedbackUnavailable: false }; },
   async sendSurvey(d) { _mockWa.messages.push({ id: 'WM-' + Date.now(), eventType: 'post_tour_survey', recipientName: 'Müşteri', status: 'queued', createdAt: new Date().toISOString(), reservationId: d.reservationId }); return { ok: true, sendingConfigured: false }; },
+  async sendReviewRequest(d) { _mockWa.messages.push({ id: 'WM-' + Date.now(), eventType: 'review_request', recipientName: 'Müşteri', status: 'queued', createdAt: new Date().toISOString(), reservationId: d.reservationId }); return { ok: true, sendingConfigured: false }; },
+  async getInbox() { return { inbound: (_mockWa.inbound || []).slice(), outbound: (_mockWa.outbound || []).slice(), unavailable: false }; },
+  async sendReply(d) { (_mockWa.outbound = _mockWa.outbound || []).push({ id: 'WO-' + Date.now(), eventType: 'crm_reply', recipientPhone: d.phone, status: 'sent', createdAt: new Date().toISOString(), sentAt: new Date().toISOString(), text: d.text }); return { ok: true }; },
 };
-const _mapWaMessage = (m) => ({ id: m.id, eventType: m.event_type, audience: m.audience_type, recipientName: m.recipient_display_name || null, recipientPhone: m.recipient_phone || null,
+const _mapWaMessage = (m) => ({ id: m.id, eventType: m.event_type, audience: m.audience_type, templateKey: m.template_key, language: m.language, recipientName: m.recipient_display_name || null, recipientPhone: m.recipient_phone || null,
   status: m.status, lastError: m.last_error || null, createdAt: m.created_at, sentAt: m.sent_at, reservationId: m.reservation_id || null, attemptCount: m.attempt_count || 0, payload: m.payload || {} });
 const SupabaseWhatsAppRepo = {
   async getStatus() { return _whatsappApi('status'); },
@@ -25533,6 +25714,20 @@ const SupabaseWhatsAppRepo = {
   async sendGuideBrief(d) { return _whatsappApi('enqueue', { kind: 'guide_brief', reservationId: d.reservationId, note: d.note || '', meetingPoint: d.meetingPoint || '', requestId: d.requestId }); },
   async sendOperationsNotice(d) { return _whatsappApi('enqueue', { kind: 'operations_notice', title: d.title, details: d.details, requestId: d.requestId }); },
   async sendSurvey(d) { return _whatsappApi('enqueue', { kind: 'survey', reservationId: d.reservationId, requestId: 'svy-' + d.reservationId }); },
+  async sendReviewRequest(d) { return _whatsappApi('enqueue', { kind: 'review_request', reservationId: d.reservationId, requestId: 'rev-' + d.reservationId }); },
+  async sendReply(d) { return _whatsappApi('enqueue', { kind: 'reply', phone: d.phone, text: d.text, requestId: d.requestId }); },
+  // CRM WhatsApp window: latest received + sent messages (RLS: admin + operations).
+  async getInbox() {
+    const sb = getSB(); if (!sb) return WhatsAppRepository.getInbox();
+    const [i, o] = await Promise.all([
+      sb.from('whatsapp_inbound_messages').select('id,from_phone,profile_name,text,received_at').order('received_at', { ascending: false }).limit(400),
+      sb.from('whatsapp_messages').select('*').not('recipient_phone', 'is', null).order('created_at', { ascending: false }).limit(400),
+    ]);
+    if (i.error || o.error) return { inbound: [], outbound: [], unavailable: true };
+    return { unavailable: false,
+      inbound: (i.data || []).map(m => ({ id: m.id, from: m.from_phone, name: m.profile_name, text: m.text, at: m.received_at })),
+      outbound: (o.data || []).map(_mapWaMessage).map(m => ({ ...m, text: _waOutboundText(m), label: _WA_EVENT_LABEL[m.eventType] || null })) };
+  },
   // WhatsApp messages + survey answer of one reservation (reservation page).
   async getReservationWhatsApp(resId) {
     const sb = getSB(); if (!sb || !resId) return WhatsAppRepository.getReservationWhatsApp(resId);
@@ -30505,7 +30700,7 @@ function PageRouter({ base, param, isMobile, navigate }) {
   if (isMobile) {
     if (base === "dashboard") return <MobileHomePage navigate={navigate}/>;
     if (base === "calendar") return <MobileCalendarPage navigate={navigate}/>;
-    if (base === "messages") return <MobileMessagesPage/>;
+    if (base === "messages") return AppConfig.useSupabase ? <WhatsAppInbox/> : <MobileMessagesPage/>;
 
     // leads/quotes list+create/edit are retired from active navigation
     // (Talepler/Teklifler simplification) — the detail views stay reachable
@@ -30573,7 +30768,7 @@ function PageRouter({ base, param, isMobile, navigate }) {
   if (base === "reports")   return <ReportsPage/>;
   if (base === "settings")  return <SettingsPage/>;
   if (base === "changelog") return <ChangelogPage/>;
-  if (base === "messages")  return <MessagesPage/>;
+  if (base === "messages")  return AppConfig.useSupabase ? <WhatsAppInbox/> : <MessagesPage/>;
 
   return <NotFound404/>;
 }

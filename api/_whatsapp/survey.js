@@ -51,6 +51,25 @@ async function enqueueSurvey({ db, reservationId }) {
   return { ok: true, ids: data.map(x => x.id), preview: built.preview };
 }
 
+// "Yorum ve puan iste": the tour page / review link straight to the
+// customer, once per reservation, in the booking language.
+async function enqueueReviewRequest({ db, reservationId }) {
+  const { data: r, error } = await db.from('reservations').select(RES_COLS).eq('id', reservationId).maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!r) return { ok: false, status: 404, error: 'Rezervasyon bulunamadı.' };
+  if (r.status === 'cancelled') return { ok: false, status: 409, error: 'İptal edilmiş rezervasyona yorum isteği gönderilmez.' };
+  const built = await surveyRowFor(db, r);
+  if (!built.ok) return built;
+  const url = await reviewUrlFor(db, r);
+  if (!url) return { ok: false, status: 422, error: 'Bu turun sayfa / puanlama linki girilmemiş (Turlar → kanal ayarları → Listing URL).' };
+  const payload = { ...built.row.payload, reviewUrl: url };
+  const row = { ...built.row, event_type: 'review_request', template_key: 'review_request', idempotency_key: `review_request:${r.id}`, payload };
+  const { data, error: e2 } = await db.from('whatsapp_messages').upsert(row, { onConflict: 'idempotency_key', ignoreDuplicates: true }).select('id');
+  if (e2) throw new Error(e2.message);
+  if (!(data || []).length) return { ok: false, status: 409, error: 'Bu rezervasyona yorum isteği zaten gönderildi.' };
+  return { ok: true, ids: data.map(x => x.id), preview: renderPreview('review_request', payload, row.language) };
+}
+
 async function enqueueDailySurveys({ db, todayISO = istanbulISODate() }) {
   const { data, error } = await db.from('reservations').select(RES_COLS).eq('check_in', todayISO);
   if (error) throw new Error(error.message);
@@ -127,4 +146,4 @@ async function handleSurveyInbound({ db, config, fetchImpl, inbound }) {
   return { handled: false };
 }
 
-module.exports = { enqueueSurvey, enqueueDailySurveys, handleSurveyInbound, reviewUrlFor };
+module.exports = { enqueueSurvey, enqueueReviewRequest, enqueueDailySurveys, handleSurveyInbound, reviewUrlFor };

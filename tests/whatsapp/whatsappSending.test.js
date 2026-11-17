@@ -14,7 +14,9 @@ const { runWorker } = require('../../api/_whatsapp/worker');
 const { verifySignature, verifyHandshake, processWebhook } = require('../../api/_whatsapp/webhook');
 const { buildGuideBrief, buildDailySummary, enqueueGuideBrief, enqueueOperationsNotice } = require('../../api/_whatsapp/enqueue');
 const { createHandler } = require('../../api/whatsapp');
-const { enqueueSurvey, enqueueDailySurveys, reviewUrlFor } = require('../../api/_whatsapp/survey');
+const { enqueueSurvey, enqueueReviewRequest, enqueueDailySurveys, reviewUrlFor } = require('../../api/_whatsapp/survey');
+const { classifyEvent, buildEventNotice, enqueueEventNotices } = require('../../api/_whatsapp/events');
+const { sendReply } = require('../../api/_whatsapp/inbox');
 const { extractTestableFn } = require('../dashboard/extractTestableFn');
 
 // ── minimal in-memory stand-in for the supabase-js query builder
@@ -25,9 +27,9 @@ function fakeDb(tables, rpcImpl) {
     rpc: async (name, args) => rpcImpl(name, args, tables),
     from(name) {
       const st = { filters: [], op: 'select', patch: null, rows: null, opts: null };
-      const match = (r) => st.filters.every(([k, v]) => r[k] === v);
+      const match = (r) => st.filters.every(([k, v, op]) => op === 'gte' ? String(r[k]) >= String(v) : r[k] === v);
       const api = {
-        select() { return api; }, order() { return api; }, limit() { return api; },
+        select() { return api; }, order() { return api; }, limit() { return api; }, gte(k, v) { st.filters.push([k, v, 'gte']); return api; },
         eq(k, v) { st.filters.push([k, v]); return api; },
         update(p) { st.op = 'update'; st.patch = p; return api; },
         upsert(rows, opts) { st.op = 'upsert'; st.rows = [].concat(rows); st.opts = opts; return api; },
@@ -289,4 +291,80 @@ test('Graph-compatible provider (coexistence): base URL override for sending; we
   const h = createHandler({ getConfig: () => cfg, getDb: () => fakeDb({}) });
   let r = res(); await h({ method: 'POST', query: { key: 'wrong' }, headers: {}, rawBody: '{"entry":[]}' }, r); assert.equal(r.code, 401);
   r = res(); await h({ method: 'POST', query: { key: 'k-123' }, headers: { 'x-hub-signature-256': 'sha256=provider-signed' }, rawBody: '{"entry":[]}' }, r); assert.equal(r.code, 200);
+});
+
+test('review request: tour page link straight to the customer, once per reservation, booking language; needs phone and a link', async () => {
+  const mk = () => fakeDb({
+    reservations: [{ id: 'R1', reservation_number: 'R-1', check_in: '2026-11-16', tour_id: 'T1', tour_language: 'İspanyolca', status: 'completed', customer_id: 'C1', source_id: 'CIV' }],
+    customers: [{ id: 'C1', full_name: 'ana lopez', phone: '+34 612 345 678' }], tours: [{ id: 'T1', name: 'Gran Bazar' }],
+    tour_channels: [{ tour_id: 'T1', source_id: 'CIV', booking_language: 'İspanyolca', listing_url: 'https://www.civitatis.com/es/estambul/tour-gran-bazar', is_active: true }],
+  });
+  const db = mk();
+  const r = await enqueueReviewRequest({ db, reservationId: 'R1' });
+  assert.equal(r.ok, true);
+  assert.match(r.preview, /^¡Hola Ana! Gracias por elegir DeseTour para el tour Gran Bazar\. Tu opinión es muy importante para nosotros/);
+  assert.match(r.preview, /https:\/\/www\.civitatis\.com\/es\/estambul\/tour-gran-bazar ¡Muchas gracias!$/);
+  const m = db.tables.whatsapp_messages[0];
+  assert.deepEqual([m.event_type, m.template_key, m.language, m.recipient_phone], ['review_request', 'review_request', 'es', '34612345678']);
+  assert.equal((await enqueueReviewRequest({ db, reservationId: 'R1' })).status, 409);
+  const noLink = mk(); noLink.tables.tour_channels = [];
+  assert.equal((await enqueueReviewRequest({ db: noLink, reservationId: 'R1' })).status, 422);
+  const prev = extractTestableFn('_whatsappReviewPreview');
+  for (const lang of Object.keys(TEMPLATES.review_request.languages)) {
+    assert.equal(prev(lang, ['Ana', 'Gran Bazar', 'https://x']), renderPreview('review_request', { customerName: 'Ana', tourName: 'Gran Bazar', reviewUrl: 'https://x' }, lang), lang);
+  }
+  for (const t of Object.values(TEMPLATES)) for (const l of Object.values(t.languages || { x: { body: t.body } })) {
+    assert.doesNotMatch(l.body, /\{\{\d+\}\}\s*$/, 'Meta rejects a body ending with a variable');
+    for (const b of l.buttons || []) assert.match(b, /^[\p{L} ]+$/u, 'no emoji in buttons');
+  }
+});
+
+test('CRM events → operations list: new booking, cancellation, change, client message; each announced once', async () => {
+  const log = (id, action, metadata) => ({ id, entity_type: 'reservation', entity_id: 'R1', action, metadata: { auto_ingested: true, ...metadata }, created_at: '2026-11-17T09:00:00Z' });
+  assert.equal(classifyEvent(log('a', 'created', {})), 'created');
+  assert.equal(classifyEvent(log('a', 'cancelled', {})), 'cancelled');
+  assert.equal(classifyEvent(log('a', 'updated', { alert_type: 'civitatis_modified' })), 'modified');
+  assert.equal(classifyEvent(log('a', 'note_added', { source: 'civitatis_message' })), 'message');
+  assert.equal(classifyEvent(log('a', 'note_added', { alert_type: 'civitatis_missing_passenger_names' })), null);
+  assert.equal(classifyEvent({ ...log('a', 'created', {}), metadata: {} }), null, 'manual CRM activity is not announced');
+  const r = { reservation_number: 'R-2026-0060', destination: 'Topkapı', check_in: '2026-11-20', check_in_time: '10:00:00', pax_adult: 2, pax_child: 1, tour_language: 'İspanyolca', guide_id: null };
+  assert.deepEqual(buildEventNotice('created', log('a', 'created', {}), r), { title: 'Yeni rezervasyon R-2026-0060', details: 'Topkapı · 20 Kasım 2026 Cuma 10:00 · 3 kişi · İspanyolca · Rehber atanmadı' });
+  assert.match(buildEventNotice('modified', log('a', 'updated', { changes: [{ label: 'Tarih', from: '19.11.2026', to: '20.11.2026' }], guide_assigned: true }), r).details, /^Tarih 19\.11\.2026 → 20\.11\.2026 \| Topkapı.*Rehbere haber verin$/);
+  assert.match(buildEventNotice('cancelled', log('a', 'cancelled', {}), { ...r, guide_id: 'G' }).title, /^İPTAL R-2026-0060$/);
+  const db = fakeDb({
+    activity_logs: [log('L1', 'created', {}), log('L2', 'note_added', { alert_type: 'civitatis_missing_passenger_names' }), { ...log('L3', 'cancelled', {}), created_at: '2026-11-16T00:00:00Z' }],
+    reservations: [{ id: 'R1', ...r }],
+    whatsapp_destinations: [{ id: 'D', destination_key: 'operations', is_active: true }],
+    whatsapp_destination_recipients: [{ destination_id: 'D', phone: '05321112233', display_name: 'Berk', is_active: true }],
+  });
+  const now = () => new Date('2026-11-17T09:10:00Z');
+  const a = await enqueueEventNotices({ db, now });
+  assert.deepEqual([a.events, a.queued], [1, 1], 'only the recent, announceable event');
+  assert.equal(db.tables.whatsapp_messages[0].event_type, 'crm_event_created');
+  assert.equal((await enqueueEventNotices({ db, now })).queued, 0, 'second run announces nothing again');
+});
+
+test('CRM WhatsApp window: reply only inside the 24-hour window; phone-app messages (echoes) are kept; threads per number', async () => {
+  const now = () => new Date('2026-11-17T12:00:00Z');
+  const db = fakeDb({ whatsapp_inbound_messages: [{ from_phone: '34600111222', received_at: '2026-11-17T10:00:00Z', profile_name: 'Ana' }, { from_phone: '34999000111', received_at: '2026-11-15T10:00:00Z' }] });
+  const sent = []; const fetchImpl = async (u, i) => { sent.push(JSON.parse(i.body)); return { ok: true, status: 200, json: async () => ({ messages: [{ id: 'wamid.X' }] }) }; };
+  assert.equal((await sendReply({ db, config: CFG, phone: '+34 600 111 222', text: ' Hola ', requestId: 'a', fetchImpl, now })).ok, true);
+  assert.deepEqual([sent[0].type, sent[0].to, sent[0].text.body], ['text', '34600111222', 'Hola']);
+  assert.equal(db.tables.whatsapp_messages[0].event_type, 'crm_reply');
+  assert.equal((await sendReply({ db, config: CFG, phone: '34999000111', text: 'x', requestId: 'b', fetchImpl, now })).status, 409, 'older than 24 h');
+  assert.equal((await sendReply({ db, config: CFG, phone: '34000', text: 'x', requestId: 'c', fetchImpl, now })).status, 422);
+  assert.equal(sent.length, 1);
+  await processWebhook({ entry: [{ changes: [{ field: 'smb_message_echoes', value: { message_echoes: [{ id: 'wamid.E', to: '34600111222', timestamp: '1700000000', type: 'text', text: { body: 'Telefondan yazdım' } }] } }] }] }, db);
+  const echo = db.tables.whatsapp_messages.find(m => m.event_type === 'app_echo');
+  assert.equal(echo.payload.text, 'Telefondan yazdım'); assert.equal(echo.recipient_phone, '34600111222');
+  const s = fs.readFileSync(path.join(__dirname, '..', '..', 'DeseTourDashboard.jsx'), 'utf8');
+  const a = s.indexOf('// TESTABLE:_buildWhatsAppThreads:start'), b = s.indexOf('// TESTABLE:_buildWhatsAppThreads:end');
+  // eslint-disable-next-line no-new-func
+  const build = new Function(s.slice(a, b) + '\nreturn _buildWhatsAppThreads;')();
+  const T = build(
+    [{ id: 1, from: '34600111222', name: 'Ana', text: 'Hola', at: '2026-11-17T10:00:00Z' }, { id: 2, from: '905321112233', text: 'Tamam', at: '2026-11-10T08:00:00Z' }],
+    [{ id: 9, recipientPhone: '+34 600 111 222', text: 'Gracias', sentAt: '2026-11-17T10:05:00Z', status: 'read', eventType: 'crm_reply', audience: 'customer' },
+     { id: 8, recipientPhone: '905321112233', recipientName: 'Ayşe', text: 'Tur bilgisi', createdAt: '2026-11-10T07:00:00Z', status: 'delivered', eventType: 'guide_tour_brief', audience: 'guide' }],
+    new Date('2026-11-17T12:00:00Z').getTime());
+  assert.deepEqual(T.map(t => [t.phone, t.name, t.messages.map(m => m.dir).join(''), t.canReply, t.audience]), [['34600111222', 'Ana', 'inout', true, 'customer'], ['905321112233', 'Ayşe', 'outin', false, 'guide']]);
 });

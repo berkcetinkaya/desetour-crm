@@ -101,6 +101,19 @@ const CRM_CHANGELOG_CATEGORIES = [
 // Newest first. See the release convention above before editing.
 const CRM_CHANGELOG = [
   {
+    version: '13.23',
+    date: '2026-11-17',
+    title: 'WhatsApp Penceresi, Yorum İsteği ve Ekip Bildirimleri',
+    summary: 'Mesajlar sayfası gerçek WhatsApp penceresi oldu; rezervasyondan müşteriye turun sayfasıyla yorum ve puan isteği gönderiliyor; yeni rezervasyon, iptal, değişiklik ve mesajlar operasyon ekibine WhatsApp ile bildiriliyor.',
+    categories: ['Yeni Özellik', 'Otomasyon'],
+    highlights: [
+      'Mesajlar: DeseTour numarasındaki yazışmalar (gelenler, CRM\'den gidenler, telefondan yazılanlar) tek pencerede; son 24 saatte yazan kişiye buradan cevap verilebiliyor.',
+      'Rezervasyonda "Yorum ve puan iste": müşteriye kendi dilinde turun Civitatis sayfası gidiyor ve yorumunun bizim için çok önemli olduğu belirtiliyor.',
+      'Yeni rezervasyon, iptal, Civitatis değişikliği ve müşteri mesajı gelince operasyon ekibindeki numaralara otomatik WhatsApp bildirimi gidiyor.',
+    ],
+    author: 'Berk',
+  },
+  {
     version: '13.22',
     date: '2026-11-17',
     title: 'Telefonda CRM: İşlem Yapılabilir Rezervasyonlar',
@@ -255,21 +268,6 @@ const CRM_CHANGELOG = [
       'Son Hareketler: rezervasyon, rehber atama, acente iletişimi ve notlar gibi önemli işlemlerin kim tarafından yapıldığı takip edilebiliyor; yöneticiler için ayrı bir ekip aktivite görünümü eklendi',
       'Acenteler: liste ve detay ekranları daha modern ve kompakt bir çalışma alanına dönüştü; yeni yanıtlar, takip bekleyenler, partner durumları, konuşmalar ve notlar daha kolay ayırt edilebiliyor',
       'Yeni tasarım sistemi: Geist ve Instrument Serif tipografisiyle daha aydınlık ve sade bir arayüz, cihazda hatırlanan açık/koyu tema desteği ve kartlar/tablolar/modallar/mobil genelinde görsel iyileştirmeler',
-    ],
-    author: 'Berk',
-  },
-  {
-    version: '12.48',
-    date: '2026-10-22',
-    title: 'Civitatis Rezervasyon Alım Sürecinde Sessiz Kayıp Önleme',
-    summary: 'Civitatis üzerinden gelen rezervasyonlardan müşteri eşleşmesi belirsiz olanlar veya başka bir güvenlik kontrolüne takılanlar artık hiçbir koşulda sistemden sessizce kaybolmuyor; bu rezervasyonlar "incelemeye alındı" durumunda kayıt altına alınıyor ve operasyon ekibi tarafından görülebiliyor.',
-    categories: ['Operasyon', 'Altyapı'],
-    highlights: [
-      'Müşteri eşleşmesi belirsiz olan veya diğer güvenlik kontrollerine takılan Civitatis rezervasyonları artık sessizce kaybolmuyor, "incelemeye alındı" olarak kayıt altına alınıyor',
-      'Otomatik kontrol (cron) süreci artık başarısız olan veya incelemeye alınan rezervasyonları daha güvenilir şekilde raporluyor',
-      'Aynı belirsiz rezervasyon için tekrarlanan otomatik kontrollerde gereksiz tekrar kayıt oluşturulmuyor',
-      'Operasyon ekibi, şüpheli bir müşteri eşleşmesini inceleyip mevcut müşteriyle mi yoksa yeni bir müşteriyle mi ilişkilendirileceğine açıkça karar verebiliyor',
-      'Hiçbir müşteri kaydı otomatik olarak birleştirilmiyor veya varsayılan olarak eşleştirilmiyor',
     ],
     author: 'Berk',
   },

@@ -12,13 +12,17 @@
  *   POST ?action=worker                scheduler (Bearer WHATSAPP_SCHEDULER_SECRET): send due messages
  *   POST ?action=daily-summary         scheduler: tomorrow's operations → operations list, then send
  *   POST ?action=post-tour-surveys     scheduler: today's tours → customer survey, then send
- *        (enqueue also takes { kind:'survey', reservationId } for a manual survey)
+ *        (enqueue also takes { kind:'survey' | 'review_request', reservationId } and
+ *         { kind:'reply', phone, text } for the CRM WhatsApp window; the worker run also
+ *         announces new CRM events to the operations list)
  */
 const { getWhatsAppConfig } = require('./_whatsapp/config');
 const { verifyHandshake, verifySignature, verifyUrlKey, processWebhook } = require('./_whatsapp/webhook');
 const { runWorker } = require('./_whatsapp/worker');
 const { enqueueGuideBrief, enqueueOperationsNotice, enqueueDailySummary } = require('./_whatsapp/enqueue');
-const { enqueueSurvey, enqueueDailySurveys } = require('./_whatsapp/survey');
+const { enqueueSurvey, enqueueReviewRequest, enqueueDailySurveys } = require('./_whatsapp/survey');
+const { enqueueEventNotices } = require('./_whatsapp/events');
+const { sendReply } = require('./_whatsapp/inbox');
 const { requireStaffRole } = require('./_shared/authorize');
 const { getAdminDb } = require('./_whatsapp/db');
 
@@ -54,8 +58,11 @@ function createHandler(deps = {}) {
         if (!isScheduler(req, cfg)) return res.status(401).json({ error: 'Unauthorized.' });
         const summary = action === 'daily-summary' ? await enqueueDailySummary({ db: db() })
           : action === 'post-tour-surveys' ? await enqueueDailySurveys({ db: db() }) : null;
+        // Every run also announces new CRM events (booking / cancellation /
+        // change / client message) to the operations list.
+        const events = await enqueueEventNotices({ db: db() });
         const worker = await runWorker({ db: db(), config: cfg, fetchImpl: deps.fetchImpl });
-        return res.status(200).json({ summary, worker });
+        return res.status(200).json({ summary, events: { events: events.events, queued: events.queued, skipped: events.skipped }, worker });
       }
       if (action === 'status' || action === 'enqueue') {
         const auth = await (deps.requireStaffRole || requireStaffRole)(req, ['admin', 'operations']);
@@ -72,6 +79,11 @@ function createHandler(deps = {}) {
           if (!title || !details) return res.status(400).json({ error: 'Başlık ve mesaj gerekli.' });
           r = await enqueueOperationsNotice({ db: db(), eventType: 'operations_notice', title, details, key: `operations_notice:${requestId}` });
         } else if (body.kind === 'survey') r = await enqueueSurvey({ db: db(), reservationId: body.reservationId });
+        else if (body.kind === 'review_request') r = await enqueueReviewRequest({ db: db(), reservationId: body.reservationId });
+        else if (body.kind === 'reply') {
+          const out = await sendReply({ db: db(), config: cfg, phone: body.phone, text: body.text, requestId, fetchImpl: deps.fetchImpl });
+          return out.ok ? res.status(200).json({ ok: true }) : res.status(out.status).json({ error: out.error });
+        }
         else return res.status(400).json({ error: 'Bilinmeyen mesaj türü.' });
         if (!r.ok) return res.status(r.status).json({ error: r.error });
         const worker = r.ids.length ? await runWorker({ db: db(), config: cfg, ids: r.ids, fetchImpl: deps.fetchImpl }) : null;
