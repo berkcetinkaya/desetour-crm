@@ -25435,7 +25435,7 @@ function getActiveRepo(entity) {
 // TESTABLE:_whatsappTemplatePreview:start
 const _WA_TEMPLATE_BODIES = {
   guide_tour_brief: 'Merhaba {{1}}, {{2}} tarihindeki {{3}} turunuzun bilgileri:\n🕘 Başlangıç: {{4}}\n🗣 Dil: {{5}}\n👥 Misafir: {{6}}\n📍 Buluşma: {{7}}\n📝 Not: {{8}}\nİyi turlar! — DeseTour Operasyon',
-  operations_notice: '📣 DeseTour Operasyon — {{1}}\n{{2}}',
+  operations_notice: '📣 DeseTour Operasyon — {{1}}\n{{2}}\nDeseTour CRM otomatik bildirimi.',
 };
 // Post-tour survey: same template in the booking's language (server:
 // api/_whatsapp/templates.js) — preview only.

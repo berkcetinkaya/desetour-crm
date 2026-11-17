@@ -20,7 +20,7 @@ const TEMPLATES = {
   // Operasyon ekibine bildirim / hatırlatma (Utility, tr)
   operations_notice: {
     name: 'desetour_operasyon_bildirimi', language: 'tr', category: 'UTILITY',
-    body: '📣 DeseTour Operasyon — {{1}}\n{{2}}',
+    body: '📣 DeseTour Operasyon — {{1}}\n{{2}}\nDeseTour CRM otomatik bildirimi.',
     params: ['title', 'details'],
   },
   // Tur sonrası anket: one template name approved in several languages,
@@ -29,11 +29,11 @@ const TEMPLATES = {
     name: 'desetour_tur_sonrasi_anket', category: 'UTILITY', params: ['customerName', 'tourName'],
     ratings: ['great', 'good', 'poor'],
     languages: {
-      es: { body: '¡Hola {{1}}! Gracias por hacer el tour {{2}} con DeseTour. ¿Qué te ha parecido?', buttons: ['😍 Excelente', '🙂 Bien', '😕 Mejorable'] },
-      pt_BR: { body: 'Olá {{1}}! Obrigado por fazer o passeio {{2}} com a DeseTour. O que você achou?', buttons: ['😍 Excelente', '🙂 Bom', '😕 Pode melhorar'] },
-      it: { body: "Ciao {{1}}! Grazie per aver fatto il tour {{2}} con DeseTour. Com'è andata?", buttons: ['😍 Ottimo', '🙂 Bene', '😕 Migliorabile'] },
-      en: { body: 'Hi {{1}}! Thank you for joining the {{2}} tour with DeseTour. How was your experience?', buttons: ['😍 Excellent', '🙂 Good', '😕 Could be better'] },
-      tr: { body: 'Merhaba {{1}}! {{2}} turunu DeseTour ile yaptığınız için teşekkürler. Nasıldı?', buttons: ['😍 Harika', '🙂 İyi', '😕 Geliştirilebilir'] },
+      es: { body: '¡Hola {{1}}! Gracias por hacer el tour {{2}} con DeseTour. ¿Qué te ha parecido?', buttons: ['Excelente', 'Bien', 'Mejorable'] },
+      pt_BR: { body: 'Olá {{1}}! Obrigado por fazer o passeio {{2}} com a DeseTour. O que você achou?', buttons: ['Excelente', 'Bom', 'Pode melhorar'] },
+      it: { body: "Ciao {{1}}! Grazie per aver fatto il tour {{2}} con DeseTour. Com'è andata?", buttons: ['Ottimo', 'Bene', 'Migliorabile'] },
+      en: { body: 'Hi {{1}}! Thank you for joining the {{2}} tour with DeseTour. How was your experience?', buttons: ['Excellent', 'Good', 'Could be better'] },
+      tr: { body: 'Merhaba {{1}}! {{2}} turunu DeseTour ile yaptığınız için teşekkürler. Nasıldı?', buttons: ['Harika', 'İyi', 'Geliştirilebilir'] },
     },
   },
 };
