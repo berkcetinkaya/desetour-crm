@@ -1,4 +1,51 @@
-# WhatsApp kurulumu (Meta WhatsApp Business Cloud API)
+# WhatsApp kurulumu
+
+# Seçilen yol: Dualhook ile "coexistence" (aynı numara telefonda + CRM'de)
+
++90 544 459 35 85 telefondaki WhatsApp Business uygulamasında kalır; CRM aynı numaradan mesaj gönderir. Meta bu bağlantıyı yalnızca yetkili aracılar üzerinden açtığı için Dualhook kullanılıyor (aylık ücretli, 14 gün deneme). Aşağıdaki "doğrudan Meta" adımları yalnızca ayrı bir numara kullanılırsa geçerlidir.
+
+## A. Vercel'e üç değer ekleyin (bağlantıdan ÖNCE)
+Vercel → desetour-crm → Settings → Environment Variables (Production):
+
+| Değişken | Değer |
+|---|---|
+| `WHATSAPP_VERIFY_TOKEN` | kendiniz uydurun (ör. 30 karakter, harf-rakam) |
+| `WHATSAPP_WEBHOOK_KEY` | kendiniz uydurun (ör. 30 karakter, harf-rakam) |
+| `WHATSAPP_SCHEDULER_SECRET` | kendiniz uydurun |
+
+Kaydedip **Redeploy** yapın. İlk iki değeri not edin; B adımında lazım.
+
+## B. Dualhook'ta bağlayın
+1. dualhook.com → hesap açın (Developer planı, 1 bağlantı).
+2. **Connect WhatsApp** → bağlantı adı: DeseTour.
+   - Webhook URL: `https://desetour-crm-v15.vercel.app/api/whatsapp?key=<WHATSAPP_WEBHOOK_KEY değeri>`
+   - Verify token: `<WHATSAPP_VERIFY_TOKEN değeri>`
+3. **Connect with Meta** → açılan pencerede:
+   - Numara listesinde 544'lü numara "Registered" etiketiyle çıkarsa onu seçin; çıkmazsa "Enter a new phone number" ile yazın.
+   - WhatsApp Business profil kartınız (logo, ad, numara) görünmeli — doğru yoldasınız demektir.
+   - İşletme portföyü: **DeseTour**.
+   - QR kodu telefondaki WhatsApp Business uygulamasıyla okutun; sohbet geçmişini paylaşıp paylaşmamayı seçin.
+4. **DURUN ve ekran görüntüsü atın, devam etmeyin** eğer: SMS/sesli arama kodu istenirse, QR çıkmadan "bağlandı" derse, ya da "numara zaten kayıtlı, bağlantıyı kesin / taşıyın" derse. Bunlar numaranın telefondan düşebileceği yoldur.
+5. Bitince Dualhook'ta bağlantının **Overview** sayfasından bir **API key** (`dh_live_…`) oluşturun. Bir kez gösterilir.
+
+## C. Vercel'e gönderim değerlerini ekleyin
+| Değişken | Değer |
+|---|---|
+| `WHATSAPP_ACCESS_TOKEN` | Dualhook API key (`dh_live_…`) |
+| `WHATSAPP_PHONE_NUMBER_ID` | `1163770170156531` (Dualhook'ta farklı görünüyorsa oradaki) |
+| `WHATSAPP_API_BASE_URL` | `https://api.dualhook.com/v25.0` |
+
+Redeploy. CRM → Ayarlar → WhatsApp'ta "Meta bağlantısı: Hazır ✓" görünmeli.
+
+## D. Kalanlar
+- **Şablonlar** (aşağıdaki 2. bölüm): aynı metinlerle onaya gönderilir.
+- **Ödeme yöntemi:** Meta → WhatsApp Yöneticisi → "Ödeme yöntemi ekleyin" (kart). Yoksa işletmenin başlattığı mesajlar gitmez.
+- **GitHub** (aşağıdaki 6. bölüm): akşam özeti ve anket görevleri.
+- **Telefonu açık tutun:** WhatsApp Business uygulaması yaklaşık 14 gün hiç açılmazsa Meta bağlantıyı koparır.
+
+---
+
+# Doğrudan Meta ile kurulum (ayrı numara kullanılırsa)
 
 CRM tarafı hazır. Mesajlar Meta bağlantısı kurulana kadar **sırada bekler**, kaybolmaz. Aşağıdaki adımlar bir kez yapılır.
 

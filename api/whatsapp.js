@@ -3,7 +3,7 @@
  * api/whatsapp.js — the ONE WhatsApp endpoint (keeps the Vercel function
  * count low). Routes:
  *   GET  ?hub.mode=subscribe…          Meta webhook verification
- *   POST (no action, Meta signature)   Meta webhook: statuses + inbound
+ *   POST (no action; Meta signature or ?key=WHATSAPP_WEBHOOK_KEY)   Meta webhook: statuses + inbound
  *   POST ?action=enqueue               CRM staff (admin/operations, AAL2):
  *        { kind:'guide_brief', reservationId, note?, meetingPoint?, requestId }
  *        { kind:'operations_notice', title, details, requestId }
@@ -15,7 +15,7 @@
  *        (enqueue also takes { kind:'survey', reservationId } for a manual survey)
  */
 const { getWhatsAppConfig } = require('./_whatsapp/config');
-const { verifyHandshake, verifySignature, processWebhook } = require('./_whatsapp/webhook');
+const { verifyHandshake, verifySignature, verifyUrlKey, processWebhook } = require('./_whatsapp/webhook');
 const { runWorker } = require('./_whatsapp/worker');
 const { enqueueGuideBrief, enqueueOperationsNotice, enqueueDailySummary } = require('./_whatsapp/enqueue');
 const { enqueueSurvey, enqueueDailySurveys } = require('./_whatsapp/survey');
@@ -43,7 +43,8 @@ function createHandler(deps = {}) {
       }
       if (req.method === 'POST' && !action) {
         const raw = await readRaw(req);
-        if (!verifySignature(raw, req.headers['x-hub-signature-256'], cfg.appSecret)) return res.status(401).json({ error: 'Invalid signature.' });
+        // Our own Meta app's signature, or the secret in the webhook URL.
+        if (!verifySignature(raw, req.headers['x-hub-signature-256'], cfg.appSecret) && !verifyUrlKey(q.key, cfg.webhookKey)) return res.status(401).json({ error: 'Invalid signature.' });
         let payload; try { payload = JSON.parse(raw.toString('utf8')); } catch (_) { return res.status(400).json({ error: 'Bad JSON.' }); }
         const out = await processWebhook(payload, db(), { config: cfg, fetchImpl: deps.fetchImpl });
         return res.status(200).json(out);
@@ -59,7 +60,7 @@ function createHandler(deps = {}) {
       if (action === 'status' || action === 'enqueue') {
         const auth = await (deps.requireStaffRole || requireStaffRole)(req, ['admin', 'operations']);
         if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
-        if (action === 'status') return res.status(200).json({ sendingConfigured: cfg.sendingConfigured, webhookConfigured: !!(cfg.appSecret && cfg.verifyToken) });
+        if (action === 'status') return res.status(200).json({ sendingConfigured: cfg.sendingConfigured, webhookConfigured: !!((cfg.appSecret || cfg.webhookKey) && cfg.verifyToken) });
         if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed.' });
         const body = JSON.parse((await readRaw(req)).toString('utf8') || '{}');
         const requestId = String(body.requestId || '').slice(0, 64);

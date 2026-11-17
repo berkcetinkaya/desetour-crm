@@ -20,6 +20,15 @@ function verifySignature(rawBody, header, appSecret) {
   return got.length === expected.length && crypto.timingSafeEqual(got, expected);
 }
 
+// Webhook URL secret (?key=…), compared in constant time. Used when the
+// payload is signed with a provider's app secret (e.g. Dualhook's Webhook
+// Override: Meta calls us directly, but the signature is not ours to check).
+function verifyUrlKey(key, expected) {
+  if (!expected || typeof key !== 'string') return false;
+  const a = Buffer.from(key), b = Buffer.from(expected);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
 const RANK = { queued: 0, processing: 0, sent: 1, delivered: 2, read: 3, failed: 4 };
 
 async function processWebhook(payload, db, opts = {}) {
@@ -67,4 +76,4 @@ async function processWebhook(payload, db, opts = {}) {
   return out;
 }
 
-module.exports = { verifyHandshake, verifySignature, processWebhook };
+module.exports = { verifyHandshake, verifySignature, verifyUrlKey, processWebhook };

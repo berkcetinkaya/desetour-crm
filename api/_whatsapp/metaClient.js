@@ -6,7 +6,8 @@
  */
 const { TEMPLATES, templateParams, templateLanguage } = require('./templates');
 
-function graphUrl(config) { return `https://graph.facebook.com/${config.graphVersion}/${config.phoneNumberId}/messages`; }
+// Meta directly, or a Graph-compatible provider base URL (same payloads).
+function graphUrl(config) { return `${config.apiBaseUrl || `https://graph.facebook.com/${config.graphVersion}`}/${config.phoneNumberId}/messages`; }
 
 // lang: language for multi-language templates (survey); buttonPayloads:
 // quick-reply payload per button index.

@@ -270,3 +270,23 @@ test('data SQL: fills only empty listing URLs, each guarded by its channel id + 
   assert.match(sql, /WHERE c\.id = v\.id AND c\.tour_id = v\.tour_id AND c\.booking_language = v\.lang/);
   for (const u of ['it/istanbul/tour-grande-bazar', 'it/istanbul/crociera-bosforo-sultanahmet', 'pt/istambul/cruzeiro-bosforo-sultanahmet', 'pt/istambul/visita-guiada-istambul', 'es/estambul/visita-palacio-topkapi-haren-santa-irene-231294']) assert.ok(sql.includes(u), u);
 });
+
+test('Graph-compatible provider (coexistence): base URL override for sending; webhook accepted by URL key when the signature is not ours', async () => {
+  const cfg = getWhatsAppConfig({ WHATSAPP_ACCESS_TOKEN: 'dh_live_x', WHATSAPP_PHONE_NUMBER_ID: '42', WHATSAPP_API_BASE_URL: 'https://api.example-provider.com/v25.0/', WHATSAPP_WEBHOOK_KEY: 'k-123', WHATSAPP_VERIFY_TOKEN: 'vt' });
+  assert.equal(cfg.apiBaseUrl, 'https://api.example-provider.com/v25.0');
+  const db = fakeDb({ whatsapp_messages: [{ id: 'q', status: 'queued', attempt_count: 0, recipient_phone: '905321112233', template_key: 'operations_notice', payload: { title: 'T', details: 'D' } }] }, claimAll);
+  const calls = []; await runWorker({ db, config: cfg, fetchImpl: metaOk(calls) });
+  assert.equal(calls[0].url, 'https://api.example-provider.com/v25.0/42/messages');
+  assert.equal(calls[0].auth, 'Bearer dh_live_x');
+  const meta = []; await runWorker({ db: fakeDb({ whatsapp_messages: [{ id: 'q', status: 'queued', attempt_count: 0, recipient_phone: '905321112233', template_key: 'operations_notice', payload: {} }] }, claimAll), config: CFG, fetchImpl: metaOk(meta) });
+  assert.equal(meta[0].url, 'https://graph.facebook.com/v21.0/123/messages', 'default stays Meta direct');
+  const { verifyUrlKey } = require('../../api/_whatsapp/webhook');
+  assert.equal(verifyUrlKey('k-123', 'k-123'), true);
+  assert.equal(verifyUrlKey('k-124', 'k-123'), false);
+  assert.equal(verifyUrlKey('k-123', ''), false, 'no key configured → never accepted');
+  assert.equal(verifyUrlKey(undefined, 'k-123'), false);
+  const res = () => { const r = { code: 0, body: null, status(c) { r.code = c; return r; }, json(b) { r.body = b; return r; }, send(b) { r.body = b; return r; } }; return r; };
+  const h = createHandler({ getConfig: () => cfg, getDb: () => fakeDb({}) });
+  let r = res(); await h({ method: 'POST', query: { key: 'wrong' }, headers: {}, rawBody: '{"entry":[]}' }, r); assert.equal(r.code, 401);
+  r = res(); await h({ method: 'POST', query: { key: 'k-123' }, headers: { 'x-hub-signature-256': 'sha256=provider-signed' }, rawBody: '{"entry":[]}' }, r); assert.equal(r.code, 200);
+});
