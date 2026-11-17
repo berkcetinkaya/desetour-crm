@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>DeseTour · WhatsApp'ı bağla</title>
+<style>
+  body{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:#F6F3EC;color:#1B2D4F;margin:0;padding:24px}
+  .card{max-width:640px;margin:0 auto;background:#fff;border:1px solid #E8E2D9;border-radius:14px;padding:24px}
+  h1{font-size:22px;margin:0 0 6px} p{font-size:14px;line-height:1.55;color:#4A5568;margin:8px 0}
+  label{display:block;font-size:12px;color:#7A7064;margin:14px 0 4px}
+  input{width:100%;box-sizing:border-box;padding:10px 12px;border:1px solid #E8E2D9;border-radius:10px;font-size:15px}
+  button{margin-top:16px;padding:12px 18px;border:none;border-radius:10px;background:#1B2D4F;color:#fff;font-size:15px;font-weight:600;cursor:pointer}
+  button:disabled{opacity:.5;cursor:default}
+  pre{background:#0F1D35;color:#E6EDF7;padding:12px;border-radius:10px;font-size:12px;white-space:pre-wrap;word-break:break-all;margin-top:16px;min-height:60px}
+  ol{font-size:14px;line-height:1.6;color:#4A5568;padding-left:20px}
+  .ok{color:#2E7D52;font-weight:600}.bad{color:#B4442F;font-weight:600}
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>Telefondaki WhatsApp Business'ı CRM'e bağla</h1>
+  <p>Bu sayfa, DeseTour WhatsApp numarasını telefondaki uygulamadan silmeden otomatik mesaj gönderimine açar (Meta "coexistence"). Yalnızca "Dese Tour CRM" Meta uygulamasının yöneticisi tamamlayabilir.</p>
+  <ol>
+    <li>Telefonda WhatsApp Business uygulamasının güncel olduğundan emin olun.</li>
+    <li>Aşağıdaki düğmeye basın, açılan Meta penceresinde <b>mevcut WhatsApp Business uygulaması numaranızı bağlama</b> seçeneğini seçin.</li>
+    <li>Ekrandaki QR kodu telefondaki WhatsApp Business uygulamasıyla okutun.</li>
+  </ol>
+  <label for="cfg">Yapılandırma kimliği (Configuration ID)</label>
+  <input id="cfg" inputmode="numeric" placeholder="Meta → Facebook Login for Business → Configurations">
+  <button id="go" disabled>WhatsApp Business uygulamasını bağla</button>
+  <pre id="out">Meta bileşeni yükleniyor…</pre>
+</div>
+<script>
+  var APP_ID = '1355919366619458';
+  var out = document.getElementById('out'), go = document.getElementById('go'), cfg = document.getElementById('cfg');
+  var q = new URLSearchParams(location.search); if (q.get('config_id')) cfg.value = q.get('config_id');
+  function log(line, cls) { var s = document.createElement('div'); if (cls) s.className = cls; s.textContent = line; out.appendChild(s); }
+  window.fbAsyncInit = function () {
+    FB.init({ appId: APP_ID, autoLogAppEvents: true, xfbml: true, version: 'v24.0' });
+    out.textContent = ''; log('Hazır. Yapılandırma kimliğini yazıp düğmeye basın.'); go.disabled = false;
+  };
+  // Session info from the Embedded Signup popup (no secrets in it).
+  window.addEventListener('message', function (event) {
+    if (!/(^|\.)facebook\.com$/.test(new URL(event.origin).hostname)) return;
+    try {
+      var data = JSON.parse(event.data);
+      if (data.type !== 'WA_EMBEDDED_SIGNUP') return;
+      var d = data.data || {};
+      if (data.event === 'FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING' || data.event === 'FINISH') {
+        log('✓ Bağlantı tamamlandı (' + data.event + ').', 'ok');
+        log('WhatsApp hesap kimliği: ' + (d.waba_id || '—') + ' · Numara kimliği: ' + (d.phone_number_id || '—'));
+        log('Bu ekranın görüntüsünü Claude\'a gönderin.');
+      } else if (data.event === 'CANCEL') {
+        log('İşlem tamamlanmadan kapatıldı (adım: ' + (d.current_step || '?') + ').', 'bad');
+      } else if (data.event === 'ERROR') {
+        log('Meta hata verdi: ' + (d.error_message || '') + ' (kod ' + (d.error_code || '?') + ')', 'bad');
+      } else { log('Olay: ' + data.event); }
+    } catch (_) { /* not JSON: ignore */ }
+  });
+  go.onclick = function () {
+    var id = cfg.value.trim();
+    if (!/^\d{6,}$/.test(id)) { log('Önce yapılandırma kimliğini (sadece rakam) yazın.', 'bad'); return; }
+    log('Meta penceresi açılıyor…');
+    FB.login(function (response) {
+      // The one-time code is deliberately NOT shown or stored: the CRM
+      // already holds its own system-user access to this account.
+      log(response && response.authResponse ? 'Meta oturumu onaylandı.' : 'Meta penceresi onay verilmeden kapandı.', response && response.authResponse ? 'ok' : 'bad');
+    }, { config_id: id, response_type: 'code', override_default_response_type: true,
+         extras: { setup: {}, featureType: 'whatsapp_business_app_onboarding', sessionInfoVersion: '3' } });
+  };
+</script>
+<script async defer crossorigin="anonymous" src="https://connect.facebook.net/en_US/sdk.js"></script>
+</body>
+</html>
