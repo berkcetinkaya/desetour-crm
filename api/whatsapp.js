@@ -23,6 +23,7 @@ const { enqueueGuideBrief, enqueueOperationsNotice, enqueueDailySummary } = requ
 const { enqueueSurvey, enqueueReviewRequest, enqueueDailySurveys } = require('./_whatsapp/survey');
 const { enqueueEventNotices } = require('./_whatsapp/events');
 const { sendReply } = require('./_whatsapp/inbox');
+const { telegramConfig, listGroups, getTelegramDestination, connectGroup, disconnectGroup, sendTelegramNotice } = require('./_whatsapp/telegram');
 const { requireStaffRole } = require('./_shared/authorize');
 const { getAdminDb } = require('./_whatsapp/db');
 
@@ -40,6 +41,13 @@ function createHandler(deps = {}) {
     const q = req.query || {};
     const action = q.action || null;
     const db = () => (deps.getDb || getAdminDb)();
+    const tg = (deps.getTelegramConfig || telegramConfig)();
+    // Team notices go to the Telegram group when one is connected,
+    // otherwise to the WhatsApp operations list.
+    const teamNotifier = async () => {
+      const dest = tg.configured ? await getTelegramDestination(db()) : null;
+      return dest ? (a) => sendTelegramNotice({ db: db(), tg, dest, fetchImpl: deps.fetchImpl, ...a }) : (a) => enqueueOperationsNotice({ db: db(), ...a });
+    };
     try {
       if (req.method === 'GET' && q['hub.mode']) {
         const v = verifyHandshake(q, cfg);
@@ -56,18 +64,23 @@ function createHandler(deps = {}) {
       if (action === 'worker' || action === 'daily-summary' || action === 'post-tour-surveys') {
         if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed.' });
         if (!isScheduler(req, cfg)) return res.status(401).json({ error: 'Unauthorized.' });
-        const summary = action === 'daily-summary' ? await enqueueDailySummary({ db: db() })
+        const notify = await teamNotifier();
+        const summary = action === 'daily-summary' ? await enqueueDailySummary({ db: db(), notify })
           : action === 'post-tour-surveys' ? await enqueueDailySurveys({ db: db() }) : null;
         // Every run also announces new CRM events (booking / cancellation /
         // change / client message) to the operations list.
-        const events = await enqueueEventNotices({ db: db() });
+        const events = await enqueueEventNotices({ db: db(), notify });
         const worker = await runWorker({ db: db(), config: cfg, fetchImpl: deps.fetchImpl });
         return res.status(200).json({ summary, events: { events: events.events, queued: events.queued, skipped: events.skipped }, worker });
       }
       if (action === 'status' || action === 'enqueue') {
         const auth = await (deps.requireStaffRole || requireStaffRole)(req, ['admin', 'operations']);
         if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
-        if (action === 'status') return res.status(200).json({ sendingConfigured: cfg.sendingConfigured, webhookConfigured: !!((cfg.appSecret || cfg.webhookKey) && cfg.verifyToken) });
+        if (action === 'status') {
+          const dest = tg.configured ? await getTelegramDestination(db()) : null;
+          return res.status(200).json({ sendingConfigured: cfg.sendingConfigured, webhookConfigured: !!((cfg.appSecret || cfg.webhookKey) && cfg.verifyToken),
+            telegram: { botConfigured: tg.configured, group: dest ? dest.title : null } });
+        }
         if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed.' });
         const body = JSON.parse((await readRaw(req)).toString('utf8') || '{}');
         const requestId = String(body.requestId || '').slice(0, 64);
@@ -77,9 +90,16 @@ function createHandler(deps = {}) {
         else if (body.kind === 'operations_notice') {
           const title = String(body.title || '').trim(), details = String(body.details || '').trim();
           if (!title || !details) return res.status(400).json({ error: 'Başlık ve mesaj gerekli.' });
-          r = await enqueueOperationsNotice({ db: db(), eventType: 'operations_notice', title, details, key: `operations_notice:${requestId}` });
+          r = await (await teamNotifier())({ eventType: 'operations_notice', title, details, key: `operations_notice:${requestId}` });
         } else if (body.kind === 'survey') r = await enqueueSurvey({ db: db(), reservationId: body.reservationId });
         else if (body.kind === 'review_request') r = await enqueueReviewRequest({ db: db(), reservationId: body.reservationId });
+        else if (body.kind === 'telegram_groups' || body.kind === 'telegram_connect' || body.kind === 'telegram_disconnect') {
+          if (!tg.configured) return res.status(409).json({ error: 'Telegram bot anahtarı (TELEGRAM_BOT_TOKEN) sunucuya eklenmemiş.' });
+          const out = body.kind === 'telegram_groups' ? await listGroups(tg, deps.fetchImpl)
+            : body.kind === 'telegram_connect' ? await connectGroup({ db: db(), tg, chatId: body.chatId, title: body.title, fetchImpl: deps.fetchImpl })
+            : await disconnectGroup({ db: db() });
+          return out.ok ? res.status(200).json(out) : res.status(out.status || 502).json({ error: out.error });
+        }
         else if (body.kind === 'reply') {
           const out = await sendReply({ db: db(), config: cfg, phone: body.phone, text: body.text, requestId, fetchImpl: deps.fetchImpl });
           return out.ok ? res.status(200).json({ ok: true }) : res.status(out.status).json({ error: out.error });

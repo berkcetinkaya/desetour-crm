@@ -37,7 +37,9 @@ function buildEventNotice(kind, log, r) {
   return { title: `Yeni Civitatis mesajı ${no}`.trim(), details: `${base || '—'} · CRM'de rezervasyonu açıp okuyun` };
 }
 
-async function enqueueEventNotices({ db, sinceMinutes = 120, now = () => new Date() }) {
+// notify(args) defaults to the WhatsApp operations list; the endpoint
+// passes the Telegram group sender when a group is connected.
+async function enqueueEventNotices({ db, sinceMinutes = 120, now = () => new Date(), notify = (a) => enqueueOperationsNotice({ db, ...a }) }) {
   const since = new Date(now().getTime() - sinceMinutes * 60000).toISOString();
   const { data: logs, error } = await db.from('activity_logs').select('id,entity_type,entity_id,action,metadata,created_at')
     .eq('entity_type', 'reservation').gte('created_at', since).order('created_at');
@@ -49,9 +51,10 @@ async function enqueueEventNotices({ db, sinceMinutes = 120, now = () => new Dat
     out.events += 1;
     const { data: r } = await db.from('reservations').select('id,reservation_number,destination,check_in,check_in_time,pax_adult,pax_child,tour_language,guide_id').eq('id', log.entity_id).maybeSingle();
     const n = buildEventNotice(kind, log, r);
-    const res = await enqueueOperationsNotice({ db, eventType: 'crm_event_' + kind, title: n.title, details: n.details, key: `event:${log.id}` });
-    if (!res.ok) { out.skipped = res.error; break; } // no recipients configured → nothing to do
-    out.queued += res.ids.length; out.ids.push(...res.ids);
+    const res = await notify({ eventType: 'crm_event_' + kind, title: n.title, details: n.details, key: `event:${log.id}` });
+    if (!res.ok) { out.skipped = res.error; break; } // no recipients / group unreachable → retried on the next run
+    if (!res.duplicate) out.queued += Math.max(res.ids.length, res.channel === 'telegram' ? 1 : 0);
+    out.ids.push(...res.ids);
   }
   return out;
 }

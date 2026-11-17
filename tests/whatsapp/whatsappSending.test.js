@@ -169,11 +169,11 @@ test('webhook: handshake, signature, status progression never goes backwards, in
 test('endpoint: scheduler secret, staff role and Meta signature are all enforced', async () => {
   const res = () => { const r = { code: 0, body: null, status(c) { r.code = c; return r; }, json(b) { r.body = b; return r; }, send(b) { r.body = b; return r; } }; return r; };
   const db = fakeDb({}, claimAll);
-  const h = createHandler({ getConfig: () => CFG, getDb: () => db, requireStaffRole: async (req) => req.headers.authorization === 'Bearer staff' ? { ok: true } : { ok: false, status: 403, error: 'no' } });
+  const h = createHandler({ getConfig: () => CFG, getDb: () => db, getTelegramConfig: () => ({ token: '', configured: false }), requireStaffRole: async (req) => req.headers.authorization === 'Bearer staff' ? { ok: true } : { ok: false, status: 403, error: 'no' } });
   let r = res(); await h({ method: 'POST', query: { action: 'worker' }, headers: {} }, r); assert.equal(r.code, 401);
   r = res(); await h({ method: 'POST', query: { action: 'worker' }, headers: { authorization: 'Bearer sch' } }, r); assert.equal(r.code, 200);
   r = res(); await h({ method: 'GET', query: { action: 'status' }, headers: {} }, r); assert.equal(r.code, 403);
-  r = res(); await h({ method: 'GET', query: { action: 'status' }, headers: { authorization: 'Bearer staff' } }, r); assert.deepEqual(r.body, { sendingConfigured: true, webhookConfigured: true });
+  r = res(); await h({ method: 'GET', query: { action: 'status' }, headers: { authorization: 'Bearer staff' } }, r); assert.deepEqual(r.body, { sendingConfigured: true, webhookConfigured: true, telegram: { botConfigured: false, group: null } });
   r = res(); await h({ method: 'POST', query: {}, headers: { 'x-hub-signature-256': 'sha256=bad' }, rawBody: '{}' }, r); assert.equal(r.code, 401);
   r = res(); await h({ method: 'GET', query: { 'hub.mode': 'subscribe', 'hub.verify_token': 'vt', 'hub.challenge': 'c1' }, headers: {} }, r); assert.equal(r.body, 'c1');
 });
@@ -367,4 +367,72 @@ test('CRM WhatsApp window: reply only inside the 24-hour window; phone-app messa
      { id: 8, recipientPhone: '905321112233', recipientName: 'Ayşe', text: 'Tur bilgisi', createdAt: '2026-11-10T07:00:00Z', status: 'delivered', eventType: 'guide_tour_brief', audience: 'guide' }],
     new Date('2026-11-17T12:00:00Z').getTime());
   assert.deepEqual(T.map(t => [t.phone, t.name, t.messages.map(m => m.dir).join(''), t.canReply, t.audience]), [['34600111222', 'Ana', 'inout', true, 'customer'], ['905321112233', 'Ayşe', 'outin', false, 'guide']]);
+});
+
+// ── Telegram group (team notifications) ──────────────────────────────────
+const { listGroups, connectGroup, disconnectGroup, getTelegramDestination, sendTelegramNotice, noticeText } = require('../../api/_whatsapp/telegram');
+const TG = { token: 'bot-token', configured: true };
+const tgFetch = (calls, updates) => async (url, init) => {
+  const method = url.split('/').pop(); const body = JSON.parse(init.body); calls.push({ method, body });
+  if (method === 'getUpdates') return { status: 200, json: async () => ({ ok: true, result: updates || [] }) };
+  if (body.chat_id === '-100999') return { status: 403, json: async () => ({ ok: false, description: 'Forbidden: bot was kicked' }) };
+  return { status: 200, json: async () => ({ ok: true, result: { message_id: calls.length } }) };
+};
+
+test('telegram: lists only groups, connects with a test message, notice goes once, disconnect falls back', async () => {
+  const calls = []; const db = fakeDb({});
+  const f = tgFetch(calls, [
+    { message: { chat: { id: -1001234567, type: 'supergroup', title: 'DeseTour Ekip' } } },
+    { message: { chat: { id: 555, type: 'private' } } },
+    { my_chat_member: { chat: { id: -4242424, type: 'group', title: 'Operasyon' } } },
+    { message: { chat: { id: -1001234567, type: 'supergroup', title: 'DeseTour Ekip' } } },
+  ]);
+  const g = await listGroups(TG, f);
+  assert.deepEqual(g.groups, [{ id: '-1001234567', title: 'DeseTour Ekip' }, { id: '-4242424', title: 'Operasyon' }]);
+  assert.equal((await connectGroup({ db, tg: TG, chatId: 'abc', fetchImpl: f })).status, 400);
+  assert.equal((await connectGroup({ db, tg: TG, chatId: '-100999', title: 'X', fetchImpl: f })).status, 502, 'bot cannot write → not saved');
+  assert.equal(await getTelegramDestination(db), null);
+  assert.equal((await connectGroup({ db, tg: TG, chatId: '-1001234567', title: 'DeseTour Ekip', fetchImpl: f })).ok, true);
+  const dest = await getTelegramDestination(db);
+  assert.deepEqual([dest.chatId, dest.title], ['-1001234567', 'DeseTour Ekip']);
+
+  assert.equal(noticeText('İPTAL R-1', 'Bosforo · 18 Kas | 2 kişi'), '📣 İPTAL R-1\nBosforo · 18 Kas\n2 kişi');
+  const before = calls.length;
+  const a = await sendTelegramNotice({ db, tg: TG, dest, eventType: 'crm_event_cancelled', title: 'İPTAL R-1', details: 'Bosforo', key: 'event:L1', fetchImpl: f });
+  assert.deepEqual([a.ok, a.channel, a.recipients], [true, 'telegram', 1]);
+  const b = await sendTelegramNotice({ db, tg: TG, dest, eventType: 'crm_event_cancelled', title: 'İPTAL R-1', details: 'Bosforo', key: 'event:L1', fetchImpl: f });
+  assert.equal(b.duplicate, true);
+  assert.equal(calls.length - before, 1, 'one Telegram call for one event');
+  const row = db.tables.whatsapp_messages[0];
+  assert.deepEqual([row.template_key, row.status, row.idempotency_key, row.recipient_phone], ['telegram', 'sent', 'tg:event:L1', undefined], 'recorded as sent; the WhatsApp worker never picks it up');
+  assert.doesNotMatch(JSON.stringify(db.tables), /bot-token/, 'bot token is never stored');
+
+  await disconnectGroup({ db });
+  assert.equal(await getTelegramDestination(db), null);
+});
+
+test('telegram: events and the team notice use the group when connected, the WhatsApp list otherwise', async () => {
+  const res = () => { const r = { code: 0, body: null, status(c) { r.code = c; return r; }, json(b) { r.body = b; return r; }, send(b) { r.body = b; return r; } }; return r; };
+  const calls = []; const f = tgFetch(calls, []);
+  const db = fakeDb({
+    activity_logs: [{ id: 'L1', entity_type: 'reservation', entity_id: 'R1', action: 'created', metadata: { auto_ingested: true }, created_at: new Date().toISOString() }],
+    reservations: [{ id: 'R1', reservation_number: 'R-1', destination: 'Bosforo', check_in: '2026-11-20', pax_adult: 2, pax_child: 0 }],
+    whatsapp_destinations: [{ id: 'D-TG', destination_key: 'telegram', display_name: 'DeseTour Ekip', provider_group_id: '-1001234567', is_active: true }],
+  }, claimAll);
+  const staff = async () => ({ ok: true });
+  const h = createHandler({ getConfig: () => CFG, getDb: () => db, getTelegramConfig: () => TG, fetchImpl: f, requireStaffRole: staff });
+  let r = res(); await h({ method: 'GET', query: { action: 'status' }, headers: {} }, r);
+  assert.deepEqual(r.body.telegram, { botConfigured: true, group: 'DeseTour Ekip' });
+  r = res(); await h({ method: 'POST', query: { action: 'worker' }, headers: { authorization: 'Bearer sch' } }, r);
+  assert.equal(r.code, 200);
+  assert.equal(calls.filter(c => c.method === 'sendMessage').length, 1);
+  assert.match(calls[0].body.text, /Yeni rezervasyon R-1/);
+  r = res(); await h({ method: 'POST', query: { action: 'worker' }, headers: { authorization: 'Bearer sch' } }, r);
+  assert.equal(calls.filter(c => c.method === 'sendMessage').length, 1, 'second worker run does not repeat it');
+  r = res(); await h({ method: 'POST', query: { action: 'enqueue' }, headers: {}, rawBody: JSON.stringify({ kind: 'operations_notice', title: 'Yarın Topkapı kapalı', details: 'Plan değişti', requestId: 'q1' }) }, r);
+  assert.equal(r.code, 200); assert.equal(r.body.channel, 'telegram');
+  // No bot key → Telegram kinds refuse, team notice falls back to the WhatsApp list.
+  const h2 = createHandler({ getConfig: () => CFG, getDb: () => db, getTelegramConfig: () => ({ token: '', configured: false }), requireStaffRole: staff });
+  r = res(); await h2({ method: 'POST', query: { action: 'enqueue' }, headers: {}, rawBody: JSON.stringify({ kind: 'telegram_groups', requestId: 'q2' }) }, r);
+  assert.equal(r.code, 409);
 });

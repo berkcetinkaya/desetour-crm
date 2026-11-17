@@ -104,12 +104,12 @@ function buildDailySummary(reservations, dateISO) {
   return { title, details, operations: list.length, unassigned };
 }
 
-async function enqueueDailySummary({ db, todayISO = istanbulISODate() }) {
+async function enqueueDailySummary({ db, todayISO = istanbulISODate(), notify }) {
   const date = addDays(todayISO, 1);
   const { data, error } = await db.from('reservations').select(RES_COLS).eq('check_in', date);
   if (error) throw new Error(error.message);
   const s = buildDailySummary(data || [], date);
-  const r = await enqueueOperationsNotice({ db, eventType: 'daily_operations_summary', title: s.title, details: s.details, key: `daily_summary:${date}` });
+  const r = await (notify || ((a) => enqueueOperationsNotice({ db, ...a })))({ eventType: 'daily_operations_summary', title: s.title, details: s.details, key: `daily_summary:${date}` });
   return { ...r, date, operations: s.operations, unassigned: s.unassigned };
 }
 

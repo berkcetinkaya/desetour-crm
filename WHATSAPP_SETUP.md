@@ -146,3 +146,13 @@ Bunlar eklenince iki görev çalışır:
 - "Meta bağlantısı: Hazır ✓" yazısını görün.
 - Operasyon ekibi numaralarını ekleyin.
 - Bir rezervasyonda **Hızlı İşlemler → Rehbere WhatsApp Gönder** ile deneyin.
+
+## 9. Telegram grubu (ekip bildirimleri)
+WhatsApp'ın resmi API'si mevcut bir WhatsApp grubuna yazamaz. Bu yüzden ekip bildirimleri (yeni rezervasyon, iptal, değişiklik, Civitatis mesajı, akşam özeti, elle yazılan ekip mesajı) bir Telegram grubuna gönderilir. Rehber ve müşteri mesajları WhatsApp'ta kalır.
+
+1. Telegram'da **@BotFather** → `/newbot` → bota ad verin (ör. "DeseTour CRM"). BotFather bir **bot anahtarı** verir.
+2. Vercel → Settings → Environment Variables → `TELEGRAM_BOT_TOKEN` = bot anahtarı → **Redeploy**. (Anahtarı sohbete ya da repoya yazmayın.)
+3. Botu ekip Telegram grubuna **üye olarak ekleyin** ve grupta bir mesaj yazın (ör. `/start`).
+4. CRM → **Ayarlar → WhatsApp → Telegram grubu** → **Grupları bul** → **Bu gruba bağla**. Gruba deneme mesajı düşer.
+
+Olay bildirimleri 15 dakikada bir çalışan görevle gider; bunun için 6. adımdaki GitHub değişkeni ve secret'ı gereklidir. Grup bağlı değilken bildirimler WhatsApp operasyon listesine gider.

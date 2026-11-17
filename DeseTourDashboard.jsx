@@ -18813,8 +18813,10 @@ function SaveBtn({ saved, onClick }) {
 // list (daily "tomorrow" summary + team notices go to these numbers), a
 // manual team notice and the latest messages with their delivery state.
 function WhatsAppSettings() {
-  const { data: st, error: stErr } = useRepo("whatsapp", "getStatus");
+  const { data: st, error: stErr, reload: reloadStatus } = useRepo("whatsapp", "getStatus");
   const { data: ops, loading: opsLoading, reload } = useRepo("whatsapp", "getOperationsList");
+  const [tgGroups, setTgGroups] = useState(null);
+  const tgInfo = (st && st.telegram) || null;
   const { data: msgs } = useRepo("whatsapp", "getRecentMessages");
   const { data: inbound } = useRepo("whatsapp", "getInbound");
   const { mutate, mutating } = useRepoMutation("whatsapp");
@@ -18839,8 +18841,24 @@ function WhatsAppSettings() {
     if (!notice.title.trim() || !notice.details.trim()) { showToast("Başlık ve mesaj yazın."); return; }
     const { data, error } = await mutate("sendOperationsNotice", { ...notice, requestId: noticeReq });
     if (error) { showToast("Hata: " + error); return; }
-    showToast(_waSendResultText(data, `Ekip mesajı (${data.recipients || 0} kişi)`));
+    showToast(data.channel === "telegram" ? "Ekip mesajı Telegram grubuna gönderildi." : _waSendResultText(data, `Ekip mesajı (${data.recipients || 0} kişi)`));
     setNotice({ title: "", details: "" }); setNoticeReq('on-' + Date.now().toString(36));
+  }
+  async function findTelegramGroups() {
+    const { data, error } = await mutate("getTelegramGroups");
+    if (error) { showToast("Hata: " + error); return; }
+    setTgGroups(data.groups || []);
+  }
+  async function connectTelegram(g) {
+    const { error } = await mutate("connectTelegramGroup", g);
+    if (error) { showToast("Hata: " + error); return; }
+    showToast(`"${g.title}" bağlandı — gruba deneme mesajı gönderildi.`); setTgGroups(null); reloadStatus && reloadStatus();
+  }
+  async function disconnectTelegram() {
+    if (!window.confirm("Telegram grubunun bağlantısı kesilsin mi? Ekip bildirimleri WhatsApp operasyon listesine döner.")) return;
+    const { error } = await mutate("disconnectTelegram");
+    if (error) { showToast("Hata: " + error); return; }
+    reloadStatus && reloadStatus();
   }
   const statusColor = (s) => s === "failed" ? C.red : s === "read" || s === "delivered" ? C.green : s === "sent" ? C.blue : C.amber;
   return (
@@ -18852,9 +18870,28 @@ function WhatsAppSettings() {
             : "Meta Business'ta numara doğrulanıp erişim anahtarları sunucuya eklenince mesajlar gönderilmeye başlar. O zamana kadar gönderdiğiniz mesajlar sırada bekler, kaybolmaz."}
         </div>
       </div>
+      <div data-testid="telegram-box" style={{ ...box, borderLeft: `3px solid ${tgInfo && tgInfo.group ? C.green : C.border}` }}>
+        <div style={h}>Telegram grubu (ekip bildirimleri){tgInfo && tgInfo.group ? `: ${tgInfo.group} ✓` : ""}</div>
+        {tgInfo && tgInfo.group ? (<>
+          <div style={sub}>Yeni rezervasyon, iptal, değişiklik, Civitatis mesajı, her akşam yarının tur özeti ve aşağıdan yazdığınız ekip mesajları bu Telegram grubuna düşer. Rehber ve müşteri mesajları WhatsApp'tan gitmeye devam eder.</div>
+          <div><button type="button" disabled={mutating} onClick={disconnectTelegram} style={{ ...btn, background: "transparent", color: C.red, border: `1px solid ${C.border}`, fontWeight: 500 }}>Bağlantıyı kes</button></div>
+        </>) : tgInfo && tgInfo.botConfigured ? (<>
+          <div style={sub}>Bot hazır. Botu Telegram grubunuza ekleyin, grupta bir mesaj yazın, sonra "Grupları bul"a basıp grubu seçin.</div>
+          <div><button type="button" disabled={mutating} onClick={findTelegramGroups} style={btn}>Grupları bul</button></div>
+          {tgGroups && tgGroups.length === 0 && <div style={{ ...sub, color: C.amber }}>Grup bulunamadı. Botun gruba eklendiğinden emin olun, grupta bir mesaj yazın (ör. /start) ve tekrar deneyin.</div>}
+          {(tgGroups || []).map(g => (
+            <div key={g.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 0", borderTop: `1px solid ${C.borderLight}`, fontFamily: "'Geist',sans-serif", fontSize: 13, color: C.text }}>
+              <b style={{ flex: 1, minWidth: 0 }}>{g.title}</b>
+              <button type="button" disabled={mutating} onClick={() => connectTelegram(g)} style={btn}>Bu gruba bağla</button>
+            </div>
+          ))}
+        </>) : (
+          <div style={sub}>WhatsApp mevcut bir gruba yazamadığı için ekip bildirimleri Telegram grubuna gönderilebilir. Kurulum: Telegram'da @BotFather ile bir bot oluşturun, bot anahtarını Vercel'e TELEGRAM_BOT_TOKEN olarak ekleyip yeniden yayınlayın, botu grubunuza ekleyin. Bağlanana kadar bildirimler aşağıdaki WhatsApp listesine gider.</div>
+        )}
+      </div>
       <div style={box}>
         <div style={h}>Operasyon ekibi listesi</div>
-        <div style={sub}>Her akşam 18:00'de yarının turları (saat, tur, dil, kişi sayısı, rehber; rehbersiz operasyonlar uyarıyla) ve aşağıdan yazdığınız ekip mesajları bu numaralara gider.</div>
+        <div style={sub}>{tgInfo && tgInfo.group ? "Telegram grubu bağlı olduğu için ekip bildirimleri oraya gidiyor; bu liste yedek olarak durur." : "Her akşam 18:00'de yarının turları (saat, tur, dil, kişi sayısı, rehber; rehbersiz operasyonlar uyarıyla) ve aşağıdan yazdığınız ekip mesajları bu numaralara gider."}</div>
         {opsLoading && !ops ? <div style={sub}>Yükleniyor…</div> : ops && ops.unavailable ? (
           <div style={{ ...sub, color: C.amber }}>WhatsApp tabloları henüz kurulmamış — supabase_migration_whatsapp_phase2_sending.sql çalıştırılmalı.</div>
         ) : (<>
@@ -25665,6 +25702,9 @@ const WhatsAppRepository = {
   async getInbound() { return []; },
   async sendGuideBrief(d) { _mockWa.messages.push({ id: 'WM-' + Date.now(), eventType: 'guide_tour_brief', recipientName: 'Rehber', status: 'queued', createdAt: new Date().toISOString(), reservationId: d.reservationId }); return { ok: true, sendingConfigured: false, preview: null }; },
   async sendOperationsNotice() { return { ok: true, sendingConfigured: false, recipients: _mockWa.recipients.filter(r => r.isActive).length }; },
+  async getTelegramGroups() { return { ok: true, groups: [] }; },
+  async connectTelegramGroup() { return { ok: true }; },
+  async disconnectTelegram() { return { ok: true }; },
   async getReservationWhatsApp(resId) { return { messages: _mockWa.messages.filter(m => m.reservationId === resId).reverse(), feedback: null, feedbackUnavailable: false }; },
   async sendSurvey(d) { _mockWa.messages.push({ id: 'WM-' + Date.now(), eventType: 'post_tour_survey', recipientName: 'Müşteri', status: 'queued', createdAt: new Date().toISOString(), reservationId: d.reservationId }); return { ok: true, sendingConfigured: false }; },
   async sendReviewRequest(d) { _mockWa.messages.push({ id: 'WM-' + Date.now(), eventType: 'review_request', recipientName: 'Müşteri', status: 'queued', createdAt: new Date().toISOString(), reservationId: d.reservationId }); return { ok: true, sendingConfigured: false }; },
@@ -25713,6 +25753,9 @@ const SupabaseWhatsAppRepo = {
   },
   async sendGuideBrief(d) { return _whatsappApi('enqueue', { kind: 'guide_brief', reservationId: d.reservationId, note: d.note || '', meetingPoint: d.meetingPoint || '', requestId: d.requestId }); },
   async sendOperationsNotice(d) { return _whatsappApi('enqueue', { kind: 'operations_notice', title: d.title, details: d.details, requestId: d.requestId }); },
+  async getTelegramGroups() { return _whatsappApi('enqueue', { kind: 'telegram_groups', requestId: 'tg-' + Date.now().toString(36) }); },
+  async connectTelegramGroup(g) { return _whatsappApi('enqueue', { kind: 'telegram_connect', chatId: g.id, title: g.title, requestId: 'tg-' + Date.now().toString(36) }); },
+  async disconnectTelegram() { return _whatsappApi('enqueue', { kind: 'telegram_disconnect', requestId: 'tg-' + Date.now().toString(36) }); },
   async sendSurvey(d) { return _whatsappApi('enqueue', { kind: 'survey', reservationId: d.reservationId, requestId: 'svy-' + d.reservationId }); },
   async sendReviewRequest(d) { return _whatsappApi('enqueue', { kind: 'review_request', reservationId: d.reservationId, requestId: 'rev-' + d.reservationId }); },
   async sendReply(d) { return _whatsappApi('enqueue', { kind: 'reply', phone: d.phone, text: d.text, requestId: d.requestId }); },
