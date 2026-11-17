@@ -10145,6 +10145,7 @@ function _ResWhatsAppCard({ r, customer }) {
   const review = msgs.find(m => m.eventType === "review_request");
   const reviewUrl = _reservationTourPage(tourForLink && tourForLink.channels, r.tourLanguage).surveyUrl;
   const fb = data && data.feedback;
+  const fbPositive = !!fb && (fb.tourScore != null ? fb.tourScore >= 4 && (fb.guideScore == null || fb.guideScore >= 4) : fb.rating !== "poor");
   const hasPhone = !!(customer && customer.phone && String(customer.phone).replace(/\D/g, "").length >= 8);
   const firstName = String(r.name || "").trim().split(/\s+/)[0] || "";
   const preview = _whatsappSurveyPreview(r.tourLanguage, [firstName, r.tour]);
@@ -10163,10 +10164,10 @@ function _ResWhatsAppCard({ r, customer }) {
     showToast(_waSendResultText(out, "Yorum isteği")); reload && reload();
   }
   async function sendSurvey() {
-    if (!window.confirm("Müşteriye tur sonrası anket WhatsApp ile gönderilsin mi?\n\n" + preview)) return;
+    if (!window.confirm("Müşteriye geri bildirim mesajı WhatsApp ile gönderilsin mi?\n\n" + preview + "\n\nYanıtladıkça sırayla rehber puanı (1–5) ve serbest yorum sorulur.")) return;
     const { data: out, error } = await mutate("sendSurvey", { reservationId: r.id });
     if (error) { showToast("Hata: " + error); return; }
-    showToast(_waSendResultText(out, "Anket")); reload && reload();
+    showToast(_waSendResultText(out, "Geri bildirim mesajı")); reload && reload();
   }
   const line = { fontSize: 12.5, color: C.text, fontFamily: "'Geist',sans-serif" };
   const muted = { fontSize: 12, color: C.textMuted, fontFamily: "'Geist',sans-serif", lineHeight: 1.5 };
@@ -10188,21 +10189,26 @@ function _ResWhatsAppCard({ r, customer }) {
           </form>
         )}
         {!customer && <div style={muted}>Bu rezervasyona bağlı müşteri kaydı yok; telefon girilemiyor.</div>}
-        {customer && !hasPhone && !editing && <div style={muted}>Civitatis müşteri telefonunu e-postada göndermiyor; Civitatis panelinden kopyalayıp girin. Telefon girilince tur günü akşamı anket otomatik gider.</div>}
+        {customer && !hasPhone && !editing && <div style={muted}>Civitatis müşteri telefonunu e-postada göndermiyor; Civitatis panelinden kopyalayıp girin. Telefon girilince tur bittikten sonra buradan geri bildirim mesajı gönderebilirsiniz.</div>}
         <div style={{ borderTop: `1px solid ${C.borderLight}`, paddingTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
-          <span style={{ ...line, fontWeight: 600 }}>Tur sonrası anket</span>
+          <span style={{ ...line, fontWeight: 600 }}>Tur sonrası geri bildirim</span>
           {fb ? (
             <div data-testid="res-wa-feedback" style={line}>
-              <span style={{ fontSize: 16 }}>{_WA_RATING[fb.rating].icon}</span> <b>{_WA_RATING[fb.rating].label}</b>
+              {fb.tourScore != null ? (<>
+                <span>Tur: <b>{fb.tourScore}/5</b></span>
+                <span style={{ marginLeft: 12 }}>Rehber: <b>{fb.guideScore != null ? `${fb.guideScore}/5` : "bekleniyor"}</b></span>
+              </>) : (<><span style={{ fontSize: 16 }}>{_WA_RATING[fb.rating].icon}</span> <b>{_WA_RATING[fb.rating].label}</b></>)}
               <span style={{ color: C.textMuted }}> · {new Date(fb.answeredAt).toLocaleString("tr-TR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}</span>
               {fb.comment && <div style={{ marginTop: 4, padding: "6px 10px", background: C.ivory, borderRadius: 8 }}>“{fb.comment}”</div>}
+              {fbPositive && !review && <div data-testid="res-wa-positive" style={{ marginTop: 6, color: C.green, fontWeight: 600 }}>Olumlu geri bildirim — ertesi gün aşağıdan yorum ve puan isteyebilirsiniz.</div>}
+              {fb.tourScore != null && !fbPositive && <div style={{ marginTop: 6, color: C.amber, fontWeight: 600 }}>Puan düşük — yorum istemeden önce müşteriyle ilgilenin.</div>}
             </div>
           ) : survey ? (
             <span style={muted}>Gönderildi ({_WA_STATUS_LABEL[survey.status] || survey.status}) — müşterinin yanıtı bekleniyor.</span>
           ) : (
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-              <span style={muted}>Henüz gönderilmedi{hasPhone ? " — tur günü 19:05'te otomatik gider." : "."}</span>
-              {hasPhone && <button type="button" data-testid="res-wa-survey" onClick={sendSurvey} disabled={mutating} style={btn}>Anketi şimdi gönder</button>}
+              <span style={muted}>{hasPhone ? "Tur bittikten sonra gönderin: teşekkür eder, turu ve rehberi 1–5 arası puanlatır, serbest yorum ister." : "Müşteri telefonu girilince gönderilebilir."}</span>
+              {hasPhone && <button type="button" data-testid="res-wa-survey" onClick={sendSurvey} disabled={mutating} style={{ ...btn, background: C.navy, color: "#fff", border: "none" }}>Geri bildirim iste</button>}
             </div>
           )}
         </div>
@@ -10216,7 +10222,7 @@ function _ResWhatsAppCard({ r, customer }) {
             <span style={{ ...muted, color: C.amber }}>Bu turun sayfa linki girilmemiş (Turlar → kanal ayarları → Listing URL).</span>
           ) : (
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-              <span style={muted}>Turun sayfasını gönderip yorum ve puan ister; bizim için çok önemli olduğunu belirtir.</span>
+              <span style={muted}>{fbPositive ? "Geri bildirim olumlu: turun Civitatis sayfasını gönderip yorum ve puan isteyin." : "Geri bildirim olumluysa ertesi gün gönderin: turun Civitatis sayfasını paylaşıp yorum ve puan ister."}</span>
               <button type="button" data-testid="res-wa-review" onClick={sendReview} disabled={mutating} style={{ ...btn, background: C.navy, color: "#fff", border: "none" }}>Yorum ve puan iste</button>
             </div>
           )}
@@ -23322,6 +23328,21 @@ function ConvContext({ conv }) {
 // the team on the DeseTour number — what they wrote, what the CRM sent and
 // what was written from the phone app — with a reply box. WhatsApp only
 // allows a free reply within 24 hours of the other side's last message.
+// Turkish translations of WhatsApp messages, kept for the session and in
+// this browser (so a message is translated once). Key = thread message id.
+const _waTrCache = (() => { try { return new Map(Object.entries(JSON.parse(localStorage.getItem('dese_wa_tr') || '{}'))); } catch (_) { return new Map(); } })();
+function _waTrSave() { try { localStorage.setItem('dese_wa_tr', JSON.stringify(Object.fromEntries([..._waTrCache].slice(-600)))); } catch (_) {} }
+// TESTABLE:_waTranslatable:start
+// Which messages of a thread still need a Turkish translation: customer
+// threads only (guides and the team already write Turkish), real text
+// only, newest 40.
+function _waTranslatable(thread, has) {
+  if (!thread || thread.audience === 'guide' || thread.audience === 'operations') return [];
+  return thread.messages.filter(m => m.text && m.text !== '(medya)' && /\p{L}{2,}/u.test(m.text) && !has(m.id)).slice(-40).map(m => ({ id: m.id, text: m.text }));
+}
+// TESTABLE:_waTranslatable:end
+const _WA_LANG_NAME = { es: 'İspanyolca', pt: 'Portekizce', pt_BR: 'Portekizce', it: 'İtalyanca', en: 'İngilizce', fr: 'Fransızca', de: 'Almanca', tr: 'Türkçe' };
+
 function WhatsAppInbox() {
   const { isMobile } = useBreakpoint();
   const { role } = useAuthContext();
@@ -23331,6 +23352,12 @@ function WhatsAppInbox() {
   const [selected, setSelected] = useState(null);
   const [q, setQ] = useState("");
   const [draft, setDraft] = useState("");
+  const [outText, setOutText] = useState("");       // the reply in the customer's language
+  const [showTr, setShowTr] = useState(true);
+  const [trTick, setTrTick] = useState(0);
+  const [trBusy, setTrBusy] = useState(false);
+  const [trErr, setTrErr] = useState(null);
+  const [langs, setLangs] = useState({});           // phone → detected language code
   const endRef = useRef(null);
   useEffect(() => { if (!allowed) return; const t = setInterval(() => { reload && reload(); }, 25000); return () => clearInterval(t); }, [allowed]);
   const threads = useMemo(() => _buildWhatsAppThreads(data && data.inbound, data && data.outbound, Date.now()), [data]);
@@ -23339,12 +23366,38 @@ function WhatsAppInbox() {
   useEffect(() => { if (endRef.current) endRef.current.scrollIntoView({ block: "end" }); }, [selected, cur && cur.messages.length]);
   const fmtAt = (iso) => iso ? new Date(iso).toLocaleString("tr-TR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "";
   const AUD = { guide: "Rehber", operations: "Ekip", customer: "Müşteri" };
+  const trOn = showTr && !!cur && cur.audience !== "guide" && cur.audience !== "operations";
+  const curLang = cur ? langs[cur.phone] || null : null;
+  // Translate what is not translated yet, whenever the open thread changes.
+  useEffect(() => {
+    if (!trOn || trBusy) return;
+    const items = _waTranslatable(cur, (id) => _waTrCache.has(id));
+    if (!items.length) return;
+    let off = false; setTrBusy(true); setTrErr(null);
+    getActiveRepo("whatsapp").translateToTurkish(items).then(out => {
+      if (off) return;
+      items.forEach(x => _waTrCache.set(x.id, (out.translations && out.translations[x.id]) || x.text));
+      _waTrSave();
+      if (out.language && out.language !== "tr") setLangs(l => ({ ...l, [cur.phone]: out.language }));
+      setTrTick(n => n + 1);
+    }).catch(e => { if (!off) setTrErr(String(e && e.message || e)); }).finally(() => { if (!off) setTrBusy(false); });
+    return () => { off = true; };
+  }, [trOn, selected, cur && cur.messages.length]);
+  useEffect(() => { setDraft(""); setOutText(""); setTrErr(null); }, [selected]);
+  async function translateDraft() {
+    const text = draft.trim(); if (!text || !cur) return;
+    const sample = cur.messages.filter(m => m.dir === "in").slice(-3).map(m => m.text).join("\n");
+    const { data: out, error } = await mutate("translateReply", { text, language: curLang, sample });
+    if (error) { showToast("Hata: " + error); return; }
+    setOutText(out.text || "");
+    if (out.language && out.language !== "tr") setLangs(l => ({ ...l, [cur.phone]: out.language }));
+  }
   async function send(e) {
     e.preventDefault();
-    const text = draft.trim(); if (!text || !cur) return;
+    const text = (trOn && outText.trim()) || draft.trim(); if (!text || !cur) return;
     const { error } = await mutate("sendReply", { phone: cur.phone, text, requestId: 'r-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7) });
     if (error) { showToast("Hata: " + error); return; }
-    setDraft(""); reload && reload();
+    setDraft(""); setOutText(""); reload && reload();
   }
   const shell = { background: C.white, border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden", height: isMobile ? "calc(100vh - 130px)" : "calc(100vh - 80px)", display: "flex", fontFamily: "'Geist',sans-serif" };
   if (!allowed) return <div style={{ ...shell, alignItems: "center", justifyContent: "center", color: C.textMuted, fontSize: 13.5 }}>WhatsApp mesajlarını Yönetici ve Operasyon rolleri görebilir.</div>;
@@ -23383,26 +23436,58 @@ function WhatsAppInbox() {
           <div style={{ fontSize: 14.5, fontWeight: 700, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{cur.name || "+" + cur.phone}</div>
           <div style={{ fontSize: 11.5, color: C.textMuted }}>+{cur.phone}{cur.audience ? " · " + (AUD[cur.audience] || "") : ""}</div>
         </div>
+        {cur.audience !== "guide" && cur.audience !== "operations" && (
+          <button type="button" data-testid="wa-tr-toggle" onClick={() => setShowTr(v => !v)} style={{ fontSize: 12, color: showTr ? "#fff" : C.textMid, background: showTr ? C.navy : C.white, border: `1px solid ${showTr ? C.navy : C.border}`, borderRadius: 8, padding: "5px 10px", cursor: "pointer", whiteSpace: "nowrap" }}>{isMobile ? "TR" : "Türkçe çeviri"}{showTr ? " ✓" : ""}</button>
+        )}
         <a href={`https://wa.me/${cur.phone}`} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: C.goldText, textDecoration: "none", border: `1px solid ${C.border}`, borderRadius: 8, padding: "5px 10px", whiteSpace: "nowrap" }}>WhatsApp'ta aç</a>
       </div>
-      <div style={{ flex: 1, overflowY: "auto", padding: "14px 14px 6px", background: C.ivory }}>
-        {cur.messages.map(m => (
-          <div key={m.id} style={{ display: "flex", justifyContent: m.dir === "out" ? "flex-end" : "flex-start", marginBottom: 9 }}>
-            <div style={{ maxWidth: "82%" }}>
-              <div style={{ padding: "9px 12px", borderRadius: m.dir === "out" ? "12px 12px 2px 12px" : "12px 12px 12px 2px", background: m.dir === "out" ? "#DCF4E4" : C.white, border: `1px solid ${m.dir === "out" ? "#BFE6CD" : C.border}`, fontSize: 13.5, lineHeight: 1.5, color: "#1F2D1F", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{m.text}</div>
-              <div style={{ fontSize: 10.5, color: m.status === "failed" ? C.red : C.textFaint, marginTop: 2, textAlign: m.dir === "out" ? "right" : "left" }}>
-                {fmtAt(m.at)}{m.dir === "out" ? ` · ${m.fromApp ? "telefondan" : (m.label || "CRM")}${m.status && !m.fromApp ? " · " + (_WA_STATUS_LABEL[m.status] || m.status) : ""}` : ""}{m.error ? ` · ${m.error}` : ""}
+      <div style={{ flex: 1, overflowY: "auto", background: C.ivory }}>
+        {trOn && !isMobile && (
+          <div style={{ position: "sticky", top: 0, zIndex: 1, display: "grid", gridTemplateColumns: "1fr 1fr", background: C.white, borderBottom: `1px solid ${C.borderLight}`, fontSize: 11.5, fontWeight: 600, color: C.textMuted }}>
+            <div style={{ padding: "6px 14px" }}>Yazışma{curLang ? ` (${_WA_LANG_NAME[curLang] || curLang})` : ""}</div>
+            <div data-testid="wa-tr-head" style={{ padding: "6px 14px", borderLeft: `1px solid ${C.borderLight}` }}>Türkçe çevirisi{trBusy ? " — çevriliyor…" : ""}{trErr ? <span style={{ color: C.red, fontWeight: 400 }}> — {trErr}</span> : null}</div>
+          </div>
+        )}
+        <div style={{ padding: "14px 0 6px" }}>
+        {cur.messages.map(m => {
+          const tr = trOn ? _waTrCache.get(m.id) : null;
+          const same = tr != null && tr.trim() === String(m.text).trim();
+          const bubble = (
+            <div style={{ display: "flex", justifyContent: m.dir === "out" ? "flex-end" : "flex-start" }}>
+              <div style={{ maxWidth: trOn && !isMobile ? "94%" : "82%" }}>
+                <div style={{ padding: "9px 12px", borderRadius: m.dir === "out" ? "12px 12px 2px 12px" : "12px 12px 12px 2px", background: m.dir === "out" ? "#DCF4E4" : C.white, border: `1px solid ${m.dir === "out" ? "#BFE6CD" : C.border}`, fontSize: 13.5, lineHeight: 1.5, color: "#1F2D1F", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{m.text}</div>
+                {trOn && isMobile && tr && !same && <div data-testid="wa-tr-text" style={{ fontSize: 12.5, lineHeight: 1.45, color: C.textMid, margin: "3px 4px 0", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>🇹🇷 {tr}</div>}
+                <div style={{ fontSize: 10.5, color: m.status === "failed" ? C.red : C.textFaint, marginTop: 2, textAlign: m.dir === "out" ? "right" : "left" }}>
+                  {fmtAt(m.at)}{m.dir === "out" ? ` · ${m.fromApp ? "telefondan" : (m.label || "CRM")}${m.status && !m.fromApp ? " · " + (_WA_STATUS_LABEL[m.status] || m.status) : ""}` : ""}{m.error ? ` · ${m.error}` : ""}
+                </div>
               </div>
             </div>
-          </div>
-        ))}
+          );
+          if (!trOn || isMobile) return <div key={m.id} style={{ padding: "0 14px", marginBottom: 9 }}>{bubble}</div>;
+          return (
+            <div key={m.id} style={{ display: "grid", gridTemplateColumns: "1fr 1fr", marginBottom: 9 }}>
+              <div style={{ padding: "0 14px", minWidth: 0 }}>{bubble}</div>
+              <div data-testid="wa-tr-text" style={{ padding: "9px 14px", minWidth: 0, borderLeft: `1px solid ${C.borderLight}`, fontSize: 13.5, lineHeight: 1.5, color: tr == null ? C.textFaint : C.text, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                {tr == null ? (trBusy ? "…" : "") : same ? <span style={{ color: C.textFaint }}>(Türkçe)</span> : <><span style={{ fontSize: 10.5, color: C.textFaint }}>{m.dir === "out" ? "Biz: " : "Müşteri: "}</span>{tr}</>}
+              </div>
+            </div>
+          );
+        })}
+        </div>
         <div ref={endRef}/>
       </div>
-      <form onSubmit={send} style={{ padding: 10, borderTop: `1px solid ${C.borderLight}`, display: "flex", gap: 8, alignItems: "flex-end", background: C.white }}>
+      <form onSubmit={send} style={{ padding: 10, borderTop: `1px solid ${C.borderLight}`, display: "flex", flexDirection: isMobile && trOn && cur.canReply ? "column" : "row", gap: 8, alignItems: isMobile && trOn && cur.canReply ? "stretch" : "flex-end", background: C.white }}>
         {cur.canReply ? (<>
-          <textarea data-testid="wa-reply" value={draft} onChange={e => setDraft(e.target.value)} rows={isMobile ? 1 : 2} placeholder="Mesaj yazın…" onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey && !isMobile) send(e); }}
-            style={{ flex: 1, resize: "none", padding: "9px 11px", borderRadius: 10, border: `1px solid ${C.border}`, background: C.white, color: C.text, fontSize: isMobile ? 16 : 13.5, fontFamily: "'Geist',sans-serif" }}/>
-          <button type="submit" disabled={mutating || !draft.trim()} style={{ padding: "10px 16px", borderRadius: 10, border: "none", background: C.navy, color: "#fff", fontSize: 13.5, fontWeight: 600, cursor: "pointer", opacity: mutating || !draft.trim() ? .6 : 1 }}>Gönder</button>
+          <div style={{ flex: 1, minWidth: 0, display: "grid", gridTemplateColumns: trOn && !isMobile ? "1fr 1fr" : "1fr", gap: 8 }}>
+            <textarea data-testid="wa-reply" value={draft} onChange={e => { setDraft(e.target.value); if (outText) setOutText(""); }} rows={isMobile ? 1 : 2} placeholder={trOn ? (isMobile ? "Türkçe yazın…" : "Cevabınızı Türkçe yazın, sonra Çevir'e basın…") : "Mesaj yazın…"} onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey && !isMobile) { if (trOn && !outText.trim()) { e.preventDefault(); translateDraft(); } else send(e); } }}
+              style={{ minWidth: 0, resize: "none", padding: "9px 11px", borderRadius: 10, border: `1px solid ${C.border}`, background: C.white, color: C.text, fontSize: isMobile ? 16 : 13.5, fontFamily: "'Geist',sans-serif" }}/>
+            {trOn && <textarea data-testid="wa-reply-out" value={outText} onChange={e => setOutText(e.target.value)} rows={isMobile ? 1 : 2} placeholder={isMobile ? `Müşteriye gidecek metin${curLang ? ` (${_WA_LANG_NAME[curLang] || curLang})` : ""}` : `Müşteriye gidecek metin${curLang ? ` (${_WA_LANG_NAME[curLang] || curLang})` : " (müşterinin dilinde)"} — Çevir'e basınca burada görünür, düzeltebilirsiniz`}
+              style={{ minWidth: 0, resize: "none", padding: "9px 11px", borderRadius: 10, border: `1px solid ${outText ? "#BFE6CD" : C.border}`, background: outText ? "#F2FBF5" : C.ivory, color: "#1F2D1F", fontSize: isMobile ? 16 : 13.5, fontFamily: "'Geist',sans-serif" }}/>}
+          </div>
+          <div style={{ display: "flex", flexDirection: isMobile ? "row" : "column", gap: 6, justifyContent: "flex-end" }}>
+            {trOn && <button type="button" data-testid="wa-translate" onClick={translateDraft} disabled={mutating || !draft.trim()} style={{ padding: "8px 14px", borderRadius: 10, border: `1px solid ${C.border}`, background: C.white, color: C.text, fontSize: 13, fontWeight: 600, cursor: "pointer", opacity: mutating || !draft.trim() ? .6 : 1 }}>Çevir</button>}
+            <button type="submit" data-testid="wa-send" disabled={mutating || !((trOn && outText.trim()) || draft.trim())} title={trOn && !outText.trim() ? "Çevirmeden gönderirseniz yazdığınız metin olduğu gibi gider" : ""} style={{ padding: "8px 16px", borderRadius: 10, border: "none", background: C.navy, color: "#fff", fontSize: 13.5, fontWeight: 600, cursor: "pointer", opacity: mutating || !((trOn && outText.trim()) || draft.trim()) ? .6 : 1 }}>Gönder</button>
+          </div>
         </>) : (
           <div data-testid="wa-reply-closed" style={{ flex: 1, fontSize: 12, color: C.textMuted, lineHeight: 1.5 }}>Bu kişi son 24 saatte yazmadığı için WhatsApp buradan serbest mesaja izin vermiyor. Telefondaki WhatsApp'tan yazabilirsiniz ("WhatsApp'ta aç"); karşı taraf yazınca buradan da cevap verebilirsiniz.</div>
         )}
@@ -25598,16 +25683,17 @@ function getActiveRepo(entity) {
 const _WA_TEMPLATE_BODIES = {
   guide_tour_brief: 'Merhaba {{1}}, {{2}} tarihindeki {{3}} turunuzun bilgileri:\n🕘 Başlangıç: {{4}}\n🗣 Dil: {{5}}\n👥 Misafir: {{6}}\n📍 Buluşma: {{7}}\n📝 Not: {{8}}\nİyi turlar! — DeseTour Operasyon',
   operations_notice: '📣 DeseTour Operasyon — {{1}}\n{{2}}\nDeseTour CRM otomatik bildirimi.',
+  guide_reminder: 'Merhaba {{1}}, hatırlatma: yarın ({{2}}) {{3}} turunuz var.\n🕘 Başlangıç: {{4}}\n🗣 Dil: {{5}}\n👥 Misafir: {{6}}\n📍 Buluşma: {{7}}\nİyi turlar! — DeseTour Operasyon',
 };
 // Post-tour survey: same template in the booking's language (server:
 // api/_whatsapp/templates.js) — preview only.
 // TESTABLE:_whatsappSurveyPreview:start
 const _WA_SURVEY_BODIES = {
-  es: '¡Hola {{1}}! Gracias por hacer el tour {{2}} con DeseTour. ¿Qué te ha parecido?',
-  pt_BR: 'Olá {{1}}! Obrigado por fazer o passeio {{2}} com a DeseTour. O que você achou?',
-  it: "Ciao {{1}}! Grazie per aver fatto il tour {{2}} con DeseTour. Com'è andata?",
-  en: 'Hi {{1}}! Thank you for joining the {{2}} tour with DeseTour. How was your experience?',
-  tr: 'Merhaba {{1}}! {{2}} turunu DeseTour ile yaptığınız için teşekkürler. Nasıldı?',
+  es: '¡Hola {{1}}! Gracias por participar en nuestro tour {{2}}. ¿Qué tal fue el tour? Puntúalo del 1 (muy mal) al 5 (excelente).',
+  pt_BR: 'Olá {{1}}! Obrigado por participar do nosso passeio {{2}}. Como foi o passeio? Dê uma nota de 1 (muito ruim) a 5 (excelente).',
+  it: "Ciao {{1}}! Grazie per aver partecipato al nostro tour {{2}}. Com'è andato il tour? Dai un voto da 1 (molto male) a 5 (eccellente).",
+  en: 'Hi {{1}}! Thank you for joining our {{2}} tour. How was the tour? Please rate it from 1 (very bad) to 5 (excellent).',
+  tr: 'Merhaba {{1}}! {{2}} turumuza katıldığınız için teşekkürler. Tur nasıl geçti? 1 (çok kötü) ile 5 (mükemmel) arasında puan verir misiniz?',
 };
 const _WA_LANG_CODE = { 'İspanyolca': 'es', 'Portekizce': 'pt_BR', 'İtalyanca': 'it', 'İngilizce': 'en', 'Türkçe': 'tr' };
 function _whatsappSurveyPreview(tourLanguage, params) {
@@ -25658,7 +25744,8 @@ function _buildWhatsAppThreads(inbound, outbound, nowMs) {
   }).sort((a, b) => String(b.lastAt || '').localeCompare(String(a.lastAt || '')));
 }
 // TESTABLE:_buildWhatsAppThreads:end
-const _WA_TEMPLATE_PARAMS = { guide_tour_brief: ['guideName', 'dateLabel', 'tourName', 'time', 'language', 'guests', 'meetingPoint', 'note'], operations_notice: ['title', 'details'] };
+const _WA_TEMPLATE_PARAMS = { guide_tour_brief: ['guideName', 'dateLabel', 'tourName', 'time', 'language', 'guests', 'meetingPoint', 'note'], operations_notice: ['title', 'details'],
+  guide_reminder: ['guideName', 'dateLabel', 'tourName', 'time', 'language', 'guests', 'meetingPoint'] };
 function _waOutboundText(m) {
   const p = m.payload || {};
   if (p.text) return p.text;
@@ -25675,7 +25762,7 @@ function _whatsappTemplatePreview(key, params) {
 }
 // TESTABLE:_whatsappTemplatePreview:end
 const _WA_STATUS_LABEL = { queued: 'Sırada', processing: 'Gönderiliyor', sent: 'Gönderildi', delivered: 'İletildi', read: 'Okundu', failed: 'Gönderilemedi' };
-const _WA_EVENT_LABEL = { guide_tour_brief: 'Rehber tur bilgisi', operations_notice: 'Ekip mesajı', daily_operations_summary: 'Yarının özeti', post_tour_survey: 'Tur sonrası anket', survey_reply: 'Anket yanıtı',
+const _WA_EVENT_LABEL = { guide_tour_brief: 'Rehber tur bilgisi', operations_notice: 'Ekip mesajı', daily_operations_summary: 'Yarının özeti', post_tour_survey: 'Geri bildirim isteği', survey_reply: 'Geri bildirim sorusu', guide_assigned: 'Rehber atama bilgisi', guide_reminder: 'Rehber hatırlatması', feedback_reminder: 'Geri bildirim hatırlatması', crm_event_feedback: 'Geri bildirim geldi',
   review_request: 'Yorum ve puan isteği', crm_reply: 'CRM yanıtı', app_echo: 'Telefondan gönderildi', crm_event_created: 'Yeni rezervasyon bildirimi', crm_event_cancelled: 'İptal bildirimi', crm_event_modified: 'Değişiklik bildirimi', crm_event_message: 'Yeni mesaj bildirimi' };
 const _WA_RATING = { great: { label: 'Harika', icon: '😍' }, good: { label: 'İyi', icon: '🙂' }, poor: { label: 'Geliştirilebilir', icon: '😕' } };
 async function _whatsappApi(action, body) {
@@ -25702,6 +25789,8 @@ const WhatsAppRepository = {
   async getInbound() { return []; },
   async sendGuideBrief(d) { _mockWa.messages.push({ id: 'WM-' + Date.now(), eventType: 'guide_tour_brief', recipientName: 'Rehber', status: 'queued', createdAt: new Date().toISOString(), reservationId: d.reservationId }); return { ok: true, sendingConfigured: false, preview: null }; },
   async sendOperationsNotice() { return { ok: true, sendingConfigured: false, recipients: _mockWa.recipients.filter(r => r.isActive).length }; },
+  async translateToTurkish(items) { return { ok: true, language: 'es', translations: Object.fromEntries((items || []).map(x => [x.id, '[TR] ' + x.text])) }; },
+  async translateReply(d) { return { ok: true, language: d.language || 'es', text: '[' + (d.language || 'es') + '] ' + d.text }; },
   async getTelegramGroups() { return { ok: true, groups: [] }; },
   async connectTelegramGroup() { return { ok: true }; },
   async disconnectTelegram() { return { ok: true }; },
@@ -25753,6 +25842,8 @@ const SupabaseWhatsAppRepo = {
   },
   async sendGuideBrief(d) { return _whatsappApi('enqueue', { kind: 'guide_brief', reservationId: d.reservationId, note: d.note || '', meetingPoint: d.meetingPoint || '', requestId: d.requestId }); },
   async sendOperationsNotice(d) { return _whatsappApi('enqueue', { kind: 'operations_notice', title: d.title, details: d.details, requestId: d.requestId }); },
+  async translateToTurkish(items) { return _whatsappApi('enqueue', { kind: 'translate', direction: 'to_turkish', items, requestId: 'tr-' + Date.now().toString(36) }); },
+  async translateReply(d) { return _whatsappApi('enqueue', { kind: 'translate', direction: 'to_customer', text: d.text, language: d.language || null, sample: d.sample || '', requestId: 'tr-' + Date.now().toString(36) }); },
   async getTelegramGroups() { return _whatsappApi('enqueue', { kind: 'telegram_groups', requestId: 'tg-' + Date.now().toString(36) }); },
   async connectTelegramGroup(g) { return _whatsappApi('enqueue', { kind: 'telegram_connect', chatId: g.id, title: g.title, requestId: 'tg-' + Date.now().toString(36) }); },
   async disconnectTelegram() { return _whatsappApi('enqueue', { kind: 'telegram_disconnect', requestId: 'tg-' + Date.now().toString(36) }); },
@@ -25779,7 +25870,7 @@ const SupabaseWhatsAppRepo = {
       sb.from('reservation_feedback').select('*').eq('reservation_id', resId).maybeSingle(),
     ]);
     return { messages: m.error ? [] : (m.data || []).map(_mapWaMessage), feedbackUnavailable: !!f.error,
-      feedback: f.data ? { rating: f.data.rating, comment: f.data.comment || null, answeredAt: f.data.answered_at, commentAt: f.data.comment_at } : null };
+      feedback: f.data ? { rating: f.data.rating, tourScore: f.data.tour_score == null ? null : Number(f.data.tour_score), guideScore: f.data.guide_score == null ? null : Number(f.data.guide_score), comment: f.data.comment || null, answeredAt: f.data.answered_at, commentAt: f.data.comment_at } : null };
   },
 };
 function _waSendResultText(r, what) {

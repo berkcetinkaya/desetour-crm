@@ -1,23 +1,28 @@
 'use strict';
 /**
- * api/_whatsapp/survey.js — post-tour survey.
+ * api/_whatsapp/survey.js — post-tour feedback and review request.
  *
- *  1. enqueueSurvey / enqueueDailySurveys: on the tour day (evening) every
- *     non-cancelled reservation whose customer has a phone gets ONE survey
- *     template in the booking's language (idempotency: one per reservation).
- *  2. handleSurveyInbound (from the webhook):
- *     • a tap on a survey button (payload svy:great|good|poor, context = the
- *       survey message) → saved in reservation_feedback; great/good get the
- *       tour's review link (tour_channels.review_url), poor gets "what could
- *       we improve?";
- *     • a text from the same phone within 3 days of a "poor" answer without
- *       a comment yet → saved as the comment, thanked.
- *     Replies are free-form texts (allowed: the customer just wrote to us).
+ *  1. enqueueSurvey (reservation page → "Geri bildirim iste"): ONE feedback
+ *     template per reservation, in the booking's language: thanks + "how
+ *     was the tour, 1 to 5?" (five buttons).
+ *  2. handleSurveyInbound (from the webhook) walks the customer through:
+ *       tour score (button or a typed 1–5) → "and your guide, 1–5?"
+ *       guide score (typed 1–5)            → "any feedback for us?"
+ *       free text                          → saved as the comment, thanks.
+ *     Answers are saved in reservation_feedback (tour_score, guide_score,
+ *     comment). Follow-up questions are free-form texts (allowed: the
+ *     customer just wrote to us). The team is told when feedback arrives.
+ *  3. enqueueReviewRequest (reservation page → "Yorum ve puan iste"): the
+ *     tour's Civitatis page, sent by the team the next day when the
+ *     answers are positive. Never sent automatically.
+ *  4. feedbackReminder: the evening list for the team — today's finished
+ *     tours still without a feedback request, and positive answers still
+ *     without a review request.
  */
 const { normalizePhone } = require('./config');
-const { SURVEY_REPLIES, surveyLanguage, renderPreview } = require('./templates');
+const { FEEDBACK_REPLIES, surveyLanguage, renderPreview } = require('./templates');
 const { sendText } = require('./metaClient');
-const { istanbulISODate } = require('./enqueue');
+const { istanbulISODate, addDays } = require('./enqueue');
 
 const RES_COLS = 'id,reservation_number,check_in,tour_id,destination,tour_language,status,customer_id,source_id';
 
@@ -42,12 +47,12 @@ async function enqueueSurvey({ db, reservationId }) {
   const { data: r, error } = await db.from('reservations').select(RES_COLS).eq('id', reservationId).maybeSingle();
   if (error) throw new Error(error.message);
   if (!r) return { ok: false, status: 404, error: 'Rezervasyon bulunamadı.' };
-  if (r.status === 'cancelled') return { ok: false, status: 409, error: 'İptal edilmiş rezervasyona anket gönderilmez.' };
+  if (r.status === 'cancelled') return { ok: false, status: 409, error: 'İptal edilmiş rezervasyona geri bildirim mesajı gönderilmez.' };
   const built = await surveyRowFor(db, r);
   if (!built.ok) return built;
   const { data, error: e2 } = await db.from('whatsapp_messages').upsert(built.row, { onConflict: 'idempotency_key', ignoreDuplicates: true }).select('id');
   if (e2) throw new Error(e2.message);
-  if (!(data || []).length) return { ok: false, status: 409, error: 'Bu rezervasyona anket zaten gönderildi.' };
+  if (!(data || []).length) return { ok: false, status: 409, error: 'Bu rezervasyona geri bildirim mesajı zaten gönderildi.' };
   return { ok: true, ids: data.map(x => x.id), preview: built.preview };
 }
 
@@ -70,18 +75,35 @@ async function enqueueReviewRequest({ db, reservationId }) {
   return { ok: true, ids: data.map(x => x.id), preview: renderPreview('review_request', payload, row.language) };
 }
 
-async function enqueueDailySurveys({ db, todayISO = istanbulISODate() }) {
-  const { data, error } = await db.from('reservations').select(RES_COLS).eq('check_in', todayISO);
+const isPositive = (fb) => !!fb && Number(fb.tour_score) >= 4 && (fb.guide_score == null || Number(fb.guide_score) >= 4);
+
+// Evening reminder for the team (goes with the daily summary): who can be
+// asked for feedback today, and whose positive answer is waiting for a
+// review request. Returns null when there is nothing to do.
+async function feedbackReminder({ db, todayISO = istanbulISODate() }) {
+  const { data: today, error } = await db.from('reservations').select(RES_COLS).eq('check_in', todayISO);
   if (error) throw new Error(error.message);
-  const out = { date: todayISO, reservations: 0, queued: 0, missingPhone: 0, ids: [] };
-  for (const r of (data || []).filter(x => x.status !== 'cancelled')) {
-    out.reservations += 1;
-    const built = await surveyRowFor(db, r);
-    if (!built.ok) { out.missingPhone += 1; continue; }
-    const { data: ins } = await db.from('whatsapp_messages').upsert(built.row, { onConflict: 'idempotency_key', ignoreDuplicates: true }).select('id');
-    (ins || []).forEach(x => { out.ids.push(x.id); out.queued += 1; });
+  const ask = [], noPhone = [];
+  for (const r of (today || []).filter(x => x.status !== 'cancelled')) {
+    const { data: sent } = await db.from('whatsapp_messages').select('id').eq('idempotency_key', `post_tour_survey:${r.id}`).maybeSingle();
+    if (sent) continue;
+    const { data: cust } = r.customer_id ? await db.from('customers').select('phone').eq('id', r.customer_id).maybeSingle() : { data: null };
+    (cust && normalizePhone(cust.phone) ? ask : noPhone).push(r.reservation_number);
   }
-  return out;
+  const { data: fbs } = await db.from('reservation_feedback').select('reservation_id,tour_score,guide_score,answered_at').gte('answered_at', addDays(todayISO, -7));
+  const review = [];
+  for (const fb of (fbs || []).filter(isPositive)) {
+    const { data: sent } = await db.from('whatsapp_messages').select('id').eq('idempotency_key', `review_request:${fb.reservation_id}`).maybeSingle();
+    if (sent) continue;
+    const { data: r } = await db.from('reservations').select('reservation_number').eq('id', fb.reservation_id).maybeSingle();
+    if (r) review.push(`${r.reservation_number} (tur ${fb.tour_score}/5${fb.guide_score != null ? `, rehber ${fb.guide_score}/5` : ''})`);
+  }
+  if (!ask.length && !noPhone.length && !review.length) return null;
+  const parts = [];
+  if (ask.length) parts.push(`Bugün turu biten, geri bildirim istenebilecek: ${ask.join(', ')}`);
+  if (noPhone.length) parts.push(`Telefonu kayıtlı olmayan: ${noPhone.join(', ')}`);
+  if (review.length) parts.push(`Olumlu yanıt verdi, yorum/puan istenebilir: ${review.join(', ')}`);
+  return { title: 'Geri bildirim hatırlatması', details: parts.join(' | '), ask: ask.length, noPhone: noPhone.length, review: review.length };
 }
 
 async function reviewUrlFor(db, reservation) {
@@ -109,41 +131,55 @@ async function reply({ db, config, fetchImpl, to, text, original, inboundId }) {
   return r;
 }
 
-const RATING = { 'svy:great': 'great', 'svy:good': 'good', 'svy:poor': 'poor' };
+// "5", "5 ⭐", "un 4", "4/5" → 1…5; anything else → null.
+function parseScore(inbound) {
+  const p = /^svy:([1-5])$/.exec(inbound.button_payload || '');
+  if (p) return Number(p[1]);
+  const t = String(inbound.text || '').trim();
+  const m = /^\D{0,12}([1-5])(?:\s*\/\s*5)?\D{0,12}$/.exec(t);
+  return m && t.length <= 20 ? Number(m[1]) : null;
+}
+const ratingOf = (score) => (score >= 5 ? 'great' : score === 4 ? 'good' : 'poor');
 
-async function handleSurveyInbound({ db, config, fetchImpl, inbound }) {
-  const lang = (o) => (SURVEY_REPLIES[o.language] ? o.language : 'en');
-  const rating = RATING[inbound.button_payload || ''];
-  if (rating && inbound.context_message_id) {
-    const { data: original } = await db.from('whatsapp_messages').select('*').eq('provider_message_id', inbound.context_message_id).maybeSingle();
-    if (!original || original.event_type !== 'post_tour_survey' || !original.reservation_id) return { handled: false };
-    const now = new Date().toISOString();
-    await db.from('reservation_feedback').upsert({ reservation_id: original.reservation_id, customer_id: original.customer_id, rating,
-      source: 'whatsapp', whatsapp_message_id: original.id, answered_at: now }, { onConflict: 'reservation_id' });
-    const L = SURVEY_REPLIES[lang(original)];
-    let text = L.ask;
-    if (rating !== 'poor') {
-      const { data: res } = await db.from('reservations').select(RES_COLS).eq('id', original.reservation_id).maybeSingle();
-      const url = await reviewUrlFor(db, res);
-      text = url ? L.link(url) : L.thanks;
-    }
-    await reply({ db, config, fetchImpl, to: inbound.from_phone, text, original, inboundId: inbound.provider_message_id });
-    return { handled: true, rating };
+async function handleSurveyInbound({ db, config, fetchImpl, inbound, notify, now = () => new Date() }) {
+  // The latest feedback request to this phone (last 3 days).
+  const since = new Date(now().getTime() - 3 * 86400000).toISOString();
+  const { data: surveys } = await db.from('whatsapp_messages').select('*').eq('event_type', 'post_tour_survey').eq('recipient_phone', inbound.from_phone);
+  const s = (surveys || []).filter(x => x.reservation_id && x.status !== 'failed' && String(x.sent_at || x.created_at || since) >= since)
+    .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')))[0];
+  if (!s) return { handled: false };
+  const L = FEEDBACK_REPLIES[FEEDBACK_REPLIES[s.language] ? s.language : 'en'];
+  const say = (text) => reply({ db, config, fetchImpl, to: inbound.from_phone, text, original: s, inboundId: inbound.provider_message_id });
+  const { data: fb } = await db.from('reservation_feedback').select('*').eq('reservation_id', s.reservation_id).maybeSingle();
+  const score = parseScore(inbound);
+  const t = now().toISOString();
+  if (!fb) {
+    if (score == null) return { handled: false };
+    await db.from('reservation_feedback').upsert({ reservation_id: s.reservation_id, customer_id: s.customer_id, rating: ratingOf(score), tour_score: score,
+      source: 'whatsapp', whatsapp_message_id: s.id, answered_at: t }, { onConflict: 'reservation_id' });
+    await say(L.guide);
+    return { handled: true, step: 'tour', score };
   }
-  if (inbound.message_type === 'text' && inbound.text) {
-    // A comment after a "poor" answer from the same phone (last 3 days).
-    const since = new Date(Date.now() - 3 * 86400000).toISOString();
-    const { data: surveys } = await db.from('whatsapp_messages').select('*').eq('event_type', 'post_tour_survey').eq('recipient_phone', inbound.from_phone);
-    for (const s of (surveys || []).sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')))) {
-      const { data: fb } = await db.from('reservation_feedback').select('*').eq('reservation_id', s.reservation_id).maybeSingle();
-      if (fb && fb.rating === 'poor' && !fb.comment && String(fb.answered_at || '') >= since) {
-        await db.from('reservation_feedback').update({ comment: String(inbound.text).slice(0, 2000), comment_at: new Date().toISOString() }).eq('reservation_id', s.reservation_id);
-        await reply({ db, config, fetchImpl, to: inbound.from_phone, text: SURVEY_REPLIES[lang(s)].got, original: s, inboundId: inbound.provider_message_id });
-        return { handled: true, comment: true };
-      }
+  if (fb.guide_score == null && fb.comment == null) {
+    if (score == null) return { handled: false };
+    await db.from('reservation_feedback').update({ guide_score: score }).eq('reservation_id', s.reservation_id);
+    await say(L.comment);
+    return { handled: true, step: 'guide', score };
+  }
+  if (fb.comment == null && inbound.message_type === 'text' && inbound.text) {
+    const comment = String(inbound.text).slice(0, 2000);
+    await db.from('reservation_feedback').update({ comment, comment_at: t }).eq('reservation_id', s.reservation_id);
+    await say(L.thanks);
+    if (notify) {
+      const { data: r } = await db.from('reservations').select('reservation_number,destination').eq('id', s.reservation_id).maybeSingle();
+      const done = { ...fb, comment };
+      await notify({ eventType: 'crm_event_feedback', title: `Geri bildirim geldi ${(r && r.reservation_number) || ''}`.trim(),
+        details: `${(r && r.destination) || 'Tur'} | Tur: ${fb.tour_score}/5 · Rehber: ${fb.guide_score}/5 | Yorum: ${comment.slice(0, 600)}${isPositive(done) ? ' | Olumlu — yarın yorum/puan isteyebilirsiniz' : ''}`,
+        key: `feedback:${s.reservation_id}` }).catch(() => null);
     }
+    return { handled: true, step: 'comment' };
   }
   return { handled: false };
 }
 
-module.exports = { enqueueSurvey, enqueueReviewRequest, enqueueDailySurveys, handleSurveyInbound, reviewUrlFor };
+module.exports = { enqueueSurvey, enqueueReviewRequest, feedbackReminder, handleSurveyInbound, reviewUrlFor, parseScore, isPositive };

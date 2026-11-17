@@ -101,6 +101,20 @@ const CRM_CHANGELOG_CATEGORIES = [
 // Newest first. See the release convention above before editing.
 const CRM_CHANGELOG = [
   {
+    version: '13.25',
+    date: '2026-11-17',
+    title: 'WhatsApp: Türkçe Çeviri, Rehber Otomasyonu ve Puanlı Geri Bildirim',
+    summary: 'Mesajlar sayfasında yazışmaların Türkçe çevirisi yan panelde görünüyor ve Türkçe yazılan cevap müşterinin diline çevrilip gönderiliyor; rehbere atama bilgisi ve tur öncesi hatırlatma otomatik gidiyor; tur sonrası geri bildirim 1–5 puanlı hale geldi.',
+    categories: ['Yeni Özellik', 'Otomasyon'],
+    highlights: [
+      'Mesajlar: her yazışmanın yanında Türkçe çevirisi görünüyor. Cevabı Türkçe yazıp "Çevir"e basınca müşterinin dilindeki metin hazırlanıyor; kontrol edip gönderiyorsunuz.',
+      'Rehber ataması yapıldığında rehbere atama bilgisi ve tur detayları WhatsApp ile otomatik gidiyor; turdan bir gün önce akşam hatırlatma mesajı gönderiliyor.',
+      'Rezervasyon sayfasından "Geri bildirim iste": müşteriye teşekkür edilip tur 1–5, rehber 1–5 puanlatılıyor ve serbest yorum isteniyor. Yanıtlar rezervasyonda görünüyor; olumluysa ertesi gün "Yorum ve puan iste" ile Civitatis sayfası gönderiliyor.',
+      'Ekip grubuna akşam hatırlatması: bugün turu biten ve geri bildirim istenebilecek rezervasyonlar ile olumlu yanıt verip yorum istenebilecek müşteriler listeleniyor; gelen geri bildirimler de gruba düşüyor.',
+    ],
+    author: 'Berk',
+  },
+  {
     version: '13.24',
     date: '2026-11-17',
     title: 'Ekip Bildirimleri Telegram Grubuna',
@@ -238,36 +252,6 @@ const CRM_CHANGELOG = [
     ],
     author: 'Berk',
     technicalNote: 'Light ve Dark Mode genelinde renk, yüzey, kontrast, shadow, radius ve motion sistemi standartlaştırıldı. Klavye erişimi, focus durumları, aria etiketleri, switch ve accordion davranışları dahil olmak üzere erişilebilirlik iyileştirmeleri yapıldı. Tours, Guides, Payments, Agencies, Messages, Reminders, Reports ve Settings ekranları ortak UI sistemiyle uyumlu hale getirildi. CRM artık QITEOS platform imzasını uygulama footer\'ında gösteriyor.',
-  },
-  {
-    version: '13.01',
-    date: '2026-10-30',
-    title: 'Civitatis Mesajları Rezervasyonlarda',
-    summary: 'Civitatis üzerinden gelen misafir mesajları artık ilgili rezervasyonla otomatik eşleştiriliyor, rezervasyon detayından takip edilebiliyor ve operasyon ekibine bildirim olarak yansıyor.',
-    categories: ['Yeni Özellik', 'Otomasyon'],
-    highlights: [
-      'Civitatis misafir mesajları artık rezervasyon numarası üzerinden ilgili rezervasyonla otomatik eşleştiriliyor',
-      'Rezervasyon detayına yeni "Civitatis Mesajları" bölümü eklendi; mesaj içerikleri daha temiz ve okunabilir şekilde gösteriliyor',
-      'Yeni mesajlar operasyon bildirimlerine ve rezervasyon aktivite geçmişine yansıyor',
-      'Rezervasyon listesinde yeni mesaj bulunan kayıtlar daha kolay fark edilebiliyor',
-      'Aynı Civitatis mesajının tekrar işlenmesi duplicate kayıt oluşturmuyor',
-    ],
-    author: 'Berk',
-  },
-  {
-    version: '12.50',
-    date: '2026-10-28',
-    title: 'Acente Araştırması ve Veri Kalitesi',
-    summary: 'Acente araştırma sistemi daha temiz, daha güvenilir ve doğrudan iletişime uygun adaylar üretecek şekilde geliştirildi.',
-    categories: ['Otomasyon', 'İyileştirme'],
-    highlights: [
-      'CRM\'de daha önce kayıtlı olan acenteler yeni araştırmalardan otomatik olarak dışlanıyor; aynı acentenin farklı website formatlarıyla (www, http/https, path, query, port) tekrar bulunması engelleniyor',
-      'Araştırmada kullanılabilir iletişim maili bulunamayan yeni acenteler artık CRM\'e eklenmiyor; sonuçlar doğrudan outreach yapılabilecek gerçek adaylardan oluşuyor',
-      'Website adresleri normalize edilerek aynı acentenin farklı yazımlarla tekrar kaydedilmesi engelleniyor; bu koruma artık ek bir güvenlik katmanıyla destekleniyor',
-      'Acente detay sayfasından mail adresi, iletişim kişisi, telefon ve website bilgileri manuel olarak güncellenebiliyor; daha önce maili bulunamayan acentelere sonradan iletişim bilgisi eklenebiliyor',
-      'Araştırma sonuçlarında mevcut CRM kayıtları, tekrar eden adaylar ve iletişim maili olmayan sonuçlar filtreleniyor; yalnızca yeni ve kullanılabilir adaylar sonuç listesinde gösteriliyor',
-    ],
-    author: 'Berk',
   },
 ];
 

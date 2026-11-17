@@ -19,8 +19,9 @@
 const { getWhatsAppConfig } = require('./_whatsapp/config');
 const { verifyHandshake, verifySignature, verifyUrlKey, processWebhook } = require('./_whatsapp/webhook');
 const { runWorker } = require('./_whatsapp/worker');
-const { enqueueGuideBrief, enqueueOperationsNotice, enqueueDailySummary } = require('./_whatsapp/enqueue');
-const { enqueueSurvey, enqueueReviewRequest, enqueueDailySurveys } = require('./_whatsapp/survey');
+const { enqueueGuideBrief, enqueueOperationsNotice, enqueueDailySummary, enqueueGuideAssignments, enqueueGuideReminders, istanbulISODate } = require('./_whatsapp/enqueue');
+const { enqueueSurvey, enqueueReviewRequest, feedbackReminder } = require('./_whatsapp/survey');
+const { toTurkish, toCustomer } = require('./_whatsapp/translate');
 const { enqueueEventNotices } = require('./_whatsapp/events');
 const { sendReply } = require('./_whatsapp/inbox');
 const { telegramConfig, listGroups, getTelegramDestination, connectGroup, disconnectGroup, sendTelegramNotice } = require('./_whatsapp/telegram');
@@ -58,20 +59,30 @@ function createHandler(deps = {}) {
         // Our own Meta app's signature, or the secret in the webhook URL.
         if (!verifySignature(raw, req.headers['x-hub-signature-256'], cfg.appSecret) && !verifyUrlKey(q.key, cfg.webhookKey)) return res.status(401).json({ error: 'Invalid signature.' });
         let payload; try { payload = JSON.parse(raw.toString('utf8')); } catch (_) { return res.status(400).json({ error: 'Bad JSON.' }); }
-        const out = await processWebhook(payload, db(), { config: cfg, fetchImpl: deps.fetchImpl });
+        const out = await processWebhook(payload, db(), { config: cfg, fetchImpl: deps.fetchImpl, notify: await teamNotifier() });
         return res.status(200).json(out);
       }
-      if (action === 'worker' || action === 'daily-summary' || action === 'post-tour-surveys') {
+      if (action === 'worker' || action === 'daily-summary') {
         if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed.' });
         if (!isScheduler(req, cfg)) return res.status(401).json({ error: 'Unauthorized.' });
         const notify = await teamNotifier();
-        const summary = action === 'daily-summary' ? await enqueueDailySummary({ db: db(), notify })
-          : action === 'post-tour-surveys' ? await enqueueDailySurveys({ db: db() }) : null;
-        // Every run also announces new CRM events (booking / cancellation /
-        // change / client message) to the operations list.
+        let summary = null, reminders = null, feedback = null;
+        if (action === 'daily-summary') {
+          // Evening run: tomorrow's summary to the team, a reminder to every
+          // guide with a tour tomorrow, and the feedback to-do list.
+          summary = await enqueueDailySummary({ db: db(), notify });
+          reminders = await enqueueGuideReminders({ db: db() });
+          const fr = await feedbackReminder({ db: db() });
+          if (fr) { const sent = await notify({ eventType: 'feedback_reminder', title: fr.title, details: fr.details, key: `feedback_reminder:${istanbulISODate()}` }); feedback = { ask: fr.ask, noPhone: fr.noPhone, review: fr.review, ok: sent.ok }; }
+        }
+        // Every run: new CRM events (booking / cancellation / change /
+        // Civitatis message) to the team, and the assignment + tour details
+        // to every newly assigned guide.
         const events = await enqueueEventNotices({ db: db(), notify });
+        const assignments = await enqueueGuideAssignments({ db: db() });
         const worker = await runWorker({ db: db(), config: cfg, fetchImpl: deps.fetchImpl });
-        return res.status(200).json({ summary, events: { events: events.events, queued: events.queued, skipped: events.skipped }, worker });
+        const slim = (x) => x && { operations: x.operations, queued: x.queued, missingPhone: x.missingPhone };
+        return res.status(200).json({ summary, reminders: slim(reminders), feedback, assignments: slim(assignments), events: { events: events.events, queued: events.queued, skipped: events.skipped }, worker });
       }
       if (action === 'status' || action === 'enqueue') {
         const auth = await (deps.requireStaffRole || requireStaffRole)(req, ['admin', 'operations']);
@@ -99,6 +110,14 @@ function createHandler(deps = {}) {
             : body.kind === 'telegram_connect' ? await connectGroup({ db: db(), tg, chatId: body.chatId, title: body.title, fetchImpl: deps.fetchImpl })
             : await disconnectGroup({ db: db() });
           return out.ok ? res.status(200).json(out) : res.status(out.status || 502).json({ error: out.error });
+        }
+        else if (body.kind === 'translate') {
+          const apiKey = (deps.getEnv ? deps.getEnv() : process.env).ANTHROPIC_API_KEY;
+          if (!apiKey) return res.status(409).json({ error: 'Çeviri için sunucuda ANTHROPIC_API_KEY tanımlı değil.' });
+          const out = body.direction === 'to_customer'
+            ? await toCustomer({ apiKey, text: body.text, language: body.language, sample: body.sample, fetchImpl: deps.fetchImpl })
+            : await toTurkish({ apiKey, items: body.items, fetchImpl: deps.fetchImpl });
+          return out.ok ? res.status(200).json(out) : res.status(out.status || 502).json({ error: 'Çeviri yapılamadı: ' + out.error });
         }
         else if (body.kind === 'reply') {
           const out = await sendReply({ db: db(), config: cfg, phone: body.phone, text: body.text, requestId, fetchImpl: deps.fetchImpl });

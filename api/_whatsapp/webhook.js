@@ -79,7 +79,7 @@ async function processWebhook(payload, db, opts = {}) {
         out.inbound += 1;
         // Meta may deliver the same message twice: act only on the first.
         if ((fresh || []).length && opts.config) {
-          const r = await handleSurveyInbound({ db, config: opts.config, fetchImpl: opts.fetchImpl, inbound });
+          const r = await handleSurveyInbound({ db, config: opts.config, fetchImpl: opts.fetchImpl, inbound, notify: opts.notify });
           if (r.handled) out.survey = (out.survey || 0) + 1;
         }
       }

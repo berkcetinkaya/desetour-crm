@@ -156,3 +156,12 @@ WhatsApp'ın resmi API'si mevcut bir WhatsApp grubuna yazamaz. Bu yüzden ekip b
 4. CRM → **Ayarlar → WhatsApp → Telegram grubu** → **Grupları bul** → **Bu gruba bağla**. Gruba deneme mesajı düşer.
 
 Olay bildirimleri 15 dakikada bir çalışan görevle gider; bunun için 6. adımdaki GitHub değişkeni ve secret'ı gereklidir. Grup bağlı değilken bildirimler WhatsApp operasyon listesine gider.
+
+## 10. Çalışma kuralları (13.25)
+- **Mesajlar (CRM WhatsApp penceresi):** tüm yazışmalar görünür; yanında Türkçe çevirisi çıkar. Cevabı Türkçe yazın → **Çevir** → müşterinin dilindeki metni kontrol edin → **Gönder**. Çeviri, sunucudaki `ANTHROPIC_API_KEY` ile yapılır (acente özellikleriyle aynı anahtar).
+- **Rehber:** rehber atanınca atama bilgisi + tur detayları otomatik gider (15 dakikalık görev); turdan bir gün önce 18:05'te hatırlatma gider. Şablonlar: `desetour_rehber_tur_bilgisi`, `desetour_rehber_hatirlatma`.
+- **Geri bildirim:** tur bittikten sonra rezervasyon sayfası → WhatsApp kartı → **Geri bildirim iste** (müşteri telefonu kayıtlıysa). Müşteri turu 1–5, rehberi 1–5 puanlar ve isterse yorum yazar. Şablon: `desetour_tur_geri_bildirim`. Otomatik gönderilmez.
+- **Yorum / puan:** yanıtlar olumluysa (tur ve rehber 4–5) ertesi gün aynı karttan **Yorum ve puan iste** ile Civitatis sayfası gönderilir. Şablon: `desetour_yorum_istegi`.
+- **Hatırlatmalar:** her akşam 18:05'te ekip grubuna "geri bildirim istenebilecekler" ve "yorum istenebilecekler" listesi düşer.
+- **Ekip bildirimleri:** yeni rezervasyon, iptal, değişiklik ve Civitatis mesajları Telegram grubuna gider (9. adım).
+- Gerekli SQL: `supabase_migration_whatsapp_phase4_feedback_scores.sql`.

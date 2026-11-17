@@ -12,9 +12,10 @@ const { normalizePhone, getWhatsAppConfig } = require('../../api/_whatsapp/confi
 const { TEMPLATES, renderPreview, templateParams } = require('../../api/_whatsapp/templates');
 const { runWorker } = require('../../api/_whatsapp/worker');
 const { verifySignature, verifyHandshake, processWebhook } = require('../../api/_whatsapp/webhook');
-const { buildGuideBrief, buildDailySummary, enqueueGuideBrief, enqueueOperationsNotice } = require('../../api/_whatsapp/enqueue');
+const { buildGuideBrief, buildDailySummary, enqueueGuideBrief, enqueueOperationsNotice, enqueueGuideAssignments, enqueueGuideReminders } = require('../../api/_whatsapp/enqueue');
 const { createHandler } = require('../../api/whatsapp');
-const { enqueueSurvey, enqueueReviewRequest, enqueueDailySurveys, reviewUrlFor } = require('../../api/_whatsapp/survey');
+const { enqueueSurvey, enqueueReviewRequest, feedbackReminder, reviewUrlFor, parseScore, isPositive } = require('../../api/_whatsapp/survey');
+const { toTurkish, toCustomer } = require('../../api/_whatsapp/translate');
 const { classifyEvent, buildEventNotice, enqueueEventNotices } = require('../../api/_whatsapp/events');
 const { sendReply } = require('../../api/_whatsapp/inbox');
 const { extractTestableFn } = require('../dashboard/extractTestableFn');
@@ -193,7 +194,7 @@ test('migration: claim function is service_role only and uses SKIP LOCKED; inbou
   assert.doesNotMatch(src, /WHATSAPP_ACCESS_TOKEN|graph\.facebook\.com/, 'no Meta credential or direct Meta call in the browser bundle');
 });
 
-test('survey: one per reservation, booking language, needs a phone; daily run skips cancelled and counts missing phones', async () => {
+test('feedback request: one per reservation, booking language, needs a phone; never for a cancelled booking', async () => {
   const db = fakeDb({
     reservations: [
       { id: 'R1', reservation_number: 'R-1', check_in: '2026-11-16', tour_id: 'T1', tour_language: 'Portekizce', status: 'completed', customer_id: 'C1' },
@@ -205,49 +206,117 @@ test('survey: one per reservation, booking language, needs a phone; daily run sk
   });
   const r = await enqueueSurvey({ db, reservationId: 'R1' });
   assert.equal(r.ok, true);
-  assert.equal(r.preview, 'Olá Maria! Obrigado por fazer o passeio Bosforo com a DeseTour. O que você achou?');
+  assert.equal(r.preview, 'Olá Maria! Obrigado por participar do nosso passeio Bosforo. Como foi o passeio? Dê uma nota de 1 (muito ruim) a 5 (excelente).');
   const m = db.tables.whatsapp_messages[0];
   assert.deepEqual([m.language, m.recipient_phone, m.audience_type], ['pt_BR', '5511912345678', 'customer']);
   assert.equal((await enqueueSurvey({ db, reservationId: 'R1' })).status, 409, 'never twice');
   assert.equal((await enqueueSurvey({ db, reservationId: 'R2' })).status, 422);
   assert.equal((await enqueueSurvey({ db, reservationId: 'R3' })).status, 409);
-  const d = await enqueueDailySurveys({ db, todayISO: '2026-11-16' });
-  assert.deepEqual([d.reservations, d.queued, d.missingPhone], [2, 0, 1]);
 });
 
-test('survey answers: Excelente → review link, Mejorable → asks what to improve, the next text is saved as the comment', async () => {
+test('feedback flow: tour 1–5 → guide 1–5 → free comment → thanks; team is told; no review link is sent automatically', async () => {
+  assert.deepEqual(['5', ' 4 ', 'un 3', '4/5', '6', 'hola', '2 personas más mañana por favor'].map(t => parseScore({ text: t })), [5, 4, 3, 4, null, null, null]);
+  assert.equal(parseScore({ button_payload: 'svy:2', text: '2' }), 2);
+  assert.deepEqual([isPositive({ tour_score: 5, guide_score: 4 }), isPositive({ tour_score: 5, guide_score: 3 }), isPositive({ tour_score: 3, guide_score: 5 }), isPositive(null)], [true, false, false, false]);
+  const recent = new Date().toISOString();
   const db = fakeDb({
-    whatsapp_messages: [{ id: 'S1', event_type: 'post_tour_survey', provider_message_id: 'wamid.S1', reservation_id: 'R1', customer_id: 'C1', language: 'es', recipient_phone: '34600', status: 'read', created_at: '2026-11-16T16:05:00Z' },
-      { id: 'S2', event_type: 'post_tour_survey', provider_message_id: 'wamid.S2', reservation_id: 'R2', customer_id: 'C2', language: 'es', recipient_phone: '34611', status: 'read', created_at: '2026-11-16T16:05:00Z' }],
-    reservations: [{ id: 'R1', tour_id: 'T1', tour_language: 'İspanyolca', source_id: 'CIV', status: 'completed' }, { id: 'R2', tour_id: 'T1', status: 'completed' }],
+    whatsapp_messages: [{ id: 'S1', event_type: 'post_tour_survey', provider_message_id: 'wamid.S1', reservation_id: 'R1', customer_id: 'C1', language: 'es', recipient_phone: '34600', status: 'read', created_at: recent, sent_at: recent }],
+    reservations: [{ id: 'R1', reservation_number: 'R-1', destination: 'Bosforo', tour_id: 'T1', tour_language: 'İspanyolca', source_id: 'CIV', status: 'completed' }],
     tour_channels: [{ tour_id: 'T1', source_id: 'CIV', booking_language: 'İspanyolca', review_url: 'https://example.com/review', is_active: true }],
   });
-  const sent = [];
+  const sent = [], notices = [];
   const fetchImpl = async (url, init) => { sent.push(JSON.parse(init.body)); return { ok: true, status: 200, json: async () => ({ messages: [{ id: 'wamid.R' + sent.length }] }) }; };
-  const ev = (msg, from) => ({ entry: [{ changes: [{ value: { contacts: [{ wa_id: from, profile: { name: 'X' } }], messages: [msg] } }] }] });
-  await processWebhook(ev({ id: 'in1', from: '34600', type: 'button', button: { text: '😍 Excelente', payload: 'svy:great' }, context: { id: 'wamid.S1' }, timestamp: '1700000000' }, '34600'), db, { config: CFG, fetchImpl });
-  assert.equal(db.tables.reservation_feedback[0].rating, 'great');
-  assert.equal(sent[0].type, 'text'); assert.match(sent[0].text.body, /https:\/\/example\.com\/review/);
-  await processWebhook(ev({ id: 'in2', from: '34611', type: 'button', button: { text: '😕 Mejorable', payload: 'svy:poor' }, context: { id: 'wamid.S2' }, timestamp: '1700000001' }, '34611'), db, { config: CFG, fetchImpl });
-  assert.match(sent[1].text.body, /Qué podríamos mejorar/);
-  await processWebhook(ev({ id: 'in3', from: '34611', type: 'text', text: { body: 'El guía llegó tarde' }, timestamp: '1700000002' }, '34611'), db, { config: CFG, fetchImpl });
-  const fb = db.tables.reservation_feedback.find(f => f.reservation_id === 'R2');
-  assert.equal(fb.comment, 'El guía llegó tarde');
-  assert.match(sent[2].text.body, /Gracias por contárnoslo/);
-  // the same inbound delivered twice → acted on once
-  await processWebhook(ev({ id: 'in3', from: '34611', type: 'text', text: { body: 'El guía llegó tarde' }, timestamp: '1700000002' }, '34611'), db, { config: CFG, fetchImpl });
-  assert.equal(sent.length, 3);
-  assert.equal(db.tables.whatsapp_messages.filter(m => m.event_type === 'survey_reply').length, 3, 'replies are logged');
+  const notify = async (a) => { notices.push(a); return { ok: true, ids: [] }; };
+  const ev = (msg) => ({ entry: [{ changes: [{ value: { contacts: [{ wa_id: '34600', profile: { name: 'X' } }], messages: [{ from: '34600', ...msg }] } }] }] });
+  const hook = (msg) => processWebhook(ev(msg), db, { config: CFG, fetchImpl, notify });
+  await hook({ id: 'in0', type: 'text', text: { body: 'Hola, ¿a qué hora es el tour?' } });
+  assert.equal(sent.length, 0, 'an ordinary message is not taken for an answer');
+  await hook({ id: 'in1', type: 'button', button: { text: '5', payload: 'svy:5' }, context: { id: 'wamid.S1' } });
+  const fb = () => db.tables.reservation_feedback[0];
+  assert.deepEqual([fb().tour_score, fb().rating, fb().guide_score], [5, 'great', undefined]);
+  assert.match(sent[0].text.body, /¿Y tu guía\?/);
+  await hook({ id: 'in2', type: 'text', text: { body: '4' } });
+  assert.equal(fb().guide_score, 4);
+  assert.match(sent[1].text.body, /dejarnos algún comentario/);
+  await hook({ id: 'in3', type: 'text', text: { body: 'Todo perfecto, el guía muy amable' } });
+  assert.equal(fb().comment, 'Todo perfecto, el guía muy amable');
+  assert.match(sent[2].text.body, /Muchas gracias por tu tiempo/);
+  assert.equal(notices.length, 1);
+  assert.match(notices[0].details, /Tur: 5\/5 · Rehber: 4\/5/); assert.match(notices[0].details, /Olumlu/);
+  assert.doesNotMatch(JSON.stringify(sent), /example\.com\/review/, 'the review link is only sent by the team, the next day');
+  // the same inbound delivered twice, and later messages, change nothing
+  await hook({ id: 'in3', type: 'text', text: { body: 'Todo perfecto, el guía muy amable' } });
+  await hook({ id: 'in4', type: 'text', text: { body: '1' } });
+  assert.equal(sent.length, 3); assert.deepEqual([fb().tour_score, fb().guide_score], [5, 4]);
+
+  const rem = await feedbackReminder({ db: fakeDb({
+    reservations: [{ id: 'A', reservation_number: 'R-10', check_in: '2026-11-17', status: 'confirmed', customer_id: 'C1' }, { id: 'B', reservation_number: 'R-11', check_in: '2026-11-17', status: 'confirmed', customer_id: 'C2' },
+      { id: 'C', reservation_number: 'R-12', check_in: '2026-11-17', status: 'cancelled', customer_id: 'C1' }, { id: 'D', reservation_number: 'R-09', check_in: '2026-11-16', status: 'completed' }],
+    customers: [{ id: 'C1', phone: '+34 600 111 222' }, { id: 'C2', phone: null }],
+    reservation_feedback: [{ reservation_id: 'D', tour_score: 5, guide_score: 5, answered_at: '2026-11-16T18:00:00Z' }],
+  }), todayISO: '2026-11-17' });
+  assert.deepEqual([rem.ask, rem.noPhone, rem.review], [1, 1, 1]);
+  assert.match(rem.details, /geri bildirim istenebilecek: R-10/); assert.match(rem.details, /yorum\/puan istenebilir: R-09 \(tur 5\/5, rehber 5\/5\)/);
 });
 
-test('worker sends the survey in the booking language with one payload per button', async () => {
+test('worker sends the feedback request in the booking language with one payload per button (1…5)', async () => {
   const db = fakeDb({ whatsapp_messages: [{ id: 'q', status: 'queued', attempt_count: 0, recipient_phone: '34600111222', template_key: 'post_tour_survey', language: 'it', payload: { customerName: 'Gio', tourName: 'Topkapı' } }] }, claimAll);
   const calls = []; await runWorker({ db, config: CFG, fetchImpl: metaOk(calls) });
   const t = calls[0].body.template;
-  assert.equal(t.name, 'desetour_tur_sonrasi_anket'); assert.equal(t.language.code, 'it');
-  assert.deepEqual(t.components.slice(1).map(c => c.parameters[0].payload), ['svy:great', 'svy:good', 'svy:poor']);
+  assert.equal(t.name, 'desetour_tur_geri_bildirim'); assert.equal(t.language.code, 'it');
+  assert.deepEqual(t.components.slice(1).map(c => c.parameters[0].payload), ['svy:1', 'svy:2', 'svy:3', 'svy:4', 'svy:5']);
   const prev = extractTestableFn('_whatsappSurveyPreview');
-  assert.equal(prev('İtalyanca', ['Gio', 'Topkapı']), renderPreview('post_tour_survey', { customerName: 'Gio', tourName: 'Topkapı' }, 'it'));
+  for (const [name, code] of [['İtalyanca', 'it'], ['İspanyolca', 'es'], ['Portekizce', 'pt_BR'], ['İngilizce', 'en'], ['Türkçe', 'tr']])
+    assert.equal(prev(name, ['Gio', 'Topkapı']), renderPreview('post_tour_survey', { customerName: 'Gio', tourName: 'Topkapı' }, code));
+});
+
+test('guides: assignment message once per operation, reminder the evening before; no phone → counted, not sent', async () => {
+  const now = () => new Date('2026-11-17T09:00:00Z');
+  const db = fakeDb({
+    reservations: [
+      { id: 'R1', reservation_number: 'R-1', check_in: '2026-11-18', check_in_time: '10:00:00', tour_id: 'T1', destination: 'Topkapı', tour_language: 'İspanyolca', guide_id: 'G1', pax_adult: 2, status: 'confirmed', updated_at: '2026-11-17T08:50:00Z' },
+      { id: 'R2', reservation_number: 'R-2', check_in: '2026-11-18', check_in_time: '10:00:00', tour_id: 'T1', destination: 'Topkapı', tour_language: 'İspanyolca', guide_id: 'G1', pax_adult: 3, status: 'confirmed', updated_at: '2026-11-17T08:55:00Z' },
+      { id: 'R3', reservation_number: 'R-3', check_in: '2026-11-18', tour_id: 'T2', guide_id: 'G2', pax_adult: 1, status: 'confirmed', updated_at: '2026-11-17T08:55:00Z' },
+      { id: 'R4', reservation_number: 'R-4', check_in: '2026-11-18', tour_id: 'T1', guide_id: null, pax_adult: 1, status: 'confirmed', updated_at: '2026-11-17T08:55:00Z' },
+      { id: 'R5', reservation_number: 'R-5', check_in: '2026-11-10', tour_id: 'T1', guide_id: 'G1', pax_adult: 1, status: 'completed', updated_at: '2026-11-17T08:55:00Z' },
+      { id: 'R6', reservation_number: 'R-6', check_in: '2026-11-19', tour_id: 'T1', guide_id: 'G1', pax_adult: 1, status: 'confirmed', updated_at: '2026-11-01T08:55:00Z' },
+    ],
+    guides: [{ id: 'G1', full_name: 'Ayşe Yılmaz', phone: '0532 123 45 67' }, { id: 'G2', full_name: 'Mehmet', phone: '' }],
+    tours: [{ id: 'T1', name: 'Topkapı Sarayı' }],
+  });
+  const a = await enqueueGuideAssignments({ db, todayISO: '2026-11-17', now });
+  assert.deepEqual([a.operations, a.queued, a.missingPhone], [2, 1, 1], 'one message for the two bookings of the same operation; past and old ones ignored');
+  const m = db.tables.whatsapp_messages[0];
+  assert.deepEqual([m.event_type, m.template_key, m.recipient_phone, m.payload.guests], ['guide_assigned', 'guide_tour_brief', '905321234567', '5 kişi (2 rezervasyon: R-1, R-2)']);
+  assert.equal((await enqueueGuideAssignments({ db, todayISO: '2026-11-17', now })).queued, 0, 'never twice for the same operation');
+  const r = await enqueueGuideReminders({ db, todayISO: '2026-11-17' });
+  assert.deepEqual([r.date, r.queued, r.missingPhone], ['2026-11-18', 1, 1]);
+  const rm = db.tables.whatsapp_messages[1];
+  assert.deepEqual([rm.event_type, rm.template_key], ['guide_reminder', 'guide_reminder']);
+  assert.match(renderPreview('guide_reminder', rm.payload), /^Merhaba Ayşe, hatırlatma: yarın \(18 Kasım 2026 Çarşamba\) Topkapı Sarayı turunuz var\./);
+  assert.equal((await enqueueGuideReminders({ db, todayISO: '2026-11-17' })).queued, 0);
+});
+
+test('translation: customer messages → Turkish with the detected language; Turkish reply → customer language; needs the server key', async () => {
+  const calls = [];
+  const f = (reply) => async (url, init) => { calls.push({ url, headers: init.headers, body: JSON.parse(init.body) }); return { ok: true, status: 200, json: async () => ({ content: [{ type: 'text', text: JSON.stringify(reply) }] }) }; };
+  const a = await toTurkish({ apiKey: 'k', items: [{ id: 'in-1', text: 'Hola, ¿dónde nos encontramos?' }, { id: 'x', text: '   ' }], fetchImpl: f({ language: 'es', translations: { 'in-1': 'Merhaba, nerede buluşuyoruz?', other: 'ignored' } }) });
+  assert.deepEqual(a, { ok: true, translations: { 'in-1': 'Merhaba, nerede buluşuyoruz?' }, language: 'es' });
+  assert.equal(calls[0].url, 'https://api.anthropic.com/v1/messages'); assert.equal(calls[0].headers['x-api-key'], 'k');
+  assert.equal(JSON.parse(calls[0].body.messages[0].content).length, 1, 'empty texts are not sent');
+  const b = await toCustomer({ apiKey: 'k', text: 'Sultanahmet meydanında buluşuyoruz.', language: 'es', fetchImpl: f({ language: 'es', text: 'Nos encontramos en la plaza de Sultanahmet.' }) });
+  assert.deepEqual(b, { ok: true, text: 'Nos encontramos en la plaza de Sultanahmet.', language: 'es' });
+  assert.match(calls[1].body.system, /Spanish/);
+  assert.equal((await toCustomer({ apiKey: 'k', text: ' ', fetchImpl: f({}) })).status, 400);
+  assert.equal((await toTurkish({ apiKey: 'k', items: [{ id: 'a', text: 'hi' }], fetchImpl: async () => ({ ok: false, status: 529, json: async () => ({ error: { message: 'overloaded' } }) }) })).ok, false);
+  const res = () => { const r = { code: 0, body: null, status(c) { r.code = c; return r; }, json(b) { r.body = b; return r; } }; return r; };
+  const h = createHandler({ getConfig: () => CFG, getDb: () => fakeDb({}), getTelegramConfig: () => ({ configured: false }), getEnv: () => ({}), requireStaffRole: async () => ({ ok: true }) });
+  const r = res(); await h({ method: 'POST', query: { action: 'enqueue' }, headers: {}, rawBody: JSON.stringify({ kind: 'translate', items: [], requestId: 't1' }) }, r);
+  assert.equal(r.code, 409);
+  const need = extractTestableFn('_waTranslatable');
+  const th = { audience: 'customer', messages: [{ id: 'a', text: 'Hola amigo' }, { id: 'b', text: '(medya)' }, { id: 'c', text: '5' }, { id: 'd', text: 'Gracias' }] };
+  assert.deepEqual(need(th, (id) => id === 'd'), [{ id: 'a', text: 'Hola amigo' }]);
+  assert.deepEqual(need({ ...th, audience: 'guide' }, () => false), [], 'guide threads are already Turkish');
 });
 
 test('tour page: the Civitatis page of the booking language (listing URL) is shown and sent with the survey; a review link wins for the survey', async () => {

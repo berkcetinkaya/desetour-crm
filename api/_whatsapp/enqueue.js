@@ -64,6 +64,59 @@ async function enqueueGuideBrief({ db, reservationId, note, meetingPoint, reques
   return { ok: true, ids: (data || []).map(x => x.id), preview: renderPreview('guide_tour_brief', payload), recipient: guide.full_name };
 }
 
+// One row per guide operation (date + tour + guide), built from all its
+// reservations. kind: 'guide_assigned' (right after the assignment) or
+// 'guide_reminder' (the evening before). Once per operation and kind.
+async function guideOperationRows(db, reservations, kind) {
+  const ops = new Map();
+  for (const r of reservations.filter(x => x.guide_id && x.status !== 'cancelled')) {
+    const k = `${String(r.check_in).slice(0, 10)}|${r.tour_id}|g:${r.guide_id}`;
+    if (!ops.has(k)) ops.set(k, []);
+    ops.get(k).push(r);
+  }
+  const rows = []; let missingPhone = 0;
+  for (const [k, seed] of ops) {
+    const idem = `${kind}:${k}`;
+    const { data: prior } = await db.from('whatsapp_messages').select('id').eq('idempotency_key', idem).maybeSingle();
+    if (prior) continue;
+    const r = seed[0];
+    const [{ data: guide }, { data: sibs }, { data: tour }] = await Promise.all([
+      db.from('guides').select('id,full_name,phone').eq('id', r.guide_id).maybeSingle(),
+      db.from('reservations').select(RES_COLS).eq('check_in', r.check_in).eq('tour_id', r.tour_id).eq('guide_id', r.guide_id),
+      r.tour_id ? db.from('tours').select('name').eq('id', r.tour_id).maybeSingle() : Promise.resolve({ data: null }),
+    ]);
+    const phone = guide ? normalizePhone(guide.phone) : null;
+    if (!phone) { missingPhone += 1; continue; }
+    const payload = buildGuideBrief({ reservations: sibs && sibs.length ? sibs : seed, guideName: guide.full_name, tourName: (tour && tour.name) || r.destination });
+    rows.push({ event_type: kind, audience_type: 'guide', template_key: kind === 'guide_reminder' ? 'guide_reminder' : 'guide_tour_brief', language: 'tr',
+      idempotency_key: idem, reservation_id: r.id, guide_id: r.guide_id, tour_id: r.tour_id, recipient_phone: phone, recipient_display_name: guide.full_name, payload });
+  }
+  let ids = [];
+  if (rows.length) {
+    const { data, error } = await db.from('whatsapp_messages').upsert(rows, { onConflict: 'idempotency_key', ignoreDuplicates: true }).select('id');
+    if (error) throw new Error(error.message);
+    ids = (data || []).map(x => x.id);
+  }
+  return { operations: ops.size, queued: ids.length, missingPhone, ids };
+}
+
+// Guide assigned (or changed) on an upcoming reservation in the last
+// sinceMinutes → the guide gets the assignment + tour details.
+async function enqueueGuideAssignments({ db, sinceMinutes = 120, todayISO = istanbulISODate(), now = () => new Date() }) {
+  const since = new Date(now().getTime() - sinceMinutes * 60000).toISOString();
+  const { data, error } = await db.from('reservations').select(RES_COLS + ',updated_at').gte('updated_at', since).gte('check_in', todayISO);
+  if (error) throw new Error(error.message);
+  return guideOperationRows(db, data || [], 'guide_assigned');
+}
+
+// The evening before: every guide with a tour tomorrow gets a reminder.
+async function enqueueGuideReminders({ db, todayISO = istanbulISODate() }) {
+  const date = addDays(todayISO, 1);
+  const { data, error } = await db.from('reservations').select(RES_COLS).eq('check_in', date);
+  if (error) throw new Error(error.message);
+  return { date, ...(await guideOperationRows(db, data || [], 'guide_reminder')) };
+}
+
 async function operationsRecipients(db) {
   const { data: dest } = await db.from('whatsapp_destinations').select('id,is_active').eq('destination_key', 'operations').maybeSingle();
   if (!dest || !dest.is_active) return { dest: null, recipients: [] };
@@ -113,4 +166,4 @@ async function enqueueDailySummary({ db, todayISO = istanbulISODate(), notify })
   return { ...r, date, operations: s.operations, unassigned: s.unassigned };
 }
 
-module.exports = { buildGuideBrief, enqueueGuideBrief, enqueueOperationsNotice, buildDailySummary, enqueueDailySummary, istanbulISODate, addDays, dateLabelTr };
+module.exports = { buildGuideBrief, enqueueGuideBrief, enqueueGuideAssignments, enqueueGuideReminders, enqueueOperationsNotice, buildDailySummary, enqueueDailySummary, istanbulISODate, addDays, dateLabelTr };

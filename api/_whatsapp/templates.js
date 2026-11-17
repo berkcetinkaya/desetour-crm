@@ -23,17 +23,25 @@ const TEMPLATES = {
     body: '📣 DeseTour Operasyon — {{1}}\n{{2}}\nDeseTour CRM otomatik bildirimi.',
     params: ['title', 'details'],
   },
-  // Tur sonrası anket: one template name approved in several languages,
-  // three quick-reply buttons whose payload the server sets (svy:<rating>).
+  // Rehbere tur hatırlatması, turdan bir gün önce (Utility, tr)
+  guide_reminder: {
+    name: 'desetour_rehber_hatirlatma', language: 'tr', category: 'UTILITY',
+    body: 'Merhaba {{1}}, hatırlatma: yarın ({{2}}) {{3}} turunuz var.\n🕘 Başlangıç: {{4}}\n🗣 Dil: {{5}}\n👥 Misafir: {{6}}\n📍 Buluşma: {{7}}\nİyi turlar! — DeseTour Operasyon',
+    params: ['guideName', 'dateLabel', 'tourName', 'time', 'language', 'guests', 'meetingPoint'],
+  },
+  // Tur sonrası geri bildirim: thanks + "how was the tour, 1 to 5?" with
+  // five quick-reply buttons (1…5). The guide score and the open comment
+  // are then asked as free-form messages (FEEDBACK_REPLIES) inside the
+  // 24-hour window the customer's answer opens.
   post_tour_survey: {
-    name: 'desetour_tur_sonrasi_anket', category: 'UTILITY', params: ['customerName', 'tourName'],
-    ratings: ['great', 'good', 'poor'],
+    name: 'desetour_tur_geri_bildirim', category: 'UTILITY', params: ['customerName', 'tourName'],
+    buttons: ['1', '2', '3', '4', '5'],
     languages: {
-      es: { body: '¡Hola {{1}}! Gracias por hacer el tour {{2}} con DeseTour. ¿Qué te ha parecido?', buttons: ['Excelente', 'Bien', 'Mejorable'] },
-      pt_BR: { body: 'Olá {{1}}! Obrigado por fazer o passeio {{2}} com a DeseTour. O que você achou?', buttons: ['Excelente', 'Bom', 'Pode melhorar'] },
-      it: { body: "Ciao {{1}}! Grazie per aver fatto il tour {{2}} con DeseTour. Com'è andata?", buttons: ['Ottimo', 'Bene', 'Migliorabile'] },
-      en: { body: 'Hi {{1}}! Thank you for joining the {{2}} tour with DeseTour. How was your experience?', buttons: ['Excellent', 'Good', 'Could be better'] },
-      tr: { body: 'Merhaba {{1}}! {{2}} turunu DeseTour ile yaptığınız için teşekkürler. Nasıldı?', buttons: ['Harika', 'İyi', 'Geliştirilebilir'] },
+      es: { body: '¡Hola {{1}}! Gracias por participar en nuestro tour {{2}}. ¿Qué tal fue el tour? Puntúalo del 1 (muy mal) al 5 (excelente).' },
+      pt_BR: { body: 'Olá {{1}}! Obrigado por participar do nosso passeio {{2}}. Como foi o passeio? Dê uma nota de 1 (muito ruim) a 5 (excelente).' },
+      it: { body: "Ciao {{1}}! Grazie per aver partecipato al nostro tour {{2}}. Com'è andato il tour? Dai un voto da 1 (molto male) a 5 (eccellente)." },
+      en: { body: 'Hi {{1}}! Thank you for joining our {{2}} tour. How was the tour? Please rate it from 1 (very bad) to 5 (excellent).' },
+      tr: { body: 'Merhaba {{1}}! {{2}} turumuza katıldığınız için teşekkürler. Tur nasıl geçti? 1 (çok kötü) ile 5 (mükemmel) arasında puan verir misiniz?' },
     },
   },
   // Yorum ve puan isteği: the tour's own page (Civitatis) sent straight to
@@ -50,14 +58,14 @@ const TEMPLATES = {
   },
 };
 
-// Free-form replies, sent inside the 24-hour window the customer's
-// button tap / message opens.
-const SURVEY_REPLIES = {
-  es: { link: (u) => `¡Muchas gracias! 🙏 Nos ayudaría muchísimo tu reseña: ${u}`, thanks: '¡Muchas gracias por tu respuesta! 🙏', ask: 'Sentimos que no haya sido perfecto. ¿Qué podríamos mejorar? Puedes responder a este mensaje.', got: '¡Gracias por contárnoslo! Lo tendremos en cuenta. 🙏' },
-  pt_BR: { link: (u) => `Muito obrigado! 🙏 Sua avaliação nos ajudaria muito: ${u}`, thanks: 'Muito obrigado pela sua resposta! 🙏', ask: 'Sentimos muito que não tenha sido perfeito. O que poderíamos melhorar? Você pode responder a esta mensagem.', got: 'Obrigado por nos contar! Vamos levar isso em conta. 🙏' },
-  it: { link: (u) => `Grazie mille! 🙏 La tua recensione ci aiuterebbe tantissimo: ${u}`, thanks: 'Grazie mille per la risposta! 🙏', ask: 'Ci dispiace che non sia stato perfetto. Cosa potremmo migliorare? Puoi rispondere a questo messaggio.', got: 'Grazie per avercelo detto! Ne terremo conto. 🙏' },
-  en: { link: (u) => `Thank you so much! 🙏 A review would help us a lot: ${u}`, thanks: 'Thank you so much for your answer! 🙏', ask: "We're sorry it wasn't perfect. What could we improve? You can simply reply to this message.", got: 'Thank you for telling us! We will take it into account. 🙏' },
-  tr: { link: (u) => `Çok teşekkürler! 🙏 Bir değerlendirme yazarsanız bize çok yardımcı olur: ${u}`, thanks: 'Yanıtınız için çok teşekkürler! 🙏', ask: 'Mükemmel olmadığı için üzgünüz. Neyi geliştirebiliriz? Bu mesaja yanıt yazabilirsiniz.', got: 'Bize anlattığınız için teşekkürler! Dikkate alacağız. 🙏' },
+// Free-form follow-ups, sent inside the 24-hour window the customer's
+// answer opens: guide score → open comment → thanks.
+const FEEDBACK_REPLIES = {
+  es: { guide: '¡Gracias! ¿Y tu guía? ¿Quedaste satisfecho/a? Responde con un número del 1 (nada) al 5 (muchísimo).', comment: '¡Gracias! Para poder ofrecer un mejor servicio, ¿te gustaría dejarnos algún comentario? Puedes escribirlo aquí.', thanks: '¡Muchas gracias por tu tiempo! Tu opinión nos ayuda a mejorar. 🙏' },
+  pt_BR: { guide: 'Obrigado! E o seu guia? Você ficou satisfeito(a)? Responda com um número de 1 (nada) a 5 (muito).', comment: 'Obrigado! Para oferecermos um serviço melhor, você gostaria de nos deixar algum comentário? Pode escrever aqui.', thanks: 'Muito obrigado pelo seu tempo! Sua opinião nos ajuda a melhorar. 🙏' },
+  it: { guide: 'Grazie! E la tua guida? Sei rimasto/a soddisfatto/a? Rispondi con un numero da 1 (per niente) a 5 (moltissimo).', comment: 'Grazie! Per offrire un servizio migliore, vuoi lasciarci un commento? Puoi scriverlo qui.', thanks: 'Grazie mille per il tuo tempo! La tua opinione ci aiuta a migliorare. 🙏' },
+  en: { guide: 'Thank you! And your guide? Were you satisfied? Reply with a number from 1 (not at all) to 5 (very much).', comment: 'Thank you! To help us offer a better service, would you like to leave us any feedback? You can write it here.', thanks: 'Thank you so much for your time! Your opinion helps us improve. 🙏' },
+  tr: { guide: 'Teşekkürler! Peki rehberinizden memnun kaldınız mı? 1 (hiç) ile 5 (çok) arasında bir rakam yazar mısınız?', comment: 'Teşekkürler! Daha iyi hizmet verebilmemiz için bize geri bildirimde bulunmak ister misiniz? Buraya yazabilirsiniz.', thanks: 'Zaman ayırdığınız için çok teşekkürler! Görüşünüz gelişmemize yardımcı oluyor. 🙏' },
 };
 
 // CRM booking language (Turkish name) → template language code.
@@ -87,4 +95,4 @@ function renderPreview(templateKey, payload, lang) {
   return templateBody(templateKey, lang).replace(/\{\{(\d+)\}\}/g, (_, n) => p[Number(n) - 1]);
 }
 
-module.exports = { TEMPLATES, SURVEY_REPLIES, LANGUAGE_CODE, surveyLanguage, templateParams, templateLanguage, templateBody, renderPreview, cleanParam };
+module.exports = { TEMPLATES, FEEDBACK_REPLIES, LANGUAGE_CODE, surveyLanguage, templateParams, templateLanguage, templateBody, renderPreview, cleanParam };
