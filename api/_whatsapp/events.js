@@ -68,6 +68,40 @@ function buildEventNotice(kind, log, r, others) {
   return { title: title.trim(), details: lines.join(' | ') };
 }
 
+// The notice for one activity log: loads the reservation and the other
+// bookings of the same day + tour.
+async function eventNoticeFor(db, kind, log) {
+  const { data: r } = await db.from('reservations').select(RES_COLS).eq('id', log.entity_id).maybeSingle();
+  let others = null;
+  if (r && r.tour_id && r.check_in) {
+    const { data: same } = await db.from('reservations').select(RES_COLS).eq('check_in', r.check_in).eq('tour_id', r.tour_id);
+    others = (same || []).filter(x => x.id !== r.id && x.status !== 'cancelled');
+  }
+  return buildEventNotice(kind, log, r, others);
+}
+
+// Test button (Ayarlar → Telegram): the latest new booking, change and
+// cancellation, plus the latest guide assignment, sent again marked TEST.
+async function sendTestNotices({ db, notify, requestId }) {
+  const { latestGuideAssignmentNotice } = require('./enqueue');
+  const { data: logs, error } = await db.from('activity_logs').select('id,entity_type,entity_id,action,metadata,created_at')
+    .eq('entity_type', 'reservation').order('created_at', { ascending: false }).limit(1000);
+  if (error) throw new Error(error.message);
+  const sorted = (logs || []).slice().sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
+  const out = { sent: [], missing: [] };
+  const LABEL = { created: 'yeni rezervasyon', guide: 'rehber ataması', modified: 'değişiklik', cancelled: 'iptal' };
+  for (const kind of ['created', 'guide', 'modified', 'cancelled']) {
+    let n = null;
+    if (kind === 'guide') n = await latestGuideAssignmentNotice(db);
+    else { const log = sorted.find(l => classifyEvent(l) === kind); if (log) n = await eventNoticeFor(db, kind, log); }
+    if (!n) { out.missing.push(LABEL[kind]); continue; }
+    const res = await notify({ eventType: 'test_notice', title: 'TEST · ' + n.title, details: n.details, key: `test:${requestId}:${kind}` });
+    if (!res.ok) return { ok: false, status: res.status || 502, error: res.error };
+    out.sent.push(LABEL[kind]);
+  }
+  return { ok: true, ...out };
+}
+
 // notify(args) defaults to the WhatsApp operations list; the endpoint
 // passes the Telegram group sender when a group is connected.
 async function enqueueEventNotices({ db, sinceMinutes = 120, now = () => new Date(), notify = (a) => enqueueOperationsNotice({ db, ...a }) }) {
@@ -80,13 +114,7 @@ async function enqueueEventNotices({ db, sinceMinutes = 120, now = () => new Dat
     const kind = classifyEvent(log);
     if (!kind) continue;
     out.events += 1;
-    const { data: r } = await db.from('reservations').select(RES_COLS).eq('id', log.entity_id).maybeSingle();
-    let others = null;
-    if (r && r.tour_id && r.check_in) {
-      const { data: same } = await db.from('reservations').select(RES_COLS).eq('check_in', r.check_in).eq('tour_id', r.tour_id);
-      others = (same || []).filter(x => x.id !== r.id && x.status !== 'cancelled');
-    }
-    const n = buildEventNotice(kind, log, r, others);
+    const n = await eventNoticeFor(db, kind, log);
     const res = await notify({ eventType: 'crm_event_' + kind, title: n.title, details: n.details, key: `event:${log.id}` });
     if (!res.ok) { out.skipped = res.error; break; } // no recipients / group unreachable → retried on the next run
     if (!res.duplicate) out.queued += Math.max(res.ids.length, res.channel === 'telegram' ? 1 : 0);
@@ -95,4 +123,4 @@ async function enqueueEventNotices({ db, sinceMinutes = 120, now = () => new Dat
   return out;
 }
 
-module.exports = { classifyEvent, buildEventNotice, enqueueEventNotices };
+module.exports = { classifyEvent, buildEventNotice, enqueueEventNotices, eventNoticeFor, sendTestNotices };

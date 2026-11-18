@@ -18920,7 +18920,15 @@ function WhatsAppSettings() {
         <div style={h}>Telegram grubu (ekip bildirimleri){tgInfo && tgInfo.group ? `: ${tgInfo.group} ✓` : ""}</div>
         {tgInfo && tgInfo.group ? (<>
           <div style={sub}>Yeni rezervasyon, iptal, değişiklik, Civitatis mesajı, her akşam yarının tur özeti ve aşağıdan yazdığınız ekip mesajları bu Telegram grubuna düşer. Rehber ve müşteri mesajları WhatsApp'tan gitmeye devam eder.</div>
-          <div><button type="button" disabled={mutating} onClick={disconnectTelegram} style={{ ...btn, background: "transparent", color: C.red, border: `1px solid ${C.border}`, fontWeight: 500 }}>Bağlantıyı kes</button></div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button type="button" data-testid="tg-test" disabled={mutating} onClick={async () => {
+              const { data, error } = await mutate("sendTelegramTest");
+              if (error) { showToast("Hata: " + error); return; }
+              showToast(`Test bildirimleri gruba gönderildi: ${(data.sent || []).join(", ") || "—"}${(data.missing || []).length ? ` · kayıt bulunamadı: ${data.missing.join(", ")}` : ""}`);
+            }} style={btn}>Test bildirimleri gönder</button>
+            <button type="button" disabled={mutating} onClick={disconnectTelegram} style={{ ...btn, background: "transparent", color: C.red, border: `1px solid ${C.border}`, fontWeight: 500 }}>Bağlantıyı kes</button>
+          </div>
+          <div style={sub}>Test: en son gelen rezervasyon, en son rehber ataması, en son değişiklik ve en son iptal "TEST" işaretiyle gruba yeniden gönderilir.</div>
         </>) : tgInfo && tgInfo.botConfigured ? (<>
           <div style={sub}>Bot hazır. Botu Telegram grubunuza ekleyin, grupta bir mesaj yazın, sonra "Grupları bul"a basıp grubu seçin.</div>
           <div><button type="button" disabled={mutating} onClick={findTelegramGroups} style={btn}>Grupları bul</button></div>
@@ -25802,7 +25810,7 @@ function _whatsappTemplatePreview(key, params) {
 }
 // TESTABLE:_whatsappTemplatePreview:end
 const _WA_STATUS_LABEL = { queued: 'Sırada', processing: 'Gönderiliyor', sent: 'Gönderildi', delivered: 'İletildi', read: 'Okundu', failed: 'Gönderilemedi' };
-const _WA_EVENT_LABEL = { guide_tour_brief: 'Rehber tur bilgisi', operations_notice: 'Ekip mesajı', daily_operations_summary: 'Yarının özeti', post_tour_survey: 'Geri bildirim isteği', survey_reply: 'Geri bildirim sorusu', guide_assigned: 'Rehber atama bilgisi', guide_reminder: 'Rehber hatırlatması', feedback_reminder: 'Geri bildirim hatırlatması', crm_event_feedback: 'Geri bildirim geldi', crm_event_guide_assigned: 'Rehber atama bildirimi',
+const _WA_EVENT_LABEL = { guide_tour_brief: 'Rehber tur bilgisi', operations_notice: 'Ekip mesajı', daily_operations_summary: 'Yarının özeti', post_tour_survey: 'Geri bildirim isteği', survey_reply: 'Geri bildirim sorusu', guide_assigned: 'Rehber atama bilgisi', guide_reminder: 'Rehber hatırlatması', feedback_reminder: 'Geri bildirim hatırlatması', crm_event_feedback: 'Geri bildirim geldi', crm_event_guide_assigned: 'Rehber atama bildirimi', test_notice: 'Test bildirimi',
   review_request: 'Yorum ve puan isteği', crm_reply: 'CRM yanıtı', app_echo: 'Telefondan gönderildi', crm_event_created: 'Yeni rezervasyon bildirimi', crm_event_cancelled: 'İptal bildirimi', crm_event_modified: 'Değişiklik bildirimi', crm_event_message: 'Yeni mesaj bildirimi' };
 const _WA_RATING = { great: { label: 'Harika', icon: '😍' }, good: { label: 'İyi', icon: '🙂' }, poor: { label: 'Geliştirilebilir', icon: '😕' } };
 async function _whatsappApi(action, body) {
@@ -25832,6 +25840,7 @@ const WhatsAppRepository = {
   async translateToTurkish(items) { return { ok: true, language: 'es', translations: Object.fromEntries((items || []).map(x => [x.id, '[TR] ' + x.text])) }; },
   async translateReply(d) { return { ok: true, language: d.language || 'es', text: '[' + (d.language || 'es') + '] ' + d.text }; },
   async getGuideFeedback() { return (_mockWa.guideFeedback || []).slice(); },
+  async sendTelegramTest() { return { ok: true, sent: ['yeni rezervasyon'], missing: [] }; },
   async getTelegramGroups() { return { ok: true, groups: [] }; },
   async connectTelegramGroup() { return { ok: true }; },
   async disconnectTelegram() { return { ok: true }; },
@@ -25897,6 +25906,7 @@ const SupabaseWhatsAppRepo = {
   },
   async translateToTurkish(items) { return _whatsappApi('enqueue', { kind: 'translate', direction: 'to_turkish', items, requestId: 'tr-' + Date.now().toString(36) }); },
   async translateReply(d) { return _whatsappApi('enqueue', { kind: 'translate', direction: 'to_customer', text: d.text, language: d.language || null, sample: d.sample || '', requestId: 'tr-' + Date.now().toString(36) }); },
+  async sendTelegramTest() { return _whatsappApi('enqueue', { kind: 'telegram_test', requestId: 'tt-' + Date.now().toString(36) }); },
   async getTelegramGroups() { return _whatsappApi('enqueue', { kind: 'telegram_groups', requestId: 'tg-' + Date.now().toString(36) }); },
   async connectTelegramGroup(g) { return _whatsappApi('enqueue', { kind: 'telegram_connect', chatId: g.id, title: g.title, requestId: 'tg-' + Date.now().toString(36) }); },
   async disconnectTelegram() { return _whatsappApi('enqueue', { kind: 'telegram_disconnect', requestId: 'tg-' + Date.now().toString(36) }); },

@@ -16,7 +16,7 @@ const { buildGuideBrief, buildDailySummary, enqueueGuideBrief, enqueueOperations
 const { createHandler } = require('../../api/whatsapp');
 const { enqueueSurvey, enqueueReviewRequest, feedbackReminder, reviewUrlFor, parseScore, isPositive } = require('../../api/_whatsapp/survey');
 const { toTurkish, toCustomer } = require('../../api/_whatsapp/translate');
-const { classifyEvent, buildEventNotice, enqueueEventNotices } = require('../../api/_whatsapp/events');
+const { classifyEvent, buildEventNotice, enqueueEventNotices, sendTestNotices } = require('../../api/_whatsapp/events');
 const { sendReply } = require('../../api/_whatsapp/inbox');
 const { extractTestableFn } = require('../dashboard/extractTestableFn');
 
@@ -529,4 +529,21 @@ test('guide profile: WhatsApp guide scores are averaged per guide; answers witho
   assert.deepEqual(stats([]), { count: 0, avgGuide: null, avgTour: null, low: 0 });
   const s = stats([{ guideScore: 5, tourScore: 4 }, { guideScore: 3, tourScore: 5 }, { guideScore: null, tourScore: 1 }, { guideScore: 4, tourScore: null }]);
   assert.deepEqual([s.count, s.avgGuide, s.avgTour, s.low], [3, 4, 4.5, 1]);
+});
+
+test('test button: latest new booking, guide assignment, change and cancellation are re-sent marked TEST; missing kinds are reported', async () => {
+  const L = (id, at, action, metadata, rid) => ({ id, entity_type: 'reservation', entity_id: rid, action, metadata: { auto_ingested: true, ...metadata }, created_at: at });
+  const db = fakeDb({
+    activity_logs: [L('a', '2026-11-10T09:00:00Z', 'created', {}, 'R1'), L('b', '2026-11-12T09:00:00Z', 'created', {}, 'R2'), L('c', '2026-11-11T09:00:00Z', 'cancelled', {}, 'R1')],
+    reservations: [
+      { id: 'R1', reservation_number: 'R-1', destination: 'Topkapı', tour_id: 'T1', check_in: '2026-11-20', pax_adult: 2, status: 'cancelled', updated_at: '2026-11-11T09:00:00Z' },
+      { id: 'R2', reservation_number: 'R-2', destination: 'Bosforo', tour_id: 'T2', check_in: '2026-11-21', pax_adult: 3, total_amount: 9900, currency: 'TL', guide_id: 'G1', guide_name: 'Ayşe Yılmaz', status: 'confirmed', updated_at: '2026-11-13T09:00:00Z' }],
+    guides: [{ id: 'G1', full_name: 'Ayşe Yılmaz', phone: '0532 123 45 67' }],
+  });
+  const told = []; const notify = async (a) => { told.push(a); return { ok: true, ids: [], channel: 'telegram' }; };
+  const out = await sendTestNotices({ db, notify, requestId: 'q' });
+  assert.deepEqual([out.sent, out.missing], [['yeni rezervasyon', 'rehber ataması', 'iptal'], ['değişiklik']]);
+  assert.deepEqual(told.map(t => t.title), ['TEST · Yeni rezervasyon R-2', 'TEST · Rehber atandı: Ayşe Yılmaz', 'TEST · İPTAL R-1']);
+  assert.deepEqual(told.map(t => t.key), ['test:q:created', 'test:q:guide', 'test:q:cancelled']);
+  assert.match(told[0].details, /💶 Tutar: 9\.900 ₺/);
 });

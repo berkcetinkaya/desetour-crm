@@ -22,7 +22,7 @@ const { runWorker } = require('./_whatsapp/worker');
 const { enqueueGuideBrief, enqueueOperationsNotice, enqueueDailySummary, enqueueGuideAssignments, notifyGuideAssignments, enqueueGuideReminders, istanbulISODate } = require('./_whatsapp/enqueue');
 const { enqueueSurvey, enqueueReviewRequest, feedbackReminder } = require('./_whatsapp/survey');
 const { toTurkish, toCustomer } = require('./_whatsapp/translate');
-const { enqueueEventNotices } = require('./_whatsapp/events');
+const { enqueueEventNotices, sendTestNotices } = require('./_whatsapp/events');
 const { sendReply } = require('./_whatsapp/inbox');
 const { telegramConfig, listGroups, getTelegramDestination, connectGroup, disconnectGroup, sendTelegramNotice } = require('./_whatsapp/telegram');
 const { requireStaffRole } = require('./_shared/authorize');
@@ -112,6 +112,12 @@ function createHandler(deps = {}) {
             : body.kind === 'telegram_connect' ? await connectGroup({ db: db(), tg, chatId: body.chatId, title: body.title, fetchImpl: deps.fetchImpl })
             : await disconnectGroup({ db: db() });
           return out.ok ? res.status(200).json(out) : res.status(out.status || 502).json({ error: out.error });
+        }
+        else if (body.kind === 'telegram_test') {
+          const dest = tg.configured ? await getTelegramDestination(db()) : null;
+          if (!dest) return res.status(409).json({ error: 'Telegram grubu bağlı değil.' });
+          const out = await sendTestNotices({ db: db(), notify: await teamNotifier(), requestId });
+          return out.ok ? res.status(200).json(out) : res.status(out.status).json({ error: out.error });
         }
         else if (body.kind === 'translate') {
           const apiKey = (deps.getEnv ? deps.getEnv() : process.env).ANTHROPIC_API_KEY;

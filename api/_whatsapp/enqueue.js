@@ -120,6 +120,26 @@ async function guideMessageLine(db, opKey, guide) {
   return '⏳ Rehbere WhatsApp bilgisi gönderilemedi: Meta doğrulaması bekleniyor. Rehbere siz haber verin';
 }
 
+async function guideAssignmentNotice(db, r, k) {
+  const [{ data: guide }, { data: sibs }, { data: tour }] = await Promise.all([
+    db.from('guides').select('id,full_name,phone').eq('id', r.guide_id).maybeSingle(),
+    db.from('reservations').select(RES_COLS).eq('check_in', r.check_in).eq('tour_id', r.tour_id).eq('guide_id', r.guide_id),
+    r.tour_id ? db.from('tours').select('name').eq('id', r.tour_id).maybeSingle() : Promise.resolve({ data: null }),
+  ]);
+  const name = (guide && guide.full_name) || r.guide_name || 'Rehber';
+  const b = buildGuideBrief({ reservations: sibs && sibs.length ? sibs : [r], guideName: name, tourName: (tour && tour.name) || r.destination });
+  const lines = [`🧑‍🏫 Rehber: ${name}`, `🧭 Tur: ${b.tourName}${b.language !== '—' ? ` (${b.language})` : ''}`, `📅 Tarih: ${b.dateLabel} ${b.time}`, `👥 Misafir: ${b.guests}`,
+    await guideMessageLine(db, k, guide), `🔗 https://crm.desetour.com/#/reservations/${r.id}`];
+  return { title: `Rehber atandı: ${name}`, details: lines.join(' | ') };
+}
+
+// For the test button: the most recently updated reservation that has a guide.
+async function latestGuideAssignmentNotice(db) {
+  const { data } = await db.from('reservations').select(RES_COLS + ',updated_at').order('updated_at', { ascending: false }).limit(300);
+  const r = (data || []).filter(x => x.guide_id && x.status !== 'cancelled').sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at)))[0];
+  return r ? guideAssignmentNotice(db, r, `${String(r.check_in).slice(0, 10)}|${r.tour_id}|g:${r.guide_id}`) : null;
+}
+
 // The same assignments, announced to the team (Telegram group or the
 // WhatsApp operations list) — once per operation and guide, whether or
 // not the guide has a phone on file.
@@ -134,17 +154,8 @@ async function notifyGuideAssignments({ db, notify, sinceMinutes = 120, todayISO
   }
   const out = { operations: ops.size, announced: 0, skipped: null };
   for (const [k, r] of ops) {
-    const [{ data: guide }, { data: sibs }, { data: tour }] = await Promise.all([
-      db.from('guides').select('id,full_name,phone').eq('id', r.guide_id).maybeSingle(),
-      db.from('reservations').select(RES_COLS).eq('check_in', r.check_in).eq('tour_id', r.tour_id).eq('guide_id', r.guide_id),
-      r.tour_id ? db.from('tours').select('name').eq('id', r.tour_id).maybeSingle() : Promise.resolve({ data: null }),
-    ]);
-    const name = (guide && guide.full_name) || r.guide_name || 'Rehber';
-    const b = buildGuideBrief({ reservations: sibs && sibs.length ? sibs : [r], guideName: name, tourName: (tour && tour.name) || r.destination });
-    const lines = [`🧑‍🏫 Rehber: ${name}`, `🧭 Tur: ${b.tourName}${b.language !== '—' ? ` (${b.language})` : ''}`, `📅 Tarih: ${b.dateLabel} ${b.time}`, `👥 Misafir: ${b.guests}`,
-      await guideMessageLine(db, k, guide),
-      `🔗 https://crm.desetour.com/#/reservations/${r.id}`];
-    const res = await notify({ eventType: 'crm_event_guide_assigned', title: `Rehber atandı: ${name}`, details: lines.join(' | '), key: `guide_assigned_team:${k}` });
+    const n = await guideAssignmentNotice(db, r, k);
+    const res = await notify({ eventType: 'crm_event_guide_assigned', title: n.title, details: n.details, key: `guide_assigned_team:${k}` });
     if (!res.ok) { out.skipped = res.error; break; }
     if (!res.duplicate && (res.ids.length || res.channel === 'telegram')) out.announced += 1;
   }
@@ -208,4 +219,4 @@ async function enqueueDailySummary({ db, todayISO = istanbulISODate(), notify })
   return { ...r, date, operations: s.operations, unassigned: s.unassigned };
 }
 
-module.exports = { buildGuideBrief, enqueueGuideBrief, enqueueGuideAssignments, notifyGuideAssignments, enqueueGuideReminders, enqueueOperationsNotice, buildDailySummary, enqueueDailySummary, istanbulISODate, addDays, dateLabelTr };
+module.exports = { buildGuideBrief, enqueueGuideBrief, enqueueGuideAssignments, notifyGuideAssignments, latestGuideAssignmentNotice, enqueueGuideReminders, enqueueOperationsNotice, buildDailySummary, enqueueDailySummary, istanbulISODate, addDays, dateLabelTr };
