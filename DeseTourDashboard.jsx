@@ -25802,7 +25802,7 @@ function _whatsappTemplatePreview(key, params) {
 }
 // TESTABLE:_whatsappTemplatePreview:end
 const _WA_STATUS_LABEL = { queued: 'Sırada', processing: 'Gönderiliyor', sent: 'Gönderildi', delivered: 'İletildi', read: 'Okundu', failed: 'Gönderilemedi' };
-const _WA_EVENT_LABEL = { guide_tour_brief: 'Rehber tur bilgisi', operations_notice: 'Ekip mesajı', daily_operations_summary: 'Yarının özeti', post_tour_survey: 'Geri bildirim isteği', survey_reply: 'Geri bildirim sorusu', guide_assigned: 'Rehber atama bilgisi', guide_reminder: 'Rehber hatırlatması', feedback_reminder: 'Geri bildirim hatırlatması', crm_event_feedback: 'Geri bildirim geldi',
+const _WA_EVENT_LABEL = { guide_tour_brief: 'Rehber tur bilgisi', operations_notice: 'Ekip mesajı', daily_operations_summary: 'Yarının özeti', post_tour_survey: 'Geri bildirim isteği', survey_reply: 'Geri bildirim sorusu', guide_assigned: 'Rehber atama bilgisi', guide_reminder: 'Rehber hatırlatması', feedback_reminder: 'Geri bildirim hatırlatması', crm_event_feedback: 'Geri bildirim geldi', crm_event_guide_assigned: 'Rehber atama bildirimi',
   review_request: 'Yorum ve puan isteği', crm_reply: 'CRM yanıtı', app_echo: 'Telefondan gönderildi', crm_event_created: 'Yeni rezervasyon bildirimi', crm_event_cancelled: 'İptal bildirimi', crm_event_modified: 'Değişiklik bildirimi', crm_event_message: 'Yeni mesaj bildirimi' };
 const _WA_RATING = { great: { label: 'Harika', icon: '😍' }, good: { label: 'İyi', icon: '🙂' }, poor: { label: 'Geliştirilebilir', icon: '😕' } };
 async function _whatsappApi(action, body) {

@@ -109,6 +109,37 @@ async function enqueueGuideAssignments({ db, sinceMinutes = 120, todayISO = ista
   return guideOperationRows(db, data || [], 'guide_assigned');
 }
 
+// The same assignments, announced to the team (Telegram group or the
+// WhatsApp operations list) — once per operation and guide, whether or
+// not the guide has a phone on file.
+async function notifyGuideAssignments({ db, notify, sinceMinutes = 120, todayISO = istanbulISODate(), now = () => new Date() }) {
+  const since = new Date(now().getTime() - sinceMinutes * 60000).toISOString();
+  const { data, error } = await db.from('reservations').select(RES_COLS + ',updated_at').gte('updated_at', since).gte('check_in', todayISO);
+  if (error) throw new Error(error.message);
+  const ops = new Map();
+  for (const r of (data || []).filter(x => x.guide_id && x.status !== 'cancelled')) {
+    const k = `${String(r.check_in).slice(0, 10)}|${r.tour_id}|g:${r.guide_id}`;
+    if (!ops.has(k)) ops.set(k, r);
+  }
+  const out = { operations: ops.size, announced: 0, skipped: null };
+  for (const [k, r] of ops) {
+    const [{ data: guide }, { data: sibs }, { data: tour }] = await Promise.all([
+      db.from('guides').select('id,full_name,phone').eq('id', r.guide_id).maybeSingle(),
+      db.from('reservations').select(RES_COLS).eq('check_in', r.check_in).eq('tour_id', r.tour_id).eq('guide_id', r.guide_id),
+      r.tour_id ? db.from('tours').select('name').eq('id', r.tour_id).maybeSingle() : Promise.resolve({ data: null }),
+    ]);
+    const name = (guide && guide.full_name) || r.guide_name || 'Rehber';
+    const b = buildGuideBrief({ reservations: sibs && sibs.length ? sibs : [r], guideName: name, tourName: (tour && tour.name) || r.destination });
+    const lines = [`🧑‍🏫 Rehber: ${name}`, `🧭 Tur: ${b.tourName}${b.language !== '—' ? ` (${b.language})` : ''}`, `📅 Tarih: ${b.dateLabel} ${b.time}`, `👥 Misafir: ${b.guests}`,
+      guide && normalizePhone(guide.phone) ? '📲 Rehbere WhatsApp ile tur bilgisi gönderiliyor' : '⚠️ Rehberin telefonu kayıtlı değil: WhatsApp bilgisi gönderilemedi',
+      `🔗 https://crm.desetour.com/#/reservations/${r.id}`];
+    const res = await notify({ eventType: 'crm_event_guide_assigned', title: `Rehber atandı: ${name}`, details: lines.join(' | '), key: `guide_assigned_team:${k}` });
+    if (!res.ok) { out.skipped = res.error; break; }
+    if (!res.duplicate && (res.ids.length || res.channel === 'telegram')) out.announced += 1;
+  }
+  return out;
+}
+
 // The evening before: every guide with a tour tomorrow gets a reminder.
 async function enqueueGuideReminders({ db, todayISO = istanbulISODate() }) {
   const date = addDays(todayISO, 1);
@@ -166,4 +197,4 @@ async function enqueueDailySummary({ db, todayISO = istanbulISODate(), notify })
   return { ...r, date, operations: s.operations, unassigned: s.unassigned };
 }
 
-module.exports = { buildGuideBrief, enqueueGuideBrief, enqueueGuideAssignments, enqueueGuideReminders, enqueueOperationsNotice, buildDailySummary, enqueueDailySummary, istanbulISODate, addDays, dateLabelTr };
+module.exports = { buildGuideBrief, enqueueGuideBrief, enqueueGuideAssignments, notifyGuideAssignments, enqueueGuideReminders, enqueueOperationsNotice, buildDailySummary, enqueueDailySummary, istanbulISODate, addDays, dateLabelTr };

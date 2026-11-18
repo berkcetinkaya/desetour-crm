@@ -12,7 +12,7 @@ const { normalizePhone, getWhatsAppConfig } = require('../../api/_whatsapp/confi
 const { TEMPLATES, renderPreview, templateParams } = require('../../api/_whatsapp/templates');
 const { runWorker } = require('../../api/_whatsapp/worker');
 const { verifySignature, verifyHandshake, processWebhook } = require('../../api/_whatsapp/webhook');
-const { buildGuideBrief, buildDailySummary, enqueueGuideBrief, enqueueOperationsNotice, enqueueGuideAssignments, enqueueGuideReminders } = require('../../api/_whatsapp/enqueue');
+const { buildGuideBrief, buildDailySummary, enqueueGuideBrief, enqueueOperationsNotice, enqueueGuideAssignments, notifyGuideAssignments, enqueueGuideReminders } = require('../../api/_whatsapp/enqueue');
 const { createHandler } = require('../../api/whatsapp');
 const { enqueueSurvey, enqueueReviewRequest, feedbackReminder, reviewUrlFor, parseScore, isPositive } = require('../../api/_whatsapp/survey');
 const { toTurkish, toCustomer } = require('../../api/_whatsapp/translate');
@@ -289,6 +289,13 @@ test('guides: assignment message once per operation, reminder the evening before
   const m = db.tables.whatsapp_messages[0];
   assert.deepEqual([m.event_type, m.template_key, m.recipient_phone, m.payload.guests], ['guide_assigned', 'guide_tour_brief', '905321234567', '5 kişi (2 rezervasyon: R-1, R-2)']);
   assert.equal((await enqueueGuideAssignments({ db, todayISO: '2026-11-17', now })).queued, 0, 'never twice for the same operation');
+  const told = []; const notify = async (a) => { const dup = told.some(x => x.key === a.key); if (!dup) told.push(a); return { ok: true, ids: [], channel: 'telegram', duplicate: dup }; };
+  const t1 = await notifyGuideAssignments({ db, notify, todayISO: '2026-11-17', now });
+  assert.deepEqual([t1.operations, t1.announced], [2, 2], 'the team hears about both operations, with or without a guide phone');
+  assert.equal(told[0].title, 'Rehber atandı: Ayşe Yılmaz');
+  assert.match(told[0].details, /🧭 Tur: Topkapı Sarayı \(İspanyolca\) \| 📅 Tarih: 18 Kasım 2026 Çarşamba 10:00 \| 👥 Misafir: 5 kişi \(2 rezervasyon: R-1, R-2\) \| 📲 Rehbere WhatsApp/);
+  assert.match(told[1].details, /Rehberin telefonu kayıtlı değil/);
+  assert.equal((await notifyGuideAssignments({ db, notify, todayISO: '2026-11-17', now })).announced, 0, 'once per operation');
   const r = await enqueueGuideReminders({ db, todayISO: '2026-11-17' });
   assert.deepEqual([r.date, r.queued, r.missingPhone], ['2026-11-18', 1, 1]);
   const rm = db.tables.whatsapp_messages[1];

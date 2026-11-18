@@ -19,7 +19,7 @@
 const { getWhatsAppConfig } = require('./_whatsapp/config');
 const { verifyHandshake, verifySignature, verifyUrlKey, processWebhook } = require('./_whatsapp/webhook');
 const { runWorker } = require('./_whatsapp/worker');
-const { enqueueGuideBrief, enqueueOperationsNotice, enqueueDailySummary, enqueueGuideAssignments, enqueueGuideReminders, istanbulISODate } = require('./_whatsapp/enqueue');
+const { enqueueGuideBrief, enqueueOperationsNotice, enqueueDailySummary, enqueueGuideAssignments, notifyGuideAssignments, enqueueGuideReminders, istanbulISODate } = require('./_whatsapp/enqueue');
 const { enqueueSurvey, enqueueReviewRequest, feedbackReminder } = require('./_whatsapp/survey');
 const { toTurkish, toCustomer } = require('./_whatsapp/translate');
 const { enqueueEventNotices } = require('./_whatsapp/events');
@@ -80,9 +80,10 @@ function createHandler(deps = {}) {
         // to every newly assigned guide.
         const events = await enqueueEventNotices({ db: db(), notify });
         const assignments = await enqueueGuideAssignments({ db: db() });
+        const assignmentNotices = await notifyGuideAssignments({ db: db(), notify });
         const worker = await runWorker({ db: db(), config: cfg, fetchImpl: deps.fetchImpl });
         const slim = (x) => x && { operations: x.operations, queued: x.queued, missingPhone: x.missingPhone };
-        return res.status(200).json({ summary, reminders: slim(reminders), feedback, assignments: slim(assignments), events: { events: events.events, queued: events.queued, skipped: events.skipped }, worker });
+        return res.status(200).json({ summary, reminders: slim(reminders), feedback, assignments: slim(assignments), assignmentNotices: { announced: assignmentNotices.announced, skipped: assignmentNotices.skipped }, events: { events: events.events, queued: events.queued, skipped: events.skipped }, worker });
       }
       if (action === 'status' || action === 'enqueue') {
         const auth = await (deps.requireStaffRole || requireStaffRole)(req, ['admin', 'operations']);
