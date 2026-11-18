@@ -420,7 +420,7 @@ test('CRM events → operations list: new booking, cancellation, change, client 
   assert.match(can.title, /^İPTAL R-2026-0060$/); assert.match(can.details, /Rehber atanmıştı \(Ayşe\): rehbere haber verin/); assert.match(can.details, /kalan: 2 rezervasyon, 5 kişi/);
   assert.doesNotMatch(buildEventNotice('message', log('a', 'note_added', {}), r, others).details, /Tutar|Aynı gün/);
   const db = fakeDb({
-    activity_logs: [log('L1', 'created', {}), log('L2', 'note_added', { alert_type: 'civitatis_missing_passenger_names' }), { ...log('L3', 'cancelled', {}), created_at: '2026-11-16T00:00:00Z' }],
+    activity_logs: [log('L1', 'created', {}), log('L2', 'note_added', { alert_type: 'civitatis_missing_passenger_names' }), { ...log('L3', 'cancelled', {}), created_at: '2026-11-10T00:00:00Z' }],
     reservations: [{ ...r }, { id: 'R2', tour_id: 'T1', check_in: '2026-11-20', pax_adult: 4, status: 'confirmed' }, { id: 'R3', tour_id: 'T1', check_in: '2026-11-20', pax_adult: 9, status: 'cancelled' }],
     whatsapp_destinations: [{ id: 'D', destination_key: 'operations', is_active: true }],
     whatsapp_destination_recipients: [{ destination_id: 'D', phone: '05321112233', display_name: 'Berk', is_active: true }],
@@ -580,4 +580,22 @@ test('weekly report: last 7 full days — bookings received, guests, guide fees,
   const wf = fs.readFileSync(path.join(__dirname, '..', '..', '.github/workflows/whatsapp-scheduled.yml'), 'utf8');
   for (const c of ["'0 9 * * *'", "'0 9 * * 0'", "'0 15 * * *'", "'7-59/15 * * * *'"]) assert.ok(wf.includes('cron: ' + c), c);
   assert.match(wf, /"0 9 \* \* 0" \]; then ACTION="weekly-report"/);
+});
+
+test('ingestion hook: team notices run right after the Civitatis ingestion; an event from 30 hours ago is still announced, once', async () => {
+  const { runTeamNotices } = require('../../api/whatsapp');
+  const at = new Date(Date.now() - 30 * 3600 * 1000).toISOString();
+  const db = fakeDb({
+    activity_logs: [{ id: 'L1', entity_type: 'reservation', entity_id: 'R1', action: 'created', metadata: { auto_ingested: true }, created_at: at }],
+    reservations: [{ id: 'R1', reservation_number: 'R-1', destination: 'Bosforo', check_in: '2030-01-05', pax_adult: 2, external_booking_id: '42748941', status: 'confirmed', updated_at: at }],
+    whatsapp_destinations: [{ id: 'D-TG', destination_key: 'telegram', display_name: 'DeseTour Ekip', provider_group_id: '-1001234567', is_active: true }],
+  }, claimAll);
+  const calls = []; const deps = { getConfig: () => CFG, getDb: () => db, getTelegramConfig: () => TG, fetchImpl: tgFetch(calls, []) };
+  const a = await runTeamNotices(deps);
+  assert.deepEqual([a.channel, a.events, a.announced], ['telegram', 1, 1]);
+  assert.match(calls[0].body.text, /Yeni rezervasyon R-1\n🎫 Civitatis kodu: A42748941/);
+  assert.equal((await runTeamNotices(deps)).announced, 0);
+  assert.equal(calls.length, 1);
+  const cron = fs.readFileSync(path.join(__dirname, '..', '..', 'api/cron-ingest-civitatis-write.js'), 'utf8');
+  assert.match(cron, /try \{ teamNotices = await require\('\.\/whatsapp'\)\.runTeamNotices\(\); \}\s*catch/, 'best effort: never fails the ingestion');
 });

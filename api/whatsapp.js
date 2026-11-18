@@ -155,5 +155,24 @@ function createHandler(deps = {}) {
   };
 }
 
+// The team notices, run from another server function (the Civitatis
+// ingestion calls this right after it writes, so a new booking /
+// cancellation / change reaches the team the moment it enters the CRM —
+// not at the next scheduler tick).
+async function runTeamNotices(deps = {}) {
+  const cfg = (deps.getConfig || getWhatsAppConfig)();
+  const db = (deps.getDb || getAdminDb)();
+  const tg = (deps.getTelegramConfig || telegramConfig)();
+  const dest = tg.configured ? await getTelegramDestination(db) : null;
+  const notify = dest ? (a) => sendTelegramNotice({ db, tg, dest, fetchImpl: deps.fetchImpl, ...a }) : (a) => enqueueOperationsNotice({ db, ...a });
+  const events = await enqueueEventNotices({ db, notify });
+  const assignments = await enqueueGuideAssignments({ db });
+  const worker = await runWorker({ db, config: cfg, fetchImpl: deps.fetchImpl });
+  const assignmentNotices = await notifyGuideAssignments({ db, notify });
+  return { channel: dest ? 'telegram' : 'whatsapp', events: events.events, announced: events.queued, skipped: events.skipped,
+    guideMessages: assignments.queued, guideNotices: assignmentNotices.announced, sent: worker.sent };
+}
+
 module.exports = createHandler();
+module.exports.runTeamNotices = runTeamNotices;
 module.exports.createHandler = createHandler;

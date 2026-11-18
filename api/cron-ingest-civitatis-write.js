@@ -263,8 +263,15 @@ async function handler(req, res) {
     results: outcome.results, cancellations: outcome.cancellations, discoveredCount: messages.length,
   });
 
+  // Tell the team (Telegram group / WhatsApp list) about what just entered
+  // the CRM. Best effort: a notification problem never fails the ingestion.
+  let teamNotices = null;
+  try { teamNotices = await require('./whatsapp').runTeamNotices(); }
+  catch (err) { console.error('[cron-ingest-civitatis-write] Team notices skipped:', err.message); teamNotices = { error: 'skipped' }; }
+
   return res.status(200).json({
     trigger: 'scheduler',
+    teamNotices,
     mode: writeModeActive ? 'write' : 'dryRun',
     writeEnabled: writeEnvValue === 'true',
     results: outcome.results,

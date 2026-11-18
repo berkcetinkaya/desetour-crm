@@ -107,7 +107,9 @@ async function sendTestNotices({ db, notify, requestId }) {
 
 // notify(args) defaults to the WhatsApp operations list; the endpoint
 // passes the Telegram group sender when a group is connected.
-async function enqueueEventNotices({ db, sinceMinutes = 120, now = () => new Date(), notify = (a) => enqueueOperationsNotice({ db, ...a }) }) {
+// sinceMinutes is wide (48 h) on purpose: the scheduler may run hours
+// apart, and every event is announced once whatever the window.
+async function enqueueEventNotices({ db, sinceMinutes = 2880, now = () => new Date(), notify = (a) => enqueueOperationsNotice({ db, ...a }) }) {
   const since = new Date(now().getTime() - sinceMinutes * 60000).toISOString();
   const { data: logs, error } = await db.from('activity_logs').select('id,entity_type,entity_id,action,metadata,created_at')
     .eq('entity_type', 'reservation').gte('created_at', since).order('created_at');

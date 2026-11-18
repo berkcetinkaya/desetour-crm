@@ -102,7 +102,7 @@ async function guideOperationRows(db, reservations, kind) {
 
 // Guide assigned (or changed) on an upcoming reservation in the last
 // sinceMinutes → the guide gets the assignment + tour details.
-async function enqueueGuideAssignments({ db, sinceMinutes = 120, todayISO = istanbulISODate(), now = () => new Date() }) {
+async function enqueueGuideAssignments({ db, sinceMinutes = 2880, todayISO = istanbulISODate(), now = () => new Date() }) {
   const since = new Date(now().getTime() - sinceMinutes * 60000).toISOString();
   const { data, error } = await db.from('reservations').select(RES_COLS + ',updated_at').gte('updated_at', since).gte('check_in', todayISO);
   if (error) throw new Error(error.message);
@@ -143,7 +143,7 @@ async function latestGuideAssignmentNotice(db) {
 // The same assignments, announced to the team (Telegram group or the
 // WhatsApp operations list) — once per operation and guide, whether or
 // not the guide has a phone on file.
-async function notifyGuideAssignments({ db, notify, sinceMinutes = 120, todayISO = istanbulISODate(), now = () => new Date() }) {
+async function notifyGuideAssignments({ db, notify, sinceMinutes = 2880, todayISO = istanbulISODate(), now = () => new Date() }) {
   const since = new Date(now().getTime() - sinceMinutes * 60000).toISOString();
   const { data, error } = await db.from('reservations').select(RES_COLS + ',updated_at').gte('updated_at', since).gte('check_in', todayISO);
   if (error) throw new Error(error.message);
