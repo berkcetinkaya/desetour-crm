@@ -80,8 +80,9 @@ function createHandler(deps = {}) {
         // to every newly assigned guide.
         const events = await enqueueEventNotices({ db: db(), notify });
         const assignments = await enqueueGuideAssignments({ db: db() });
-        const assignmentNotices = await notifyGuideAssignments({ db: db(), notify });
         const worker = await runWorker({ db: db(), config: cfg, fetchImpl: deps.fetchImpl });
+        // After the worker, so the team notice can say whether the guide's own message went out.
+        const assignmentNotices = await notifyGuideAssignments({ db: db(), notify });
         const slim = (x) => x && { operations: x.operations, queued: x.queued, missingPhone: x.missingPhone };
         return res.status(200).json({ summary, reminders: slim(reminders), feedback, assignments: slim(assignments), assignmentNotices: { announced: assignmentNotices.announced, skipped: assignmentNotices.skipped }, events: { events: events.events, queued: events.queued, skipped: events.skipped }, worker });
       }

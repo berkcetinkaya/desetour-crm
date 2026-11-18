@@ -108,7 +108,7 @@ const CRM_CHANGELOG = [
     categories: ['Yeni Özellik', 'Otomasyon'],
     highlights: [
       'Telegram bildirimi: yeni rezervasyonda tur ve dil, tarih ve saat, kişi sayısı, tutar, rehber durumu, aynı gün o turdaki diğer rezervasyonlar ve toplam kişi ile rezervasyonun CRM bağlantısı satır satır geliyor. İptal ve değişiklik bildirimleri de aynı düzende.',
-      'Rehber ataması yapıldığında Telegram grubuna "Rehber atandı" bildirimi düşüyor: rehber, tur, tarih, misafir sayısı ve rehbere WhatsApp bilgisinin gidip gitmediği.',
+      'Rehber ataması yapıldığında Telegram grubuna "Rehber atandı" bildirimi düşüyor: rehber, tur, tarih, misafir sayısı ve rehbere WhatsApp bilgisinin gidip gitmediği (Meta doğrulaması beklenirken "gönderilemedi, rehbere siz haber verin" uyarısı).',
       'Rehber profilinde "WhatsApp Geri Bildirim Puanları": rehber puanı ortalaması, yanıt sayısı ve 3 ve altı puan sayısı.',
       'Her yanıt tur, tarih, rehber ve tur puanı, müşteri yorumu ve rezervasyon bağlantısıyla listeleniyor.',
       'Bu puanlar platform değerlendirmelerinden (Civitatis vb.) ayrı tutuluyor; mevcut ortalama puan değişmiyor.',

@@ -109,6 +109,17 @@ async function enqueueGuideAssignments({ db, sinceMinutes = 120, todayISO = ista
   return guideOperationRows(db, data || [], 'guide_assigned');
 }
 
+// What really happened to the guide's own WhatsApp message (the worker
+// has already run): sent, or not — and why. Until Meta approves the
+// templates every guide message fails, so the team is told to call.
+async function guideMessageLine(db, opKey, guide) {
+  if (!guide || !normalizePhone(guide.phone)) return '⚠️ Rehberin telefonu kayıtlı değil: WhatsApp bilgisi gönderilemedi, rehbere siz haber verin';
+  const { data: msg } = await db.from('whatsapp_messages').select('status,last_error').eq('idempotency_key', `guide_assigned:${opKey}`).maybeSingle();
+  if (msg && ['sent', 'delivered', 'read'].includes(msg.status)) return '📲 Rehbere WhatsApp ile tur bilgisi gönderildi';
+  if (msg && msg.status === 'failed' && !/template|şablon|132\d{3}|verif/i.test(String(msg.last_error || ''))) return '⚠️ Rehbere WhatsApp bilgisi gönderilemedi, rehbere siz haber verin';
+  return '⏳ Rehbere WhatsApp bilgisi gönderilemedi: Meta doğrulaması bekleniyor. Rehbere siz haber verin';
+}
+
 // The same assignments, announced to the team (Telegram group or the
 // WhatsApp operations list) — once per operation and guide, whether or
 // not the guide has a phone on file.
@@ -131,7 +142,7 @@ async function notifyGuideAssignments({ db, notify, sinceMinutes = 120, todayISO
     const name = (guide && guide.full_name) || r.guide_name || 'Rehber';
     const b = buildGuideBrief({ reservations: sibs && sibs.length ? sibs : [r], guideName: name, tourName: (tour && tour.name) || r.destination });
     const lines = [`🧑‍🏫 Rehber: ${name}`, `🧭 Tur: ${b.tourName}${b.language !== '—' ? ` (${b.language})` : ''}`, `📅 Tarih: ${b.dateLabel} ${b.time}`, `👥 Misafir: ${b.guests}`,
-      guide && normalizePhone(guide.phone) ? '📲 Rehbere WhatsApp ile tur bilgisi gönderiliyor' : '⚠️ Rehberin telefonu kayıtlı değil: WhatsApp bilgisi gönderilemedi',
+      await guideMessageLine(db, k, guide),
       `🔗 https://crm.desetour.com/#/reservations/${r.id}`];
     const res = await notify({ eventType: 'crm_event_guide_assigned', title: `Rehber atandı: ${name}`, details: lines.join(' | '), key: `guide_assigned_team:${k}` });
     if (!res.ok) { out.skipped = res.error; break; }

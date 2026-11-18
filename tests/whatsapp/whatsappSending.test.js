@@ -293,9 +293,12 @@ test('guides: assignment message once per operation, reminder the evening before
   const t1 = await notifyGuideAssignments({ db, notify, todayISO: '2026-11-17', now });
   assert.deepEqual([t1.operations, t1.announced], [2, 2], 'the team hears about both operations, with or without a guide phone');
   assert.equal(told[0].title, 'Rehber atandı: Ayşe Yılmaz');
-  assert.match(told[0].details, /🧭 Tur: Topkapı Sarayı \(İspanyolca\) \| 📅 Tarih: 18 Kasım 2026 Çarşamba 10:00 \| 👥 Misafir: 5 kişi \(2 rezervasyon: R-1, R-2\) \| 📲 Rehbere WhatsApp/);
+  assert.match(told[0].details, /🧭 Tur: Topkapı Sarayı \(İspanyolca\) \| 📅 Tarih: 18 Kasım 2026 Çarşamba 10:00 \| 👥 Misafir: 5 kişi \(2 rezervasyon: R-1, R-2\) \| ⏳ Rehbere WhatsApp bilgisi gönderilemedi: Meta doğrulaması bekleniyor\. Rehbere siz haber verin/);
   assert.match(told[1].details, /Rehberin telefonu kayıtlı değil/);
   assert.equal((await notifyGuideAssignments({ db, notify, todayISO: '2026-11-17', now })).announced, 0, 'once per operation');
+  db.tables.whatsapp_messages[0].status = 'delivered'; told.length = 0;
+  await notifyGuideAssignments({ db, notify, todayISO: '2026-11-17', now });
+  assert.match(told[0].details, /📲 Rehbere WhatsApp ile tur bilgisi gönderildi/, 'once Meta approves and the message goes out, the notice says so');
   const r = await enqueueGuideReminders({ db, todayISO: '2026-11-17' });
   assert.deepEqual([r.date, r.queued, r.missingPhone], ['2026-11-18', 1, 1]);
   const rm = db.tables.whatsapp_messages[1];
