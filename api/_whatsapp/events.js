@@ -56,7 +56,7 @@ function buildEventNotice(kind, log, r, others) {
     if (pax) lines.push(`👥 Kişi: ${pax}${Number(r.pax_child) ? ` (${Number(r.pax_adult) || 0} yetişkin + ${Number(r.pax_child)} çocuk)` : ''}`);
     const money = moneyLabel(r.total_amount, r.currency);
     if (money && kind !== 'message') lines.push(`💶 Tutar: ${money}`);
-    if (kind === 'created' || kind === 'modified') lines.push(`🧑‍🏫 Rehber: ${r.guide_id ? (r.guide_name || 'atandı') : 'atanmadı'}`);
+    if (kind === 'created' || kind === 'modified') lines.push(r.guide_id ? `🧑‍🏫 Rehber: ${r.guide_name || 'atandı'}` : `🧑‍🏫 Rehber: atanmadı${r.id ? ` → Rehber Ata: ${CRM_URL}${r.id}/rehber-ata` : ''}`);
     if (kind === 'cancelled' && r.guide_id) lines.push(`⚠️ Rehber atanmıştı${r.guide_name ? ` (${r.guide_name})` : ''}: rehbere haber verin`);
     if (kind === 'modified' && m.guide_assigned) lines.push('⚠️ Rehbere haber verin');
     if (others && kind !== 'message') {

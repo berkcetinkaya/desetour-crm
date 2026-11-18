@@ -409,7 +409,7 @@ test('CRM events → operations list: new booking, cancellation, change, client 
   const r = { id: 'R1', reservation_number: 'R-2026-0060', destination: 'Topkapı', tour_id: 'T1', check_in: '2026-11-20', check_in_time: '10:00:00', pax_adult: 2, pax_child: 1, tour_language: 'İspanyolca', guide_id: null, total_amount: 9900, currency: 'TL', status: 'confirmed' };
   const others = [{ pax_adult: 3, pax_child: 0 }, { pax_adult: 2, pax_child: 0 }];
   assert.deepEqual(buildEventNotice('created', log('a', 'created', {}), r, others), { title: 'Yeni rezervasyon R-2026-0060', details: [
-    '🧭 Tur: Topkapı (İspanyolca)', '📅 Tarih: 20 Kasım 2026 Cuma 10:00', '👥 Kişi: 3 (2 yetişkin + 1 çocuk)', '💶 Tutar: 9.900 ₺', '🧑‍🏫 Rehber: atanmadı',
+    '🧭 Tur: Topkapı (İspanyolca)', '📅 Tarih: 20 Kasım 2026 Cuma 10:00', '👥 Kişi: 3 (2 yetişkin + 1 çocuk)', '💶 Tutar: 9.900 ₺', '🧑‍🏫 Rehber: atanmadı → Rehber Ata: https://crm.desetour.com/#/reservations/R1/rehber-ata',
     '📊 Aynı gün bu turda: 2 rezervasyon daha, 5 kişi → toplam 8 kişi', '🔗 https://crm.desetour.com/#/reservations/R1'].join(' | ') });
   assert.match(buildEventNotice('created', log('a', 'created', {}), r, []).details, /başka katılım yok \(ilk rezervasyon\)/);
   assert.match(buildEventNotice('created', log('a', 'created', {}), { ...r, external_booking_id: '42748941' }, []).details, /^🎫 Civitatis kodu: A42748941 \| 🧭 Tur/);

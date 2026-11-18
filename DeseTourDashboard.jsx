@@ -98,6 +98,10 @@ function useTheme() {
   return { theme, toggleTheme };
 }
 
+// Deep link from a team notice: #/reservations/<id>/rehber-ata opens the
+// reservation with the guide-assignment window already open.
+function _hashWantsGuideAssign() { try { return /\/rehber-ata\/?$/.test(window.location.hash); } catch (_) { return false; } }
+
 function getHashPath() {
   try {
     const h = window.location.hash.replace(/^#\/?/, '') || 'dashboard';
@@ -10829,7 +10833,7 @@ function ReservationDetailPage({ resId, onBack }) {
     setReopeningPrepId(null);
   }
   const { mutate:mutGuideAssign } = useRepoMutation("reservation");
-  const [showAssignGuide, setShowAssignGuide] = useState(false);
+  const [showAssignGuide, setShowAssignGuide] = useState(_hashWantsGuideAssign);
   const [removingGuide, setRemovingGuide] = useState(false);
   const [showEditLanguage, setShowEditLanguage] = useState(false);
   const [showTourInfo, setShowTourInfo] = useState(false);
@@ -33282,7 +33286,7 @@ function MobileReservationDetailPage({ resId, onBack }) {
   // NewReminderModal, GuideWhatsAppModal); only the entry points differ.
   const { data:mobGuests } = useRepo("reservation", "getGuests", resId);
   const { mutate:mutResMobile, mutating:mobResSaving } = useRepoMutation("reservation");
-  const [mobSheet, setMobSheet] = useState(null); // 'assign' | 'pickup' | 'wa' | 'payment' | 'reminder' | 'status' | 'more'
+  const [mobSheet, setMobSheet] = useState(() => _hashWantsGuideAssign() ? 'assign' : null); // 'assign' | 'pickup' | 'wa' | 'payment' | 'reminder' | 'status' | 'more'
   const mobCanAct = !!mobAuth.role && mobAuth.role !== "Rehber";
   const mobCanWa = ["Yönetici", "Operasyon"].includes(mobAuth.role);
   async function mobSetStatus(next) {
