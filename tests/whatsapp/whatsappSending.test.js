@@ -396,13 +396,20 @@ test('CRM events → operations list: new booking, cancellation, change, client 
   assert.equal(classifyEvent(log('a', 'note_added', { source: 'civitatis_message' })), 'message');
   assert.equal(classifyEvent(log('a', 'note_added', { alert_type: 'civitatis_missing_passenger_names' })), null);
   assert.equal(classifyEvent({ ...log('a', 'created', {}), metadata: {} }), null, 'manual CRM activity is not announced');
-  const r = { reservation_number: 'R-2026-0060', destination: 'Topkapı', check_in: '2026-11-20', check_in_time: '10:00:00', pax_adult: 2, pax_child: 1, tour_language: 'İspanyolca', guide_id: null };
-  assert.deepEqual(buildEventNotice('created', log('a', 'created', {}), r), { title: 'Yeni rezervasyon R-2026-0060', details: 'Topkapı · 20 Kasım 2026 Cuma 10:00 · 3 kişi · İspanyolca · Rehber atanmadı' });
-  assert.match(buildEventNotice('modified', log('a', 'updated', { changes: [{ label: 'Tarih', from: '19.11.2026', to: '20.11.2026' }], guide_assigned: true }), r).details, /^Tarih 19\.11\.2026 → 20\.11\.2026 \| Topkapı.*Rehbere haber verin$/);
-  assert.match(buildEventNotice('cancelled', log('a', 'cancelled', {}), { ...r, guide_id: 'G' }).title, /^İPTAL R-2026-0060$/);
+  const r = { id: 'R1', reservation_number: 'R-2026-0060', destination: 'Topkapı', tour_id: 'T1', check_in: '2026-11-20', check_in_time: '10:00:00', pax_adult: 2, pax_child: 1, tour_language: 'İspanyolca', guide_id: null, total_amount: 9900, currency: 'TL', status: 'confirmed' };
+  const others = [{ pax_adult: 3, pax_child: 0 }, { pax_adult: 2, pax_child: 0 }];
+  assert.deepEqual(buildEventNotice('created', log('a', 'created', {}), r, others), { title: 'Yeni rezervasyon R-2026-0060', details: [
+    '🧭 Tur: Topkapı (İspanyolca)', '📅 Tarih: 20 Kasım 2026 Cuma 10:00', '👥 Kişi: 3 (2 yetişkin + 1 çocuk)', '💶 Tutar: 9.900 ₺', '🧑‍🏫 Rehber: atanmadı',
+    '📊 Aynı gün bu turda: 2 rezervasyon daha, 5 kişi → toplam 8 kişi', '🔗 https://crm.desetour.com/#/reservations/R1'].join(' | ') });
+  assert.match(buildEventNotice('created', log('a', 'created', {}), r, []).details, /başka katılım yok \(ilk rezervasyon\)/);
+  const mod = buildEventNotice('modified', log('a', 'updated', { changes: [{ label: 'Tarih', from: '19.11.2026', to: '20.11.2026' }], guide_assigned: true }), r, []).details;
+  assert.match(mod, /^✏️ Tarih: 19\.11\.2026 → 20\.11\.2026 \| 🧭 Tur: Topkapı/); assert.match(mod, /Rehbere haber verin/);
+  const can = buildEventNotice('cancelled', log('a', 'cancelled', {}), { ...r, guide_id: 'G', guide_name: 'Ayşe' }, others);
+  assert.match(can.title, /^İPTAL R-2026-0060$/); assert.match(can.details, /Rehber atanmıştı \(Ayşe\): rehbere haber verin/); assert.match(can.details, /kalan: 2 rezervasyon, 5 kişi/);
+  assert.doesNotMatch(buildEventNotice('message', log('a', 'note_added', {}), r, others).details, /Tutar|Aynı gün/);
   const db = fakeDb({
     activity_logs: [log('L1', 'created', {}), log('L2', 'note_added', { alert_type: 'civitatis_missing_passenger_names' }), { ...log('L3', 'cancelled', {}), created_at: '2026-11-16T00:00:00Z' }],
-    reservations: [{ id: 'R1', ...r }],
+    reservations: [{ ...r }, { id: 'R2', tour_id: 'T1', check_in: '2026-11-20', pax_adult: 4, status: 'confirmed' }, { id: 'R3', tour_id: 'T1', check_in: '2026-11-20', pax_adult: 9, status: 'cancelled' }],
     whatsapp_destinations: [{ id: 'D', destination_key: 'operations', is_active: true }],
     whatsapp_destination_recipients: [{ destination_id: 'D', phone: '05321112233', display_name: 'Berk', is_active: true }],
   });
@@ -410,6 +417,7 @@ test('CRM events → operations list: new booking, cancellation, change, client 
   const a = await enqueueEventNotices({ db, now });
   assert.deepEqual([a.events, a.queued], [1, 1], 'only the recent, announceable event');
   assert.equal(db.tables.whatsapp_messages[0].event_type, 'crm_event_created');
+  assert.match(db.tables.whatsapp_messages[0].payload.details, /1 rezervasyon daha, 4 kişi → toplam 7 kişi/, 'cancelled bookings of the day are not counted');
   assert.equal((await enqueueEventNotices({ db, now })).queued, 0, 'second run announces nothing again');
 });
 

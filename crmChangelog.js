@@ -103,10 +103,11 @@ const CRM_CHANGELOG = [
   {
     version: '13.26',
     date: '2026-11-17',
-    title: 'Müşteri Puanları Rehber Profilinde',
-    summary: 'Müşterilerin WhatsApp geri bildiriminde rehbere verdiği 1–5 puanlar artık rehberin CRM profiline işleniyor.',
-    categories: ['Yeni Özellik'],
+    title: 'Müşteri Puanları Rehber Profilinde, Ayrıntılı Telegram Bildirimleri',
+    summary: 'Müşterilerin WhatsApp geri bildiriminde rehbere verdiği 1–5 puanlar rehberin CRM profiline işleniyor; Telegram grubuna düşen rezervasyon bildirimleri artık tur, tarih, kişi, tutar ve o günkü diğer katılımı gösteriyor.',
+    categories: ['Yeni Özellik', 'Otomasyon'],
     highlights: [
+      'Telegram bildirimi: yeni rezervasyonda tur ve dil, tarih ve saat, kişi sayısı, tutar, rehber durumu, aynı gün o turdaki diğer rezervasyonlar ve toplam kişi ile rezervasyonun CRM bağlantısı satır satır geliyor. İptal ve değişiklik bildirimleri de aynı düzende.',
       'Rehber profilinde "WhatsApp Geri Bildirim Puanları": rehber puanı ortalaması, yanıt sayısı ve 3 ve altı puan sayısı.',
       'Her yanıt tur, tarih, rehber ve tur puanı, müşteri yorumu ve rezervasyon bağlantısıyla listeleniyor.',
       'Bu puanlar platform değerlendirmelerinden (Civitatis vb.) ayrı tutuluyor; mevcut ortalama puan değişmiyor.',

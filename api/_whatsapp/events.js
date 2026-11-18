@@ -12,6 +12,8 @@
  */
 const { enqueueOperationsNotice, dateLabelTr } = require('./enqueue');
 
+const RES_COLS = 'id,reservation_number,destination,tour_id,check_in,check_in_time,pax_adult,pax_child,tour_language,guide_id,guide_name,total_amount,currency,status';
+
 function classifyEvent(log) {
   const m = log.metadata || {};
   if (log.entity_type !== 'reservation' || m.auto_ingested !== true) return null;
@@ -22,19 +24,48 @@ function classifyEvent(log) {
   return null;
 }
 
-function buildEventNotice(kind, log, r) {
+const CRM_URL = 'https://crm.desetour.com/#/reservations/';
+const paxOf = (x) => (Number(x.pax_adult) || 0) + (Number(x.pax_child) || 0);
+function moneyLabel(amount, currency) {
+  const n = Number(amount);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  const c = String(currency || '').toUpperCase();
+  const sym = c === 'TL' || c === 'TRY' ? '₺' : c === 'EUR' ? '€' : c === 'USD' ? '$' : c;
+  return `${n.toLocaleString('tr-TR', { minimumFractionDigits: 0, maximumFractionDigits: 2 })} ${sym}`.trim();
+}
+
+// One line per fact (lines are joined with " | "; the Telegram sender
+// puts each on its own row). `others` = the other non-cancelled
+// reservations of the same day + tour.
+function buildEventNotice(kind, log, r, others) {
   const m = log.metadata || {};
   const no = (r && r.reservation_number) || m.reservation_number || '';
-  const pax = r ? (Number(r.pax_adult) || 0) + (Number(r.pax_child) || 0) : null;
+  const pax = r ? paxOf(r) : null;
   const when = r && r.check_in ? `${dateLabelTr(r.check_in)}${r.check_in_time ? ' ' + String(r.check_in_time).slice(0, 5) : ''}` : null;
-  const base = [r && r.destination, when, pax ? `${pax} kişi` : null, r && r.tour_language].filter(Boolean).join(' · ');
-  if (kind === 'created') return { title: `Yeni rezervasyon ${no}`.trim(), details: `${base || '—'}${r && !r.guide_id ? ' · Rehber atanmadı' : ''}` };
-  if (kind === 'cancelled') return { title: `İPTAL ${no}`.trim(), details: `${base || m.tour_name || '—'}${r && r.guide_id ? ' · Rehber atanmıştı: rehbere haber verin' : ''}` };
+  const lines = [];
   if (kind === 'modified') {
-    const ch = Array.isArray(m.changes) ? m.changes.map(c => `${c.label} ${c.from} → ${c.to}`).join(' · ') : '';
-    return { title: `Değişiklik ${no}`.trim(), details: `${ch || '—'}${base ? ' | ' + base : ''}${m.guide_assigned ? ' · Rehbere haber verin' : ''}` };
+    const ch = Array.isArray(m.changes) ? m.changes.map(c => `${c.label}: ${c.from} → ${c.to}`).join(' · ') : '';
+    lines.push(`✏️ ${ch || 'Değişiklik ayrıntısı yok'}`);
   }
-  return { title: `Yeni Civitatis mesajı ${no}`.trim(), details: `${base || '—'} · CRM'de rezervasyonu açıp okuyun` };
+  if (r) {
+    lines.push(`🧭 Tur: ${r.destination || m.tour_name || '—'}${r.tour_language ? ` (${r.tour_language})` : ''}`);
+    if (when) lines.push(`📅 Tarih: ${when}`);
+    if (pax) lines.push(`👥 Kişi: ${pax}${Number(r.pax_child) ? ` (${Number(r.pax_adult) || 0} yetişkin + ${Number(r.pax_child)} çocuk)` : ''}`);
+    const money = moneyLabel(r.total_amount, r.currency);
+    if (money && kind !== 'message') lines.push(`💶 Tutar: ${money}`);
+    if (kind === 'created' || kind === 'modified') lines.push(`🧑‍🏫 Rehber: ${r.guide_id ? (r.guide_name || 'atandı') : 'atanmadı'}`);
+    if (kind === 'cancelled' && r.guide_id) lines.push(`⚠️ Rehber atanmıştı${r.guide_name ? ` (${r.guide_name})` : ''}: rehbere haber verin`);
+    if (kind === 'modified' && m.guide_assigned) lines.push('⚠️ Rehbere haber verin');
+    if (others && kind !== 'message') {
+      const op = others.reduce((n, x) => n + paxOf(x), 0);
+      if (kind === 'cancelled') lines.push(others.length ? `📊 Aynı gün bu turda kalan: ${others.length} rezervasyon, ${op} kişi` : '📊 Aynı gün bu turda başka katılım kalmadı');
+      else lines.push(others.length ? `📊 Aynı gün bu turda: ${others.length} rezervasyon daha, ${op} kişi → toplam ${op + (pax || 0)} kişi` : '📊 Aynı gün bu turda başka katılım yok (ilk rezervasyon)');
+    }
+    if (kind === 'message') lines.push("💬 Civitatis'ten yeni mesaj var: CRM'de rezervasyonu açıp okuyun");
+    if (r.id) lines.push(`🔗 ${CRM_URL}${r.id}`);
+  } else lines.push(m.tour_name || '—');
+  const title = kind === 'created' ? `Yeni rezervasyon ${no}` : kind === 'cancelled' ? `İPTAL ${no}` : kind === 'modified' ? `Değişiklik ${no}` : `Yeni Civitatis mesajı ${no}`;
+  return { title: title.trim(), details: lines.join(' | ') };
 }
 
 // notify(args) defaults to the WhatsApp operations list; the endpoint
@@ -49,8 +80,13 @@ async function enqueueEventNotices({ db, sinceMinutes = 120, now = () => new Dat
     const kind = classifyEvent(log);
     if (!kind) continue;
     out.events += 1;
-    const { data: r } = await db.from('reservations').select('id,reservation_number,destination,check_in,check_in_time,pax_adult,pax_child,tour_language,guide_id').eq('id', log.entity_id).maybeSingle();
-    const n = buildEventNotice(kind, log, r);
+    const { data: r } = await db.from('reservations').select(RES_COLS).eq('id', log.entity_id).maybeSingle();
+    let others = null;
+    if (r && r.tour_id && r.check_in) {
+      const { data: same } = await db.from('reservations').select(RES_COLS).eq('check_in', r.check_in).eq('tour_id', r.tour_id);
+      others = (same || []).filter(x => x.id !== r.id && x.status !== 'cancelled');
+    }
+    const n = buildEventNotice(kind, log, r, others);
     const res = await notify({ eventType: 'crm_event_' + kind, title: n.title, details: n.details, key: `event:${log.id}` });
     if (!res.ok) { out.skipped = res.error; break; } // no recipients / group unreachable → retried on the next run
     if (!res.duplicate) out.queued += Math.max(res.ids.length, res.channel === 'telegram' ? 1 : 0);
