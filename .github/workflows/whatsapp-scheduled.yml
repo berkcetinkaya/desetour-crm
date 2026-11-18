@@ -1,13 +1,17 @@
 # WhatsApp Scheduled Jobs
 # ─────────────────────────────────────────────────────────────────────────
 # Calls the protected api/whatsapp.js endpoint (no logic here):
-#   • every day 15:00 UTC (18:00 Istanbul) → ?action=daily-summary:
-#     tomorrow's operations to the team (Telegram group, or the WhatsApp
-#     operations list), a reminder to every guide with a tour tomorrow,
-#     and the team's feedback to-do list.
-#   • every 15 minutes → ?action=worker: new CRM events to the team, the
-#     assignment + tour details to newly assigned guides, and retries of
-#     queued / failed-retryable messages.
+#   • every day 09:00 UTC (12:00 Istanbul) → ?action=daily-summary:
+#     tomorrow's operations to the team (tour, guests, guide assigned or not).
+#   • every Sunday 09:00 UTC (12:00 Istanbul) → ?action=weekly-report:
+#     last 7 days — bookings received, guests, guide fees, top tours, languages.
+#   • every day 15:00 UTC (18:00 Istanbul) → ?action=evening-reminders:
+#     a reminder to every guide with a tour tomorrow, and the team's
+#     feedback to-do list.
+#   • every 15 minutes (minutes 7, 22, 37, 52 — never on the hour, so it
+#     does not collide with the jobs above) → ?action=worker: new CRM events
+#     and guide assignments to the team, assignment details to the guide,
+#     retries of queued / failed-retryable messages.
 #   Customer feedback and review requests are never sent automatically —
 #   the team sends them from the reservation page.
 # Needs repository variable WHATSAPP_ENDPOINT_URL
@@ -19,12 +23,14 @@ name: WhatsApp Scheduled Jobs
 
 on:
   schedule:
+    - cron: '0 9 * * *'
+    - cron: '0 9 * * 0'
     - cron: '0 15 * * *'
-    - cron: '*/15 * * * *'
+    - cron: '7-59/15 * * * *'
   workflow_dispatch:
     inputs:
       action:
-        description: 'worker or daily-summary'
+        description: 'worker, daily-summary, weekly-report or evening-reminders'
         required: true
         default: 'worker'
 
@@ -54,8 +60,10 @@ jobs:
           fi
           ACTION="worker"
           if [ "${EVENT_NAME}" = "workflow_dispatch" ]; then ACTION="${INPUT_ACTION}"; fi
-          if [ "${SCHEDULE}" = "0 15 * * *" ]; then ACTION="daily-summary"; fi
-          case "${ACTION}" in worker|daily-summary) ;; *) echo "::error::Unknown action ${ACTION}"; exit 1;; esac
+          if [ "${SCHEDULE}" = "0 9 * * *" ]; then ACTION="daily-summary"; fi
+          if [ "${SCHEDULE}" = "0 9 * * 0" ]; then ACTION="weekly-report"; fi
+          if [ "${SCHEDULE}" = "0 15 * * *" ]; then ACTION="evening-reminders"; fi
+          case "${ACTION}" in worker|daily-summary|weekly-report|evening-reminders) ;; *) echo "::error::Unknown action ${ACTION}"; exit 1;; esac
           http_status=$(curl -sS -o response.json -w '%{http_code}' --max-time 50 -X POST \
             -H "Authorization: Bearer ${SCHEDULER_SECRET}" "${ENDPOINT_URL}?action=${ACTION}")
           echo "Action: ${ACTION} · HTTP ${http_status}"

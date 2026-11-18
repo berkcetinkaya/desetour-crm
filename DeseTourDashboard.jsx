@@ -18942,7 +18942,7 @@ function WhatsAppSettings() {
             }} style={btn}>Test bildirimleri gönder</button>
             <button type="button" disabled={mutating} onClick={disconnectTelegram} style={{ ...btn, background: "transparent", color: C.red, border: `1px solid ${C.border}`, fontWeight: 500 }}>Bağlantıyı kes</button>
           </div>
-          <div style={sub}>Test: en son gelen rezervasyon, en son rehber ataması, en son değişiklik ve en son iptal "TEST" işaretiyle gruba yeniden gönderilir.</div>
+          <div style={sub}>Test: en son gelen rezervasyon, rehber ataması, değişiklik ve iptal ile yarının özeti ve haftalık rapor "TEST" işaretiyle gruba gönderilir. Günlük özet her gün 12:00'de, haftalık rapor pazar 12:00'de otomatik gelir.</div>
         </>) : tgInfo && tgInfo.botConfigured ? (<>
           <div style={sub}>Bot hazır. Botu Telegram grubunuza ekleyin, grupta bir mesaj yazın, sonra "Grupları bul"a basıp grubu seçin.</div>
           <div><button type="button" disabled={mutating} onClick={findTelegramGroups} style={btn}>Grupları bul</button></div>
@@ -25824,7 +25824,7 @@ function _whatsappTemplatePreview(key, params) {
 }
 // TESTABLE:_whatsappTemplatePreview:end
 const _WA_STATUS_LABEL = { queued: 'Sırada', processing: 'Gönderiliyor', sent: 'Gönderildi', delivered: 'İletildi', read: 'Okundu', failed: 'Gönderilemedi' };
-const _WA_EVENT_LABEL = { guide_tour_brief: 'Rehber tur bilgisi', operations_notice: 'Ekip mesajı', daily_operations_summary: 'Yarının özeti', post_tour_survey: 'Geri bildirim isteği', survey_reply: 'Geri bildirim sorusu', guide_assigned: 'Rehber atama bilgisi', guide_reminder: 'Rehber hatırlatması', feedback_reminder: 'Geri bildirim hatırlatması', crm_event_feedback: 'Geri bildirim geldi', crm_event_guide_assigned: 'Rehber atama bildirimi', test_notice: 'Test bildirimi',
+const _WA_EVENT_LABEL = { guide_tour_brief: 'Rehber tur bilgisi', operations_notice: 'Ekip mesajı', daily_operations_summary: 'Yarının özeti', post_tour_survey: 'Geri bildirim isteği', survey_reply: 'Geri bildirim sorusu', guide_assigned: 'Rehber atama bilgisi', guide_reminder: 'Rehber hatırlatması', feedback_reminder: 'Geri bildirim hatırlatması', crm_event_feedback: 'Geri bildirim geldi', crm_event_guide_assigned: 'Rehber atama bildirimi', test_notice: 'Test bildirimi', weekly_report: 'Haftalık rapor',
   review_request: 'Yorum ve puan isteği', crm_reply: 'CRM yanıtı', app_echo: 'Telefondan gönderildi', crm_event_created: 'Yeni rezervasyon bildirimi', crm_event_cancelled: 'İptal bildirimi', crm_event_modified: 'Değişiklik bildirimi', crm_event_message: 'Yeni mesaj bildirimi' };
 const _WA_RATING = { great: { label: 'Harika', icon: '😍' }, good: { label: 'İyi', icon: '🙂' }, poor: { label: 'Geliştirilebilir', icon: '😕' } };
 async function _whatsappApi(action, body) {

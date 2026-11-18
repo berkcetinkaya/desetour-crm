@@ -165,3 +165,9 @@ Olay bildirimleri 15 dakikada bir çalışan görevle gider; bunun için 6. adı
 - **Hatırlatmalar:** her akşam 18:00'te ekip grubuna "geri bildirim istenebilecekler" ve "yorum istenebilecekler" listesi düşer.
 - **Ekip bildirimleri:** yeni rezervasyon, iptal, değişiklik ve Civitatis mesajları Telegram grubuna gider (9. adım).
 - Gerekli SQL: `supabase_migration_whatsapp_phase4_feedback_scores.sql`.
+
+## 11. Zamanlama (İstanbul saati)
+- **Her gün 12:00:** yarının operasyon özeti ekip grubuna (tur, saat, dil, kişi ve rezervasyon sayısı, rehber atandı mı).
+- **Pazar 12:00:** haftalık rapor (son 7 gün: gelen rezervasyon, gerçekleşen tur ve katılan misafir, rehber ücretleri, en çok katılım olan turlar, dile göre rezervasyon).
+- **Her gün 18:00:** ertesi gün turu olan rehberlere WhatsApp hatırlatması ve ekip için geri bildirim hatırlatma listesi.
+- **15 dakikada bir:** yeni rezervasyon, iptal, değişiklik, Civitatis mesajı ve rehber ataması bildirimleri.

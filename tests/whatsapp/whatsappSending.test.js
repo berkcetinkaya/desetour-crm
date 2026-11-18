@@ -549,3 +549,35 @@ test('test button: latest new booking, guide assignment, change and cancellation
   assert.deepEqual(told.map(t => t.key), ['test:q:created', 'test:q:guide', 'test:q:cancelled']);
   assert.match(told[0].details, /💶 Tutar: 9\.900 ₺/);
 });
+
+const { buildWeeklyReport } = require('../../api/_whatsapp/weekly');
+test('weekly report: last 7 full days — bookings received, guests, guide fees, top tours, languages; schedule at Istanbul noon', async () => {
+  const R = (o) => ({ pax_adult: 2, pax_child: 0, status: 'confirmed', tour_id: 'T1', destination: 'Topkapı', tour_language: 'İspanyolca', guide_id: 'G1', created_at: '2026-10-01T10:00:00Z', ...o });
+  const db = fakeDb({
+    reservations: [
+      R({ id: '1', check_in: '2026-11-16' }), R({ id: '2', check_in: '2026-11-16', pax_adult: 3, pax_child: 1 }),
+      R({ id: '3', check_in: '2026-11-18', tour_id: 'T2', destination: 'Bosforo', tour_language: 'İtalyanca', guide_id: null, pax_adult: 6 }),
+      R({ id: '4', check_in: '2026-11-19', status: 'cancelled', pax_adult: 9 }),
+      R({ id: '5', check_in: '2026-11-22', pax_adult: 8 }),                       // today — not in the week
+      R({ id: '6', check_in: '2026-11-14', pax_adult: 8 }),                       // before the week
+      R({ id: '7', check_in: '2026-12-05', created_at: '2026-11-20T08:00:00Z' }), // received this week, tour later
+      R({ id: '8', check_in: '2026-12-06', created_at: '2026-11-21T08:00:00Z', status: 'cancelled' }),
+      R({ id: '9', check_in: '2026-12-07', created_at: '2026-11-22T08:00:00Z' }), // received today — next week's report
+    ],
+    guide_operation_cost_overrides: [
+      { operation_key: 'fee|2026-11-16|T1|g:G1', tour_date: '2026-11-16', amount: 150, currency: 'EUR' },
+      { operation_key: 'fee|2026-11-18|T2|g:G2', tour_date: '2026-11-18', amount: 150, currency: 'EUR' },
+      { operation_key: 'other|x', tour_date: '2026-11-17', amount: 999, currency: 'EUR' },
+      { operation_key: 'fee|2026-11-23|T1|g:G1', tour_date: '2026-11-23', amount: 150, currency: 'EUR' },
+    ],
+  });
+  const r = await buildWeeklyReport({ db, todayISO: '2026-11-22' });
+  assert.equal(r.title, 'Haftalık rapor (15 Kasım – 21 Kasım)');
+  assert.deepEqual(r.details.split(' | '), [
+    '🆕 Yeni gelen rezervasyon: 2 (4 kişi, 1 tanesi iptal)', '🧭 Gerçekleşen tur: 2 operasyon, 3 rezervasyon', '👥 Katılan misafir: 12 kişi',
+    '💶 Rehber ücretleri: 300 € (2 operasyon)', '⚠️ Rehber kaydı olmayan rezervasyon: 1', '🏆 En çok katılım:',
+    '1) Topkapı — 6 kişi, 2 rezervasyon', '2) Bosforo — 6 kişi, 1 rezervasyon', '🗣 Dile göre rezervasyon: İspanyolca 2 · İtalyanca 1']);
+  const wf = fs.readFileSync(path.join(__dirname, '..', '..', '.github/workflows/whatsapp-scheduled.yml'), 'utf8');
+  for (const c of ["'0 9 * * *'", "'0 9 * * 0'", "'0 15 * * *'", "'7-59/15 * * * *'"]) assert.ok(wf.includes('cron: ' + c), c);
+  assert.match(wf, /"0 9 \* \* 0" \]; then ACTION="weekly-report"/);
+});

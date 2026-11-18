@@ -101,6 +101,20 @@ const CRM_CHANGELOG_CATEGORIES = [
 // Newest first. See the release convention above before editing.
 const CRM_CHANGELOG = [
   {
+    version: '13.27',
+    date: '2026-11-18',
+    title: 'Günlük ve Haftalık Telegram Raporları',
+    summary: 'Ekip grubuna her gün 12:00\'de yarının operasyon özeti, her pazar 12:00\'de haftalık rapor düşüyor; giriş ekranı her cihazda okunaklı ve uygulama varsayılan olarak parlak modda açılıyor.',
+    categories: ['Otomasyon', 'İyileştirme'],
+    highlights: [
+      'Her gün 12:00 (İstanbul): yarın bizi bekleyen operasyonlar — tur, saat, dil, kişi ve rezervasyon sayısı, rehber atandı mı; rehbersiz turlar uyarıyla.',
+      'Her pazar 12:00: haftalık rapor — son 7 günde gelen rezervasyon, gerçekleşen tur ve katılan misafir, rehber ücretleri, en çok katılım olan turlar ve dile göre rezervasyon sayısı.',
+      'Bildirimlerde Civitatis rezervasyon kodu (A ile başlayan) ve rehberi atanmamış rezervasyonlarda doğrudan rehber atama penceresini açan "Rehber Ata" bağlantısı.',
+      'Giriş ve doğrulama ekranı karanlık görünme sorunu giderildi; uygulama artık cihaz ayarından bağımsız olarak parlak modda açılıyor.',
+    ],
+    author: 'Berk',
+  },
+  {
     version: '13.26',
     date: '2026-11-17',
     title: 'Müşteri Puanları Rehber Profilinde, Ayrıntılı Telegram Bildirimleri',
@@ -234,22 +248,6 @@ const CRM_CHANGELOG = [
       'Acente yanıtlarının e-postadan otomatik alınması, Gmail\'de silinmiş bir mesaj yüzünden durmayacak şekilde düzeltildi.',
     ],
     author: 'Berk',
-  },
-  {
-    version: '13.16',
-    date: '2026-11-11',
-    title: 'Finans Merkezi, Kârlılık ve Ek Satışlar',
-    summary: 'Bugünkü güncellemelerle CRM\'e tur bazında bütçe, kârlılık ve nakit planlamayı tek yerde toplayan Finans bölümü geldi. Ana sayfa artık Civitatis komisyonu düşülmüş net geliri, tahmini net kârı ve ek satışları gösteriyor; rehber, bilet ve ek satış tutarları ekrandan yönetilebiliyor.',
-    categories: ['Yeni Özellik', 'Operasyon', 'Arayüz'],
-    highlights: [
-      'Ana sayfa: Civitatis komisyonu düşülmüş beklenen net gelir, tahmini net kâr ve ek satış yan yana; dövizli rezervasyonlar güncel ECB kuruyla TL\'ye çevriliyor.',
-      'Finans Genel Bakış: önümüzdeki 7 gün, 15 gün ve 1 ay için rehber ve giriş biletleri için hazırlanacak para, bu haftanın operasyonlarıyla birlikte.',
-      'Rehber maliyeti her tarih, tur ve dil için tek operasyon (standart €150); rezervasyondan operasyon bazında değiştirilebiliyor, ödemeler bu tutarla eşleştiriliyor.',
-      'Tur Karlılığı: her tur tek satır, altında diller ve operasyonlar; maliyetin TL karşılığı ve kâra geçmek için gereken kişi sayısı.',
-      'Ek Satışlar: turdaki müşterilere yapılan satışlar Civitatis kodu, rezervasyon numarası veya müşteri adıyla aranan rezervasyona kaydediliyor ve gelire ekleniyor.',
-    ],
-    author: 'Berk',
-    technicalNote: 'Bütçe & Tahmin turlara göre rehber maliyetini ve dil bazında maaşlı rehber karşılaştırmasını gösteriyor. Maliyet kataloğundaki tutarlar ekrandan bugünden itibaren ya da tüm tarihler için güncellenebiliyor. Topkapı biletleri kişi başı €40, Ayasofya €25 ve Boğaz turu ₺340 olarak planlanıyor. Takvimde rezervasyona tıklayınca hızlı görünüm açılıyor; mobil rezervasyon detayında da Finans kartı var. İptal edilen operasyonlar maliyet taşımıyor; farklı para birimindeki veya iptal edilmiş operasyona ait ödemeler inceleme için ayrıca gösteriliyor.',
   },
 ];
 

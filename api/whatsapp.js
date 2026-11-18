@@ -22,6 +22,7 @@ const { runWorker } = require('./_whatsapp/worker');
 const { enqueueGuideBrief, enqueueOperationsNotice, enqueueDailySummary, enqueueGuideAssignments, notifyGuideAssignments, enqueueGuideReminders, istanbulISODate } = require('./_whatsapp/enqueue');
 const { enqueueSurvey, enqueueReviewRequest, feedbackReminder } = require('./_whatsapp/survey');
 const { toTurkish, toCustomer } = require('./_whatsapp/translate');
+const { sendWeeklyReport } = require('./_whatsapp/weekly');
 const { enqueueEventNotices, sendTestNotices } = require('./_whatsapp/events');
 const { sendReply } = require('./_whatsapp/inbox');
 const { telegramConfig, listGroups, getTelegramDestination, connectGroup, disconnectGroup, sendTelegramNotice } = require('./_whatsapp/telegram');
@@ -62,15 +63,17 @@ function createHandler(deps = {}) {
         const out = await processWebhook(payload, db(), { config: cfg, fetchImpl: deps.fetchImpl, notify: await teamNotifier() });
         return res.status(200).json(out);
       }
-      if (action === 'worker' || action === 'daily-summary') {
+      if (['worker', 'daily-summary', 'evening-reminders', 'weekly-report'].includes(action)) {
         if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed.' });
         if (!isScheduler(req, cfg)) return res.status(401).json({ error: 'Unauthorized.' });
         const notify = await teamNotifier();
-        let summary = null, reminders = null, feedback = null;
-        if (action === 'daily-summary') {
-          // Evening run: tomorrow's summary to the team, a reminder to every
-          // guide with a tour tomorrow, and the feedback to-do list.
-          summary = await enqueueDailySummary({ db: db(), notify });
+        let summary = null, reminders = null, feedback = null, weekly = null;
+        // Noon: tomorrow's operations (tour, guests, guide or "not assigned") to the team.
+        if (action === 'daily-summary') summary = await enqueueDailySummary({ db: db(), notify });
+        // Sunday noon: the weekly report.
+        if (action === 'weekly-report') weekly = await sendWeeklyReport({ db: db(), notify });
+        // Evening: a reminder to every guide with a tour tomorrow, and the feedback to-do list.
+        if (action === 'evening-reminders') {
           reminders = await enqueueGuideReminders({ db: db() });
           const fr = await feedbackReminder({ db: db() });
           if (fr) { const sent = await notify({ eventType: 'feedback_reminder', title: fr.title, details: fr.details, key: `feedback_reminder:${istanbulISODate()}` }); feedback = { ask: fr.ask, noPhone: fr.noPhone, review: fr.review, ok: sent.ok }; }
@@ -84,7 +87,7 @@ function createHandler(deps = {}) {
         // After the worker, so the team notice can say whether the guide's own message went out.
         const assignmentNotices = await notifyGuideAssignments({ db: db(), notify });
         const slim = (x) => x && { operations: x.operations, queued: x.queued, missingPhone: x.missingPhone };
-        return res.status(200).json({ summary, reminders: slim(reminders), feedback, assignments: slim(assignments), assignmentNotices: { announced: assignmentNotices.announced, skipped: assignmentNotices.skipped }, events: { events: events.events, queued: events.queued, skipped: events.skipped }, worker });
+        return res.status(200).json({ summary, weekly, reminders: slim(reminders), feedback, assignments: slim(assignments), assignmentNotices: { announced: assignmentNotices.announced, skipped: assignmentNotices.skipped }, events: { events: events.events, queued: events.queued, skipped: events.skipped }, worker });
       }
       if (action === 'status' || action === 'enqueue') {
         const auth = await (deps.requireStaffRole || requireStaffRole)(req, ['admin', 'operations']);
@@ -116,7 +119,15 @@ function createHandler(deps = {}) {
         else if (body.kind === 'telegram_test') {
           const dest = tg.configured ? await getTelegramDestination(db()) : null;
           if (!dest) return res.status(409).json({ error: 'Telegram grubu bağlı değil.' });
-          const out = await sendTestNotices({ db: db(), notify: await teamNotifier(), requestId });
+          const notify = await teamNotifier();
+          const out = await sendTestNotices({ db: db(), notify, requestId });
+          if (out.ok) {
+            // Also the two reports, as they would arrive: tomorrow's summary and the weekly report.
+            const asTest = (kind) => (a) => notify({ ...a, eventType: 'test_notice', title: 'TEST · ' + a.title, key: `test:${requestId}:${kind}` });
+            const d = await enqueueDailySummary({ db: db(), notify: asTest('daily') });
+            const w = await sendWeeklyReport({ db: db(), notify: asTest('weekly') });
+            if (d.ok) out.sent.push('yarının özeti'); if (w.ok) out.sent.push('haftalık rapor');
+          }
           return out.ok ? res.status(200).json(out) : res.status(out.status).json({ error: out.error });
         }
         else if (body.kind === 'translate') {
