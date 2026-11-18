@@ -71,8 +71,9 @@ function useBreakpoint() {
   };
 }
 
-// Light/dark theme preference — persisted, defaulting to the system's own
-// `prefers-color-scheme` on first visit, never forced. Setting the
+// Light/dark theme preference — persisted. The default is LIGHT (the
+// flagship theme) whatever the device's own setting; dark is only used
+// when the person switches to it with the moon button. Setting the
 // `data-theme` attribute on <html> is all a theme switch needs to do: every
 // color in C (except the fixed brand/decorative ones, see C's own comment)
 // is a CSS var() that resolves against this attribute, so no component
@@ -83,11 +84,20 @@ function getInitialTheme() {
     const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
     if (stored === "light" || stored === "dark") return stored;
   } catch (_) {}
-  try {
-    if (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) return "dark";
-  } catch (_) {}
   return "light";
 }
+// The sign-in and verification screens render before the app's theme
+// stylesheet exists, so the theme variables they read are set right on
+// them — always the light palette, readable on every device and in
+// in-app browsers (Telegram, WhatsApp).
+const _AUTH_LIGHT_VARS = {
+  colorScheme: "light", color: "#1B2D4F",
+  "--c-white": "#FFFFFF", "--c-ivory": "#FAF9F6", "--c-ivory-dark": "#F5F4F0", "--c-border": "#E7E4DD", "--c-border-light": "#EFEDE8",
+  "--c-text": "#1B2D4F", "--c-text-mid": "#4A5568", "--c-text-muted": "#8A8070", "--c-text-faint": "#B0A898",
+  "--c-gold-pale": "#F5EDD4", "--c-gold-pale-wash": "#FBF7EC", "--c-gold-text": "#8A6B1E",
+  "--c-green": "#2E7D52", "--c-green-bg": "#EBF5EF", "--c-red": "#C0392B", "--c-red-bg": "#FDECEC",
+  "--c-amber": "#B45309", "--c-amber-bg": "#FEF3E2", "--c-blue": "#1A6FAE", "--c-blue-bg": "#E8F2FB",
+};
 function useTheme() {
   const [theme, setTheme] = useState(getInitialTheme);
   useEffect(() => {
@@ -26979,6 +26989,7 @@ function LoginPage({ onLogin, connectionError }) {
 
   return (
     <div style={{
+      ..._AUTH_LIGHT_VARS,
       minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center",
       background:`linear-gradient(135deg, ${C.navyDeep} 0%, ${C.navy} 60%, #2C3E6B 100%)`,
       padding:20, position:"relative", overflow:"hidden",
@@ -27248,7 +27259,8 @@ function AccessDenied({ page }) {
 // share it identically rather than duplicating it a third/fourth time.
 function MfaScreenShell({ maxWidth, children }) {
   return (
-    <div style={{
+    <div data-testid="auth-shell" style={{
+      ..._AUTH_LIGHT_VARS,
       minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center",
       background:`linear-gradient(135deg, ${C.navyDeep} 0%, ${C.navy} 100%)`, padding:20,
     }}>
