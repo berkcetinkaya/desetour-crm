@@ -412,6 +412,8 @@ test('CRM events → operations list: new booking, cancellation, change, client 
     '🧭 Tur: Topkapı (İspanyolca)', '📅 Tarih: 20 Kasım 2026 Cuma 10:00', '👥 Kişi: 3 (2 yetişkin + 1 çocuk)', '💶 Tutar: 9.900 ₺', '🧑‍🏫 Rehber: atanmadı',
     '📊 Aynı gün bu turda: 2 rezervasyon daha, 5 kişi → toplam 8 kişi', '🔗 https://crm.desetour.com/#/reservations/R1'].join(' | ') });
   assert.match(buildEventNotice('created', log('a', 'created', {}), r, []).details, /başka katılım yok \(ilk rezervasyon\)/);
+  assert.match(buildEventNotice('created', log('a', 'created', {}), { ...r, external_booking_id: '42748941' }, []).details, /^🎫 Civitatis kodu: A42748941 \| 🧭 Tur/);
+  assert.match(buildEventNotice('cancelled', log('a', 'cancelled', { external_booking_id: '42742046' }), r, []).details, /^🎫 Civitatis kodu: A42742046 \|/, 'falls back to the code in the log');
   const mod = buildEventNotice('modified', log('a', 'updated', { changes: [{ label: 'Tarih', from: '19.11.2026', to: '20.11.2026' }], guide_assigned: true }), r, []).details;
   assert.match(mod, /^✏️ Tarih: 19\.11\.2026 → 20\.11\.2026 \| 🧭 Tur: Topkapı/); assert.match(mod, /Rehbere haber verin/);
   const can = buildEventNotice('cancelled', log('a', 'cancelled', {}), { ...r, guide_id: 'G', guide_name: 'Ayşe' }, others);

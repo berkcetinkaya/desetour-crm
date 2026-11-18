@@ -12,7 +12,7 @@
  */
 const { enqueueOperationsNotice, dateLabelTr } = require('./enqueue');
 
-const RES_COLS = 'id,reservation_number,destination,tour_id,check_in,check_in_time,pax_adult,pax_child,tour_language,guide_id,guide_name,total_amount,currency,status';
+const RES_COLS = 'id,reservation_number,destination,tour_id,check_in,check_in_time,pax_adult,pax_child,tour_language,guide_id,guide_name,total_amount,currency,status,external_booking_id';
 
 function classifyEvent(log) {
   const m = log.metadata || {};
@@ -43,6 +43,9 @@ function buildEventNotice(kind, log, r, others) {
   const pax = r ? paxOf(r) : null;
   const when = r && r.check_in ? `${dateLabelTr(r.check_in)}${r.check_in_time ? ' ' + String(r.check_in_time).slice(0, 5) : ''}` : null;
   const lines = [];
+  // Civitatis shows its code as "A42635449"; the CRM stores the digits.
+  const ext = String((r && r.external_booking_id) || m.external_booking_id || '').trim();
+  if (ext) lines.push(`🎫 Civitatis kodu: ${/^\d+$/.test(ext) ? 'A' + ext : ext}`);
   if (kind === 'modified') {
     const ch = Array.isArray(m.changes) ? m.changes.map(c => `${c.label}: ${c.from} → ${c.to}`).join(' · ') : '';
     lines.push(`✏️ ${ch || 'Değişiklik ayrıntısı yok'}`);
