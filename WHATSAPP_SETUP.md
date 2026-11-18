@@ -132,7 +132,7 @@ Repository → Settings → Secrets and variables → Actions:
 - Secret `WHATSAPP_SCHEDULER_SECRET` = Vercel'deki ile aynı değer
 
 Bunlar eklenince iki görev çalışır:
-- Her gün **18:05**'te yarının operasyon özeti operasyon listesine gider.
+- Her gün **18:00**'te yarının operasyon özeti operasyon listesine gider.
 - **15 dakikada bir** gönderilemeyen mesajlar yeniden denenir.
 
 ## 7. Anket için CRM'de
@@ -159,9 +159,9 @@ Olay bildirimleri 15 dakikada bir çalışan görevle gider; bunun için 6. adı
 
 ## 10. Çalışma kuralları (13.25)
 - **Mesajlar (CRM WhatsApp penceresi):** tüm yazışmalar görünür; yanında Türkçe çevirisi çıkar. Cevabı Türkçe yazın → **Çevir** → müşterinin dilindeki metni kontrol edin → **Gönder**. Çeviri, sunucudaki `ANTHROPIC_API_KEY` ile yapılır (acente özellikleriyle aynı anahtar).
-- **Rehber:** rehber atanınca atama bilgisi + tur detayları otomatik gider (15 dakikalık görev); turdan bir gün önce 18:05'te hatırlatma gider. Şablonlar: `desetour_rehber_tur_bilgisi`, `desetour_rehber_hatirlatma`.
+- **Rehber:** rehber atanınca atama bilgisi + tur detayları otomatik gider (15 dakikalık görev); turdan bir gün önce 18:00'te hatırlatma gider. Şablonlar: `desetour_rehber_tur_bilgisi`, `desetour_rehber_hatirlatma`.
 - **Geri bildirim:** tur bittikten sonra rezervasyon sayfası → WhatsApp kartı → **Geri bildirim iste** (müşteri telefonu kayıtlıysa). Müşteri turu 1–5, rehberi 1–5 puanlar ve isterse yorum yazar. Şablon: `desetour_tur_geri_bildirim`. Otomatik gönderilmez.
 - **Yorum / puan:** yanıtlar olumluysa (tur ve rehber 4–5) ertesi gün aynı karttan **Yorum ve puan iste** ile Civitatis sayfası gönderilir. Şablon: `desetour_yorum_istegi`.
-- **Hatırlatmalar:** her akşam 18:05'te ekip grubuna "geri bildirim istenebilecekler" ve "yorum istenebilecekler" listesi düşer.
+- **Hatırlatmalar:** her akşam 18:00'te ekip grubuna "geri bildirim istenebilecekler" ve "yorum istenebilecekler" listesi düşer.
 - **Ekip bildirimleri:** yeni rezervasyon, iptal, değişiklik ve Civitatis mesajları Telegram grubuna gider (9. adım).
 - Gerekli SQL: `supabase_migration_whatsapp_phase4_feedback_scores.sql`.

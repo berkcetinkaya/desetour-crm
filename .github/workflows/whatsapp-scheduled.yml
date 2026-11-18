@@ -1,7 +1,7 @@
 # WhatsApp Scheduled Jobs
 # ─────────────────────────────────────────────────────────────────────────
 # Calls the protected api/whatsapp.js endpoint (no logic here):
-#   • every day 15:05 UTC (18:05 Istanbul) → ?action=daily-summary:
+#   • every day 15:00 UTC (18:00 Istanbul) → ?action=daily-summary:
 #     tomorrow's operations to the team (Telegram group, or the WhatsApp
 #     operations list), a reminder to every guide with a tour tomorrow,
 #     and the team's feedback to-do list.
@@ -19,7 +19,7 @@ name: WhatsApp Scheduled Jobs
 
 on:
   schedule:
-    - cron: '5 15 * * *'
+    - cron: '0 15 * * *'
     - cron: '*/15 * * * *'
   workflow_dispatch:
     inputs:
@@ -54,7 +54,7 @@ jobs:
           fi
           ACTION="worker"
           if [ "${EVENT_NAME}" = "workflow_dispatch" ]; then ACTION="${INPUT_ACTION}"; fi
-          if [ "${SCHEDULE}" = "5 15 * * *" ]; then ACTION="daily-summary"; fi
+          if [ "${SCHEDULE}" = "0 15 * * *" ]; then ACTION="daily-summary"; fi
           case "${ACTION}" in worker|daily-summary) ;; *) echo "::error::Unknown action ${ACTION}"; exit 1;; esac
           http_status=$(curl -sS -o response.json -w '%{http_code}' --max-time 50 -X POST \
             -H "Authorization: Bearer ${SCHEDULER_SECRET}" "${ENDPOINT_URL}?action=${ACTION}")

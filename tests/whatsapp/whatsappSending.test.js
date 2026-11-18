@@ -102,7 +102,7 @@ test('daily summary: tomorrow only, one line per operation, unassigned guide fla
   ], '2026-11-21');
   assert.equal(s.operations, 2); assert.equal(s.unassigned, 1);
   assert.match(s.title, /2 operasyon, 7 misafir/);
-  assert.equal(s.details, '1) 09:00 Bosforo (İtalyanca) 2 kişi · ⚠️ REHBER ATANMADI  |  2) 10:00 Topkapı (İspanyolca) 5 kişi · Rehber: Ayşe  |  ⚠️ 1 operasyonda rehber yok');
+  assert.equal(s.details, '1) 09:00 Bosforo (İtalyanca) · 2 kişi, 1 rezervasyon · ⚠️ REHBER ATANMADI  |  2) 10:00 Topkapı (İspanyolca) · 5 kişi, 2 rezervasyon · Rehber: Ayşe  |  ⚠️ 1 operasyonda rehber yok');
   assert.ok(!/\n/.test(s.details), 'no line breaks (Meta rejects them in parameters)');
 });
 
@@ -188,7 +188,7 @@ test('migration: claim function is service_role only and uses SKIP LOCKED; inbou
   assert.equal((MIG.match(/ON public\.whatsapp_inbound_messages FOR SELECT/g) || []).length, 2);
   assert.doesNotMatch(MIG, /whatsapp_inbound_messages FOR (INSERT|UPDATE|DELETE|ALL)/);
   const wf = fs.readFileSync(path.join(ROOT, '.github/workflows/whatsapp-scheduled.yml'), 'utf8');
-  assert.match(wf, /cron: '5 15 \* \* \*'/); assert.match(wf, /secrets\.WHATSAPP_SCHEDULER_SECRET/);
+  assert.match(wf, /cron: '0 15 \* \* \*'/); assert.match(wf, /secrets\.WHATSAPP_SCHEDULER_SECRET/);
   assert.ok(JSON.parse(fs.readFileSync(path.join(ROOT, 'vercel.json'), 'utf8')).functions['api/whatsapp.js']);
   const src = fs.readFileSync(path.join(ROOT, 'DeseTourDashboard.jsx'), 'utf8');
   assert.doesNotMatch(src, /WHATSAPP_ACCESS_TOKEN|graph\.facebook\.com/, 'no Meta credential or direct Meta call in the browser bundle');

@@ -193,7 +193,7 @@ function buildDailySummary(reservations, dateISO) {
   const unassigned = list.filter(o => !o.hasGuide).length;
   const title = `Yarın (${dateLabelTr(dateISO)}): ${list.length} operasyon, ${list.reduce((n, o) => n + o.pax, 0)} misafir`;
   const details = list.length
-    ? list.map((o, i) => `${i + 1}) ${o.time || '--:--'} ${o.tour}${o.langs.size ? ` (${[...o.langs].join('/')})` : ''} ${o.pax} kişi · ${o.hasGuide ? 'Rehber: ' + (o.guide || 'atandı') : '⚠️ REHBER ATANMADI'}`).join('  |  ')
+    ? list.map((o, i) => `${i + 1}) ${o.time || '--:--'} ${o.tour}${o.langs.size ? ` (${[...o.langs].join('/')})` : ''} · ${o.pax} kişi, ${o.res} rezervasyon · ${o.hasGuide ? 'Rehber: ' + (o.guide || 'atandı') : '⚠️ REHBER ATANMADI'}`).join('  |  ')
       + (unassigned ? `  |  ⚠️ ${unassigned} operasyonda rehber yok` : '')
     : 'Yarın tur yok.';
   return { title, details, operations: list.length, unassigned };
