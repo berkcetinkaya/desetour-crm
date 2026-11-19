@@ -80,30 +80,43 @@ const isPositive = (fb) => !!fb && Number(fb.tour_score) >= 4 && (fb.guide_score
 // Evening reminder for the team (goes with the daily summary): who can be
 // asked for feedback today, and whose positive answer is waiting for a
 // review request. Returns null when there is nothing to do.
+// One line per reservation: number · Civitatis code · customer · tour
+// (language) · guests, and the reservation's CRM link on the next line.
+const REM_COLS = 'id,reservation_number,external_booking_id,destination,tour_language,check_in,check_in_time,pax_adult,pax_child,status,customer_id';
+function reminderEntry(r, cust, extra) {
+  const ext = String(r.external_booking_id || '').trim();
+  const pax = (Number(r.pax_adult) || 0) + (Number(r.pax_child) || 0);
+  const head = [r.reservation_number, ext ? (/^\d+$/.test(ext) ? 'A' + ext : ext) : null, cust && cust.full_name ? String(cust.full_name).trim() : null,
+    `${r.destination || 'Tur'}${r.tour_language ? ` (${r.tour_language})` : ''}`,
+    r.check_in_time ? String(r.check_in_time).slice(0, 5) : null, pax ? `${pax} kişi` : null, extra || null].filter(Boolean).join(' · ');
+  return [`• ${head}`, `   🔗 https://crm.desetour.com/#/reservations/${r.id}`];
+}
+
 async function feedbackReminder({ db, todayISO = istanbulISODate() }) {
-  const { data: today, error } = await db.from('reservations').select(RES_COLS).eq('check_in', todayISO);
+  const { data: today, error } = await db.from('reservations').select(REM_COLS).eq('check_in', todayISO);
   if (error) throw new Error(error.message);
+  const custOf = async (r) => (r.customer_id ? (await db.from('customers').select('full_name,phone').eq('id', r.customer_id).maybeSingle()).data : null);
   const ask = [], noPhone = [];
-  for (const r of (today || []).filter(x => x.status !== 'cancelled')) {
+  for (const r of (today || []).filter(x => x.status !== 'cancelled').sort((a, b) => String(a.check_in_time || '').localeCompare(String(b.check_in_time || '')))) {
     const { data: sent } = await db.from('whatsapp_messages').select('id').eq('idempotency_key', `post_tour_survey:${r.id}`).maybeSingle();
     if (sent) continue;
-    const { data: cust } = r.customer_id ? await db.from('customers').select('phone').eq('id', r.customer_id).maybeSingle() : { data: null };
-    (cust && normalizePhone(cust.phone) ? ask : noPhone).push(r.reservation_number);
+    const cust = await custOf(r);
+    (cust && normalizePhone(cust.phone) ? ask : noPhone).push(reminderEntry(r, cust));
   }
   const { data: fbs } = await db.from('reservation_feedback').select('reservation_id,tour_score,guide_score,answered_at').gte('answered_at', addDays(todayISO, -7));
   const review = [];
   for (const fb of (fbs || []).filter(isPositive)) {
     const { data: sent } = await db.from('whatsapp_messages').select('id').eq('idempotency_key', `review_request:${fb.reservation_id}`).maybeSingle();
     if (sent) continue;
-    const { data: r } = await db.from('reservations').select('reservation_number').eq('id', fb.reservation_id).maybeSingle();
-    if (r) review.push(`${r.reservation_number} (tur ${fb.tour_score}/5${fb.guide_score != null ? `, rehber ${fb.guide_score}/5` : ''})`);
+    const { data: r } = await db.from('reservations').select(REM_COLS).eq('id', fb.reservation_id).maybeSingle();
+    if (r) review.push(reminderEntry(r, await custOf(r), `tur ${fb.tour_score}/5${fb.guide_score != null ? `, rehber ${fb.guide_score}/5` : ''}`));
   }
   if (!ask.length && !noPhone.length && !review.length) return null;
-  const parts = [];
-  if (ask.length) parts.push(`Bugün turu biten, geri bildirim istenebilecek: ${ask.join(', ')}`);
-  if (noPhone.length) parts.push(`Telefonu kayıtlı olmayan: ${noPhone.join(', ')}`);
-  if (review.length) parts.push(`Olumlu yanıt verdi, yorum/puan istenebilir: ${review.join(', ')}`);
-  return { title: 'Geri bildirim hatırlatması', details: parts.join(' | '), ask: ask.length, noPhone: noPhone.length, review: review.length };
+  const lines = [];
+  if (ask.length) lines.push(`✅ Bugün turu biten, geri bildirim istenebilecek (${ask.length}):`, ...ask.flat());
+  if (noPhone.length) lines.push(`📵 Telefonu kayıtlı değil — önce telefon ekleyin (${noPhone.length}):`, ...noPhone.flat());
+  if (review.length) lines.push(`⭐ Olumlu yanıt verdi, yorum/puan istenebilir (${review.length}):`, ...review.flat());
+  return { title: 'Geri bildirim hatırlatması', details: lines.join(' | '), ask: ask.length, noPhone: noPhone.length, review: review.length };
 }
 
 async function reviewUrlFor(db, reservation) {
@@ -171,10 +184,12 @@ async function handleSurveyInbound({ db, config, fetchImpl, inbound, notify, now
     await db.from('reservation_feedback').update({ comment, comment_at: t }).eq('reservation_id', s.reservation_id);
     await say(L.thanks);
     if (notify) {
-      const { data: r } = await db.from('reservations').select('reservation_number,destination').eq('id', s.reservation_id).maybeSingle();
+      const { data: r } = await db.from('reservations').select(REM_COLS).eq('id', s.reservation_id).maybeSingle();
       const done = { ...fb, comment };
+      const cust = r && r.customer_id ? (await db.from('customers').select('full_name').eq('id', r.customer_id).maybeSingle()).data : null;
+      const who = r ? reminderEntry(r, cust).join(' | ') : 'Tur';
       await notify({ eventType: 'crm_event_feedback', title: `Geri bildirim geldi ${(r && r.reservation_number) || ''}`.trim(),
-        details: `${(r && r.destination) || 'Tur'} | Tur: ${fb.tour_score}/5 · Rehber: ${fb.guide_score}/5 | Yorum: ${comment.slice(0, 600)}${isPositive(done) ? ' | Olumlu — yarın yorum/puan isteyebilirsiniz' : ''}`,
+        details: `${who} | ⭐ Tur: ${fb.tour_score}/5 · Rehber: ${fb.guide_score}/5 | 💬 Yorum: ${comment.slice(0, 600)}${isPositive(done) ? ' | ✅ Olumlu — yarın yorum/puan isteyebilirsiniz' : ''}`,
         key: `feedback:${s.reservation_id}` }).catch(() => null);
     }
     return { handled: true, step: 'comment' };

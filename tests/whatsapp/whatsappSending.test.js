@@ -250,13 +250,22 @@ test('feedback flow: tour 1–5 → guide 1–5 → free comment → thanks; tea
   assert.equal(sent.length, 3); assert.deepEqual([fb().tour_score, fb().guide_score], [5, 4]);
 
   const rem = await feedbackReminder({ db: fakeDb({
-    reservations: [{ id: 'A', reservation_number: 'R-10', check_in: '2026-11-17', status: 'confirmed', customer_id: 'C1' }, { id: 'B', reservation_number: 'R-11', check_in: '2026-11-17', status: 'confirmed', customer_id: 'C2' },
-      { id: 'C', reservation_number: 'R-12', check_in: '2026-11-17', status: 'cancelled', customer_id: 'C1' }, { id: 'D', reservation_number: 'R-09', check_in: '2026-11-16', status: 'completed' }],
-    customers: [{ id: 'C1', phone: '+34 600 111 222' }, { id: 'C2', phone: null }],
+    reservations: [
+      { id: 'A', reservation_number: 'R-10', external_booking_id: '42748941', destination: 'Bosforo', tour_language: 'İtalyanca', check_in: '2026-11-17', check_in_time: '11:00:00', pax_adult: 2, pax_child: 1, status: 'confirmed', customer_id: 'C1' },
+      { id: 'B', reservation_number: 'R-11', destination: 'Topkapı', check_in: '2026-11-17', pax_adult: 2, status: 'confirmed', customer_id: 'C2' },
+      { id: 'C', reservation_number: 'R-12', check_in: '2026-11-17', status: 'cancelled', customer_id: 'C1' },
+      { id: 'D', reservation_number: 'R-09', external_booking_id: '42700001', destination: 'Topkapı', tour_language: 'İspanyolca', check_in: '2026-11-16', pax_adult: 4, status: 'completed', customer_id: 'C1' }],
+    customers: [{ id: 'C1', full_name: 'Maria Silva', phone: '+34 600 111 222' }, { id: 'C2', full_name: 'Juan Perez', phone: null }],
     reservation_feedback: [{ reservation_id: 'D', tour_score: 5, guide_score: 5, answered_at: '2026-11-16T18:00:00Z' }],
   }), todayISO: '2026-11-17' });
   assert.deepEqual([rem.ask, rem.noPhone, rem.review], [1, 1, 1]);
-  assert.match(rem.details, /geri bildirim istenebilecek: R-10/); assert.match(rem.details, /yorum\/puan istenebilir: R-09 \(tur 5\/5, rehber 5\/5\)/);
+  assert.deepEqual(rem.details.split(' | '), [
+    '✅ Bugün turu biten, geri bildirim istenebilecek (1):',
+    '• R-10 · A42748941 · Maria Silva · Bosforo (İtalyanca) · 11:00 · 3 kişi', '   🔗 https://crm.desetour.com/#/reservations/A',
+    '📵 Telefonu kayıtlı değil — önce telefon ekleyin (1):',
+    '• R-11 · Juan Perez · Topkapı · 2 kişi', '   🔗 https://crm.desetour.com/#/reservations/B',
+    '⭐ Olumlu yanıt verdi, yorum/puan istenebilir (1):',
+    '• R-09 · A42700001 · Maria Silva · Topkapı (İspanyolca) · 4 kişi · tur 5/5, rehber 5/5', '   🔗 https://crm.desetour.com/#/reservations/D']);
 });
 
 test('worker sends the feedback request in the booking language with one payload per button (5…1)', async () => {
