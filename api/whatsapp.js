@@ -19,7 +19,7 @@
 const { getWhatsAppConfig } = require('./_whatsapp/config');
 const { verifyHandshake, verifySignature, verifyUrlKey, processWebhook } = require('./_whatsapp/webhook');
 const { runWorker } = require('./_whatsapp/worker');
-const { enqueueGuideBrief, enqueueOperationsNotice, enqueueDailySummary, enqueueGuideAssignments, notifyGuideAssignments, enqueueGuideReminders, istanbulISODate } = require('./_whatsapp/enqueue');
+const { enqueueGuideBrief, enqueueOperationsNotice, enqueueDailySummary, enqueueGuideAssignments, notifyGuideAssignments, enqueueGuideReminders, istanbulISODate, addDays } = require('./_whatsapp/enqueue');
 const { enqueueSurvey, enqueueReviewRequest, feedbackReminder } = require('./_whatsapp/survey');
 const { toTurkish, toCustomer } = require('./_whatsapp/translate');
 const { sendWeeklyReport } = require('./_whatsapp/weekly');
@@ -36,6 +36,13 @@ async function readRaw(req) {
   return Buffer.concat(chunks);
 }
 const isScheduler = (req, cfg) => !!cfg.schedulerSecret && req.headers['authorization'] === `Bearer ${cfg.schedulerSecret}`;
+
+// Istanbul date for the day-bound jobs; before 06:00 it is still "last night".
+function scheduledOpsDay(now) {
+  const hour = Number(new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Istanbul', hour: '2-digit', hourCycle: 'h23' }).format(now));
+  const today = istanbulISODate(now);
+  return hour < 6 ? addDays(today, -1) : today;
+}
 
 function createHandler(deps = {}) {
   return async function handler(req, res) {
@@ -68,15 +75,19 @@ function createHandler(deps = {}) {
         if (!isScheduler(req, cfg)) return res.status(401).json({ error: 'Unauthorized.' });
         const notify = await teamNotifier();
         let summary = null, reminders = null, feedback = null, weekly = null;
+        // The scheduler can run hours late. A noon / evening job that only
+        // fires after midnight still belongs to the previous day — otherwise
+        // the guides' reminders skip a day and "tomorrow" means the wrong day.
+        const opsDay = scheduledOpsDay((deps.now || (() => new Date()))());
         // Noon: tomorrow's operations (tour, guests, guide or "not assigned") to the team.
-        if (action === 'daily-summary') summary = await enqueueDailySummary({ db: db(), notify });
+        if (action === 'daily-summary') summary = await enqueueDailySummary({ db: db(), notify, todayISO: opsDay });
         // Sunday noon: the weekly report.
         if (action === 'weekly-report') weekly = await sendWeeklyReport({ db: db(), notify });
         // Evening: a reminder to every guide with a tour tomorrow, and the feedback to-do list.
         if (action === 'evening-reminders') {
-          reminders = await enqueueGuideReminders({ db: db() });
-          const fr = await feedbackReminder({ db: db() });
-          if (fr) { const sent = await notify({ eventType: 'feedback_reminder', title: fr.title, details: fr.details, key: `feedback_reminder:${istanbulISODate()}` }); feedback = { ask: fr.ask, noPhone: fr.noPhone, review: fr.review, ok: sent.ok }; }
+          reminders = await enqueueGuideReminders({ db: db(), todayISO: opsDay });
+          const fr = await feedbackReminder({ db: db(), todayISO: opsDay });
+          if (fr) { const sent = await notify({ eventType: 'feedback_reminder', title: fr.title, details: fr.details, key: `feedback_reminder:${opsDay}` }); feedback = { ask: fr.ask, noPhone: fr.noPhone, review: fr.review, ok: sent.ok }; }
         }
         // Every run: new CRM events (booking / cancellation / change /
         // Civitatis message) to the team, and the assignment + tour details
@@ -175,4 +186,5 @@ async function runTeamNotices(deps = {}) {
 
 module.exports = createHandler();
 module.exports.runTeamNotices = runTeamNotices;
+module.exports.scheduledOpsDay = scheduledOpsDay;
 module.exports.createHandler = createHandler;

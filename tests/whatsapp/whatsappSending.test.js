@@ -608,3 +608,10 @@ test('ingestion hook: team notices run right after the Civitatis ingestion; an e
   const cron = fs.readFileSync(path.join(__dirname, '..', '..', 'api/cron-ingest-civitatis-write.js'), 'utf8');
   assert.match(cron, /try \{ teamNotices = await require\('\.\/whatsapp'\)\.runTeamNotices\(\); \}\s*catch/, 'best effort: never fails the ingestion');
 });
+
+test('late scheduler: a noon/evening job that fires after midnight still works on the previous day', () => {
+  const { scheduledOpsDay } = require('../../api/whatsapp');
+  assert.equal(scheduledOpsDay(new Date('2026-11-20T15:00:00Z')), '2026-11-20', '18:00 Istanbul');
+  assert.equal(scheduledOpsDay(new Date('2026-11-20T22:10:00Z')), '2026-11-20', '01:10 Istanbul next day → still the 20th');
+  assert.equal(scheduledOpsDay(new Date('2026-11-21T03:30:00Z')), '2026-11-21', '06:30 Istanbul → the new day');
+});
