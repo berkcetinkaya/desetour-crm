@@ -23,6 +23,7 @@ const { enqueueGuideBrief, enqueueOperationsNotice, enqueueDailySummary, enqueue
 const { enqueueSurvey, enqueueReviewRequest, feedbackReminder } = require('./_whatsapp/survey');
 const { toTurkish, toCustomer } = require('./_whatsapp/translate');
 const { sendWeeklyReport } = require('./_whatsapp/weekly');
+const { fillMissingPickups } = require('./_civitatis/pickupPoint');
 const { enqueueEventNotices, sendTestNotices } = require('./_whatsapp/events');
 const { sendReply } = require('./_whatsapp/inbox');
 const { telegramConfig, listGroups, getTelegramDestination, connectGroup, disconnectGroup, sendTelegramNotice } = require('./_whatsapp/telegram');
@@ -79,6 +80,8 @@ function createHandler(deps = {}) {
         // fires after midnight still belongs to the previous day — otherwise
         // the guides' reminders skip a day and "tomorrow" means the wrong day.
         const opsDay = scheduledOpsDay((deps.now || (() => new Date()))());
+        // Pickup point + time from the Civitatis email, so guide messages carry it.
+        const pickups = await fillMissingPickups({ db: db(), sinceISO: addDays(istanbulISODate(), -1) }).catch((e) => ({ error: e.message }));
         // Noon: tomorrow's operations (tour, guests, guide or "not assigned") to the team.
         if (action === 'daily-summary') summary = await enqueueDailySummary({ db: db(), notify, todayISO: opsDay });
         // Sunday noon: the weekly report.
@@ -98,7 +101,7 @@ function createHandler(deps = {}) {
         // After the worker, so the team notice can say whether the guide's own message went out.
         const assignmentNotices = await notifyGuideAssignments({ db: db(), notify });
         const slim = (x) => x && { operations: x.operations, queued: x.queued, missingPhone: x.missingPhone };
-        return res.status(200).json({ summary, weekly, reminders: slim(reminders), feedback, assignments: slim(assignments), assignmentNotices: { announced: assignmentNotices.announced, skipped: assignmentNotices.skipped }, events: { events: events.events, queued: events.queued, skipped: events.skipped }, worker });
+        return res.status(200).json({ summary, weekly, pickups, reminders: slim(reminders), feedback, assignments: slim(assignments), assignmentNotices: { announced: assignmentNotices.announced, skipped: assignmentNotices.skipped }, events: { events: events.events, queued: events.queued, skipped: events.skipped }, worker });
       }
       if (action === 'status' || action === 'enqueue') {
         const auth = await (deps.requireStaffRole || requireStaffRole)(req, ['admin', 'operations']);
@@ -176,6 +179,7 @@ async function runTeamNotices(deps = {}) {
   const tg = (deps.getTelegramConfig || telegramConfig)();
   const dest = tg.configured ? await getTelegramDestination(db) : null;
   const notify = dest ? (a) => sendTelegramNotice({ db, tg, dest, fetchImpl: deps.fetchImpl, ...a }) : (a) => enqueueOperationsNotice({ db, ...a });
+  await fillMissingPickups({ db, sinceISO: addDays(istanbulISODate(), -1) }).catch(() => null);
   const events = await enqueueEventNotices({ db, notify });
   const assignments = await enqueueGuideAssignments({ db });
   const worker = await runWorker({ db, config: cfg, fetchImpl: deps.fetchImpl });

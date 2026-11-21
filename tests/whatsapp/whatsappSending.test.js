@@ -631,3 +631,40 @@ test('guide messages: tour meeting point and duration fill in; the earliest know
   const withPickup = buildGuideBrief({ guideName: 'A', tour, reservations: [{ reservation_number: 'R-4', check_in: '2026-12-28', check_in_time: '10:00:00', pickup_location: 'Hotel X', pax_adult: 2, status: 'confirmed' }] });
   assert.equal(withPickup.meetingPoint, 'Hotel X', "the booking's own pickup wins over the tour default");
 });
+
+const { parsePickupPoint, fillMissingPickups } = require('../../api/_civitatis/pickupPoint');
+test('pickup point: read from the Civitatis email, filled only when empty, used as meeting point and time in guide messages', async () => {
+  assert.deepEqual(parsePickupPoint('DATE: x\n\t\t PICKUP POINT: Tamara Restaurant Sultanahmed, às 8:45 horas.\n PEOPLE'), { location: 'Tamara Restaurant Sultanahmed', time: '08:45', raw: 'Tamara Restaurant Sultanahmed, às 8:45 horas.' });
+  assert.equal(parsePickupPoint(' PICKUP POINT: Tamara Restaurant Sultanahmed, alle 8:45.').location, 'Tamara Restaurant Sultanahmed');
+  assert.deepEqual(parsePickupPoint('PICKUP POINT: Hotel lobby'), { location: 'Hotel lobby', time: null, raw: 'Hotel lobby' });
+  assert.equal(parsePickupPoint('HOUR: 11:00 (11:00 am)'), null);
+  const db = fakeDb({
+    reservations: [
+      { id: 'A', external_booking_id: '42330184', check_in: '2026-12-31', pickup_location: null, pickup_time: null, status: 'confirmed' },
+      { id: 'B', external_booking_id: '42330185', check_in: '2026-12-31', pickup_location: 'Hotel X', pickup_time: null, status: 'confirmed' },
+      { id: 'C', external_booking_id: '42330186', check_in: '2026-12-31', pickup_location: null, status: 'confirmed' },
+      { id: 'D', external_booking_id: '42330187', check_in: '2026-11-01', pickup_location: null, status: 'confirmed' }],
+    email_ingestions: [
+      { external_booking_id: '42330184', received_at: '2026-10-01', raw_body_snapshot: 'PICKUP POINT: Old place, às 9:00 horas.' },
+      { external_booking_id: '42330184', received_at: '2026-10-05', raw_body_snapshot: 'PICKUP POINT: Tamara Restaurant Sultanahmed, alle 8:45.' },
+      { external_booking_id: '42330185', received_at: '2026-10-05', raw_body_snapshot: 'PICKUP POINT: Somewhere, alle 8:45.' },
+      { external_booking_id: '42330186', received_at: '2026-10-05', raw_body_snapshot: 'HOUR: 10:00' },
+      { external_booking_id: '42330187', received_at: '2026-10-05', raw_body_snapshot: 'PICKUP POINT: Past, alle 8:45.' }],
+  });
+  assert.deepEqual(await fillMissingPickups({ db, sinceISO: '2026-11-20' }), { checked: 2, filled: 1 });
+  const r = db.tables.reservations;
+  assert.deepEqual([r[0].pickup_location, r[0].pickup_time], ['Tamara Restaurant Sultanahmed', '08:45'], 'the latest email wins');
+  assert.equal(r[1].pickup_location, 'Hotel X', 'never overwrites what the team entered');
+  assert.equal(r[3].pickup_location, null, 'past tours are left alone');
+  const p = buildGuideBrief({ guideName: 'Özcan', tour: { name: 'Bosforo y Barrio Sultanahmet', duration_text: '7 Saat' }, reservations: [
+    { reservation_number: 'R-2026-0028', check_in: '2026-12-31', check_in_time: null, pickup_location: 'Tamara Restaurant Sultanahmed', pickup_time: '08:45:00', tour_language: 'Portekizce', pax_adult: 2, status: 'confirmed' }] });
+  assert.equal(p.time, '08:45 (buluşma) · Süre: 7 Saat');
+  assert.equal(p.meetingPoint, 'Tamara Restaurant Sultanahmed (08:45)');
+  assert.equal(p.startKnown, true);
+});
+
+test('team notice shows the pickup point with its time', () => {
+  const n = buildEventNotice('created', { id: 'L', entity_type: 'reservation', action: 'created', metadata: { auto_ingested: true } },
+    { id: 'R', reservation_number: 'R-1', destination: 'Bosforo', check_in: '2026-12-31', pax_adult: 2, pickup_location: 'Tamara Restaurant Sultanahmed', pickup_time: '08:45:00' }, []);
+  assert.match(n.details, /📅 Tarih: 31 Aralık 2026 Perşembe \| 📍 Buluşma: Tamara Restaurant Sultanahmed \(08:45\) \|/);
+});

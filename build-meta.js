@@ -1,1 +1,1 @@
-window.__DESETOUR_BUILD__ = {"version":"13.27","major":13,"minor":27,"buildTimestamp":"2026-11-21T07:53:33.021Z","commitSha":"6a81b27ad5b99790aad7ea8b861188e95ad08bfd","commitShaShort":"6a81b27","branch":"feature/guide-operation-cost"};
+window.__DESETOUR_BUILD__ = {"version":"13.27","major":13,"minor":27,"buildTimestamp":"2026-11-21T07:57:29.490Z","commitSha":"a7af1e0ef9e43cebd4c19408e42bca028e4298b3","commitShaShort":"a7af1e0","branch":"feature/guide-operation-cost"};

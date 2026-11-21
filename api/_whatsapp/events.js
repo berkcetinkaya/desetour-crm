@@ -12,7 +12,7 @@
  */
 const { enqueueOperationsNotice, dateLabelTr } = require('./enqueue');
 
-const RES_COLS = 'id,reservation_number,destination,tour_id,check_in,check_in_time,pax_adult,pax_child,tour_language,guide_id,guide_name,total_amount,currency,status,external_booking_id';
+const RES_COLS = 'id,reservation_number,destination,tour_id,check_in,check_in_time,pax_adult,pax_child,tour_language,guide_id,guide_name,total_amount,currency,status,external_booking_id,pickup_location,pickup_time';
 
 function classifyEvent(log) {
   const m = log.metadata || {};
@@ -53,6 +53,7 @@ function buildEventNotice(kind, log, r, others) {
   if (r) {
     lines.push(`🧭 Tur: ${r.destination || m.tour_name || '—'}${r.tour_language ? ` (${r.tour_language})` : ''}`);
     if (when) lines.push(`📅 Tarih: ${when}`);
+    if (r.pickup_location) lines.push(`📍 Buluşma: ${r.pickup_location}${r.pickup_time ? ` (${String(r.pickup_time).slice(0, 5)})` : ''}`);
     if (pax) lines.push(`👥 Kişi: ${pax}${Number(r.pax_child) ? ` (${Number(r.pax_adult) || 0} yetişkin + ${Number(r.pax_child)} çocuk)` : ''}`);
     const money = moneyLabel(r.total_amount, r.currency);
     if (money && kind !== 'message') lines.push(`💶 Tutar: ${money}`);

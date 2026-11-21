@@ -9,7 +9,7 @@
 const { normalizePhone } = require('./config');
 const { renderPreview } = require('./templates');
 
-const RES_COLS = 'id,reservation_number,check_in,check_in_time,tour_id,destination,tour_language,guide_id,guide_name,pickup_location,pax_adult,pax_child,status';
+const RES_COLS = 'id,reservation_number,check_in,check_in_time,tour_id,destination,tour_language,guide_id,guide_name,pickup_location,pickup_time,pax_adult,pax_child,status';
 
 function dateLabelTr(iso) {
   return new Date(String(iso).slice(0, 10) + 'T12:00:00Z').toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', year: 'numeric', weekday: 'long', timeZone: 'UTC' });
@@ -33,21 +33,25 @@ function buildGuideBrief({ reservations, guideName, tourName, note, meetingPoint
   const first = timed[0] || list[0] || {};
   const guests = list.reduce((n, r) => n + pax(r), 0);
   const langs = [...new Set(list.map(r => r.tour_language).filter(Boolean))];
-  const pickups = [...new Set(list.map(r => (r.pickup_location || '').trim()).filter(Boolean))];
+  // The customer's pickup point with its meeting time, e.g. "Tamara Restaurant Sultanahmed (08:45)".
+  const pickups = [...new Set(list.filter(r => (r.pickup_location || '').trim())
+    .map(r => `${String(r.pickup_location).trim()}${r.pickup_time ? ` (${hhmm(r.pickup_time)})` : ''}`))];
+  const pickupTimes = list.map(r => hhmm(r.pickup_time)).filter(Boolean).sort();
   const duration = tour && tour.duration_text ? String(tour.duration_text).trim() : '';
   const start = hhmm(first.check_in_time);
   const out = {
     guideName: String(guideName || '').trim().split(/\s+/)[0] || 'Merhaba',
     dateLabel: dateLabelTr(first.check_in),
     tourName: tourName || (tour && tour.name) || first.destination || 'Tur',
-    time: `${start || 'saat CRM\'de girilmemiş, operasyondan teyit edin'}${duration ? ` · Süre: ${duration}` : ''}`,
+    // No fixed start (Civitatis: "see the voucher") → the earliest pickup time.
+    time: `${start || (pickupTimes[0] ? `${pickupTimes[0]} (buluşma)` : 'saat CRM\'de girilmemiş, operasyondan teyit edin')}${duration ? ` · Süre: ${duration}` : ''}`,
     language: langs.join(' / ') || '—',
     guests: `${guests} kişi (${list.length} rezervasyon: ${list.map(r => r.reservation_number).join(', ')})`,
     meetingPoint: (meetingPoint && meetingPoint.trim()) || pickups.join(' / ') || (tour && tour.meeting_point && String(tour.meeting_point).trim()) || 'Operasyondan iletilecek',
     note: (note && note.trim()) || (tour && tour.guide_notes_tr && String(tour.guide_notes_tr).trim()) || '—',
   };
   // Not a template parameter: tells the team notice the start time is missing.
-  Object.defineProperty(out, 'startKnown', { value: !!start, enumerable: false });
+  Object.defineProperty(out, 'startKnown', { value: !!(start || pickupTimes[0]), enumerable: false });
   return out;
 }
 
