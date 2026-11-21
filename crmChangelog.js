@@ -101,6 +101,20 @@ const CRM_CHANGELOG_CATEGORIES = [
 // Newest first. See the release convention above before editing.
 const CRM_CHANGELOG = [
   {
+    version: '13.28',
+    date: '2026-11-21',
+    title: 'Rehber Mesajlarında Buluşma Noktası ve Saati',
+    summary: 'Rehbere giden atama ve hatırlatma mesajları artık rehbere ad-soyadıyla hitap ediyor; müşterinin Civitatis\'te seçtiği buluşma noktası ve saati ile turun süresi mesaja ekleniyor.',
+    categories: ['Otomasyon', 'İyileştirme'],
+    highlights: [
+      'Civitatis e-postasındaki buluşma noktası ve saati (ör. Tamara Restaurant Sultanahmed, 08:45) rezervasyonun Pickup bilgisine otomatik işleniyor; ekibin girdiği pickup değiştirilmiyor.',
+      'Rehber mesajı: başlangıç saati yoksa buluşma saati, yanında turun süresi; buluşma satırında müşterinin seçtiği nokta. Telegram bildirimlerine de buluşma satırı eklendi.',
+      'Geri bildirim hatırlatması her rezervasyon için Civitatis kodu, müşteri adı, tur, saat, kişi sayısı ve CRM bağlantısıyla geliyor.',
+      'Zamanlayıcı gece yarısından sonra geç çalışsa da akşam hatırlatmaları ve günlük özet doğru güne göre gönderiliyor.',
+    ],
+    author: 'Berk',
+  },
+  {
     version: '13.27',
     date: '2026-11-18',
     title: 'Günlük ve Haftalık Telegram Raporları',
@@ -233,19 +247,6 @@ const CRM_CHANGELOG = [
       'Aynı rehber aynı gün aynı tura başka bir rezervasyon için atanınca ilk girilen ücret silik ve değiştirilemez görünüyor; ikinci ücret oluşmuyor.',
       'Rehber atanmamış ya da ücreti girilmemiş operasyonlar maliyete sayılmıyor ve uyarıyla gösteriliyor.',
       'Eksik ücret rezervasyonun Finans kartından girilebiliyor; Yönetici ve Operasyon yanlış girilen ücreti onayla düzeltebiliyor.',
-    ],
-    author: 'Berk',
-  },
-  {
-    version: '13.17',
-    date: '2026-11-12',
-    title: 'Ana Sayfada Sonraki Aylar',
-    summary: 'Ana sayfadaki Beklenen Net Gelir kartında ay değiştirilerek sonraki ve önceki ayların net geliri, tahmini kârı ve ek satışları görülebiliyor.',
-    categories: ['İyileştirme', 'Arayüz'],
-    highlights: [
-      'Beklenen Net Gelir kartında ay okları ve "Bu ay" düğmesi; Aralık, Ocak ve sonraki aylar görülebiliyor.',
-      'Tahmini net kâr ve ek satış seçilen aya göre hesaplanıyor; dövizli rezervasyonlar güncel ECB kuruyla çevriliyor.',
-      'Acente yanıtlarının e-postadan otomatik alınması, Gmail\'de silinmiş bir mesaj yüzünden durmayacak şekilde düzeltildi.',
     ],
     author: 'Berk',
   },
