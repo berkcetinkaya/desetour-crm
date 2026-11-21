@@ -302,7 +302,7 @@ test('guides: assignment message once per operation, reminder the evening before
   const t1 = await notifyGuideAssignments({ db, notify, todayISO: '2026-11-17', now });
   assert.deepEqual([t1.operations, t1.announced], [2, 2], 'the team hears about both operations, with or without a guide phone');
   assert.equal(told[0].title, 'Rehber atandı: Ayşe Yılmaz');
-  assert.match(told[0].details, /🧭 Tur: Topkapı Sarayı \(İspanyolca\) \| 📅 Tarih: 18 Kasım 2026 Çarşamba 10:00 \| 👥 Misafir: 5 kişi \(2 rezervasyon: R-1, R-2\) \| ⏳ Rehbere WhatsApp bilgisi gönderilemedi: Meta doğrulaması bekleniyor\. Rehbere siz haber verin/);
+  assert.match(told[0].details, /🧭 Tur: Topkapı Sarayı \(İspanyolca\) \| 📅 Tarih: 18 Kasım 2026 Çarşamba 10:00 \| 📍 Buluşma: Operasyondan iletilecek \| 👥 Misafir: 5 kişi \(2 rezervasyon: R-1, R-2\) \| ⏳ Rehbere WhatsApp bilgisi sırada/);
   assert.match(told[1].details, /Rehberin telefonu kayıtlı değil/);
   assert.equal((await notifyGuideAssignments({ db, notify, todayISO: '2026-11-17', now })).announced, 0, 'once per operation');
   db.tables.whatsapp_messages[0].status = 'delivered'; told.length = 0;
@@ -614,4 +614,20 @@ test('late scheduler: a noon/evening job that fires after midnight still works o
   assert.equal(scheduledOpsDay(new Date('2026-11-20T15:00:00Z')), '2026-11-20', '18:00 Istanbul');
   assert.equal(scheduledOpsDay(new Date('2026-11-20T22:10:00Z')), '2026-11-20', '01:10 Istanbul next day → still the 20th');
   assert.equal(scheduledOpsDay(new Date('2026-11-21T03:30:00Z')), '2026-11-21', '06:30 Istanbul → the new day');
+});
+
+test('guide messages: tour meeting point and duration fill in; the earliest known start time is used; a missing time is flagged', () => {
+  const tour = { name: 'Bosforo y Barrio Sultanahmet', meeting_point: 'Tamara Restaurant Sultanahmet (08:45) veya The Marmara Hotel Taksim (08:10)', duration_text: '7 Saat', guide_notes_tr: null };
+  const p = buildGuideBrief({ guideName: 'Özcan Yıldız', tour, reservations: [
+    { reservation_number: 'R-1', check_in: '2026-11-21', check_in_time: null, tour_language: 'İtalyanca', pax_adult: 2, status: 'confirmed' },
+    { reservation_number: 'R-2', check_in: '2026-11-21', check_in_time: '11:00:00', tour_language: 'İtalyanca', pax_adult: 1, status: 'confirmed' }] });
+  assert.equal(p.time, '11:00 · Süre: 7 Saat', 'a booking without a time does not hide the known start');
+  assert.equal(p.meetingPoint, tour.meeting_point);
+  assert.equal(p.tourName, 'Bosforo y Barrio Sultanahmet');
+  assert.deepEqual(Object.keys(p), ['guideName', 'dateLabel', 'tourName', 'time', 'language', 'guests', 'meetingPoint', 'note'], 'payload holds only template parameters');
+  assert.match(renderPreview('guide_reminder', p), /🕘 Başlangıç: 11:00 · Süre: 7 Saat\n.*\n.*\n📍 Buluşma: Tamara Restaurant Sultanahmet \(08:45\)/);
+  const q = buildGuideBrief({ guideName: 'A', tour, reservations: [{ reservation_number: 'R-3', check_in: '2026-12-28', check_in_time: null, pax_adult: 2, status: 'confirmed' }] });
+  assert.equal(q.time, "saat CRM'de girilmemiş, operasyondan teyit edin · Süre: 7 Saat"); assert.equal(q.startKnown, false);
+  const withPickup = buildGuideBrief({ guideName: 'A', tour, reservations: [{ reservation_number: 'R-4', check_in: '2026-12-28', check_in_time: '10:00:00', pickup_location: 'Hotel X', pax_adult: 2, status: 'confirmed' }] });
+  assert.equal(withPickup.meetingPoint, 'Hotel X', "the booking's own pickup wins over the tour default");
 });

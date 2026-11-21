@@ -22,22 +22,33 @@ function addDays(iso, n) { const d = new Date(iso + 'T12:00:00Z'); d.setUTCDate(
 const pax = (r) => (Number(r.pax_adult) || 0) + (Number(r.pax_child) || 0);
 
 // One guide operation = same date + tour + guide (CRM rule since 13.18).
-function buildGuideBrief({ reservations, guideName, tourName, note, meetingPoint }) {
+// `tour` = the tour record: its meeting point (with meeting times, e.g.
+// "Tamara Restaurant Sultanahmet (08:45)…") is used when the bookings have
+// no pickup, its duration is shown next to the start time, and its guide
+// notes fill the note when none was written.
+const TOUR_COLS = 'name,meeting_point,duration_text,guide_notes_tr';
+function buildGuideBrief({ reservations, guideName, tourName, note, meetingPoint, tour }) {
   const list = reservations.filter(r => r.status !== 'cancelled');
-  const first = list.slice().sort((a, b) => String(a.check_in_time || '').localeCompare(String(b.check_in_time || '')))[0] || {};
+  const timed = list.filter(r => r.check_in_time).sort((a, b) => String(a.check_in_time).localeCompare(String(b.check_in_time)));
+  const first = timed[0] || list[0] || {};
   const guests = list.reduce((n, r) => n + pax(r), 0);
   const langs = [...new Set(list.map(r => r.tour_language).filter(Boolean))];
   const pickups = [...new Set(list.map(r => (r.pickup_location || '').trim()).filter(Boolean))];
-  return {
+  const duration = tour && tour.duration_text ? String(tour.duration_text).trim() : '';
+  const start = hhmm(first.check_in_time);
+  const out = {
     guideName: String(guideName || '').trim().split(/\s+/)[0] || 'Merhaba',
     dateLabel: dateLabelTr(first.check_in),
-    tourName: tourName || first.destination || 'Tur',
-    time: hhmm(first.check_in_time) || 'saat bilgisi yok',
+    tourName: tourName || (tour && tour.name) || first.destination || 'Tur',
+    time: `${start || 'saat CRM\'de girilmemiş, operasyondan teyit edin'}${duration ? ` · Süre: ${duration}` : ''}`,
     language: langs.join(' / ') || '—',
     guests: `${guests} kişi (${list.length} rezervasyon: ${list.map(r => r.reservation_number).join(', ')})`,
-    meetingPoint: (meetingPoint && meetingPoint.trim()) || pickups.join(' / ') || 'Operasyondan iletilecek',
-    note: (note && note.trim()) || '—',
+    meetingPoint: (meetingPoint && meetingPoint.trim()) || pickups.join(' / ') || (tour && tour.meeting_point && String(tour.meeting_point).trim()) || 'Operasyondan iletilecek',
+    note: (note && note.trim()) || (tour && tour.guide_notes_tr && String(tour.guide_notes_tr).trim()) || '—',
   };
+  // Not a template parameter: tells the team notice the start time is missing.
+  Object.defineProperty(out, 'startKnown', { value: !!start, enumerable: false });
+  return out;
 }
 
 async function enqueueGuideBrief({ db, reservationId, note, meetingPoint, requestId }) {
@@ -48,12 +59,12 @@ async function enqueueGuideBrief({ db, reservationId, note, meetingPoint, reques
   const [{ data: guide }, { data: sibs }, { data: tour }] = await Promise.all([
     db.from('guides').select('id,full_name,phone').eq('id', r.guide_id).maybeSingle(),
     db.from('reservations').select(RES_COLS).eq('check_in', r.check_in).eq('tour_id', r.tour_id).eq('guide_id', r.guide_id),
-    r.tour_id ? db.from('tours').select('name').eq('id', r.tour_id).maybeSingle() : Promise.resolve({ data: null }),
+    r.tour_id ? db.from('tours').select(TOUR_COLS).eq('id', r.tour_id).maybeSingle() : Promise.resolve({ data: null }),
   ]);
   if (!guide) return { ok: false, status: 404, error: 'Rehber bulunamadı.' };
   const phone = normalizePhone(guide.phone);
   if (!phone) return { ok: false, status: 422, error: `${guide.full_name} için geçerli bir telefon numarası kayıtlı değil.` };
-  const payload = buildGuideBrief({ reservations: sibs && sibs.length ? sibs : [r], guideName: guide.full_name, tourName: (tour && tour.name) || r.destination, note, meetingPoint });
+  const payload = buildGuideBrief({ reservations: sibs && sibs.length ? sibs : [r], guideName: guide.full_name, tour, tourName: (tour && tour.name) || r.destination, note, meetingPoint });
   const row = {
     event_type: 'guide_tour_brief', audience_type: 'guide', template_key: 'guide_tour_brief', language: 'tr',
     idempotency_key: `guide_tour_brief:${r.check_in}|${r.tour_id}|g:${r.guide_id}:${requestId}`,
@@ -83,11 +94,11 @@ async function guideOperationRows(db, reservations, kind) {
     const [{ data: guide }, { data: sibs }, { data: tour }] = await Promise.all([
       db.from('guides').select('id,full_name,phone').eq('id', r.guide_id).maybeSingle(),
       db.from('reservations').select(RES_COLS).eq('check_in', r.check_in).eq('tour_id', r.tour_id).eq('guide_id', r.guide_id),
-      r.tour_id ? db.from('tours').select('name').eq('id', r.tour_id).maybeSingle() : Promise.resolve({ data: null }),
+      r.tour_id ? db.from('tours').select(TOUR_COLS).eq('id', r.tour_id).maybeSingle() : Promise.resolve({ data: null }),
     ]);
     const phone = guide ? normalizePhone(guide.phone) : null;
     if (!phone) { missingPhone += 1; continue; }
-    const payload = buildGuideBrief({ reservations: sibs && sibs.length ? sibs : seed, guideName: guide.full_name, tourName: (tour && tour.name) || r.destination });
+    const payload = buildGuideBrief({ reservations: sibs && sibs.length ? sibs : seed, guideName: guide.full_name, tour, tourName: (tour && tour.name) || r.destination });
     rows.push({ event_type: kind, audience_type: 'guide', template_key: kind === 'guide_reminder' ? 'guide_reminder' : 'guide_tour_brief', language: 'tr',
       idempotency_key: idem, reservation_id: r.id, guide_id: r.guide_id, tour_id: r.tour_id, recipient_phone: phone, recipient_display_name: guide.full_name, payload });
   }
@@ -116,19 +127,19 @@ async function guideMessageLine(db, opKey, guide) {
   if (!guide || !normalizePhone(guide.phone)) return '⚠️ Rehberin telefonu kayıtlı değil: WhatsApp bilgisi gönderilemedi, rehbere siz haber verin';
   const { data: msg } = await db.from('whatsapp_messages').select('status,last_error').eq('idempotency_key', `guide_assigned:${opKey}`).maybeSingle();
   if (msg && ['sent', 'delivered', 'read'].includes(msg.status)) return '📲 Rehbere WhatsApp ile tur bilgisi gönderildi';
-  if (msg && msg.status === 'failed' && !/template|şablon|132\d{3}|verif/i.test(String(msg.last_error || ''))) return '⚠️ Rehbere WhatsApp bilgisi gönderilemedi, rehbere siz haber verin';
-  return '⏳ Rehbere WhatsApp bilgisi gönderilemedi: Meta doğrulaması bekleniyor. Rehbere siz haber verin';
+  if (msg && msg.status === 'failed') return '⚠️ Rehbere WhatsApp bilgisi gönderilemedi, rehbere siz haber verin';
+  return '⏳ Rehbere WhatsApp bilgisi sırada, birkaç dakika içinde gider';
 }
 
 async function guideAssignmentNotice(db, r, k) {
   const [{ data: guide }, { data: sibs }, { data: tour }] = await Promise.all([
     db.from('guides').select('id,full_name,phone').eq('id', r.guide_id).maybeSingle(),
     db.from('reservations').select(RES_COLS).eq('check_in', r.check_in).eq('tour_id', r.tour_id).eq('guide_id', r.guide_id),
-    r.tour_id ? db.from('tours').select('name').eq('id', r.tour_id).maybeSingle() : Promise.resolve({ data: null }),
+    r.tour_id ? db.from('tours').select(TOUR_COLS).eq('id', r.tour_id).maybeSingle() : Promise.resolve({ data: null }),
   ]);
   const name = (guide && guide.full_name) || r.guide_name || 'Rehber';
-  const b = buildGuideBrief({ reservations: sibs && sibs.length ? sibs : [r], guideName: name, tourName: (tour && tour.name) || r.destination });
-  const lines = [`🧑‍🏫 Rehber: ${name}`, `🧭 Tur: ${b.tourName}${b.language !== '—' ? ` (${b.language})` : ''}`, `📅 Tarih: ${b.dateLabel} ${b.time}`, `👥 Misafir: ${b.guests}`,
+  const b = buildGuideBrief({ reservations: sibs && sibs.length ? sibs : [r], guideName: name, tour, tourName: (tour && tour.name) || r.destination });
+  const lines = [`🧑‍🏫 Rehber: ${name}`, `🧭 Tur: ${b.tourName}${b.language !== '—' ? ` (${b.language})` : ''}`, `📅 Tarih: ${b.dateLabel} ${b.time}`, `📍 Buluşma: ${b.meetingPoint}`, ...(b.startKnown ? [] : ['⚠️ Rezervasyonda saat girilmemiş: rehbere saati siz iletin']), `👥 Misafir: ${b.guests}`,
     await guideMessageLine(db, k, guide), `🔗 https://crm.desetour.com/#/reservations/${r.id}`];
   return { title: `Rehber atandı: ${name}`, details: lines.join(' | ') };
 }
@@ -204,7 +215,7 @@ function buildDailySummary(reservations, dateISO) {
   const unassigned = list.filter(o => !o.hasGuide).length;
   const title = `Yarın (${dateLabelTr(dateISO)}): ${list.length} operasyon, ${list.reduce((n, o) => n + o.pax, 0)} misafir`;
   const details = list.length
-    ? list.map((o, i) => `${i + 1}) ${o.time || '--:--'} ${o.tour}${o.langs.size ? ` (${[...o.langs].join('/')})` : ''} · ${o.pax} kişi, ${o.res} rezervasyon · ${o.hasGuide ? 'Rehber: ' + (o.guide || 'atandı') : '⚠️ REHBER ATANMADI'}`).join('  |  ')
+    ? list.map((o, i) => `${i + 1}) ${o.time || '⚠️ saat yok'} ${o.tour}${o.langs.size ? ` (${[...o.langs].join('/')})` : ''} · ${o.pax} kişi, ${o.res} rezervasyon · ${o.hasGuide ? 'Rehber: ' + (o.guide || 'atandı') : '⚠️ REHBER ATANMADI'}`).join('  |  ')
       + (unassigned ? `  |  ⚠️ ${unassigned} operasyonda rehber yok` : '')
     : 'Yarın tur yok.';
   return { title, details, operations: list.length, unassigned };
