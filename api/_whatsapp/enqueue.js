@@ -40,7 +40,8 @@ function buildGuideBrief({ reservations, guideName, tourName, note, meetingPoint
   const duration = tour && tour.duration_text ? String(tour.duration_text).trim() : '';
   const start = hhmm(first.check_in_time);
   const out = {
-    guideName: String(guideName || '').trim().split(/\s+/)[0] || 'Merhaba',
+    // Full name ("Merhaba Ayşe Yılmaz"), never the first name alone.
+    guideName: String(guideName || '').trim().replace(/\s+/g, ' ') || 'Rehberimiz',
     dateLabel: dateLabelTr(first.check_in),
     tourName: tourName || (tour && tour.name) || first.destination || 'Tur',
     // No fixed start (Civitatis: "see the voucher") → the earliest pickup time.

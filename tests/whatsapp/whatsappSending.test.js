@@ -84,7 +84,7 @@ test('guide brief: one operation = all bookings of the same date + tour + guide;
       { reservation_number: 'R-2', check_in: '2026-11-20', check_in_time: '09:30:00', tour_language: 'Portekizce', pax_adult: 3, pax_child: 1, pickup_location: 'Sultanahmet', status: 'pending_confirmation' },
       { reservation_number: 'R-3', check_in: '2026-11-20', check_in_time: '10:00:00', pax_adult: 9, status: 'cancelled' },
     ] });
-  assert.equal(p.guideName, 'Ayşe');
+  assert.equal(p.guideName, 'Ayşe Yılmaz', 'full name, not the first name alone');
   assert.equal(p.time, '09:30');
   assert.equal(p.language, 'İspanyolca / Portekizce');
   assert.equal(p.guests, '6 kişi (2 rezervasyon: R-1, R-2)');
@@ -312,7 +312,7 @@ test('guides: assignment message once per operation, reminder the evening before
   assert.deepEqual([r.date, r.queued, r.missingPhone], ['2026-11-18', 1, 1]);
   const rm = db.tables.whatsapp_messages[1];
   assert.deepEqual([rm.event_type, rm.template_key], ['guide_reminder', 'guide_reminder']);
-  assert.match(renderPreview('guide_reminder', rm.payload), /^Merhaba Ayşe, hatırlatma: yarın \(18 Kasım 2026 Çarşamba\) Topkapı Sarayı turunuz var\./);
+  assert.match(renderPreview('guide_reminder', rm.payload), /^Merhaba Ayşe Yılmaz, hatırlatma: yarın \(18 Kasım 2026 Çarşamba\) Topkapı Sarayı turunuz var\./);
   assert.equal((await enqueueGuideReminders({ db, todayISO: '2026-11-17' })).queued, 0);
 });
 

@@ -10263,7 +10263,7 @@ function GuideWhatsAppModal({ res, onClose }) {
   const [requestId] = useState(() => 'gb-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8));
   const guideName = res?.guide || res?.assignedGuideName || "Rehber";
   const dateLabel = res?.checkIn ? new Date(String(res.checkIn).slice(0, 10) + "T12:00:00").toLocaleDateString("tr-TR", { day: "numeric", month: "long", year: "numeric", weekday: "long" }) : res?.date;
-  const preview = _whatsappTemplatePreview("guide_tour_brief", [String(guideName).split(" ")[0], dateLabel, res?.tour, res?.time ? String(res.time).slice(0, 5) : "", res?.tourLanguage,
+  const preview = _whatsappTemplatePreview("guide_tour_brief", [String(guideName).trim(), dateLabel, res?.tour, res?.time ? String(res.time).slice(0, 5) : "", res?.tourLanguage,
     "aynı gün ve turdaki tüm rezervasyonlar toplanır", meetingPoint || "Operasyondan iletilecek", note]);
   async function handleSubmit() {
     const { data, error } = await mutate("sendGuideBrief", { reservationId: res.id, meetingPoint, note, requestId });
