@@ -249,7 +249,13 @@ function buildRpcPayload({ parsedEvent, rawBody, civitatisSourceId, tourId, cust
  *   made either way.
  * @returns {Promise<{ok:true, civitatisSourceId:string, plans:Array} | {ok:false, error:string, stage?:string}>}
  */
-async function planCivitatisIngestion({ messages, repo, identityDecision = null }) {
+// autoLinkSingleExactName (owner rule 2026-11-25): the same contact name
+// keeps coming back on different days — usually an agency booking for
+// its guests. When the exact normalized name matches exactly ONE existing
+// customer, the booking is linked to that customer and written, instead
+// of waiting for a manual decision. Two or more same-name customers still
+// wait for review. The scheduled ingestion turns this on.
+async function planCivitatisIngestion({ messages, repo, identityDecision = null, autoLinkSingleExactName = false }) {
   const civitatisSource = await repo.getCivitatisSource();
   if (!civitatisSource) {
     return { ok: false, error: 'No Civitatis source found — cannot plan any writes.' };
@@ -461,7 +467,9 @@ async function planCivitatisIngestion({ messages, repo, identityDecision = null 
         if (nameMatch.matched) {
           const hasExplicitDecisionForThisBooking = identityDecision && identityDecision.externalBookingId === externalBookingId;
 
-          if (!hasExplicitDecisionForThisBooking) {
+          const autoLink = !hasExplicitDecisionForThisBooking && autoLinkSingleExactName && nameMatch.candidates.length === 1;
+          if (autoLink) customerId = nameMatch.candidates[0].id;
+          if (!hasExplicitDecisionForThisBooking && !autoLink) {
             // Default, production behavior (the V14 silent-loss fix):
             // no identity assumption is ever made either way — persist
             // a retryable needs_review marker for every message in this
@@ -479,7 +487,7 @@ async function planCivitatisIngestion({ messages, repo, identityDecision = null 
             continue;
           }
 
-          if (identityDecision.decision === 'existing_customer') {
+          if (hasExplicitDecisionForThisBooking && identityDecision.decision === 'existing_customer') {
             // confirmedCustomerId MUST be exactly one of the candidates
             // matchCustomerByName itself just returned for THIS
             // booking's own contact name — never an arbitrary operator-

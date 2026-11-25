@@ -249,6 +249,8 @@ async function handler(req, res) {
     outcome = await writeEndpoint.runCivitatisWriteOrchestration({
       messages, repo, externalBookingId: null, writeModeActive, rpcCaller, cancellationRpcCaller,
       clientMessageRpcCaller, markNeedsReviewRpcCaller,
+      // Same contact name, one existing customer → link and write (agency bookings).
+      autoLinkSingleExactName: true,
     });
   } catch (err) {
     console.error('[cron-ingest-civitatis-write] Orchestration error:', err.message);

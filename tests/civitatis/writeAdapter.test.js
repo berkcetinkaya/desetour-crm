@@ -512,3 +512,25 @@ test('the 5 known real Civitatis bookings, mixed together, plan exactly 4 eligib
   const eligibleCount = plan.plans.filter(p => p.eligible).length;
   assert.equal(eligibleCount, 4); // total automatic reservations
 });
+
+// Owner rule 2026-11-25: the same booking-contact name comes back on other
+// days (agency bookings). Scheduled ingestion links a single exact-name
+// match to that customer and writes the booking; two same-name customers
+// still wait for review; the manual default (no flag) is unchanged.
+test('autoLinkSingleExactName: one same-name customer → linked and written; two → still held; flag off → held as before', async () => {
+  const one = createFakeRepo(baseRepoOptions({ customers: [{ id: 'cust-juan', full_name: 'Juan Armas Puente', email: null, phone: null }] }));
+  const linked = await planCivitatisIngestion({ messages: [F.juanArmasPuenteBooking], repo: one, autoLinkSingleExactName: true });
+  assert.equal(linked.plans[0].eligible, true);
+  assert.equal(linked.plans[0].customerId, 'cust-juan');
+  assert.equal(linked.plans[0].calls[0].p_customer_id, 'cust-juan');
+
+  const held = await planCivitatisIngestion({ messages: [F.juanArmasPuenteBooking], repo: one });
+  assert.equal(held.plans[0].eligible, false, 'manual endpoint default unchanged');
+
+  const two = createFakeRepo(baseRepoOptions({ customers: [
+    { id: 'cust-juan-1', full_name: 'Juan Armas Puente', email: null, phone: null },
+    { id: 'cust-juan-2', full_name: 'JUAN ARMAS PUENTE', email: null, phone: null }] }));
+  const ambiguous = await planCivitatisIngestion({ messages: [F.juanArmasPuenteBooking], repo: two, autoLinkSingleExactName: true });
+  assert.equal(ambiguous.plans[0].eligible, false);
+  assert.ok(ambiguous.plans[0].reason.includes('exact normalized name'));
+});

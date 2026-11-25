@@ -478,7 +478,7 @@ function decorateClientMessageResult(entry) {
  * result from planCivitatisIngestion (an invalid confirmedCustomerId)
  * is passed straight through so the HTTP handler can map it to a 400.
  */
-async function runCivitatisWriteOrchestration({ messages, repo, externalBookingId, writeModeActive, rpcCaller, cancellationRpcCaller, clientMessageRpcCaller, markNeedsReviewRpcCaller, identityDecision = null }) {
+async function runCivitatisWriteOrchestration({ messages, repo, externalBookingId, writeModeActive, rpcCaller, cancellationRpcCaller, clientMessageRpcCaller, markNeedsReviewRpcCaller, identityDecision = null, autoLinkSingleExactName = false }) {
   const filteredMessages = externalBookingId
     ? filterMessagesByExternalBookingId(messages, externalBookingId)
     : (messages || []);
@@ -490,7 +490,7 @@ async function runCivitatisWriteOrchestration({ messages, repo, externalBookingI
   // booking fields to extract.
   const { clientMessages, other: bookingMessages } = splitClientMessages(afterCancellationSplit);
 
-  const plan = await planCivitatisIngestion({ messages: bookingMessages, repo, identityDecision });
+  const plan = await planCivitatisIngestion({ messages: bookingMessages, repo, identityDecision, autoLinkSingleExactName });
   if (!plan.ok) return { ok: false, error: plan.error, stage: plan.stage };
 
   const cancellationPlan = await planCivitatisCancellations({ messages: cancellationMessages, repo });

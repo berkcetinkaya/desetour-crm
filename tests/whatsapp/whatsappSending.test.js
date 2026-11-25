@@ -607,6 +607,7 @@ test('ingestion hook: team notices run right after the Civitatis ingestion; an e
   assert.equal(calls.length, 1);
   const cron = fs.readFileSync(path.join(__dirname, '..', '..', 'api/cron-ingest-civitatis-write.js'), 'utf8');
   assert.match(cron, /try \{ teamNotices = await require\('\.\/whatsapp'\)\.runTeamNotices\(\); \}\s*catch/, 'best effort: never fails the ingestion');
+  assert.match(cron, /autoLinkSingleExactName: true/, 'scheduled ingestion links a single same-name customer (agency bookings)');
 });
 
 test('late scheduler: a noon/evening job that fires after midnight still works on the previous day', () => {

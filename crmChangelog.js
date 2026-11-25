@@ -101,6 +101,19 @@ const CRM_CHANGELOG_CATEGORIES = [
 // Newest first. See the release convention above before editing.
 const CRM_CHANGELOG = [
   {
+    version: '13.29',
+    date: '2026-11-25',
+    title: 'Aynı İsimle Gelen Rezervasyonlar Bekletilmiyor',
+    summary: 'Civitatis rezervasyonunda müşteri adı CRM\'deki tek bir müşteriyle birebir aynıysa (çoğunlukla aynı acentenin farklı günlere yaptığı rezervasyonlar) rezervasyon artık onay beklemeden o müşteriye bağlanıp CRM\'e alınıyor.',
+    categories: ['Otomasyon', 'İyileştirme'],
+    highlights: [
+      'Aynı isimde tek müşteri varsa yeni rezervasyon otomatik olarak o müşteriye bağlanıyor; müşteri kaydı değiştirilmiyor.',
+      'Aynı isimde birden fazla müşteri varsa rezervasyon eskisi gibi kontrol için bekletiliyor.',
+      'Daha önce bu nedenle bekleyen rezervasyonlar bir sonraki e-posta taramasında otomatik olarak alınıyor.',
+    ],
+    author: 'Berk',
+  },
+  {
     version: '13.28',
     date: '2026-11-21',
     title: 'Rehber Mesajlarında Buluşma Noktası ve Saati',
@@ -233,20 +246,6 @@ const CRM_CHANGELOG = [
       'Finans → Aylık Harcamalar: ay seçip harcama adı ve tutar yazarak (ör. Ekim · Meta Reklam · ₺10.000) istediğiniz aya gider ekleyebiliyorsunuz; harcamalar o ayın kârından düşülüyor.',
       'Raporlar → Aylık Detaylı Rapor: tur ve rezervasyon sayıları, en çok satan tur, tur ve dil bazında katılım, rehberler ve hakedişleri, gelir–gider–kâr ve aylık harcamalar grafiklerle PDF\'te.',
       'Raporun son bölümü CRM\'de unutulan kayıtları (rehber atanmamış tur, girilmemiş ücret, belirsiz yemek durumu…) raporu nasıl etkilediği ve ne yapılması gerektiğiyle listeliyor.',
-    ],
-    author: 'Berk',
-  },
-  {
-    version: '13.18',
-    date: '2026-11-14',
-    title: 'Rehber Ücreti Atamada Giriliyor',
-    summary: 'Rehber maliyeti artık otomatik hesaplanmıyor: rehber atanırken rehbere ödenecek ücret giriliyor ve aynı gün, aynı tur ve aynı rehber için tek ücret sayılıyor.',
-    categories: ['Operasyon', 'İyileştirme'],
-    highlights: [
-      'Rehber atama ekranında rehbere ödenecek ücret giriliyor; tüm finans hesapları bu tutarı kullanıyor.',
-      'Aynı rehber aynı gün aynı tura başka bir rezervasyon için atanınca ilk girilen ücret silik ve değiştirilemez görünüyor; ikinci ücret oluşmuyor.',
-      'Rehber atanmamış ya da ücreti girilmemiş operasyonlar maliyete sayılmıyor ve uyarıyla gösteriliyor.',
-      'Eksik ücret rezervasyonun Finans kartından girilebiliyor; Yönetici ve Operasyon yanlış girilen ücreti onayla düzeltebiliyor.',
     ],
     author: 'Berk',
   },
