@@ -12,7 +12,7 @@ const { normalizePhone, getWhatsAppConfig } = require('../../api/_whatsapp/confi
 const { TEMPLATES, renderPreview, templateParams } = require('../../api/_whatsapp/templates');
 const { runWorker } = require('../../api/_whatsapp/worker');
 const { verifySignature, verifyHandshake, processWebhook } = require('../../api/_whatsapp/webhook');
-const { buildGuideBrief, buildDailySummary, enqueueGuideBrief, enqueueOperationsNotice, enqueueGuideAssignments, notifyGuideAssignments, enqueueGuideReminders } = require('../../api/_whatsapp/enqueue');
+const { buildGuideBrief, buildDailySummary, enqueueGuideBrief, enqueueOperationsNotice, enqueueGuideAssignments, enqueueGuideAssignmentMessage, notifyGuideAssignments, enqueueGuideReminders } = require('../../api/_whatsapp/enqueue');
 const { createHandler } = require('../../api/whatsapp');
 const { enqueueSurvey, enqueueReviewRequest, feedbackReminder, reviewUrlFor, parseScore, isPositive } = require('../../api/_whatsapp/survey');
 const { toTurkish, toCustomer } = require('../../api/_whatsapp/translate');
@@ -280,7 +280,7 @@ test('worker sends the feedback request in the booking language with one payload
 });
 
 test('guides: assignment message once per operation, reminder the evening before; no phone → counted, not sent', async () => {
-  const now = () => new Date('2026-11-17T09:00:00Z');
+  const now = () => new Date('2026-11-17T09:30:00Z');
   const db = fakeDb({
     reservations: [
       { id: 'R1', reservation_number: 'R-1', check_in: '2026-11-18', check_in_time: '10:00:00', tour_id: 'T1', destination: 'Topkapı', tour_language: 'İspanyolca', guide_id: 'G1', pax_adult: 2, status: 'confirmed', updated_at: '2026-11-17T08:50:00Z' },
@@ -618,15 +618,16 @@ test('late scheduler: a noon/evening job that fires after midnight still works o
 });
 
 test('guide messages: tour meeting point and duration fill in; the earliest known start time is used; a missing time is flagged', () => {
-  const tour = { name: 'Bosforo y Barrio Sultanahmet', meeting_point: 'Tamara Restaurant Sultanahmet (08:45) veya The Marmara Hotel Taksim (08:10)', duration_text: '7 Saat', guide_notes_tr: null };
+  const tour = { name: 'Bosforo y Barrio Sultanahmet', meeting_point: 'Tamara Restaurant Sultanahmet (08:45) veya The Marmara Hotel Taksim (08:10)', duration_text: '7 Saat', guide_notes_tr: 'Alışveriş baskısı yapılmamalı.' };
   const p = buildGuideBrief({ guideName: 'Özcan Yıldız', tour, reservations: [
     { reservation_number: 'R-1', check_in: '2026-11-21', check_in_time: null, tour_language: 'İtalyanca', pax_adult: 2, status: 'confirmed' },
     { reservation_number: 'R-2', check_in: '2026-11-21', check_in_time: '11:00:00', tour_language: 'İtalyanca', pax_adult: 1, status: 'confirmed' }] });
   assert.equal(p.time, '11:00 · Süre: 7 Saat', 'a booking without a time does not hide the known start');
-  assert.equal(p.meetingPoint, tour.meeting_point);
+  assert.equal(p.meetingPoint, 'Operasyondan iletilecek', 'the tour record never supplies the meeting point');
+  assert.equal(p.note, '—', 'no automatic tour note');
   assert.equal(p.tourName, 'Bosforo y Barrio Sultanahmet');
   assert.deepEqual(Object.keys(p), ['guideName', 'dateLabel', 'tourName', 'time', 'language', 'guests', 'meetingPoint', 'note'], 'payload holds only template parameters');
-  assert.match(renderPreview('guide_reminder', p), /🕘 Başlangıç: 11:00 · Süre: 7 Saat\n.*\n.*\n📍 Buluşma: Tamara Restaurant Sultanahmet \(08:45\)/);
+  assert.match(renderPreview('guide_reminder', p), /🕘 Başlangıç: 11:00 · Süre: 7 Saat\n.*\n.*\n📍 Buluşma: Operasyondan iletilecek/);
   const q = buildGuideBrief({ guideName: 'A', tour, reservations: [{ reservation_number: 'R-3', check_in: '2026-12-28', check_in_time: null, pax_adult: 2, status: 'confirmed' }] });
   assert.equal(q.time, "saat CRM'de girilmemiş, operasyondan teyit edin · Süre: 7 Saat"); assert.equal(q.startKnown, false);
   const withPickup = buildGuideBrief({ guideName: 'A', tour, reservations: [{ reservation_number: 'R-4', check_in: '2026-12-28', check_in_time: '10:00:00', pickup_location: 'Hotel X', pax_adult: 2, status: 'confirmed' }] });
@@ -668,4 +669,37 @@ test('team notice shows the pickup point with its time', () => {
   const n = buildEventNotice('created', { id: 'L', entity_type: 'reservation', action: 'created', metadata: { auto_ingested: true } },
     { id: 'R', reservation_number: 'R-1', destination: 'Bosforo', check_in: '2026-12-31', pax_adult: 2, pickup_location: 'Tamara Restaurant Sultanahmed', pickup_time: '08:45:00' }, []);
   assert.match(n.details, /📅 Tarih: 31 Aralık 2026 Perşembe \| 📍 Buluşma: Tamara Restaurant Sultanahmed \(08:45\) \|/);
+});
+
+test('assignment dialog: send now or schedule up to 12 hours with a note; one message per operation; automatic path waits for the choice', async () => {
+  const t0 = new Date('2026-11-28T09:00:00Z');
+  const R = (o) => ({ reservation_number: 'R-1', check_in: '2026-11-30', check_in_time: '10:00:00', tour_id: 'T1', destination: 'Grand Bazaar', tour_language: 'İspanyolca', guide_id: 'G1', pax_adult: 2, status: 'confirmed', pickup_location: 'Hotel Sultania', pickup_time: '09:30:00', ...o });
+  const db = fakeDb({
+    reservations: [R({ id: 'A', updated_at: '2026-11-28T08:59:00Z' })],
+    guides: [{ id: 'G1', full_name: 'Deniz Bulut', phone: '0531 898 84 32' }],
+    tours: [{ id: 'T1', name: 'Grand Bazaar Experience', duration_text: '4 Saat', meeting_point: 'Çemberlitaş Tramvay İstasyonu', guide_notes_tr: 'Otomatik not' }],
+  }, claimAll);
+  // the automatic fallback leaves a fresh assignment alone (grace period)
+  assert.equal((await enqueueGuideAssignments({ db, todayISO: '2026-11-28', now: () => t0 })).queued, 0);
+  const told = []; const notify = async (a) => { told.push(a); return { ok: true, ids: [], channel: 'telegram' }; };
+  await notifyGuideAssignments({ db, notify, todayISO: '2026-11-28', now: () => t0 });
+  assert.equal(told.length, 0, 'the team hears about it once the choice is made');
+  assert.equal((await enqueueGuideAssignmentMessage({ db, reservationId: 'A', delayMinutes: 721, now: () => t0 })).status, 400, 'at most 12 hours');
+  const a = await enqueueGuideAssignmentMessage({ db, reservationId: 'A', note: 'Şemsiye alın', delayMinutes: 180, now: () => t0 });
+  assert.equal(a.scheduledAt, '2026-11-28T12:00:00.000Z');
+  const m = db.tables.whatsapp_messages[0];
+  assert.deepEqual([m.idempotency_key, m.next_attempt_at, m.payload.guideName, m.payload.note], ['guide_assigned:2026-11-30|T1|g:G1', '2026-11-28T12:00:00.000Z', 'Deniz Bulut', 'Şemsiye alın']);
+  assert.equal(m.payload.meetingPoint, 'Hotel Sultania (09:30)', 'meeting point and time from the booking, not the tour record');
+  assert.match(renderPreview('guide_tour_brief', m.payload), /📝 Not: Şemsiye alın\n/);
+  assert.doesNotMatch(JSON.stringify(m.payload), /Otomatik not|Çemberlitaş/);
+  assert.equal((await enqueueGuideAssignmentMessage({ db, reservationId: 'A', delayMinutes: 0, now: () => t0 })).duplicate, true, 'never twice');
+  const later = () => new Date('2026-11-28T10:00:00Z');
+  assert.equal((await enqueueGuideAssignments({ db, todayISO: '2026-11-28', now: later })).queued, 0, 'the fallback sees the chosen message');
+  await notifyGuideAssignments({ db, notify, todayISO: '2026-11-28', now: () => t0 });
+  assert.equal(told.length, 1);
+  assert.match(told[0].details, /⏰ Rehbere WhatsApp bilgisi/);
+  const src = fs.readFileSync(path.join(__dirname, '..', '..', 'DeseTourDashboard.jsx'), 'utf8');
+  const opts = src.match(/const _GUIDE_WA_DELAYS = (\[.*\]);/)[1];
+  assert.deepEqual(JSON.parse(opts.replace(/\[(\d+), "([^"]+)"\]/g, '[$1,"$2"]')).map(x => x[0]), [0, 60, 120, 180, 240, 360, 480, 720]);
+  assert.match(src, /if \(guideId && guideId !== r\.guideId\) \{\s*setWaStep/, 'the step opens after a new or changed guide');
 });

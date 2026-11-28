@@ -19,7 +19,7 @@
 const { getWhatsAppConfig } = require('./_whatsapp/config');
 const { verifyHandshake, verifySignature, verifyUrlKey, processWebhook } = require('./_whatsapp/webhook');
 const { runWorker } = require('./_whatsapp/worker');
-const { enqueueGuideBrief, enqueueOperationsNotice, enqueueDailySummary, enqueueGuideAssignments, notifyGuideAssignments, enqueueGuideReminders, istanbulISODate, addDays } = require('./_whatsapp/enqueue');
+const { enqueueGuideBrief, enqueueOperationsNotice, enqueueDailySummary, enqueueGuideAssignments, enqueueGuideAssignmentMessage, notifyGuideAssignments, enqueueGuideReminders, istanbulISODate, addDays } = require('./_whatsapp/enqueue');
 const { enqueueSurvey, enqueueReviewRequest, feedbackReminder } = require('./_whatsapp/survey');
 const { toTurkish, toCustomer } = require('./_whatsapp/translate');
 const { sendWeeklyReport } = require('./_whatsapp/weekly');
@@ -116,7 +116,11 @@ function createHandler(deps = {}) {
         const requestId = String(body.requestId || '').slice(0, 64);
         if (!requestId) return res.status(400).json({ error: 'requestId gerekli.' });
         let r;
-        if (body.kind === 'guide_brief') r = await enqueueGuideBrief({ db: db(), reservationId: body.reservationId, note: body.note, meetingPoint: body.meetingPoint, requestId });
+        if (body.kind === 'guide_assignment') {
+          r = await enqueueGuideAssignmentMessage({ db: db(), reservationId: body.reservationId, note: body.note, delayMinutes: body.delayMinutes });
+          if (r.ok && !r.sendNow) return res.status(200).json({ ...r, sendingConfigured: cfg.sendingConfigured, worker: null });
+        }
+        else if (body.kind === 'guide_brief') r = await enqueueGuideBrief({ db: db(), reservationId: body.reservationId, note: body.note, meetingPoint: body.meetingPoint, requestId });
         else if (body.kind === 'operations_notice') {
           const title = String(body.title || '').trim(), details = String(body.details || '').trim();
           if (!title || !details) return res.status(400).json({ error: 'Başlık ve mesaj gerekli.' });

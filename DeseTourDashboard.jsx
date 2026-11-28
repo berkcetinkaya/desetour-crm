@@ -8744,7 +8744,55 @@ async function _saveGuideFeeIfNew(mutateFinance, lookup, res, value) {
     reservationId: res.id || null, amount: value.amount, currency: value.currency, reason: "Rehber atamasında girildi" });
 }
 
+// When the guide's WhatsApp info goes after an assignment: now … 12 hours.
+const _GUIDE_WA_DELAYS = [[0, "Hemen"], [60, "1 saat sonra"], [120, "2 saat sonra"], [180, "3 saat sonra"], [240, "4 saat sonra"], [360, "6 saat sonra"], [480, "8 saat sonra"], [720, "12 saat sonra"]];
+
+// Step 2 of a guide assignment: ask when the WhatsApp info should reach
+// the guide and whether to add a note. Closing it without choosing lets
+// the automatic sender deliver it (right away, ~20 minutes later).
+function GuideAssignWhatsAppStep({ r, guide, onClose }) {
+  const { mutate, mutating } = useRepoMutation("whatsapp");
+  const [delay, setDelay] = useState("0");
+  const [note, setNote] = useState("");
+  const hasPhone = !!(guide && String(guide.phone || "").replace(/\D/g, "").length >= 10);
+  const when = (m) => new Date(Date.now() + m * 60000).toLocaleString("tr-TR", { day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" });
+  async function submit() {
+    if (!hasPhone) { onClose(); return; }
+    const { data, error } = await mutate("sendGuideAssignment", { reservationId: r.id, note: note.trim(), delayMinutes: Number(delay) });
+    if (error) { showToast("WhatsApp bilgisi planlanamadı: " + error); return; }
+    showToast(data && data.duplicate ? "Bu operasyon için rehbere WhatsApp bilgisi zaten planlanmış/gönderilmiş."
+      : data && data.scheduledAt ? `Rehbere WhatsApp bilgisi ${new Date(data.scheduledAt).toLocaleString("tr-TR", { day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" })}'da gönderilecek.`
+      : "Rehbere WhatsApp bilgisi gönderildi.");
+    onClose();
+  }
+  return (
+    <Modal title="Rehbere WhatsApp bilgisi" onClose={onClose} onSubmit={submit} submitLabel={mutating ? "Kaydediliyor…" : !hasPhone ? "Tamam" : delay === "0" ? "Şimdi gönder" : "Planla"}>
+      <div data-testid="guide-wa-step" style={{ fontSize: 13, color: C.text, fontFamily: "'Geist',sans-serif", lineHeight: 1.55, marginBottom: 10 }}>
+        <b>{guide ? guide.name : "Rehber"}</b> atandı. Tur bilgilerini içeren WhatsApp mesajı rehbere ne zaman gönderilsin?
+      </div>
+      {!hasPhone ? (
+        <div style={{ padding: "10px 12px", borderRadius: 8, background: C.amberBg, fontSize: 12.5, color: C.text, fontFamily: "'Geist',sans-serif" }}>
+          Bu rehberin telefon numarası kayıtlı değil; WhatsApp bilgisi gönderilemez. Rehberlerimiz sayfasından numarasını ekleyin.
+        </div>
+      ) : (<>
+        <FRow label="Gönderim zamanı">
+          <FSelect value={delay} onChange={setDelay} options={_GUIDE_WA_DELAYS.map(([m, l]) => [String(m), m ? `${l} (${when(m)})` : l])}/>
+        </FRow>
+        <FRow label="Not (isteğe bağlı)" hint="Mesajdaki “Not” satırına yazılır. Boş bırakırsanız “—” görünür.">
+          <textarea data-testid="guide-wa-note" value={note} onChange={e => setNote(e.target.value)} rows={3} maxLength={600}
+            placeholder="ör. Misafirlerden biri tekerlekli sandalye kullanıyor"
+            style={{ width: "100%", boxSizing: "border-box", padding: "9px 11px", borderRadius: 8, border: `1px solid ${C.border}`, background: C.white, color: C.text, fontSize: 13.5, fontFamily: "'Geist',sans-serif", resize: "vertical" }}/>
+        </FRow>
+        <div style={{ fontSize: 11.5, color: C.textMuted, fontFamily: "'Geist',sans-serif", lineHeight: 1.5 }}>
+          Buluşma yeri ve saati rezervasyondaki pickup bilgisinden alınır. Turdan bir gün önce akşam rehbere ayrıca hatırlatma gider. Seçim yapmadan kapatırsanız mesaj yaklaşık 20 dakika içinde notsuz gönderilir.
+        </div>
+      </>)}
+    </Modal>
+  );
+}
+
 function AssignGuideModal({ r, onClose, initialGuideId }) {
+  const [waStep, setWaStep] = useState(null);
   const { mutate, mutating } = useRepoMutation("reservation");
   const { mutate: mutateFinance } = useRepoMutation("finance");
   const { data:guideList } = useRepo("guide", "getAll");
@@ -8772,9 +8820,15 @@ function AssignGuideModal({ r, onClose, initialGuideId }) {
       const { error: fErr } = await _saveGuideFeeIfNew(mutateFinance, feeLookup, r, fee);
       if (fErr) showToast("Rehber atandı ama ücret kaydedilemedi: " + fErr);
     }
+    // A new or changed guide → ask when the guide's WhatsApp info should go.
+    if (guideId && guideId !== r.guideId) {
+      setWaStep(guides.find(g => g.id === guideId) || { name: "Rehber" });
+      return;
+    }
     onClose();
   }
 
+  if (waStep) return <GuideAssignWhatsAppStep r={r} guide={waStep} onClose={onClose}/>;
   return (
     <Modal title="Rehber Ata" onClose={onClose} onSubmit={handleSubmit} submitLabel={mutating?"Kaydediliyor…":"Kaydet"}>
       <FRow label="Rehber">
@@ -25849,6 +25903,7 @@ const WhatsAppRepository = {
   async removeRecipient(id) { const i = _mockWa.recipients.findIndex(x => x.id === id); if (i >= 0) _mockWa.recipients.splice(i, 1); return true; },
   async getRecentMessages() { return _mockWa.messages.slice().reverse(); },
   async getInbound() { return []; },
+  async sendGuideAssignment(d) { _mockWa.messages.push({ id: 'WM-' + Date.now(), eventType: 'guide_assigned', recipientName: 'Rehber', status: 'queued', createdAt: new Date().toISOString(), reservationId: d.reservationId, payload: { note: d.note } }); return { ok: true, ids: [], scheduledAt: d.delayMinutes ? new Date(Date.now() + d.delayMinutes * 60000).toISOString() : null, sendingConfigured: false }; },
   async sendGuideBrief(d) { _mockWa.messages.push({ id: 'WM-' + Date.now(), eventType: 'guide_tour_brief', recipientName: 'Rehber', status: 'queued', createdAt: new Date().toISOString(), reservationId: d.reservationId }); return { ok: true, sendingConfigured: false, preview: null }; },
   async sendOperationsNotice() { return { ok: true, sendingConfigured: false, recipients: _mockWa.recipients.filter(r => r.isActive).length }; },
   async translateToTurkish(items) { return { ok: true, language: 'es', translations: Object.fromEntries((items || []).map(x => [x.id, '[TR] ' + x.text])) }; },
@@ -25904,6 +25959,7 @@ const SupabaseWhatsAppRepo = {
     if (error) return [];
     return (data || []).map(m => ({ id: m.id, from: m.from_phone, name: m.profile_name, text: m.text, at: m.received_at }));
   },
+  async sendGuideAssignment(d) { return _whatsappApi('enqueue', { kind: 'guide_assignment', reservationId: d.reservationId, note: d.note || '', delayMinutes: d.delayMinutes || 0, requestId: 'ga-' + d.reservationId + '-' + Date.now().toString(36) }); },
   async sendGuideBrief(d) { return _whatsappApi('enqueue', { kind: 'guide_brief', reservationId: d.reservationId, note: d.note || '', meetingPoint: d.meetingPoint || '', requestId: d.requestId }); },
   async sendOperationsNotice(d) { return _whatsappApi('enqueue', { kind: 'operations_notice', title: d.title, details: d.details, requestId: d.requestId }); },
   // Customer scores for one guide: feedback of the reservations this guide

@@ -22,11 +22,9 @@ function addDays(iso, n) { const d = new Date(iso + 'T12:00:00Z'); d.setUTCDate(
 const pax = (r) => (Number(r.pax_adult) || 0) + (Number(r.pax_child) || 0);
 
 // One guide operation = same date + tour + guide (CRM rule since 13.18).
-// `tour` = the tour record: its meeting point (with meeting times, e.g.
-// "Tamara Restaurant Sultanahmet (08:45)…") is used when the bookings have
-// no pickup, its duration is shown next to the start time, and its guide
-// notes fill the note when none was written.
-const TOUR_COLS = 'name,meeting_point,duration_text,guide_notes_tr';
+// `tour` = the tour record: only its name and duration are used. Meeting
+// point and time come from the bookings (pickup), the note from the team.
+const TOUR_COLS = 'name,duration_text';
 function buildGuideBrief({ reservations, guideName, tourName, note, meetingPoint, tour }) {
   const list = reservations.filter(r => r.status !== 'cancelled');
   const timed = list.filter(r => r.check_in_time).sort((a, b) => String(a.check_in_time).localeCompare(String(b.check_in_time)));
@@ -48,8 +46,11 @@ function buildGuideBrief({ reservations, guideName, tourName, note, meetingPoint
     time: `${start || (pickupTimes[0] ? `${pickupTimes[0]} (buluşma)` : 'saat CRM\'de girilmemiş, operasyondan teyit edin')}${duration ? ` · Süre: ${duration}` : ''}`,
     language: langs.join(' / ') || '—',
     guests: `${guests} kişi (${list.length} rezervasyon: ${list.map(r => r.reservation_number).join(', ')})`,
-    meetingPoint: (meetingPoint && meetingPoint.trim()) || pickups.join(' / ') || (tour && tour.meeting_point && String(tour.meeting_point).trim()) || 'Operasyondan iletilecek',
-    note: (note && note.trim()) || (tour && tour.guide_notes_tr && String(tour.guide_notes_tr).trim()) || '—',
+    // Meeting point and times come ONLY from the bookings themselves (the
+    // pickup the customer chose on Civitatis) — never the tour record.
+    meetingPoint: (meetingPoint && meetingPoint.trim()) || pickups.join(' / ') || 'Operasyondan iletilecek',
+    // Only a note the team wrote — no automatic tour note.
+    note: (note && note.trim()) || '—',
   };
   // Not a template parameter: tells the team notice the start time is missing.
   Object.defineProperty(out, 'startKnown', { value: !!(start || pickupTimes[0]), enumerable: false });
@@ -118,11 +119,59 @@ async function guideOperationRows(db, reservations, kind) {
 
 // Guide assigned (or changed) on an upcoming reservation in the last
 // sinceMinutes → the guide gets the assignment + tour details.
+// The CRM asks, right after the assignment, when the guide's message
+// should go and whether to add a note (enqueueGuideAssignmentMessage).
+// This automatic path is only the fallback for an assignment whose dialog
+// was closed without a choice: it waits GRACE_MINUTES so it never races
+// the team's choice, then sends right away.
+const GRACE_MINUTES = 20;
 async function enqueueGuideAssignments({ db, sinceMinutes = 2880, todayISO = istanbulISODate(), now = () => new Date() }) {
   const since = new Date(now().getTime() - sinceMinutes * 60000).toISOString();
+  const graceEnd = new Date(now().getTime() - GRACE_MINUTES * 60000).toISOString();
   const { data, error } = await db.from('reservations').select(RES_COLS + ',updated_at').gte('updated_at', since).gte('check_in', todayISO);
   if (error) throw new Error(error.message);
-  return guideOperationRows(db, data || [], 'guide_assigned');
+  return guideOperationRows(db, settledOps(data || [], graceEnd), 'guide_assigned');
+}
+// Bookings of operations whose latest change is older than the grace period.
+function settledOps(rows, graceEnd) {
+  const latest = new Map();
+  for (const r of rows) {
+    const k = `${String(r.check_in).slice(0, 10)}|${r.tour_id}|g:${r.guide_id}`;
+    if (!latest.has(k) || String(r.updated_at) > latest.get(k)) latest.set(k, String(r.updated_at));
+  }
+  return rows.filter(r => latest.get(`${String(r.check_in).slice(0, 10)}|${r.tour_id}|g:${r.guide_id}`) <= graceEnd);
+}
+
+// The team's choice after assigning a guide: send now or in up to 12 hours,
+// with an optional note. One message per operation (same key as the
+// automatic path, so the guide never gets it twice).
+const MAX_DELAY_MINUTES = 12 * 60;
+async function enqueueGuideAssignmentMessage({ db, reservationId, note, delayMinutes = 0, now = () => new Date() }) {
+  const delay = Math.round(Number(delayMinutes) || 0);
+  if (delay < 0 || delay > MAX_DELAY_MINUTES) return { ok: false, status: 400, error: 'Gönderim zamanı en fazla 12 saat sonrası olabilir.' };
+  const { data: r, error } = await db.from('reservations').select(RES_COLS).eq('id', reservationId).maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!r) return { ok: false, status: 404, error: 'Rezervasyon bulunamadı.' };
+  if (!r.guide_id) return { ok: false, status: 409, error: 'Bu rezervasyona rehber atanmamış.' };
+  const opKey = `${String(r.check_in).slice(0, 10)}|${r.tour_id}|g:${r.guide_id}`;
+  const idem = `guide_assigned:${opKey}`;
+  const { data: prior } = await db.from('whatsapp_messages').select('id,status,next_attempt_at').eq('idempotency_key', idem).maybeSingle();
+  if (prior) return { ok: true, ids: [], duplicate: true, status: prior.status, scheduledAt: prior.next_attempt_at || null };
+  const [{ data: guide }, { data: sibs }, { data: tour }] = await Promise.all([
+    db.from('guides').select('id,full_name,phone').eq('id', r.guide_id).maybeSingle(),
+    db.from('reservations').select(RES_COLS).eq('check_in', r.check_in).eq('tour_id', r.tour_id).eq('guide_id', r.guide_id),
+    r.tour_id ? db.from('tours').select(TOUR_COLS).eq('id', r.tour_id).maybeSingle() : Promise.resolve({ data: null }),
+  ]);
+  if (!guide) return { ok: false, status: 404, error: 'Rehber bulunamadı.' };
+  const phone = normalizePhone(guide.phone);
+  if (!phone) return { ok: false, status: 422, error: `${guide.full_name} için geçerli bir telefon numarası kayıtlı değil.` };
+  const payload = buildGuideBrief({ reservations: sibs && sibs.length ? sibs : [r], guideName: guide.full_name, tour, tourName: (tour && tour.name) || r.destination, note: String(note || '').slice(0, 600) });
+  const scheduledAt = delay > 0 ? new Date(now().getTime() + delay * 60000).toISOString() : null;
+  const row = { event_type: 'guide_assigned', audience_type: 'guide', template_key: 'guide_tour_brief', language: 'tr', idempotency_key: idem,
+    reservation_id: r.id, guide_id: r.guide_id, tour_id: r.tour_id, recipient_phone: phone, recipient_display_name: guide.full_name, payload, next_attempt_at: scheduledAt };
+  const { data, error: e2 } = await db.from('whatsapp_messages').upsert(row, { onConflict: 'idempotency_key', ignoreDuplicates: true }).select('id');
+  if (e2) throw new Error(e2.message);
+  return { ok: true, ids: (data || []).map(x => x.id), scheduledAt, sendNow: !scheduledAt, recipient: guide.full_name, preview: renderPreview('guide_tour_brief', payload) };
 }
 
 // What really happened to the guide's own WhatsApp message (the worker
@@ -130,8 +179,12 @@ async function enqueueGuideAssignments({ db, sinceMinutes = 2880, todayISO = ist
 // templates every guide message fails, so the team is told to call.
 async function guideMessageLine(db, opKey, guide) {
   if (!guide || !normalizePhone(guide.phone)) return '⚠️ Rehberin telefonu kayıtlı değil: WhatsApp bilgisi gönderilemedi, rehbere siz haber verin';
-  const { data: msg } = await db.from('whatsapp_messages').select('status,last_error').eq('idempotency_key', `guide_assigned:${opKey}`).maybeSingle();
+  const { data: msg } = await db.from('whatsapp_messages').select('status,last_error,next_attempt_at').eq('idempotency_key', `guide_assigned:${opKey}`).maybeSingle();
   if (msg && ['sent', 'delivered', 'read'].includes(msg.status)) return '📲 Rehbere WhatsApp ile tur bilgisi gönderildi';
+  if (msg && msg.status === 'queued' && msg.next_attempt_at && new Date(msg.next_attempt_at).getTime() > Date.now()) {
+    const at = new Date(msg.next_attempt_at).toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' });
+    return `⏰ Rehbere WhatsApp bilgisi ${at}'da gönderilecek`;
+  }
   if (msg && msg.status === 'failed') return '⚠️ Rehbere WhatsApp bilgisi gönderilemedi, rehbere siz haber verin';
   return '⏳ Rehbere WhatsApp bilgisi sırada, birkaç dakika içinde gider';
 }
@@ -169,7 +222,14 @@ async function notifyGuideAssignments({ db, notify, sinceMinutes = 2880, todayIS
     if (!ops.has(k)) ops.set(k, r);
   }
   const out = { operations: ops.size, announced: 0, skipped: null };
+  const graceEnd = new Date(now().getTime() - GRACE_MINUTES * 60000).toISOString();
+  const settled = new Set(settledOps(data || [], graceEnd).map(r => `${String(r.check_in).slice(0, 10)}|${r.tour_id}|g:${r.guide_id}`));
   for (const [k, r] of ops) {
+    // Wait for the team's send-time choice (or the grace period) first.
+    if (!settled.has(k)) {
+      const { data: chosen } = await db.from('whatsapp_messages').select('id').eq('idempotency_key', `guide_assigned:${k}`).maybeSingle();
+      if (!chosen) continue;
+    }
     const n = await guideAssignmentNotice(db, r, k);
     const res = await notify({ eventType: 'crm_event_guide_assigned', title: n.title, details: n.details, key: `guide_assigned_team:${k}` });
     if (!res.ok) { out.skipped = res.error; break; }
@@ -235,4 +295,4 @@ async function enqueueDailySummary({ db, todayISO = istanbulISODate(), notify })
   return { ...r, date, operations: s.operations, unassigned: s.unassigned };
 }
 
-module.exports = { buildGuideBrief, enqueueGuideBrief, enqueueGuideAssignments, notifyGuideAssignments, latestGuideAssignmentNotice, enqueueGuideReminders, enqueueOperationsNotice, buildDailySummary, enqueueDailySummary, istanbulISODate, addDays, dateLabelTr };
+module.exports = { buildGuideBrief, enqueueGuideBrief, enqueueGuideAssignments, enqueueGuideAssignmentMessage, notifyGuideAssignments, latestGuideAssignmentNotice, enqueueGuideReminders, enqueueOperationsNotice, buildDailySummary, enqueueDailySummary, istanbulISODate, addDays, dateLabelTr };

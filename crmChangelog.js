@@ -101,6 +101,19 @@ const CRM_CHANGELOG_CATEGORIES = [
 // Newest first. See the release convention above before editing.
 const CRM_CHANGELOG = [
   {
+    version: '13.30',
+    date: '2026-11-28',
+    title: 'Rehber Atamasında WhatsApp Zamanı ve Not',
+    summary: 'Rehber atandıktan sonra açılan pencereden rehbere giden WhatsApp bilgisinin ne zaman gönderileceği (hemen ya da 12 saate kadar) seçilip not eklenebiliyor; buluşma yeri ve saati yalnızca rezervasyondan alınıyor.',
+    categories: ['Otomasyon', 'İyileştirme'],
+    highlights: [
+      'Rehber atayınca "Rehbere WhatsApp bilgisi" penceresi açılıyor: Hemen, 1, 2, 3, 4, 6, 8 veya 12 saat sonra; isteğe bağlı not mesajın Not satırına yazılıyor.',
+      'Buluşma yeri ve saati yalnızca rezervasyonun pickup bilgisinden (Civitatis\'te müşterinin seçtiği) geliyor; tur kaydındaki buluşma bilgisi ve otomatik tur notu (ör. Grand Bazaar) artık mesaja eklenmiyor.',
+      'Telegram\'daki "Rehber atandı" bildirimi planlanan gönderim saatini gösteriyor.',
+    ],
+    author: 'Berk',
+  },
+  {
     version: '13.29',
     date: '2026-11-25',
     title: 'Aynı İsimle Gelen Rezervasyonlar Bekletilmiyor',
@@ -233,19 +246,6 @@ const CRM_CHANGELOG = [
       'Rezervasyon sayfasında "Civitatis Değişiklikleri" bölümü: ör. Tarih 19.11.2026 → 20.11.2026, ne zaman uygulandığıyla.',
       'Ana sayfada yeni "Değişiklik" kutusu ve bildirim zilinde uyarı; rehber atanmış turlarda "değişikliği rehbere iletin" hatırlatması.',
       'Değişiklik mailleri eskiden olduğu gibi otomatik uygulanıyor; içeriği aynı olan bir mail yeni uyarı oluşturmuyor.',
-    ],
-    author: 'Berk',
-  },
-  {
-    version: '13.19',
-    date: '2026-11-15',
-    title: 'Aylık Harcamalar ve PDF Aylık Rapor',
-    summary: 'Finans\'a ay seçilerek elle girilen aylık harcamalar (Meta reklam, Higgsfield gibi) eklendi; Raporlar sayfasından seçilen ayın detaylı raporu tek tıkla PDF olarak indiriliyor.',
-    categories: ['Yeni Özellik', 'Operasyon'],
-    highlights: [
-      'Finans → Aylık Harcamalar: ay seçip harcama adı ve tutar yazarak (ör. Ekim · Meta Reklam · ₺10.000) istediğiniz aya gider ekleyebiliyorsunuz; harcamalar o ayın kârından düşülüyor.',
-      'Raporlar → Aylık Detaylı Rapor: tur ve rezervasyon sayıları, en çok satan tur, tur ve dil bazında katılım, rehberler ve hakedişleri, gelir–gider–kâr ve aylık harcamalar grafiklerle PDF\'te.',
-      'Raporun son bölümü CRM\'de unutulan kayıtları (rehber atanmamış tur, girilmemiş ücret, belirsiz yemek durumu…) raporu nasıl etkilediği ve ne yapılması gerektiğiyle listeliyor.',
     ],
     author: 'Berk',
   },
