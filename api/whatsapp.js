@@ -96,7 +96,9 @@ function createHandler(deps = {}) {
         // Civitatis message) to the team, and the assignment + tour details
         // to every newly assigned guide.
         const events = await enqueueEventNotices({ db: db(), notify });
-        const assignments = await enqueueGuideAssignments({ db: db() });
+        // Guide messages go ONLY by the team's choice in the assignment dialog
+        // (owner rule 2026-11-29) — no automatic send after an assignment.
+        const assignments = { operations: 0, queued: 0, missingPhone: 0 };
         const worker = await runWorker({ db: db(), config: cfg, fetchImpl: deps.fetchImpl });
         // After the worker, so the team notice can say whether the guide's own message went out.
         const assignmentNotices = await notifyGuideAssignments({ db: db(), notify });
@@ -185,7 +187,7 @@ async function runTeamNotices(deps = {}) {
   const notify = dest ? (a) => sendTelegramNotice({ db, tg, dest, fetchImpl: deps.fetchImpl, ...a }) : (a) => enqueueOperationsNotice({ db, ...a });
   await fillMissingPickups({ db, sinceISO: addDays(istanbulISODate(), -1) }).catch(() => null);
   const events = await enqueueEventNotices({ db, notify });
-  const assignments = await enqueueGuideAssignments({ db });
+  const assignments = { queued: 0 }; // guide messages only by the team's choice (assignment dialog)
   const worker = await runWorker({ db, config: cfg, fetchImpl: deps.fetchImpl });
   const assignmentNotices = await notifyGuideAssignments({ db, notify });
   return { channel: dest ? 'telegram' : 'whatsapp', events: events.events, announced: events.queued, skipped: events.skipped,

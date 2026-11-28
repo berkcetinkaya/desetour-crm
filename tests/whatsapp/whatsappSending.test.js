@@ -703,3 +703,20 @@ test('assignment dialog: send now or schedule up to 12 hours with a note; one me
   assert.deepEqual(JSON.parse(opts.replace(/\[(\d+), "([^"]+)"\]/g, '[$1,"$2"]')).map(x => x[0]), [0, 60, 120, 180, 240, 360, 480, 720]);
   assert.match(src, /if \(guideId && guideId !== r\.guideId\) \{\s*setWaStep/, 'the step opens after a new or changed guide');
 });
+
+test('no automatic guide message after an assignment: only the dialog choice sends; the team notice says when nothing was sent', async () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', '..', 'api/whatsapp.js'), 'utf8');
+  assert.doesNotMatch(src, /await enqueueGuideAssignments\(/, 'the automatic sender is not called by any scheduled run');
+  const ui = fs.readFileSync(path.join(__dirname, '..', '..', 'DeseTourDashboard.jsx'), 'utf8');
+  assert.match(ui, /const \[delay, setDelay\] = useState\(""\);/, 'no preselected send time');
+  assert.match(ui, /if \(delay === ""\) \{ setErr\("Gönderim zamanını seçin\."\); return; \}/);
+  assert.match(ui, /\["skip", "Gönderme"\]/);
+  const told = []; const notify = async (a) => { told.push(a); return { ok: true, ids: [], channel: 'telegram' }; };
+  const db = fakeDb({
+    reservations: [{ id: 'A', reservation_number: 'R-1', check_in: '2026-12-01', tour_id: 'T1', destination: 'Topkapı', guide_id: 'G1', pax_adult: 2, status: 'confirmed', updated_at: '2026-11-29T08:00:00Z' }],
+    guides: [{ id: 'G1', full_name: 'Deniz Bulut', phone: '0531 898 84 32' }],
+  });
+  await notifyGuideAssignments({ db, notify, todayISO: '2026-11-29', now: () => new Date('2026-11-29T09:00:00Z') });
+  assert.match(told[0].details, /✋ Rehbere WhatsApp bilgisi gönderilmedi/);
+  assert.equal((db.tables.whatsapp_messages || []).filter(m => m.audience_type === 'guide').length, 0);
+});

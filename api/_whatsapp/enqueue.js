@@ -186,7 +186,8 @@ async function guideMessageLine(db, opKey, guide) {
     return `⏰ Rehbere WhatsApp bilgisi ${at}'da gönderilecek`;
   }
   if (msg && msg.status === 'failed') return '⚠️ Rehbere WhatsApp bilgisi gönderilemedi, rehbere siz haber verin';
-  return '⏳ Rehbere WhatsApp bilgisi sırada, birkaç dakika içinde gider';
+  if (msg) return '⏳ Rehbere WhatsApp bilgisi sırada, birkaç dakika içinde gider';
+  return '✋ Rehbere WhatsApp bilgisi gönderilmedi (atamada "Gönderme" seçildi): rehbere siz haber verin';
 }
 
 async function guideAssignmentNotice(db, r, k) {

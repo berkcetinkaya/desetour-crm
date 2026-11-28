@@ -8747,17 +8747,25 @@ async function _saveGuideFeeIfNew(mutateFinance, lookup, res, value) {
 // When the guide's WhatsApp info goes after an assignment: now … 12 hours.
 const _GUIDE_WA_DELAYS = [[0, "Hemen"], [60, "1 saat sonra"], [120, "2 saat sonra"], [180, "3 saat sonra"], [240, "4 saat sonra"], [360, "6 saat sonra"], [480, "8 saat sonra"], [720, "12 saat sonra"]];
 
-// Step 2 of a guide assignment: ask when the WhatsApp info should reach
-// the guide and whether to add a note. Closing it without choosing lets
-// the automatic sender deliver it (right away, ~20 minutes later).
+// Step 2 of a guide assignment: the team MUST choose when the WhatsApp
+// info reaches the guide (or that it is not sent) and may add a note.
+// Nothing is sent automatically (owner rule 2026-11-29: an automatic
+// message reached a guide in the middle of the night).
 function GuideAssignWhatsAppStep({ r, guide, onClose }) {
   const { mutate, mutating } = useRepoMutation("whatsapp");
-  const [delay, setDelay] = useState("0");
+  const [delay, setDelay] = useState("");
+  const [err, setErr] = useState(null);
+  function close() {
+    if (hasPhone && !window.confirm("Rehbere WhatsApp bilgisi gönderilmeyecek. Kapatılsın mı?")) return;
+    onClose();
+  }
   const [note, setNote] = useState("");
   const hasPhone = !!(guide && String(guide.phone || "").replace(/\D/g, "").length >= 10);
   const when = (m) => new Date(Date.now() + m * 60000).toLocaleString("tr-TR", { day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" });
   async function submit() {
     if (!hasPhone) { onClose(); return; }
+    if (delay === "") { setErr("Gönderim zamanını seçin."); return; }
+    if (delay === "skip") { showToast("Rehbere WhatsApp bilgisi gönderilmeyecek."); onClose(); return; }
     const { data, error } = await mutate("sendGuideAssignment", { reservationId: r.id, note: note.trim(), delayMinutes: Number(delay) });
     if (error) { showToast("WhatsApp bilgisi planlanamadı: " + error); return; }
     showToast(data && data.duplicate ? "Bu operasyon için rehbere WhatsApp bilgisi zaten planlanmış/gönderilmiş."
@@ -8766,7 +8774,7 @@ function GuideAssignWhatsAppStep({ r, guide, onClose }) {
     onClose();
   }
   return (
-    <Modal title="Rehbere WhatsApp bilgisi" onClose={onClose} onSubmit={submit} submitLabel={mutating ? "Kaydediliyor…" : !hasPhone ? "Tamam" : delay === "0" ? "Şimdi gönder" : "Planla"}>
+    <Modal title="Rehbere WhatsApp bilgisi" onClose={close} onSubmit={submit} submitLabel={mutating ? "Kaydediliyor…" : !hasPhone ? "Tamam" : delay === "0" ? "Şimdi gönder" : delay === "skip" ? "Gönderme" : delay === "" ? "Kaydet" : "Planla"}>
       <div data-testid="guide-wa-step" style={{ fontSize: 13, color: C.text, fontFamily: "'Geist',sans-serif", lineHeight: 1.55, marginBottom: 10 }}>
         <b>{guide ? guide.name : "Rehber"}</b> atandı. Tur bilgilerini içeren WhatsApp mesajı rehbere ne zaman gönderilsin?
       </div>
@@ -8775,8 +8783,8 @@ function GuideAssignWhatsAppStep({ r, guide, onClose }) {
           Bu rehberin telefon numarası kayıtlı değil; WhatsApp bilgisi gönderilemez. Rehberlerimiz sayfasından numarasını ekleyin.
         </div>
       ) : (<>
-        <FRow label="Gönderim zamanı">
-          <FSelect value={delay} onChange={setDelay} options={_GUIDE_WA_DELAYS.map(([m, l]) => [String(m), m ? `${l} (${when(m)})` : l])}/>
+        <FRow label="Gönderim zamanı" required error={err}>
+          <FSelect value={delay} onChange={(v) => { setDelay(v); setErr(null); }} options={[["", "— Seçin —"], ..._GUIDE_WA_DELAYS.map(([m, l]) => [String(m), m ? `${l} (${when(m)})` : `${l} (${when(0)})`]), ["skip", "Gönderme"]]}/>
         </FRow>
         <FRow label="Not (isteğe bağlı)" hint="Mesajdaki “Not” satırına yazılır. Boş bırakırsanız “—” görünür.">
           <textarea data-testid="guide-wa-note" value={note} onChange={e => setNote(e.target.value)} rows={3} maxLength={600}
@@ -8784,7 +8792,7 @@ function GuideAssignWhatsAppStep({ r, guide, onClose }) {
             style={{ width: "100%", boxSizing: "border-box", padding: "9px 11px", borderRadius: 8, border: `1px solid ${C.border}`, background: C.white, color: C.text, fontSize: 13.5, fontFamily: "'Geist',sans-serif", resize: "vertical" }}/>
         </FRow>
         <div style={{ fontSize: 11.5, color: C.textMuted, fontFamily: "'Geist',sans-serif", lineHeight: 1.5 }}>
-          Buluşma yeri ve saati rezervasyondaki pickup bilgisinden alınır. Turdan bir gün önce akşam rehbere ayrıca hatırlatma gider. Seçim yapmadan kapatırsanız mesaj yaklaşık 20 dakika içinde notsuz gönderilir.
+          Buluşma yeri ve saati rezervasyondaki pickup bilgisinden alınır. Turdan bir gün önce akşam rehbere ayrıca hatırlatma gider. Seçim yapmadan mesaj gönderilmez; otomatik gönderim yok.
         </div>
       </>)}
     </Modal>

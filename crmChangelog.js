@@ -104,10 +104,11 @@ const CRM_CHANGELOG = [
     version: '13.30',
     date: '2026-11-28',
     title: 'Rehber Atamasında WhatsApp Zamanı ve Not',
-    summary: 'Rehber atandıktan sonra açılan pencereden rehbere giden WhatsApp bilgisinin ne zaman gönderileceği (hemen ya da 12 saate kadar) seçilip not eklenebiliyor; buluşma yeri ve saati yalnızca rezervasyondan alınıyor.',
+    summary: 'Rehber atandıktan sonra açılan pencerede rehbere giden WhatsApp bilgisinin ne zaman gönderileceği (hemen ya da 12 saate kadar, ya da hiç) seçilmesi zorunlu ve not eklenebiliyor; buluşma yeri ve saati yalnızca rezervasyondan alınıyor.',
     categories: ['Otomasyon', 'İyileştirme'],
     highlights: [
       'Rehber atayınca "Rehbere WhatsApp bilgisi" penceresi açılıyor: Hemen, 1, 2, 3, 4, 6, 8 veya 12 saat sonra; isteğe bağlı not mesajın Not satırına yazılıyor.',
+      'Rehbere WhatsApp bilgisi artık yalnızca bu penceredeki seçimle gidiyor: gönderim zamanı seçilmeden ilerlenemiyor, "Gönderme" de seçilebiliyor; atama sonrası otomatik gönderim (gece saatlerinde ulaşan mesajlar) kaldırıldı.',
       'Buluşma yeri ve saati yalnızca rezervasyonun pickup bilgisinden (Civitatis\'te müşterinin seçtiği) geliyor; tur kaydındaki buluşma bilgisi ve otomatik tur notu (ör. Grand Bazaar) artık mesaja eklenmiyor.',
       'Telegram\'daki "Rehber atandı" bildirimi planlanan gönderim saatini gösteriyor.',
     ],
